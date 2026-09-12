@@ -211,11 +211,24 @@ a local run.
 | Run | Commit | Result |
 |---|---|---|
 | [34701567324](https://github.com/meedo1985/autonomous-quant-trader/actions/runs/34701567324) | `ab8da50` | **FAILED** at step `ruff format --check .`: `Would reformat: tests/unit/test_cost_model.py` (1 file, 21 already formatted). The later steps did not run. Cause and fix are defect 4 above. |
+| [34701759775](https://github.com/meedo1985/autonomous-quant-trader/actions/runs/34701759775) | `66b176e` | **SUCCESS**, 21s, ubuntu-latest, CPython 3.12.14 |
 
-The conclusion and per-step outcomes of the run for the follow-up commit that
-carries the defect-4 fix are reported in the session summary accompanying that
-commit. Nothing here should be read as a claim that a check passed before its
-run reported success.
+Per-step output of the successful run `34701759775`:
+
+| CI step | Exact output |
+|---|---|
+| `ruff format --check .` | `22 files already formatted` |
+| `ruff check .` | `All checks passed!` |
+| `mypy src` | `Success: no issues found in 18 source files` |
+| `python -m pytest` | `106 passed in 0.51s` (whole suite: Task 1 + Task 2 + the 55 Task 3 cases) |
+| `lint-imports` | `Analyzed 18 files, 1 dependencies.` / `Contracts: 4 kept, 0 broken.` |
+
+The single dependency edge `lint-imports` analysed is `aqt.backtest -> aqt.data`,
+introduced by this task; all four frozen contracts remain kept.
+
+Nothing here should be read as a claim that a check passed before its run
+reported success. Local execution of these five commands remains **blocked**;
+CI is the evidence.
 
 Still **not** verified anywhere for Task 3:
 `python review/task1/verify_task1.py` and `pre-commit validate-config`. Both are
@@ -229,7 +242,8 @@ passing**.
 
 Implementation complete for the authorized Task 3 scope. Mandatory local
 validation is blocked by the session permission policy described above; remote
-CI is the substitute execution evidence for five of the seven commands. Task 4
+CI is the substitute execution evidence for five of the seven commands, and it
+reported **success** for commit `66b176e`. Task 4
 was not started. No frozen artifact, protocol, schema, spec, sidecar, or
 `FROZEN_HASHES.json` entry was touched. No network, exchange, trading, ML, or
 LLM code was written. No commit was amended, force-pushed, or merged.
