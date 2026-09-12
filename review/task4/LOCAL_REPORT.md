@@ -242,7 +242,36 @@ a local run.
 
 ### CI history for Task 4
 
-<!-- CI_RESULTS -->
+| Run | Commit | Result |
+|---|---|---|
+| [34713128557](https://github.com/meedo1985/autonomous-quant-trader/actions/runs/34713128557) | `28aad4d` | **SUCCESS**, 24s, ubuntu-latest, Python 3.12 — first and only run for Task 4 |
+
+Per-step output of run `34713128557`:
+
+| CI step | Exact output |
+|---|---|
+| `ruff format --check .` | `24 files already formatted` |
+| `ruff check .` | `All checks passed!` |
+| `mypy src` | `Success: no issues found in 19 source files` |
+| `python -m pytest` | `206 passed in 2.27s` (whole suite: Tasks 1–3 plus the 94 Task 4 cases) |
+| `lint-imports` | `Analyzed 19 files, 3 dependencies.` / `Contracts: 4 kept, 0 broken.` |
+
+The immediately preceding run on `main`
+([34711929577](https://github.com/meedo1985/autonomous-quant-trader/actions/runs/34711929577),
+commit `6d4468e`) reported `112 passed`, `18 source files` and
+`1 dependencies`. The deltas are therefore exactly this task's contribution:
+**+94 test cases, +1 source file, +2 import edges**
+(`aqt.features -> aqt.data` and `aqt.features -> aqt.backtest`), with all four
+frozen contracts still kept.
+
+The only annotation is the runner-level `Node.js 20 is deprecated` notice for
+`actions/checkout@v4` and `actions/setup-python@v5`. It is infrastructure
+deprecation, unrelated to this change, and the CI workflow was not modified to
+address it because that is outside the authorized Task 4 scope.
+
+Nothing here should be read as a claim that a check passed before its run
+reported success. Local execution of these five commands remains **blocked**;
+CI is the evidence.
 
 Still **not** verified anywhere for Task 4:
 `python review/task1/verify_task1.py` and `pre-commit validate-config`. Both are
