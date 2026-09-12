@@ -540,3 +540,61 @@ def test_trade_cost_does_not_mutate_the_series() -> None:
     trade_cost(series, _ts(4), Side.BUY, stress_multiplier=3.0)
     assert series.bars == snapshot
     assert series.bars is snapshot
+
+
+def test_trade_cost_does_not_reset_volatility_after_a_historical_gap() -> None:
+    closes = tuple(100.0 * math.exp((i % 2) * 0.03) for i in range(170))
+    closes += (100.0,) * 5
+    complete = _series_from_closes(closes)
+    gapped = BarSeries(
+        symbol=complete.symbol,
+        bars=tuple(bar for i, bar in enumerate(complete.bars) if i != 170),
+    )
+    assert trade_cost(complete, _ts(174), Side.BUY).breakdown.slippage_bps > 14.0
+    with pytest.raises(CostModelError, match="contiguous bars"):
+        trade_cost(gapped, _ts(174), Side.BUY)
+
+
+def test_future_gap_does_not_invalidate_a_past_cost() -> None:
+    complete = _series_from_closes(_geometric_closes(10, 30.0))
+    gapped = BarSeries(
+        symbol=complete.symbol,
+        bars=tuple(bar for i, bar in enumerate(complete.bars) if i != 8),
+    )
+    assert trade_cost(gapped, _ts(5), Side.BUY) == trade_cost(
+        complete, _ts(5), Side.BUY
+    )
+
+
+@pytest.mark.parametrize("delay", [0, 1])
+def test_execution_resolver_rejects_daily_bars(delay: int) -> None:
+    daily = timedelta(days=1)
+    bars = tuple(
+        Bar(
+            open_time=_ORIGIN + i * daily,
+            open=100.0,
+            high=100.0,
+            low=100.0,
+            close=100.0,
+            volume=1.0,
+            interval=daily,
+        )
+        for i in range(4)
+    )
+    series = BarSeries(symbol="TESTUSDT", bars=bars, interval=daily)
+    with pytest.raises(CostModelError, match="execution requires a 1:00:00 series"):
+        resolve_execution(series, _ORIGIN + daily, delay_bars=delay)
+
+
+def test_large_finite_notional_does_not_overflow_intermediately() -> None:
+    cost = per_side_cost_bps(sigma_hourly_bps=100.0).cost_quote(1e308)
+    assert math.isfinite(cost)
+    assert cost == pytest.approx(1.7e305)
+
+
+def test_unrepresentable_cost_is_rejected() -> None:
+    breakdown = per_side_cost_bps(
+        sigma_hourly_bps=100.0, fee=FeeQuote(20000.0, "schedule")
+    )
+    with pytest.raises(CostModelError, match="cost_quote.*finite"):
+        breakdown.cost_quote(1e308)

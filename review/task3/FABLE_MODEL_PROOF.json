@@ -1,0 +1,11 @@
+{
+  "requested_model": "claude-fable-5-1",
+  "observed_model": "claude-fable-5-1",
+  "is_error": false,
+  "reviewed_head": "853cb62b199d0f8f6c3ab5844eba3657285927af",
+  "raw_response_sha256": "18385DF7330922933ABD3E53983E59E581CC070E591E31C241845EEE5BB8AACA",
+  "other_reported_model_usage": [
+    "claude-haiku-4-5-20251001"
+  ],
+  "note": "Fable generated substantive review; metadata additionally records 24 Haiku output tokens. Reproductions were manually traced by Fable, not executed."
+}

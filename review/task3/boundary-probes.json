@@ -1,0 +1,302 @@
+[
+  {
+    "source": "aqt.allocation",
+    "target": "aqt.research",
+    "indirect": false,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-1gycils7",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 20 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code BROKEN\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nLive packages cannot reach research agent code\n----------------------------------------------\n\naqt.allocation is not allowed to import aqt.research:\n\n-   aqt.allocation.probe -> aqt.research.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.allocation",
+    "target": "aqt.research",
+    "indirect": true,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-iqj76t7m",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 21 files, 3 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code BROKEN\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nLive packages cannot reach research agent code\n----------------------------------------------\n\naqt.allocation is not allowed to import aqt.research:\n\n-   aqt.allocation.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.research.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.execution",
+    "target": "aqt.models",
+    "indirect": false,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-63huqnaj",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 20 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training BROKEN\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nExecution cannot reach model training\n-------------------------------------\n\naqt.execution is not allowed to import aqt.models:\n\n-   aqt.execution.probe -> aqt.models.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.execution",
+    "target": "aqt.models",
+    "indirect": true,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-2liwvjd9",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 21 files, 3 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training BROKEN\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nExecution cannot reach model training\n-------------------------------------\n\naqt.execution is not allowed to import aqt.models:\n\n-   aqt.execution.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.models.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.execution",
+    "target": "aqt.research",
+    "indirect": false,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-tiuuul2e",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 20 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code BROKEN\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nLive packages cannot reach research agent code\n----------------------------------------------\n\naqt.execution is not allowed to import aqt.research:\n\n-   aqt.execution.probe -> aqt.research.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.execution",
+    "target": "aqt.research",
+    "indirect": true,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-ij8l1f2i",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 21 files, 3 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code BROKEN\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nLive packages cannot reach research agent code\n----------------------------------------------\n\naqt.execution is not allowed to import aqt.research:\n\n-   aqt.execution.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.research.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.governor",
+    "target": "aqt.execution",
+    "indirect": false,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-aevqj0h1",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 20 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training BROKEN\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nGovernor cannot reach execution or model training\n-------------------------------------------------\n\naqt.governor is not allowed to import aqt.execution:\n\n-   aqt.governor.probe -> aqt.execution.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.governor",
+    "target": "aqt.execution",
+    "indirect": true,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-a0hzoj22",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 21 files, 3 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training BROKEN\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nGovernor cannot reach execution or model training\n-------------------------------------------------\n\naqt.governor is not allowed to import aqt.execution:\n\n-   aqt.governor.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.execution.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.governor",
+    "target": "aqt.models",
+    "indirect": false,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-jm9k5izz",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 20 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training BROKEN\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nGovernor cannot reach execution or model training\n-------------------------------------------------\n\naqt.governor is not allowed to import aqt.models:\n\n-   aqt.governor.probe -> aqt.models.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.governor",
+    "target": "aqt.models",
+    "indirect": true,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-b3e0aq01",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 21 files, 3 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training BROKEN\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nGovernor cannot reach execution or model training\n-------------------------------------------------\n\naqt.governor is not allowed to import aqt.models:\n\n-   aqt.governor.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.models.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.governor",
+    "target": "aqt.research",
+    "indirect": false,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-6v1owasy",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 20 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code BROKEN\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nLive packages cannot reach research agent code\n----------------------------------------------\n\naqt.governor is not allowed to import aqt.research:\n\n-   aqt.governor.probe -> aqt.research.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.governor",
+    "target": "aqt.research",
+    "indirect": true,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-h1yen2vg",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 21 files, 3 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code BROKEN\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nLive packages cannot reach research agent code\n----------------------------------------------\n\naqt.governor is not allowed to import aqt.research:\n\n-   aqt.governor.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.research.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.monitoring",
+    "target": "aqt.research",
+    "indirect": false,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-5pkcnq6b",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 20 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code BROKEN\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nLive packages cannot reach research agent code\n----------------------------------------------\n\naqt.monitoring is not allowed to import aqt.research:\n\n-   aqt.monitoring.probe -> aqt.research.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.monitoring",
+    "target": "aqt.research",
+    "indirect": true,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-hhto6k51",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 21 files, 3 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code BROKEN\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nLive packages cannot reach research agent code\n----------------------------------------------\n\naqt.monitoring is not allowed to import aqt.research:\n\n-   aqt.monitoring.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.research.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.research",
+    "target": "aqt.execution",
+    "indirect": false,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-lnmslhkx",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 20 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages BROKEN\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nResearch cannot reach protected runtime or lockbox packages\n-----------------------------------------------------------\n\naqt.research is not allowed to import aqt.execution:\n\n-   aqt.research.probe -> aqt.execution.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.research",
+    "target": "aqt.execution",
+    "indirect": true,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-mb5dr24w",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 21 files, 3 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages BROKEN\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nResearch cannot reach protected runtime or lockbox packages\n-----------------------------------------------------------\n\naqt.research is not allowed to import aqt.execution:\n\n-   aqt.research.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.execution.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.research",
+    "target": "aqt.governor",
+    "indirect": false,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-osnhnvig",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 20 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages BROKEN\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nResearch cannot reach protected runtime or lockbox packages\n-----------------------------------------------------------\n\naqt.research is not allowed to import aqt.governor:\n\n-   aqt.research.probe -> aqt.governor.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.research",
+    "target": "aqt.governor",
+    "indirect": true,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-moxxjcie",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 21 files, 3 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages BROKEN\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nResearch cannot reach protected runtime or lockbox packages\n-----------------------------------------------------------\n\naqt.research is not allowed to import aqt.governor:\n\n-   aqt.research.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.governor.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.research",
+    "target": "aqt.lockbox_eval",
+    "indirect": false,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-ympeb2lr",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 20 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages BROKEN\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nResearch cannot reach protected runtime or lockbox packages\n-----------------------------------------------------------\n\naqt.research is not allowed to import aqt.lockbox_eval:\n\n-   aqt.research.probe -> aqt.lockbox_eval.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.research",
+    "target": "aqt.lockbox_eval",
+    "indirect": true,
+    "command": [
+      "C:\\Users\\PMP Cordination\\AppData\\Local\\Temp\\aqt-skill-tools-python-3.12.10\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-1xhbdwyz",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "=============\nImport Linter\n=============\n\n\n---------\nContracts\n---------\n\nAnalyzed 21 files, 3 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages BROKEN\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nResearch cannot reach protected runtime or lockbox packages\n-----------------------------------------------------------\n\naqt.research is not allowed to import aqt.lockbox_eval:\n\n-   aqt.research.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.lockbox_eval.probe (l.1)\n\n\n"
+  }
+]

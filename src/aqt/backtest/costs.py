@@ -1,7 +1,7 @@
 """Deterministic cost model for Cycle-1 taker-like spot execution.
 
-This module implements `specs/COST_MODEL_v1.md` exactly and nothing else. It
-is pure: every function is a total function of its arguments, no input is
+This module implements the cost calculations in `specs/COST_MODEL_v1.md`
+with the conventions documented below. It is pure: no input is
 mutated, no clock is read, no randomness is drawn, no file or network is
 touched. The same arguments always produce the same result.
 
@@ -27,9 +27,13 @@ returns of bar closes, expressed in basis points. Returns are point-in-time:
 the return of bar t is known at close(t), which is the decision timestamp of
 bar t, so a decision at close(t) may use returns up to and including bar t.
 
-The frozen spec fixes the half-life and the initialisation but not the return
-definition or the recursion form; the choices made here are recorded in
-`review/task3/LOCAL_REPORT.md`.
+Hourly log returns follow `specs/FEATURE_FACTORY_v1.md`. The frozen cost
+spec fixes the half-life and initialisation but leaves the recursion form
+unspecified. The existing zero-mean recursion and decision-time volatility
+under delay stress have user approval recorded in
+`review/task3/SCIENTIFIC_DECISION.md`. No historical gap is silently reset: a
+gap in the supplied history through the decision raises `CostModelError`.
+This rejects unresolved data; it does not define post-outage recovery.
 
 No silent correction
 --------------------
@@ -361,7 +365,8 @@ class CostBreakdown:
     def cost_quote(self, notional_quote: float) -> float:
         """Return the modeled per-side cost for `notional_quote` of turnover."""
         notional = _require_non_negative(notional_quote, "notional_quote")
-        return notional * self.total_bps / BPS_PER_UNIT
+        result = notional * (self.total_bps / BPS_PER_UNIT)
+        return _require_finite(result, "cost_quote")
 
 
 def per_side_cost_bps(
@@ -402,6 +407,10 @@ def resolve_execution(
     exist or when a hole falls between the decision and the fill; a fill is
     never shifted onto a different bar to make it resolvable.
     """
+    if series.interval != BAR_INTERVAL:
+        raise CostModelError(
+            f"execution requires a {BAR_INTERVAL} series, got {series.interval}"
+        )
     if delay_bars < 0:
         raise CostModelError(f"delay_bars must be non-negative, got {delay_bars}")
     try:
@@ -497,18 +506,12 @@ def trade_cost(
 def _bars_through(series: BarSeries, decision_time: datetime) -> tuple[Bar, ...]:
     """Return the bars whose close is at or before `decision_time`.
 
-    The result is the point-in-time history a decision at `decision_time` may
-    use. It stops at the first hole looking backwards, because returns are
-    not computed across holes.
+    Only bars observable at the decision are checked. Reject a historical
+    gap rather than silently discard observations or invent a recovery rule.
     """
     decision_index = series.index_of(decision_time - series.interval)
-    start = decision_index
-    while start > 0:
-        previous = series.bars[start - 1]
-        if previous.open_time + series.interval != series.bars[start].open_time:
-            break
-        start -= 1
-    window = series.bars[start : decision_index + 1]
+    window = series.bars[: decision_index + 1]
+    _require_contiguous_hourly(window)
     if len(window) < 3:
         raise CostModelError(
             f"decision at {decision_time.isoformat()} has {len(window)} "

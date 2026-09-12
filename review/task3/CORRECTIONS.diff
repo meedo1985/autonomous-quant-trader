@@ -1,0 +1,141 @@
+diff --git a/src/aqt/backtest/costs.py b/src/aqt/backtest/costs.py
+index f8b09fa..d64a325 100644
+--- a/src/aqt/backtest/costs.py
++++ b/src/aqt/backtest/costs.py
+@@ -1,7 +1,7 @@
+ """Deterministic cost model for Cycle-1 taker-like spot execution.
+ 
+-This module implements `specs/COST_MODEL_v1.md` exactly and nothing else. It
+-is pure: every function is a total function of its arguments, no input is
++This module implements the cost calculations in `specs/COST_MODEL_v1.md`
++with the conventions documented below. It is pure: no input is
+ mutated, no clock is read, no randomness is drawn, no file or network is
+ touched. The same arguments always produce the same result.
+ 
+@@ -27,9 +27,13 @@ returns of bar closes, expressed in basis points. Returns are point-in-time:
+ the return of bar t is known at close(t), which is the decision timestamp of
+ bar t, so a decision at close(t) may use returns up to and including bar t.
+ 
+-The frozen spec fixes the half-life and the initialisation but not the return
+-definition or the recursion form; the choices made here are recorded in
+-`review/task3/LOCAL_REPORT.md`.
++Hourly log returns follow `specs/FEATURE_FACTORY_v1.md`. The frozen cost
++spec fixes the half-life and initialisation but leaves the recursion form
++unspecified. The existing zero-mean recursion and decision-time volatility
++under delay stress have user approval recorded in
++`review/task3/SCIENTIFIC_DECISION.md`. No historical gap is silently reset: a
++gap in the supplied history through the decision raises `CostModelError`.
++This rejects unresolved data; it does not define post-outage recovery.
+ 
+ No silent correction
+ --------------------
+@@ -361,7 +365,8 @@ class CostBreakdown:
+     def cost_quote(self, notional_quote: float) -> float:
+         """Return the modeled per-side cost for `notional_quote` of turnover."""
+         notional = _require_non_negative(notional_quote, "notional_quote")
+-        return notional * self.total_bps / BPS_PER_UNIT
++        result = notional * (self.total_bps / BPS_PER_UNIT)
++        return _require_finite(result, "cost_quote")
+ 
+ 
+ def per_side_cost_bps(
+@@ -402,6 +407,10 @@ def resolve_execution(
+     exist or when a hole falls between the decision and the fill; a fill is
+     never shifted onto a different bar to make it resolvable.
+     """
++    if series.interval != BAR_INTERVAL:
++        raise CostModelError(
++            f"execution requires a {BAR_INTERVAL} series, got {series.interval}"
++        )
+     if delay_bars < 0:
+         raise CostModelError(f"delay_bars must be non-negative, got {delay_bars}")
+     try:
+@@ -497,18 +506,12 @@ def trade_cost(
+ def _bars_through(series: BarSeries, decision_time: datetime) -> tuple[Bar, ...]:
+     """Return the bars whose close is at or before `decision_time`.
+ 
+-    The result is the point-in-time history a decision at `decision_time` may
+-    use. It stops at the first hole looking backwards, because returns are
+-    not computed across holes.
++    Only bars observable at the decision are checked. Reject a historical
++    gap rather than silently discard observations or invent a recovery rule.
+     """
+     decision_index = series.index_of(decision_time - series.interval)
+-    start = decision_index
+-    while start > 0:
+-        previous = series.bars[start - 1]
+-        if previous.open_time + series.interval != series.bars[start].open_time:
+-            break
+-        start -= 1
+-    window = series.bars[start : decision_index + 1]
++    window = series.bars[: decision_index + 1]
++    _require_contiguous_hourly(window)
+     if len(window) < 3:
+         raise CostModelError(
+             f"decision at {decision_time.isoformat()} has {len(window)} "
+diff --git a/tests/unit/test_cost_model.py b/tests/unit/test_cost_model.py
+index d971424..5105adf 100644
+--- a/tests/unit/test_cost_model.py
++++ b/tests/unit/test_cost_model.py
+@@ -540,3 +540,61 @@ def test_trade_cost_does_not_mutate_the_series() -> None:
+     trade_cost(series, _ts(4), Side.BUY, stress_multiplier=3.0)
+     assert series.bars == snapshot
+     assert series.bars is snapshot
++
++
++def test_trade_cost_does_not_reset_volatility_after_a_historical_gap() -> None:
++    closes = tuple(100.0 * math.exp((i % 2) * 0.03) for i in range(170))
++    closes += (100.0,) * 5
++    complete = _series_from_closes(closes)
++    gapped = BarSeries(
++        symbol=complete.symbol,
++        bars=tuple(bar for i, bar in enumerate(complete.bars) if i != 170),
++    )
++    assert trade_cost(complete, _ts(174), Side.BUY).breakdown.slippage_bps > 14.0
++    with pytest.raises(CostModelError, match="contiguous bars"):
++        trade_cost(gapped, _ts(174), Side.BUY)
++
++
++def test_future_gap_does_not_invalidate_a_past_cost() -> None:
++    complete = _series_from_closes(_geometric_closes(10, 30.0))
++    gapped = BarSeries(
++        symbol=complete.symbol,
++        bars=tuple(bar for i, bar in enumerate(complete.bars) if i != 8),
++    )
++    assert trade_cost(gapped, _ts(5), Side.BUY) == trade_cost(
++        complete, _ts(5), Side.BUY
++    )
++
++
++@pytest.mark.parametrize("delay", [0, 1])
++def test_execution_resolver_rejects_daily_bars(delay: int) -> None:
++    daily = timedelta(days=1)
++    bars = tuple(
++        Bar(
++            open_time=_ORIGIN + i * daily,
++            open=100.0,
++            high=100.0,
++            low=100.0,
++            close=100.0,
++            volume=1.0,
++            interval=daily,
++        )
++        for i in range(4)
++    )
++    series = BarSeries(symbol="TESTUSDT", bars=bars, interval=daily)
++    with pytest.raises(CostModelError, match="execution requires a 1:00:00 series"):
++        resolve_execution(series, _ORIGIN + daily, delay_bars=delay)
++
++
++def test_large_finite_notional_does_not_overflow_intermediately() -> None:
++    cost = per_side_cost_bps(sigma_hourly_bps=100.0).cost_quote(1e308)
++    assert math.isfinite(cost)
++    assert cost == pytest.approx(1.7e305)
++
++
++def test_unrepresentable_cost_is_rejected() -> None:
++    breakdown = per_side_cost_bps(
++        sigma_hourly_bps=100.0, fee=FeeQuote(20000.0, "schedule")
++    )
++    with pytest.raises(CostModelError, match="cost_quote.*finite"):
++        breakdown.cost_quote(1e308)
