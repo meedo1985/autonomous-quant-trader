@@ -1,7 +1,7 @@
 # autonomous-quant-trader
 
 Scientifically defensible, reproducible, cost-aware crypto spot research.
-Current status: **Milestone 0.1 / Task 1 — repository foundation**.
+Current status: **Milestone 0.1 / Task 2 — bar semantics foundation**.
 **NO EDGE FOUND (`NO_EDGE_FOUND`) is a valid result.**
 
 V1 is Binance Spot BTC/ETH research: no leverage, margin, futures, or
@@ -33,11 +33,22 @@ git diff --check
 ```
 
 Source lives in `src/aqt`; packages are empty except for version and path
-metadata in `core`. `core.paths.REPOSITORY_ROOT` describes this source checkout,
+metadata in `core` and the bar-semantics module in `data`.
+`core.paths.REPOSITORY_ROOT` describes this source checkout,
 not an installed wheel's data location. It performs no filesystem reads.
 Import contracts cover direct and indirect dependencies, including descendants.
 Research-agent code belongs under `aqt.research`; any future agent package
 elsewhere must be added to the live-path forbidden contracts before use.
 
+## Bar semantics (Task 2)
+
+`aqt.data.bars` is the single tested bar-semantics module required by the
+Constitution. It defines timestamped 1h OHLCV bars in UTC only, rejects naive
+or non-UTC timestamps, requires strictly increasing unique interval-aligned
+open times, reports missing intervals explicitly instead of filling or
+dropping them, and encodes the frozen convention of a decision at close(t)
+executing at open(t+1). It reads no market data and performs no network
+access; its tests are synthetic.
+
 Repository review instructions are in `AGENTS.md` and `.agents/skills/`.
-The Task 1 evidence and Claude handoff are in `review/task1/`.
+Task evidence and Claude handoffs are in `review/task1/` and `review/task2/`.
