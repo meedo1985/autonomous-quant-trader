@@ -1,0 +1,17 @@
+TASK 3 — DETERMINISTIC COST MODEL
+
+Authorization: user delegated project sequencing to ChatGPT because they are not a trading expert. This task is derived directly from frozen specs/COST_MODEL_v1.md and existing Task 2 bar semantics.
+
+Implement only a pure, deterministic cost-model module and synthetic tests. The module must:
+- consume Task 2 bar semantics and decision/fill timestamps;
+- model taker-like per-side fee, fixed 2 bps spread, and bounded slippage;
+- use 10 bps fallback fee when no point-in-time fee schedule is supplied;
+- compute hourly volatility with the specified 168-hour initialization and EWMA behavior;
+- support stress multipliers 1.0x, 1.5x, 2.0x, 3.0x and one-bar delay stress as pure calculations;
+- expose auditable per-side and total costs without mutating input data.
+
+Required tests cover normal calculations, fee fallback/supplied fee, slippage floor/cap/monotonicity, EWMA initialization, stress multipliers, delay behavior, invalid inputs, determinism, and no silent correction.
+
+Explicit exclusions: exchange/network access, Binance credentials, live trading, order placement, strategy/features, portfolio/allocation, ML/LLM, backtester orchestration, and any Task 4+ work.
+
+Frozen files remain immutable. Validation and external review gates remain required; external model review is deferred until usage reset.
