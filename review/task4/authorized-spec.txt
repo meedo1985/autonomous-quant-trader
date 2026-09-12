@@ -1,0 +1,13 @@
+TASK 4 — CAUSAL FEATURE FACTORY
+
+Authorization: user requested continuation and delegated sequencing to ChatGPT.
+Scope is derived directly from frozen specs/FEATURE_FACTORY_v1.md and Task 2 bar semantics.
+
+Implement a pure deterministic feature factory for the frozen Cycle-1 features only:
+ret_1h, ret_24h, ret_72h, ret_168h; EMA 24/72/168 and EMA distances; SMA 4800 and trend_200d; breakout_720; rv_24/168/720; ewma_vol_168h; and atr_24. All features must be causal at the decision timestamp, UTC/hourly, and must reject insufficient or gapped history rather than silently filling or dropping rows. Use existing Task 2 bar semantics and approved Task 3 volatility convention where applicable.
+
+Required synthetic tests: formulas against independent calculations, warm-up/insufficient history, gaps/duplicates/invalid bars, timestamp causality, deterministic repeatability, no future leakage, and rejection of forbidden volume/order-book/seasonality inputs.
+
+Explicit exclusions: live/exchange/network access, Binance credentials, trading/execution, strategies, ML/LLM, portfolio/allocation, backtester orchestration, benchmarks, governor, and Task 5+.
+
+Frozen artifacts are immutable. Run applicable tests, lint, type, import-boundary, diff-check and frozen verification; record exact results in review/task4/LOCAL_REPORT.md. Include literal EXTERNAL REVIEW: DEFERRED UNTIL USAGE RESET. Commit/push only after validation; never modify frozen files or start Task 5.
