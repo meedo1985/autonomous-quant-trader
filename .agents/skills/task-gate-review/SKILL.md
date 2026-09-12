@@ -1,0 +1,17 @@
+---
+name: task-gate-review
+description: Run the end-of-task acceptance gate for every autonomous-quant-trader project task, especially before declaring a major task complete, and prepare the Claude review handoff after local checks pass.
+---
+
+# Task gate review
+
+Read root `AGENTS.md`, the authorized task and its acceptance criteria, and relevant governance. This is a review gate, not authorization to implement the next task, commit, merge, publish, or modify governance.
+
+1. Inspect `git status --untracked-files=all`, `git diff`, and `git diff --cached`, plus the relevant base-commit diff if the task includes commits. Read relevant untracked files separately; an empty Git diff does not prove an empty change. Separate pre-existing changes from this task and flag out-of-scope edits.
+2. Identify required validation from the task, repository configuration/CI, and governing specs. Run every mandatory command, including tests, lint, type, and import-boundary checks where applicable. Record command, environment, exit code, result, and evidence. N/A needs a concrete reason; unavailable tools or skipped mandatory checks are blockers, never passes. Do not add new implementation/tooling just to fabricate a green gate.
+3. Verify the frozen v1.0 files in `docs/`, `protocols/`, `schemas/`, and `specs/`, `FROZEN_HASHES.json`, and all sidecars. Compare file inventory and bytes against the trusted pre-task snapshot/accepted baseline, including untracked artifacts and sidecars themselves; detect deletion or changed manifests as well as changed content. Independently verify all sidecar SHA-256 values, manifest entries, Constitution canonical self-hash, and relevant embedded hash bindings using `schemas/HASH_CANONICALIZATION_v1.md`. Matching freshly changed sidecars is not proof of preservation. Never repair/regenerate frozen hashes. If no trusted baseline exists, state that limitation and do not claim historical preservation.
+4. Map each acceptance criterion to changed files and validation evidence. Review simplicity, determinism, scope, secrets, and applicable safety/import/data-access boundaries. For scientific/quant tasks, read and invoke sibling `scientific-reproducibility-review/SKILL.md` and `quant-code-review/SKILL.md`; incorporate their findings without recursive gate invocation.
+5. List `BLOCKER`, `NON-BLOCKING`, and `QUESTION` items. A question that prevents establishing a mandatory criterion remains a blocker. Any mandatory validation failure, missing mandatory check, unauthorized frozen change, or unmet acceptance criterion means `LOCAL GATE: BLOCKED`; do not declare the task complete.
+6. When local checks pass, report `LOCAL GATE: PASS` and read/invoke sibling `claude-adversarial-review/SKILL.md` to prepare the actual review packet. If blocked, provide the blocking evidence and optionally a clearly labeled diagnostic packet. Record Claude status as `NOT SENT`, `AWAITING FEEDBACK`, or `ADJUDICATED` truthfully. Local pass and packet preparation are not external approval; enumerate outstanding human/different-model reviews required by the task or Constitution section 16 before merge.
+
+Finish with scope, acceptance results, exact validation outcomes, frozen verification results, unresolved blockers/assumptions, and packet location or copyable packet. Stop at the current task boundary. Skills are instructions, not enforced CI or access controls; do not claim mechanical enforcement unless it exists and was tested.

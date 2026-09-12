@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "experiment_id",
+    "hypothesis_hash",
+    "protocol_hash",
+    "protocol_status",
+    "trial_index",
+    "seed",
+    "backtester_hash",
+    "data_manifest_hash"
+  ],
+  "properties": {
+    "experiment_id": {
+      "type": "string"
+    },
+    "hypothesis_hash": {
+      "type": "string"
+    },
+    "protocol_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "protocol_status": {
+      "const": "FROZEN"
+    },
+    "trial_index": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "seed": {},
+    "backtester_hash": {
+      "type": "string"
+    },
+    "data_manifest_hash": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

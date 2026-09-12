@@ -1,0 +1,396 @@
+TASK 1 — REPOSITORY FOUNDATION
+Project: autonomous-quant-trader
+Milestone: 0.1
+Architecture status: v1.0 FROZEN
+
+You are implementing repository infrastructure only.
+
+DO NOT implement:
+- trading strategies
+- Binance API access
+- market-data downloaders
+- feature calculations
+- machine learning
+- backtesting logic
+- portfolio logic
+- governor logic
+- execution logic
+- LLM/agent logic
+- secrets or API-key handling
+
+Do not reinterpret or redesign the frozen architecture.
+
+==================================================
+1. FIRST: INSPECT THE EXISTING REPOSITORY
+==================================================
+
+Before changing anything:
+
+1. Print the current repository tree.
+2. Identify existing Python/project configuration files.
+3. Identify any existing docs/protocol/spec/schema files.
+4. Do not overwrite useful existing files blindly.
+5. Report briefly what will be created or changed.
+
+Then implement the foundation below.
+
+==================================================
+2. PYTHON PROJECT
+==================================================
+
+Target:
+- Python >= 3.12
+
+Create a modern pyproject.toml.
+
+Use:
+- pytest
+- ruff
+- mypy
+- import-linter
+- pydantic
+- pydantic-settings
+
+Runtime/data packages allowed at this stage:
+- numpy
+- polars
+- duckdb
+- pyarrow
+- httpx
+- websockets
+
+Do NOT add:
+- pandas unless a dependency later requires it
+- scikit-learn yet
+- lightgbm yet
+- statsmodels yet
+- arch yet
+- Binance SDKs
+- vectorbt
+- backtrader
+- MLflow
+- Prefect
+- Redis
+- PostgreSQL
+- Docker orchestration
+- Kubernetes
+
+Use a src-layout.
+
+==================================================
+3. PACKAGE STRUCTURE
+==================================================
+
+Create:
+
+src/
+  aqt/
+    __init__.py
+
+    core/
+      __init__.py
+
+    data/
+      __init__.py
+
+    research/
+      __init__.py
+
+    features/
+      __init__.py
+
+    models/
+      __init__.py
+
+    benchmarks/
+      __init__.py
+
+    validation/
+      __init__.py
+
+    backtest/
+      __init__.py
+
+    allocation/
+      __init__.py
+
+    governor/
+      __init__.py
+
+    execution/
+      __init__.py
+
+    monitoring/
+      __init__.py
+
+    lockbox_eval/
+      __init__.py
+
+tests/
+  unit/
+  integration/
+  canaries/
+
+configs/
+scripts/
+experiments/
+
+Do not add implementation/business logic to these packages yet.
+
+Use allocation/, NOT portfolio/.
+
+==================================================
+4. FROZEN GOVERNANCE FILES
+==================================================
+
+The repository must have these top-level governance areas:
+
+docs/
+protocols/
+schemas/
+specs/
+
+If the frozen v1.0 files already exist, DO NOT alter their content.
+
+Expected governance artifacts include:
+
+docs/
+  RESEARCH_CONSTITUTION.md
+  THREAT_MODEL_v1.md
+
+protocols/
+  protocol_v1.yaml
+
+specs/
+  CANONICAL_BENCHMARKS_v1.md
+  COST_MODEL_v1.md
+  FEATURE_FACTORY_v1.md
+  BACKTESTER_SPEC_v1.md
+
+schemas/
+  HASH_CANONICALIZATION_v1.md
+  protocol.schema.json
+  hypothesis.schema.json
+  experiment.schema.json
+  metrics.schema.json
+  attestation.schema.json
+
+If any frozen file is absent, report it.
+Do NOT invent or reconstruct its contents.
+
+Add a small docs/README.md explaining that the v1.0 governance artifacts are frozen and may not be edited during Cycle C1 except through the formal Constitution process.
+
+Do NOT modify the frozen files themselves.
+
+==================================================
+5. IMPORT BOUNDARIES
+==================================================
+
+Configure import-linter so CI enforces at minimum:
+
+- aqt.research MUST NOT import aqt.governor
+- aqt.research MUST NOT import aqt.execution
+- aqt.research MUST NOT import aqt.lockbox_eval
+
+- aqt.governor MUST NOT import aqt.execution
+- aqt.governor MUST NOT import aqt.research
+- aqt.governor MUST NOT import model-training/research modules
+
+- aqt.execution MUST NOT import aqt.research
+- aqt.execution MUST NOT import model-training/research modules
+
+- live-path packages must not import research-agent code
+
+Because the packages are currently mostly empty, create the import-linter configuration in a way that can be enforced now and extended later.
+
+Do not fake passing boundaries by disabling checks.
+
+==================================================
+6. CODE QUALITY
+==================================================
+
+Configure Ruff for:
+- Python 3.12
+- formatting
+- import sorting
+- common correctness rules
+- reasonable line length
+
+Configure mypy with strict-enough defaults for new code without making empty scaffold unusable.
+
+Configure pytest.
+
+Add:
+tests/unit/test_package_imports.py
+
+It should simply prove the main package and foundational subpackages import successfully.
+
+Do not write fake trading tests.
+
+==================================================
+7. CI
+==================================================
+
+Create GitHub Actions workflow:
+
+.github/workflows/ci.yml
+
+Run on:
+- pull_request
+- push to main
+
+CI steps:
+
+1. checkout
+2. setup Python 3.12
+3. install project + dev dependencies
+4. ruff format --check
+5. ruff check
+6. mypy
+7. pytest
+8. import-linter
+
+All steps must fail the workflow if they fail.
+
+Do not use continue-on-error.
+
+==================================================
+8. PRE-COMMIT
+==================================================
+
+Add .pre-commit-config.yaml with:
+- ruff check --fix
+- ruff format
+- basic whitespace/end-of-file checks
+
+Do not add large or unrelated hook collections.
+
+==================================================
+9. REPOSITORY HYGIENE
+==================================================
+
+Create/update:
+
+.gitignore
+
+Ignore at minimum:
+- .venv/
+- __pycache__/
+- *.pyc
+- .pytest_cache/
+- .mypy_cache/
+- .ruff_cache/
+- .env
+- .env.*
+- data/raw/
+- data/processed/
+- data/lockbox/
+- userdata/
+- *.db
+- build/
+- dist/
+
+Do NOT ignore governance documents.
+
+Add:
+
+.env.example
+
+It must contain comments/placeholders only.
+NO real secrets.
+
+Add a SECURITY.md stating:
+- never commit exchange credentials
+- never place secrets in logs/artifacts/LLM context
+- production exchange credentials belong only to the executor identity
+- withdrawals must remain disabled
+- Cycle 1 contains no live exchange integration
+
+==================================================
+10. README
+==================================================
+
+Update/create README.md.
+
+Keep it concise.
+
+Include:
+- project purpose
+- current status: Milestone 0.1 / Task 1
+- NO EDGE FOUND is a valid result
+- V1 is Binance Spot BTC/ETH research
+- no leverage / margin / futures / withdrawals
+- current task does not trade
+- architecture governance files are frozen
+- local developer setup
+- commands:
+
+python -m pytest
+ruff check .
+ruff format --check .
+mypy src
+lint-imports
+
+Do not advertise guaranteed profitability.
+
+==================================================
+11. FOUNDATION METADATA
+==================================================
+
+Create:
+
+src/aqt/core/version.py
+
+Only include project version metadata.
+
+Create:
+
+src/aqt/core/paths.py
+
+It may define repository-relative paths only.
+
+It must NOT:
+- read market data
+- access secrets
+- access lockbox files
+- implement trading logic
+
+==================================================
+12. ACCEPTANCE TESTS
+==================================================
+
+Before finishing, run:
+
+python -m pytest
+ruff check .
+ruff format --check .
+mypy src
+lint-imports
+
+Also run:
+
+git diff --check
+
+If any fails:
+FIX IT.
+
+Do not weaken tests/configuration merely to make them green.
+
+==================================================
+13. FINAL RESPONSE
+==================================================
+
+Return:
+
+1. concise summary of files created/changed
+2. repository tree for the new foundation
+3. exact commands run
+4. result of every validation command
+5. any frozen governance artifact that was missing
+6. any assumption you had to make
+
+Do NOT proceed to Task 2.
+
+Do NOT implement bar semantics.
+
+Stop after Task 1 passes.

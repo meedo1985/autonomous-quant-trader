@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "constitution_hash",
+    "protocol_hash",
+    "hypothesis_hash",
+    "benchmark_set_hash",
+    "cost_model_hash",
+    "feature_set_hash",
+    "data_manifest_hash",
+    "backtester_hash",
+    "eligibility_result_id",
+    "lockbox_evaluation_id",
+    "cooling_off_start",
+    "signature"
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "hypothesis_id",
+    "content_hash",
+    "family",
+    "created_by",
+    "target_definition",
+    "horizon",
+    "bar_frequency",
+    "decision_frequency",
+    "feature_set_hash",
+    "exposure_mapping",
+    "rebalance_rule",
+    "cost_model_hash",
+    "training_window",
+    "retrain_policy_hash",
+    "parameter_grid",
+    "protocol_hash"
+  ],
+  "properties": {
+    "hypothesis_id": {
+      "type": "string"
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "family": {
+      "type": "string"
+    },
+    "created_by": {
+      "enum": [
+        "human",
+        "ai"
+      ]
+    },
+    "target_definition": {},
+    "horizon": {},
+    "bar_frequency": {},
+    "decision_frequency": {},
+    "feature_set_hash": {
+      "type": "string"
+    },
+    "exposure_mapping": {},
+    "rebalance_rule": {},
+    "cost_model_hash": {
+      "type": "string"
+    },
+    "training_window": {},
+    "retrain_policy_hash": {
+      "type": "string"
+    },
+    "parameter_grid": {},
+    "protocol_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "parent_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "hypothesis_id": {
+            "pattern": ".+"
+          }
+        }
+      },
+      "then": {}
+    }
+  ],
+  "additionalProperties": true
+}

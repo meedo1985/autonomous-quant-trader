@@ -1,0 +1,211 @@
+[
+  {
+    "command": "git diff --no-index --check -- NUL .env.example",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": "warning: in the working copy of '.env.example', LF will be replaced by CRLF the next time Git touches it\n"
+  },
+  {
+    "command": "git diff --no-index --check -- NUL .gitattributes",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": "warning: in the working copy of '.gitattributes', LF will be replaced by CRLF the next time Git touches it\n"
+  },
+  {
+    "command": "git diff --no-index --check -- NUL .github/workflows/ci.yml",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": "warning: in the working copy of '.github/workflows/ci.yml', LF will be replaced by CRLF the next time Git touches it\n"
+  },
+  {
+    "command": "git diff --no-index --check -- NUL .gitignore",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": "warning: in the working copy of '.gitignore', LF will be replaced by CRLF the next time Git touches it\n"
+  },
+  {
+    "command": "git diff --no-index --check -- NUL .pre-commit-config.yaml",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": "warning: in the working copy of '.pre-commit-config.yaml', LF will be replaced by CRLF the next time Git touches it\n"
+  },
+  {
+    "command": "git diff --no-index --check -- NUL README.md",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": "warning: in the working copy of 'README.md', LF will be replaced by CRLF the next time Git touches it\n"
+  },
+  {
+    "command": "git diff --no-index --check -- NUL SECURITY.md",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": "warning: in the working copy of 'SECURITY.md', LF will be replaced by CRLF the next time Git touches it\n"
+  },
+  {
+    "command": "git diff --no-index --check -- NUL configs/.gitkeep",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL docs/README.md",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": "warning: in the working copy of 'docs/README.md', LF will be replaced by CRLF the next time Git touches it\n"
+  },
+  {
+    "command": "git diff --no-index --check -- NUL experiments/.gitkeep",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL pyproject.toml",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": "warning: in the working copy of 'pyproject.toml', LF will be replaced by CRLF the next time Git touches it\n"
+  },
+  {
+    "command": "git diff --no-index --check -- NUL scripts/.gitkeep",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL src/aqt/__init__.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL src/aqt/allocation/__init__.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL src/aqt/backtest/__init__.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL src/aqt/benchmarks/__init__.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL src/aqt/core/__init__.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL src/aqt/core/paths.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": "warning: in the working copy of 'src/aqt/core/paths.py', LF will be replaced by CRLF the next time Git touches it\n"
+  },
+  {
+    "command": "git diff --no-index --check -- NUL src/aqt/core/version.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": "warning: in the working copy of 'src/aqt/core/version.py', LF will be replaced by CRLF the next time Git touches it\n"
+  },
+  {
+    "command": "git diff --no-index --check -- NUL src/aqt/data/__init__.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL src/aqt/execution/__init__.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL src/aqt/features/__init__.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL src/aqt/governor/__init__.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL src/aqt/lockbox_eval/__init__.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL src/aqt/models/__init__.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL src/aqt/monitoring/__init__.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL src/aqt/research/__init__.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL src/aqt/validation/__init__.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL tests/canaries/.gitkeep",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL tests/integration/.gitkeep",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": ""
+  },
+  {
+    "command": "git diff --no-index --check -- NUL tests/unit/test_package_imports.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": "warning: in the working copy of 'tests/unit/test_package_imports.py', LF will be replaced by CRLF the next time Git touches it\n"
+  },
+  {
+    "command": "git diff --no-index --check -- NUL review/task1/verify_task1.py",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": "warning: in the working copy of 'review/task1/verify_task1.py', LF will be replaced by CRLF the next time Git touches it\n"
+  },
+  {
+    "command": "git diff --no-index --check -- NUL review/task1/run_checks.ps1",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": "warning: in the working copy of 'review/task1/run_checks.ps1', LF will be replaced by CRLF the next time Git touches it\n"
+  },
+  {
+    "command": "git diff --no-index --check -- NUL review/task1/README.md",
+    "exit_code": 1,
+    "whitespace_check": "PASS",
+    "output": "warning: in the working copy of 'review/task1/README.md', LF will be replaced by CRLF the next time Git touches it\n"
+  },
+  {
+    "command": "git diff --check",
+    "exit_code": 0,
+    "output": "warning: in the working copy of 'README.md', LF will be replaced by CRLF the next time Git touches it\n"
+  }
+]

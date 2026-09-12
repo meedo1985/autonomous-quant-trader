@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "protocol_hash",
+    "benchmark_set_hash",
+    "comparison_benchmark",
+    "btc",
+    "eth",
+    "trial_accounting",
+    "reproducibility"
+  ]
+}

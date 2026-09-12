@@ -1,0 +1,47 @@
+[
+  {
+    "command": "python -m pytest",
+    "exit_code": 0,
+    "output": "============================= test session starts =============================\r\nplatform win32 -- Python 3.12.10, pytest-8.4.2, pluggy-1.6.0\r\nrootdir: D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\r\nconfigfile: pyproject.toml\r\ntestpaths: tests\r\ncollected 16 items\r\n\r\ntests\\unit\\test_package_imports.py ................                      [100%]\r\n\r\n============================= 16 passed in 0.05s ==============================\r\n"
+  },
+  {
+    "command": "ruff check .",
+    "exit_code": 0,
+    "output": "All checks passed!\r\n"
+  },
+  {
+    "command": "ruff format --check .",
+    "exit_code": 0,
+    "output": "18 files already formatted\r\n"
+  },
+  {
+    "command": "mypy src",
+    "exit_code": 0,
+    "output": "Success: no issues found in 16 source files\r\n"
+  },
+  {
+    "command": "lint-imports",
+    "exit_code": 0,
+    "output": "\r\n╔══╗─────────▶╔╗ ╔╗      ╔╗◀───┐\r\n╚╣╠╝◀─────┐  ╔╝╚╗║║────▶╔╝╚╗   │\r\n ║║   ╔══╦══╦╩╗╔╝║║  ╔╦═╩╗╔╝╔═╦══╗\r\n ║║╔══╣╔╗║╔╗║╔╣║ ║║ ╔╬╣╔╗║║ ║│║╔═╝\r\n╔╣╠╣║║║╚╝║╚╝║║║╚╗║╚═╝║║║║║╚╗║═╣║\r\n╚══╩╩╩╣╔═╩══╩╝╚═╝╚═══╩╩╝╚╩═╩╩═╩╝\r\n  └──▶║║                    ▲ \r\n      ╚╝────────────────────┘\r\n\r\n\r\n---------\r\nContracts\r\n---------\r\n\r\nAnalyzed 16 files, 0 dependencies.\r\n----------------------------------\r\n\r\nResearch cannot reach protected runtime or lockbox packages KEPT\r\nGovernor cannot reach execution or model training KEPT\r\nExecution cannot reach model training KEPT\r\nLive packages cannot reach research agent code KEPT\r\n\r\nContracts: 4 kept, 0 broken.\r\n"
+  },
+  {
+    "command": "git diff --check",
+    "exit_code": 0,
+    "output": "warning: in the working copy of 'README.md', LF will be replaced by CRLF the next time Git touches it\r\n"
+  },
+  {
+    "command": "python review/task1/verify_task1.py",
+    "exit_code": 0,
+    "output": "PASS: 28 protected bytes/inventory; all existing untracked work; 14 sidecars\r\nPASS: Constitution canonical hash 4cb6c7d35e238bdd778e8dd74b25d1b978e57fedffdbfae83b2867b5ec4fb8d7; manifest/protocol bindings\r\nPASS: five Draft 2020-12 schemas; protocol instance; two rejection controls\r\nPASS: frozen hook exclusions, README inclusion, env ignore exception, CI\r\nPASS: 20 direct/indirect probes rejected; controls passed\r\n"
+  },
+  {
+    "command": "python -m pip check",
+    "exit_code": 0,
+    "output": "No broken requirements found.\r\n"
+  },
+  {
+    "command": "pre-commit validate-config",
+    "exit_code": 0,
+    "output": ""
+  }
+]

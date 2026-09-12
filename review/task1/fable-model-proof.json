@@ -1,0 +1,15 @@
+{
+  "requested_model": "claude-fable-5-1",
+  "observed_model": "claude-fable-5-1",
+  "canonical_model": "claude-fable-5-1",
+  "review_output_tokens_including_thinking": 23198,
+  "client_version": "2.1.268",
+  "invocation_exit_code": 0,
+  "is_error": false,
+  "review_verdict": "TASK 1 PASS",
+  "other_reported_model_usage": [
+    "claude-haiku-4-5-20251001"
+  ],
+  "raw_response_sha256": "d35d0b2b1f6aff52398bc08d60737741a6c7399ce593d8f8f5764746a7cded36",
+  "note": "Fable produced the substantive review. Raw metadata additionally records 23 Haiku output tokens; that is not the review verdict."
+}

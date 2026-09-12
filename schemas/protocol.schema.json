@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "protocol_version",
+    "cycle_id",
+    "status",
+    "constitution_version",
+    "constitution_hash",
+    "hash_canonicalization_spec_hash",
+    "feature_factory_hash",
+    "benchmark_set_hash",
+    "cost_model_hash",
+    "backtester_spec_hash",
+    "threat_model_hash",
+    "cycle_start_bindings",
+    "comparison",
+    "asset_evaluation",
+    "scope",
+    "partitions",
+    "lockbox_policy",
+    "feature_factory",
+    "target",
+    "exposure_mapping",
+    "benchmarks",
+    "cost_model",
+    "models",
+    "trial_accounting",
+    "cycle_termination",
+    "validation",
+    "promotion",
+    "lockbox_request",
+    "promotion_attestation",
+    "owner_change_control",
+    "freeze_sequence"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string"
+    },
+    "cycle_id": {
+      "type": "string"
+    },
+    "status": {
+      "const": "FROZEN"
+    },
+    "constitution_version": {
+      "type": "string"
+    },
+    "constitution_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "cycle_start_bindings": {
+      "type": "object"
+    },
+    "comparison": {
+      "type": "object"
+    },
+    "asset_evaluation": {
+      "type": "object"
+    },
+    "benchmarks": {
+      "type": "object",
+      "required": [
+        "deployable_baseline",
+        "benchmark_set_hash",
+        "null_models"
+      ]
+    },
+    "cost_model": {
+      "type": "object",
+      "required": [
+        "hash",
+        "baseline_execution",
+        "stress_multipliers"
+      ]
+    },
+    "feature_factory": {
+      "type": "object",
+      "required": [
+        "hash",
+        "frozen"
+      ]
+    },
+    "models": {
+      "type": "object",
+      "required": [
+        "allowed_classes_cycle_1"
+      ]
+    },
+    "cycle_termination": {
+      "type": "object",
+      "required": [
+        "calendar_days_elapsed",
+        "ends_when_any",
+        "outcomes"
+      ]
+    }
+  },
+  "additionalProperties": true
+}

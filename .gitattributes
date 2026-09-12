@@ -1,0 +1,9 @@
+# Frozen bytes must survive Git add/checkout even when core.autocrlf is enabled.
+/FROZEN_HASHES.json -text
+/docs/RESEARCH_CONSTITUTION.md -text
+/docs/THREAT_MODEL_v1.md -text
+/protocols/protocol_v1.yaml -text
+/schemas/HASH_CANONICALIZATION_v1.md -text
+/schemas/*.schema.json -text
+/specs/*_v1.md -text
+*.sha256 -text

@@ -1,0 +1,302 @@
+[
+  {
+    "source": "aqt.allocation",
+    "target": "aqt.research",
+    "indirect": false,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-bt5vfu00",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 18 files, 1 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code BROKEN\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nLive packages cannot reach research agent code\n----------------------------------------------\n\naqt.allocation is not allowed to import aqt.research:\n\n-   aqt.allocation.probe -> aqt.research.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.allocation",
+    "target": "aqt.research",
+    "indirect": true,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-lymabe_0",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 19 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code BROKEN\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nLive packages cannot reach research agent code\n----------------------------------------------\n\naqt.allocation is not allowed to import aqt.research:\n\n-   aqt.allocation.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.research.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.execution",
+    "target": "aqt.models",
+    "indirect": false,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-qw6i_t7l",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 18 files, 1 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training BROKEN\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nExecution cannot reach model training\n-------------------------------------\n\naqt.execution is not allowed to import aqt.models:\n\n-   aqt.execution.probe -> aqt.models.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.execution",
+    "target": "aqt.models",
+    "indirect": true,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-klusxa3y",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 19 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training BROKEN\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nExecution cannot reach model training\n-------------------------------------\n\naqt.execution is not allowed to import aqt.models:\n\n-   aqt.execution.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.models.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.execution",
+    "target": "aqt.research",
+    "indirect": false,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-ithn7y2y",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 18 files, 1 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code BROKEN\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nLive packages cannot reach research agent code\n----------------------------------------------\n\naqt.execution is not allowed to import aqt.research:\n\n-   aqt.execution.probe -> aqt.research.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.execution",
+    "target": "aqt.research",
+    "indirect": true,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-x5ky3otg",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 19 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code BROKEN\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nLive packages cannot reach research agent code\n----------------------------------------------\n\naqt.execution is not allowed to import aqt.research:\n\n-   aqt.execution.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.research.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.governor",
+    "target": "aqt.execution",
+    "indirect": false,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-1u_6ahqt",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 18 files, 1 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training BROKEN\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nGovernor cannot reach execution or model training\n-------------------------------------------------\n\naqt.governor is not allowed to import aqt.execution:\n\n-   aqt.governor.probe -> aqt.execution.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.governor",
+    "target": "aqt.execution",
+    "indirect": true,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-lqgr6g9r",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 19 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training BROKEN\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nGovernor cannot reach execution or model training\n-------------------------------------------------\n\naqt.governor is not allowed to import aqt.execution:\n\n-   aqt.governor.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.execution.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.governor",
+    "target": "aqt.models",
+    "indirect": false,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-_bz21n0p",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 18 files, 1 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training BROKEN\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nGovernor cannot reach execution or model training\n-------------------------------------------------\n\naqt.governor is not allowed to import aqt.models:\n\n-   aqt.governor.probe -> aqt.models.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.governor",
+    "target": "aqt.models",
+    "indirect": true,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-d2ibkgvf",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 19 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training BROKEN\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nGovernor cannot reach execution or model training\n-------------------------------------------------\n\naqt.governor is not allowed to import aqt.models:\n\n-   aqt.governor.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.models.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.governor",
+    "target": "aqt.research",
+    "indirect": false,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-toi4bel3",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 18 files, 1 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code BROKEN\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nLive packages cannot reach research agent code\n----------------------------------------------\n\naqt.governor is not allowed to import aqt.research:\n\n-   aqt.governor.probe -> aqt.research.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.governor",
+    "target": "aqt.research",
+    "indirect": true,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-qricrhmn",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 19 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code BROKEN\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nLive packages cannot reach research agent code\n----------------------------------------------\n\naqt.governor is not allowed to import aqt.research:\n\n-   aqt.governor.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.research.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.monitoring",
+    "target": "aqt.research",
+    "indirect": false,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-l51nn6wm",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 18 files, 1 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code BROKEN\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nLive packages cannot reach research agent code\n----------------------------------------------\n\naqt.monitoring is not allowed to import aqt.research:\n\n-   aqt.monitoring.probe -> aqt.research.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.monitoring",
+    "target": "aqt.research",
+    "indirect": true,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-74iukg6o",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 19 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages KEPT\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code BROKEN\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nLive packages cannot reach research agent code\n----------------------------------------------\n\naqt.monitoring is not allowed to import aqt.research:\n\n-   aqt.monitoring.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.research.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.research",
+    "target": "aqt.execution",
+    "indirect": false,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-031aujio",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 18 files, 1 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages BROKEN\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nResearch cannot reach protected runtime or lockbox packages\n-----------------------------------------------------------\n\naqt.research is not allowed to import aqt.execution:\n\n-   aqt.research.probe -> aqt.execution.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.research",
+    "target": "aqt.execution",
+    "indirect": true,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-qv5falbj",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 19 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages BROKEN\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nResearch cannot reach protected runtime or lockbox packages\n-----------------------------------------------------------\n\naqt.research is not allowed to import aqt.execution:\n\n-   aqt.research.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.execution.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.research",
+    "target": "aqt.governor",
+    "indirect": false,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-ih5jkobe",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 18 files, 1 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages BROKEN\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nResearch cannot reach protected runtime or lockbox packages\n-----------------------------------------------------------\n\naqt.research is not allowed to import aqt.governor:\n\n-   aqt.research.probe -> aqt.governor.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.research",
+    "target": "aqt.governor",
+    "indirect": true,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-ev4tgyfi",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 19 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages BROKEN\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nResearch cannot reach protected runtime or lockbox packages\n-----------------------------------------------------------\n\naqt.research is not allowed to import aqt.governor:\n\n-   aqt.research.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.governor.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.research",
+    "target": "aqt.lockbox_eval",
+    "indirect": false,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-tpr046ks",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 18 files, 1 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages BROKEN\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nResearch cannot reach protected runtime or lockbox packages\n-----------------------------------------------------------\n\naqt.research is not allowed to import aqt.lockbox_eval:\n\n-   aqt.research.probe -> aqt.lockbox_eval.probe (l.1)\n\n\n"
+  },
+  {
+    "source": "aqt.research",
+    "target": "aqt.lockbox_eval",
+    "indirect": true,
+    "command": [
+      "D:\\PMP-programs-for-sharawi\\autonomous-quant-trader\\.venv\\python.exe",
+      "-c",
+      "import sys; sys.path.insert(0, 'src'); from importlinter.cli import lint_imports_command as run; run()",
+      "--no-cache"
+    ],
+    "cwd": "C:\\Users\\PMPCOR~1\\AppData\\Local\\Temp\\aqt-task1-import-7xe3pf2h",
+    "control_exit": 0,
+    "violation_exit": 1,
+    "output": "\n\u2554\u2550\u2550\u2557\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25b6\u2554\u2557 \u2554\u2557      \u2554\u2557\u25c0\u2500\u2500\u2500\u2510\n\u255a\u2563\u2560\u255d\u25c0\u2500\u2500\u2500\u2500\u2500\u2510  \u2554\u255d\u255a\u2557\u2551\u2551\u2500\u2500\u2500\u2500\u25b6\u2554\u255d\u255a\u2557   \u2502\n \u2551\u2551   \u2554\u2550\u2550\u2566\u2550\u2550\u2566\u2569\u2557\u2554\u255d\u2551\u2551  \u2554\u2566\u2550\u2569\u2557\u2554\u255d\u2554\u2550\u2566\u2550\u2550\u2557\n \u2551\u2551\u2554\u2550\u2550\u2563\u2554\u2557\u2551\u2554\u2557\u2551\u2554\u2563\u2551 \u2551\u2551 \u2554\u256c\u2563\u2554\u2557\u2551\u2551 \u2551\u2502\u2551\u2554\u2550\u255d\n\u2554\u2563\u2560\u2563\u2551\u2551\u2551\u255a\u255d\u2551\u255a\u255d\u2551\u2551\u2551\u255a\u2557\u2551\u255a\u2550\u255d\u2551\u2551\u2551\u2551\u2551\u255a\u2557\u2551\u2550\u2563\u2551\n\u255a\u2550\u2550\u2569\u2569\u2569\u2563\u2554\u2550\u2569\u2550\u2550\u2569\u255d\u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2569\u2569\u255d\u255a\u2569\u2550\u2569\u2569\u2550\u2569\u255d\n  \u2514\u2500\u2500\u25b6\u2551\u2551                    \u25b2 \n      \u255a\u255d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\n---------\nContracts\n---------\n\nAnalyzed 19 files, 2 dependencies.\n----------------------------------\n\nResearch cannot reach protected runtime or lockbox packages BROKEN\nGovernor cannot reach execution or model training KEPT\nExecution cannot reach model training KEPT\nLive packages cannot reach research agent code KEPT\n\nContracts: 3 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nResearch cannot reach protected runtime or lockbox packages\n-----------------------------------------------------------\n\naqt.research is not allowed to import aqt.lockbox_eval:\n\n-   aqt.research.probe -> aqt.core.bridge (l.1)\n    aqt.core.bridge -> aqt.lockbox_eval.probe (l.1)\n\n\n"
+  }
+]

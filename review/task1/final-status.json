@@ -1,0 +1,32 @@
+{
+  "completed_at_utc": "2026-09-12T11:40:51.086661+00:00",
+  "task": "Task 1 Repository Foundation",
+  "local_gate": "PASS",
+  "claude_verdict": "TASK 1 PASS",
+  "claude_status": "ADJUDICATED",
+  "remaining_blockers": [],
+  "task2_started": false,
+  "head": "b596a8e73a563cb376361b3ca3cada8c0ea326f6",
+  "protected_files_unchanged": 28,
+  "reviewed_snapshot_sha256": "5b48f70bb8eba5e586e19f7d4188d63e021e52a27024cd6b6bb0d29b064fe8a0",
+  "sent_packet_sha256": "2e281ceabeb2271f5bd0c548b82d096eb136436d3506844954c18f104aad3eeb",
+  "claude_response_sha256": "d35d0b2b1f6aff52398bc08d60737741a6c7399ce593d8f8f5764746a7cded36",
+  "required_checks_pass": true,
+  "final_git_diff_check_exit": 0,
+  "remote_ci_run": false,
+  "requested_claude_model": "claude-fable-5-1",
+  "requested_model_review_status": "ADJUDICATED",
+  "previous_review_model": "claude-sonnet-4-6",
+  "requested_model_verified": true,
+  "actual_review_model": "claude-fable-5-1",
+  "claude_client_version": "2.1.268",
+  "reviewed_core_source_unchanged": true,
+  "post_review_changes": [
+    "README.md",
+    "review/task1/README.md",
+    "review/task1/run_checks.ps1 (EOF whitespace only)"
+  ],
+  "final_snapshot_files": 67,
+  "final_snapshot_sha256": "d952bf1f0ce03be0791ca1449b676ce2a8ddde5bf2b24f68cbcdc460125458b8",
+  "final_new_changed_whitespace_paths_passed": 34
+}

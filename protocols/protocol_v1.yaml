@@ -1,0 +1,317 @@
+protocol_version: "1.0"
+cycle_id: "C1"
+status: "FROZEN"
+constitution_version: "1.0"
+constitution_hash: "4cb6c7d35e238bdd778e8dd74b25d1b978e57fedffdbfae83b2867b5ec4fb8d7"
+hash_canonicalization_spec_hash: "189e3525c5c63f9605f739386aa3edc16b7bf44b5f4f7196dd7f698c9fbdc3cf"
+feature_factory_hash: "c8a0ea027de04889ff90ca6a89ad1096a335ee9c368fea8cb138b85dbbe30348"
+benchmark_set_hash: "b1baffd321c9adf2482350b35c73b3f436e9dda483d86b2c751e7ddddc606222"
+cost_model_hash: "3f5e62ab2df26f360f3ca13d2db379e95a1e52b25dc3d2c8f2683878b49327ae"
+backtester_spec_hash: "a1bee89f6e0d1fe309b5b12317ff277e55a91b96c81174789f4bc4c09503d961"
+threat_model_hash: "8817a315b03564e833d6c556da5de07a0740c7d87c9f7820dd8280082e745d4e"
+
+cycle_start_bindings:
+  data_manifest_hash:
+    value: "BOUND_IN_CYCLE_RECORD_BEFORE_FIRST_TRIAL"
+    justification: "Data cannot be hashed before ingestion, so the cycle record binds it before any trial begins."
+  backtester_code_hash:
+    value: "BOUND_IN_CYCLE_RECORD_BEFORE_FIRST_TRIAL"
+    justification: "Implementation does not exist at protocol freeze; no trial may run until an accepted backtester hash is bound."
+  no_trial_before_bindings_complete:
+    value: true
+    justification: "Prevents protocol-frozen research from running on unbound data or engine code."
+
+comparison:
+  promotion_benchmark:
+    value: "VOL_TARGET_BUY_AND_HOLD"
+    justification: "One predeclared comparator is used for every eligibility, robustness, DSR/PBO, null, and lockbox comparison."
+  other_benchmarks_eligibility_role:
+    value: "report_only"
+    justification: "Prevents choosing the most flattering comparator after results."
+
+asset_evaluation:
+  primary_asset:
+    value: "BTCUSDT"
+    justification: "All formal eligibility statistics use one predeclared primary series."
+  sanity_asset:
+    value: "ETHUSDT"
+    justification: "ETH is a correlated sanity check, not independent replication."
+  btc_gate:
+    value: "full_eligibility_and_lockbox_rules"
+    justification: "Defines the single formal gate series."
+  eth_gate:
+    value: "paired_delta_sharpe_point_estimate_gt_0_AND_drawdown_constraint_holds_at_1x_cost"
+    justification: "Requires directional consistency without pretending ETH is an independent second test."
+  combined_portfolio_gate:
+    value: false
+    justification: "Avoids introducing an undeclared allocation problem."
+
+scope:
+  exchange: {value: "Binance", justification: "Single venue limits semantic/operational variance."}
+  market: {value: "spot", justification: "Avoids leverage/funding/liquidation complexity."}
+  symbols: {value: ["BTCUSDT","ETHUSDT"], justification: "Initial liquid pair; formal roles defined above."}
+  bar_interval: {value: "1h", justification: "Causal feature resolution without 15m noise/trial inflation."}
+  scheduled_decision_anchor_utc: {value: "00:00", justification: "Fixes intraday timing before results."}
+  hourly_signal_evaluation: {value: true, justification: "Allows intraday risk-reduction monitoring."}
+  risk_increase_rule:
+    value: "only_at_00_00_UTC_and_only_if_24h_since_last_risk_increase"
+    justification: "Makes risk increases scheduled and bounded."
+  intraday_action_rule:
+    value: "only_reduce_exposure_if_target_is_at_least_0.10_below_current"
+    justification: "Band-triggered intraday actions are safety-direction only."
+  max_exposure_per_asset: {value: 1.0, justification: "Long-only unlevered spot."}
+
+partitions:
+  exploration: {start: "2017-08-17T00:00:00Z", end: "2021-12-31T23:59:59Z"}
+  confirmation: {start: "2022-01-01T00:00:00Z", end: "2025-05-31T23:59:59Z"}
+  lockbox: {start: "2025-06-01T00:00:00Z", end: "2026-08-31T23:59:59Z"}
+  exploration_may_enter_training_folds: true
+  sandbox_exploration_policy:
+    value: "all jobs logged; human review triggered after 250 jobs"
+    justification: "Partition boundary is the control; high exploratory volume triggers governance review."
+
+lockbox_policy:
+  max_evaluations_per_family_per_cycle: {value: 2, justification: "One primary and one replacement candidate."}
+  cooldown_days: {value: 30, justification: "Prevents rapid re-probing."}
+  result_to_research: {value: "PASS_FAIL_ONLY", justification: "Prevents tuning feedback."}
+  attestation_coarse_fields:
+    value: ["paired_delta_sharpe_sign","drawdown_constraint_held","prediction_decay_test_passed"]
+    justification: "Enumerated fields prevent diagnostic drift."
+  cost_multiplier:
+    value: 1.0
+    justification: "Lockbox tests consistency of the validated baseline-cost prediction; cost fragility was already gated at 2x pre-lockbox."
+  prediction_interval:
+    construction:
+      value: "stationary bootstrap the confirmation BTC paired-difference series using Politis-White blocks; generate synthetic paths with decision-count equal to the lockbox BTC decision-count; compute delta-Sharpe per path"
+      justification: "Produces a prediction distribution for a lockbox-length realization rather than a CI on the confirmation mean."
+    tail:
+      value: "one_sided_lower_5_percentile"
+      justification: "Unexpected underperformance fails; upside exceedance is logged but does not fail."
+  pass_rule:
+    value: "BTC passes iff lockbox delta-Sharpe >= 5th percentile of confirmation-derived lockbox-length prediction distribution AND BTC delta-Sharpe > 0 AND BTC drawdown constraint holds; ETH sanity gate must also pass"
+    justification: "Tests consistency and direction without pretending 15 months is a fresh high-power significance sample."
+  net_return_tolerance_rule:
+    value: "REMOVED"
+    justification: "A de-risker may legitimately trail on absolute return while improving risk-adjusted behavior."
+  exposed_segments_release_to: {value: "confirmation", justification: "Exposed data never returns to free exploration."}
+
+feature_factory:
+  hash: "c8a0ea027de04889ff90ca6a89ad1096a335ee9c368fea8cb138b85dbbe30348"
+  frozen: true
+
+target:
+  formula:
+    value: "log(P[t+H]/P[t]) / (sigma_hourly_t * sqrt(H_hours))"
+    justification: "Comparable scale across declared horizons."
+  normalization_vol:
+    value: "EWMA hourly vol, 168h half-life"
+    justification: "Fixed label normalization across all families."
+  horizons_hours: [24,72,168]
+
+exposure_mapping:
+  rebalance_band_absolute: 0.10
+  minimum_holding_hours_for_risk_increase: 24
+  default_sizing_vol_estimator:
+    value: "EWMA_168h"
+    justification: "Used by trend family and canonical baseline."
+  volatility_family_sizing_estimator_rule:
+    value: "may declare a preregistered alternative estimator as part of hypothesis content and parameter_point"
+    justification: "Allows HAR/GARCH/alternate EWMA to be tested without changing target normalization."
+  allowed_volatility_family_estimators:
+    value: ["EWMA_72h","EWMA_168h","EWMA_336h","HAR_RV","GARCH_1_1"]
+    justification: "Predeclared bounded categorical estimator set."
+  sizing_estimator_dimension_type:
+    value: "categorical_structural"
+    justification: "Estimator classes have no meaningful +/-1 ordering; they count as trials but are excluded from numeric boundary rules."
+  vol_target_trial_dimension:
+    value: [0.40,0.60,0.80]
+    justification: "Small explicit annualized sizing grid."
+  canonical_baseline_vol_target: 0.60
+
+benchmarks:
+  deployable_baseline: "VOL_TARGET_BUY_AND_HOLD"
+  benchmark_set_hash: "b1baffd321c9adf2482350b35c73b3f436e9dda483d86b2c751e7ddddc606222"
+  null_models:
+    random_exposure:
+      construction:
+        value: "match candidate mean exposure and turnover on BTC; evaluate paired delta-Sharpe versus VOL_TARGET_BUY_AND_HOLD"
+        justification: "Removes beta/time-in-market advantage from the trading null."
+      samples: 500
+      gate_metric: "paired_delta_sharpe_vs_VOL_TARGET_BUY_AND_HOLD"
+    shuffled_labels:
+      samples: 500
+      gate_metric:
+        value: "OOS Spearman IC between model prediction and vol-scaled target"
+        justification: "Explicit predictive null metric."
+
+cost_model:
+  hash: "3f5e62ab2df26f360f3ca13d2db379e95a1e52b25dc3d2c8f2683878b49327ae"
+  baseline_execution: "next_1h_bar_open_plus_frozen_cost_model"
+  stress_multipliers: [1.0,1.5,2.0,3.0]
+
+
+models:
+  allowed_classes_cycle_1:
+    value: ["linear","ridge","lasso","elastic_net","logistic","lightgbm"]
+    justification: "Enforces the agreed low-complexity model progression and excludes undeclared model classes."
+  deep_learning_allowed:
+    value: false
+    justification: "Deep learning requires a future Constitution-compliant amendment."
+  logistic_use:
+    value: "only_if_sign_objective_is_preregistered"
+    justification: "Prevents casual conversion of a magnitude target into classification."
+  lightgbm_constraints:
+    max_depth:
+      value: 3
+      justification: "Keeps tree complexity shallow in the small-sample Cycle-1 setting."
+    num_leaves_max:
+      value: 8
+      justification: "Consistent with max_depth<=3 and reduces overfitting capacity."
+    learning_rate:
+      value: 0.05
+      justification: "Conservative fixed learning rate; not a free post-hoc knob."
+    n_estimators_max:
+      value: 300
+      justification: "Bounds boosting capacity; any exact estimator count is preregistered inside the hypothesis grid."
+
+trial_accounting:
+  trial_unit:
+    value: "(hypothesis_id, parameter_point, horizon); BTC and ETH evaluated jointly inside the same trial"
+    justification: "ETH sanity does not double trial count."
+  parameter_point_includes:
+    value: ["vol_target","model_or_estimator_parameters"]
+    justification: "Makes trial arithmetic explicit."
+  trend_budget:
+    value: 81
+    justification: "Supports up to three 27-trial fully gridded hypotheses (3 model points × 3 vol targets × 3 horizons)."
+  volatility_budget:
+    value: 81
+    justification: "Same bounded capacity for up to three fully gridded volatility hypotheses."
+  lifetime_accounting: true
+
+cycle_termination:
+  calendar_days_elapsed: 180
+  ends_when_any: ["all_family_trial_budgets_exhausted","calendar_days_elapsed","candidate_promoted","protocol_revision","cycle_invalidated"]
+  outcomes: ["CANDIDATE_PROMOTED","NO_EDGE_FOUND","PROTOCOL_REVISION","INVALIDATED"]
+
+validation:
+  training_window_months: 24
+  walk_forward_step_days: 30
+  retrain_cadence_days: 30
+  reporting_fold_months: 3
+  final_partial_reporting_block:
+    value: "excluded_from_paired_fold_win_rate_but_reported_separately"
+    justification: "Avoids changing the denominator with a shorter fold."
+  purge_rule: "label_horizon"
+  embargo:
+    rule: "max(label_horizon,target_autocorr_cutoff)"
+    target_acf_sampling_frequency:
+      value: "daily_decision_frequency"
+      justification: "Avoids overstating dependence using overlapping hourly labels."
+    estimator: "ACF_with_Bartlett_bands"
+    alpha: 0.05
+    max_lag: "4 * horizon_in_daily_steps"
+    cutoff: "first lag after which no remaining lag is significant"
+  cpcv:
+    enabled_if_effective_decisions_gte: 250
+    groups: 8
+    test_groups: 2
+    role:
+      value: "diagnostic_only"
+      justification: "Report median and 5th-percentile path paired-delta-Sharpe; no independent promotion gate."
+    training_rule: "all non-test groups with purge and embargo; 24-month rolling window applies to walk-forward only"
+  bootstrap:
+    type: "stationary_block"
+    block_method: "politis_white"
+    iterations: 2000
+  dsr:
+    series:
+      value: "BTC candidate_minus_VOL_TARGET_BUY_AND_HOLD paired OOS return series"
+      justification: "Measures incremental evidence rather than BTC beta."
+    minimum: 0.95
+    effective_trial_count_method: "eigenvalue_effective_number_from_trial_return_correlation_matrix"
+    fallback: "raw_trial_count"
+  pbo:
+    enabled_if_family_trials_gte: 20
+    partitions: 16
+    series_matrix:
+      value: "family trial paired-difference return matrix versus VOL_TARGET_BUY_AND_HOLD"
+      justification: "Keeps PBO on the same incremental objective as DSR."
+    ranking_metric: "paired_delta_sharpe"
+    maximum: 0.30
+  effective_decisions:
+    method: "newey_west_autocorrelation_adjusted_ESS_on_BTC_OOS_strategy_returns"
+    fallback: "raw_decisions / ceil(horizon_hours/24)"
+  oos_is_ratio:
+    in_sample_definition:
+      value: "training-window Sharpe of the same fixed configuration on the paired-difference series"
+      justification: "Avoids mixing absolute beta Sharpe with incremental OOS evidence."
+    note_for_rule_based_no_fit_models: "gate_is_reported_as_not_applicable"
+  configuration_selection:
+    value: "each grid point is one fixed trial; no per-fold reselection; submitted candidate is one grid point; family DSR/PBO/plateau account for selection"
+    justification: "Removes hidden nested/post-hoc ambiguity."
+  plateau:
+    tunable_dimensions:
+      value: "model_or_estimator_parameters_only"
+      justification: "Structural dimensions horizon and vol_target remain counted trials but do not trigger boundary-optimum rejection."
+    structural_dimensions:
+      value: ["horizon","vol_target","sizing_estimator"]
+      justification: "Horizon/vol-target are bounded by design and estimator class is categorical; all count as trials but do not trigger numeric boundary rejection."
+    neighbor_inclusion:
+      value: "available +/-1-step neighbors are used only for ordered numeric dimensions; categorical sizing_estimator is excluded from neighbor arithmetic; the three EWMA half-lives may be treated as ordered numeric neighbors only within the EWMA subclass"
+      justification: "Avoids inventing distance between HAR, GARCH, and EWMA while preserving local checks where an ordering exists."
+    pass_rule:
+      value: "if no ordered numeric tunable dimensions: N/A; otherwise median available-neighbor BTC OOS paired-delta-Sharpe >= 0.5 * selected-point value AND selected point is not on a boundary of any ordered numeric tunable dimension"
+      justification: "Rejects isolated numeric peaks without arbitrarily penalizing categorical estimator choices."
+  random_seed_policy: "SHA256(protocol_hash,hypothesis_hash,trial_index) -> deterministic seed"
+  feature_delay_stress_bars: 1
+  execution_delay_stress_bars: 1
+
+promotion:
+  comparison_benchmark: "VOL_TARGET_BUY_AND_HOLD"
+  primary_asset: "BTCUSDT"
+  sanity_asset: "ETHUSDT"
+  paired_confidence_interval: "two_sided_90_percent"
+  btc_min_sharpe_delta_ci_lower_bound: 0.0
+  btc_drawdown_constraint:
+    value: "confirmation OOS max drawdown point estimate no worse than benchmark by >0.05"
+    justification: "MDD is a robustness constraint, not primary bootstrap inference."
+  eth_sanity_rule: "paired_delta_sharpe_point_estimate > 0 AND drawdown_constraint_holds_at_1x_cost"
+  paired_fold_win_rate:
+    minimum: 0.60
+    unit: "complete_3_month_reporting_blocks"
+  survive_2x_cost_rule: "BTC paired_delta_sharpe_point_estimate > 0 AND BTC candidate_net_return > 0 AND BTC drawdown_constraint_holds; ETH sanity rule also holds"
+  feature_delay_hard_gate: true
+  execution_delay_hard_gate: true
+  parameter_plateau_required: true
+  dsr_minimum: 0.95
+  pbo_maximum_if_enabled: 0.30
+  null_minimum_percentile: 0.95
+  minimum_effective_decisions: 120
+  benchmark_hash_must_match: true
+  trial_budget_hard_stop: true
+
+lockbox_request:
+  allowed_only_after_eligibility: true
+  descendant_retry_same_cycle_after_fail: false
+
+promotion_attestation:
+  human_decisions: ["APPROVE_AS_IS","REJECT"]
+  cooling_off_hours: 72
+
+owner_change_control:
+  capital_increase_cooling_off_hours: 72
+  risk_loosening_cooling_off_hours: 72
+  safety_amendment_activation_delay_hours: 72
+  risk_decrease_immediate: true
+
+freeze_sequence:
+  value:
+    - "freeze Constitution v1.0 and compute canonical content hash"
+    - "update protocol constitution_hash"
+    - "verify all referenced dependency hashes"
+    - "set protocol status to FROZEN"
+    - "recompute protocol sidecar hash"
+    - "create cycle record"
+    - "bind data_manifest_hash and accepted backtester_code_hash before first trial"
+  justification: "Makes expected hash changes during freezing explicit."

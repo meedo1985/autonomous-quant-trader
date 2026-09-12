@@ -1,0 +1,21 @@
+{
+  "command": [
+    "C:\\Users\\PMP Cordination\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.EXE",
+    "-p",
+    "--output-format",
+    "json",
+    "--tools",
+    "",
+    "--strict-mcp-config",
+    "--disable-slash-commands",
+    "--no-session-persistence",
+    "--permission-mode",
+    "dontAsk",
+    "--setting-sources",
+    "",
+    "--effort",
+    "high"
+  ],
+  "exit_code": 0,
+  "stderr": ""
+}

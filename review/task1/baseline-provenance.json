@@ -1,0 +1,20 @@
+{
+  "coordinator_snapshot_path": "C:\\Users\\PMP Cordination\\.codex\\.chatgpt-projects\\g-p-6a9fe1759e988191a5e041e0863411e2\\task1-frozen-before.json",
+  "snapshot_created_utc": "2026-09-12T11:02:09.409236+00:00",
+  "snapshot_sha256": "d17855c78f81725e826e98a0e1b9b87325cdc8567a02e569ffcf3a71a476e1df",
+  "worker_copy_identical": true,
+  "codex_cli_implementation_started_utc": "2026-09-12T11:03:20Z",
+  "source_conversation_id": "6a9fe177-d74c-83ed-a302-2259683269bd",
+  "previously_reported_accepted_hashes": {
+    "constitution_content_hash": "4cb6c7d35e238bdd778e8dd74b25d1b978e57fedffdbfae83b2867b5ec4fb8d7",
+    "protocol_file_sha256": "d22efb8989cb31a1d673000bba1e69baf5e0965bb400a8798aa966a3035d8b26",
+    "cost_model_sha256": "3f5e62ab2df26f360f3ca13d2db379e95a1e52b25dc3d2c8f2683878b49327ae",
+    "feature_factory_sha256": "c8a0ea027de04889ff90ca6a89ad1096a335ee9c368fea8cb138b85dbbe30348",
+    "benchmark_set_sha256": "b1baffd321c9adf2482350b35c73b3f436e9dda483d86b2c751e7ddddc606222",
+    "backtester_spec_sha256": "a1bee89f6e0d1fe309b5b12317ff277e55a91b96c81174789f4bc4c09503d961",
+    "threat_model_sha256": "8817a315b03564e833d6c556da5de07a0740c7d87c9f7820dd8280082e745d4e",
+    "hash_canonicalization_spec_sha256": "189e3525c5c63f9605f739386aa3edc16b7bf44b5f4f7196dd7f698c9fbdc3cf"
+  },
+  "all_accepted_hashes_match": true,
+  "limitation": "Recorded pre-task workstation snapshot and earlier conversation corroborate preservation; no signed historical Git baseline exists."
+}
