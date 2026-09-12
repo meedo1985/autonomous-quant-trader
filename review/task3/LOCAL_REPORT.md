@@ -99,8 +99,19 @@ frozen spec and the Task 2 module. Three defects were found and corrected:
    it as `CostModelError`). Documentation corrected; behaviour unchanged,
    because the existing behaviour is deliberate and is covered by tests.
 
+4. `tests/unit/test_cost_model.py`,
+   `test_trade_cost_uses_only_information_available_at_the_decision`: the
+   assertion was written as a single chained comparison across two
+   `trade_cost(...).breakdown` calls, which `ruff format` rejects (it wraps the
+   comparison in parentheses instead, because the right-hand side ends in an
+   attribute access rather than a bracket). **This failed
+   `ruff format --check .` in CI run 34701567324.** Rewritten as two local
+   bindings plus a short assertion, which is format-stable. Test semantics are
+   unchanged.
+
 Defects 1 and 2 were identified by manual trace, not by execution — see the
-blocker section. No other behavioural change was made to the draft module.
+blocker section. Defect 4 was identified by CI. No other behavioural change was
+made to the draft module.
 
 ## Changed files
 
@@ -191,10 +202,20 @@ locally.
 Mitigation actually applied: GitHub Actions (`.github/workflows/ci.yml`) re-runs
 five of the seven mandatory checks — `ruff format --check .`, `ruff check .`,
 `mypy src`, `python -m pytest`, `lint-imports` — on a clean Linux Python 3.12
-runner for this commit. That CI run is the **only** execution evidence for those
-five checks for Task 3; its run URL, conclusion and per-step outcomes are
-reported in the session summary accompanying this commit. Formatting, typing and
-test conformance therefore rest on CI, not on a local run.
+runner. Those CI runs are the **only** execution evidence for those five checks
+for Task 3. Formatting, typing and test conformance therefore rest on CI, not on
+a local run.
+
+### CI history for Task 3
+
+| Run | Commit | Result |
+|---|---|---|
+| [34701567324](https://github.com/meedo1985/autonomous-quant-trader/actions/runs/34701567324) | `ab8da50` | **FAILED** at step `ruff format --check .`: `Would reformat: tests/unit/test_cost_model.py` (1 file, 21 already formatted). The later steps did not run. Cause and fix are defect 4 above. |
+
+The conclusion and per-step outcomes of the run for the follow-up commit that
+carries the defect-4 fix are reported in the session summary accompanying that
+commit. Nothing here should be read as a claim that a check passed before its
+run reported success.
 
 Still **not** verified anywhere for Task 3:
 `python review/task1/verify_task1.py` and `pre-commit validate-config`. Both are

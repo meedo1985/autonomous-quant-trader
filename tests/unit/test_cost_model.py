@@ -430,9 +430,9 @@ def test_trade_cost_uses_only_information_available_at_the_decision() -> None:
     closes = _geometric_closes(12, 40.0)
     short = _series_from_closes(closes[:6])
     long = _series_from_closes((*closes, 999.0))
-    assert trade_cost(short, _ts(5), Side.BUY).breakdown == trade_cost(
-        long, _ts(5), Side.BUY
-    ).breakdown
+    short_cost = trade_cost(short, _ts(5), Side.BUY)
+    long_cost = trade_cost(long, _ts(5), Side.BUY)
+    assert short_cost.breakdown == long_cost.breakdown
 
 
 def test_trade_cost_is_deterministic_across_repeated_calls() -> None:
