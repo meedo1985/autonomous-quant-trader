@@ -1,0 +1,9 @@
+{
+  "requested_model": "claude-fable-5-1",
+  "observed_model": "claude-fable-5-1",
+  "session_id": "51d078de",
+  "reported_cost_usd": 2.4879345,
+  "mode": "read_only_review",
+  "permission_denials": 0,
+  "verdict": "PASS_WITH_NON_BLOCKING_FINDINGS"
+}

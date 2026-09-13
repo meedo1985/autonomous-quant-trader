@@ -1,7 +1,7 @@
 # autonomous-quant-trader
 
 Scientifically defensible, reproducible, cost-aware crypto spot research.
-Current status: **Milestone 0.1 / Task 2 — bar semantics foundation**.
+Current status: **Milestone 0.1 / Task 6 — accepted oracle/canary suite frozen**.
 **NO EDGE FOUND (`NO_EDGE_FOUND`) is a valid result.**
 
 V1 is Binance Spot BTC/ETH research: no leverage, margin, futures, or
@@ -32,13 +32,21 @@ lint-imports
 git diff --check
 ```
 
-Source lives in `src/aqt`; packages are empty except for version and path
-metadata in `core` and the bar-semantics module in `data`.
+Source lives in `src/aqt`. Implemented foundations cover bar semantics,
+costs, causal features, and canonical benchmark definitions.
 `core.paths.REPOSITORY_ROOT` describes this source checkout,
 not an installed wheel's data location. It performs no filesystem reads.
 Import contracts cover direct and indirect dependencies, including descendants.
 Research-agent code belongs under `aqt.research`; any future agent package
 elsewhere must be added to the live-path forbidden contracts before use.
+
+## Backtester trust suite (Task 6)
+
+Task 6 adds exact-arithmetic, synthetic-only mathematical oracles and leakage
+canaries under `tests/oracles/` and `tests/canaries/`. They are independent of
+the future production backtester. The NumPy reference and production engine
+remain deferred until these tests receive the human acceptance required by the
+Constitution. Evidence is in `review/task6/`.
 
 ## Bar semantics (Task 2)
 
@@ -51,4 +59,4 @@ executing at open(t+1). It reads no market data and performs no network
 access; its tests are synthetic.
 
 Repository review instructions are in `AGENTS.md` and `.agents/skills/`.
-Task evidence and Claude handoffs are in `review/task1/` and `review/task2/`.
+Task evidence and external-review records are under `review/`.

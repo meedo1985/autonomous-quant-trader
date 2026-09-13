@@ -1,0 +1,19 @@
+{
+  "required_model": "claude-fable-5-1",
+  "rounds": [
+    {
+      "session_id": "c8f9b4a1-f377-4078-a1b2-1914556377e3",
+      "observed_model": "claude-fable-5-1",
+      "reported_cost_usd": 0.277665,
+      "permission_denials": 0
+    },
+    {
+      "session_id": "b0d5ac7f-6e90-43f7-a51b-beb21d70b4e7",
+      "observed_model": "claude-fable-5-1",
+      "reported_cost_usd": 0.17266575,
+      "permission_denials": 0
+    }
+  ],
+  "verdict": "BETTER_DECISIONS_AVAILABLE",
+  "human_acceptance": "ACCEPTED_2026-09-13"
+}

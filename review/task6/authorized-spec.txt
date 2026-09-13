@@ -1,0 +1,71 @@
+TASK 6 — PRE-PRODUCTION BACKTESTER ORACLE AND LEAKAGE-CANARY ACCEPTANCE SUITE
+
+Authorization: recorded verbatim in scope and acceptance criteria from the
+user's Task 6 instruction to the implementation model, 2026-09-13. The user
+delegated project sequencing; this task is derived from
+docs/RESEARCH_CONSTITUTION.md sections 16 and 18 and
+specs/BACKTESTER_SPEC_v1.md.
+
+MANDATED ORDER (Constitution section 16)
+  human spec review -> oracle tests -> leakage canaries -> NumPy reference ->
+  production implementation.
+This task is the second and third links only. It therefore creates reviewable
+oracle and canary tests plus this authorization and the local report, and
+nothing else. The NumPy reference implementation and the production
+backtester are NOT implemented in this task. The tests are NOT frozen and NOT
+accepted; acceptance is a later human decision (section 16: "Accepted
+oracle/canary tests are frozen; changes require human rationale/review").
+
+SCOPE — REQUIRED
+  Implement the smallest deterministic, self-contained mathematical oracle and
+  canary suite under tests/oracles and tests/canaries. Synthetic data only. No
+  import of, and no dependency on, a production backtester that does not yet
+  exist. Stdlib only where practical. Helpers stay private to tests so they
+  cannot become accidental production code. Exact integers, Fraction, or
+  Decimal are used wherever that makes an oracle identity independent of
+  floating-point ambiguity.
+
+ACCEPTANCE CRITERIA — the suite must cover, without inventing strategy logic
+or tunable scientific thresholds:
+  A1 zero exposure gives exactly zero trading PnL;
+  A2 buy-and-hold analytic identity under the frozen next-open execution
+     semantics;
+  A3 a known alternating exposure path gives exact turnover and cost;
+  A4 increasing the cost multiplier never improves net PnL for the identical
+     path;
+  A5 a deliberately future-return-leaking signal has a mathematically
+     perfect/absurd synthetic result while the causal lagged control does not;
+  A6 a deterministic shuffled-label null exactly centered at zero by
+     construction or exhaustive symmetry, avoiding an arbitrary near-zero
+     threshold;
+  A7 deterministic reruns produce byte-identical canonical oracle records.
+
+DEFERRED BY THE MANDATED ORDER — stated, not stubbed. No skipped test pretends
+to cover these:
+  D1 NumPy reference implementation and its comparison to these oracles;
+  D2 any adapter that runs the production backtester against these identities;
+  D3 the protocol's 500-sample sampled null over confirmation data, which
+     belongs to the validation engine and to a model that does not exist.
+
+DELIVERABLES
+  review/task6/authorized-spec.txt (this file),
+  review/task6/LOCAL_REPORT.md mapping every frozen requirement to each test,
+  the test suite files themselves,
+  a README.md change limited to current Task 6 status, evidence location, and
+  correction of the stale Task 2 status line.
+
+EXCLUSIONS
+  No production backtester, NumPy reference, performance/metric engine,
+  eligibility or promotion logic, strategy or feature invention, model or ML or
+  LLM code, exchange or network access, credentials, trading, execution,
+  research engine, lockbox, governor, or allocation work. No Task 7 work.
+  No modification of docs/, protocols/, schemas/, specs/, FROZEN_HASHES.json,
+  or any SHA-256 sidecar. No weakening of existing tests. No modification of
+  prior task evidence except the README pointer. No commit and no push.
+
+STANDING GATES
+  Every frozen byte and sidecar is preserved. AGENTS.md validation, task-gate,
+  scientific-reproducibility, quant-code and adversarial-review gates remain
+  required and remain OPEN for this task. Any acceptance claim that cannot be
+  encoded without inventing a policy is left explicit and BLOCKED rather than
+  guessed.

@@ -1,0 +1,10 @@
+{
+  "requested_primary_model": "claude-opus-5-1",
+  "primary_result": "rejected_before_inference_as_unrecognized_model",
+  "primary_reported_cost_usd": 0,
+  "fallback_model": "claude-opus-5",
+  "fallback_status": "created_initial_task_files_but_call_was_interrupted_before_completion_metadata",
+  "verified_observed_fallback_model_from_response_metadata": null,
+  "coordinator_action": "inspected_all_files_corrected_one_test_and_ran_all_validation",
+  "note": "This record intentionally does not claim verified Opus 5 completion metadata."
+}
