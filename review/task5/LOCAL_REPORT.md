@@ -273,8 +273,41 @@ therefore rest on CI, not on a local run.
 
 ### CI history for Task 5
 
-Recorded in a follow-up commit once the run for this commit has completed; see
-the section appended below.
+| Run | Commit | Result |
+|---|---|---|
+| [34738503803](https://github.com/meedo1985/autonomous-quant-trader/actions/runs/34738503803) | `0a90d15` | **SUCCESS**, 35s, ubuntu-latest, Python 3.12 — first and only run for Task 5 |
+
+Per-step output of run `34738503803`:
+
+| CI step | Exact output |
+|---|---|
+| `ruff format --check .` | `26 files already formatted` |
+| `ruff check .` | `All checks passed!` |
+| `mypy src` | `Success: no issues found in 20 source files` |
+| `python -m pytest` | `630 passed, 4 skipped in 7.80s` (whole suite: Tasks 1–4 plus the Task 5 cases) |
+| `lint-imports` | `Analyzed 20 files, 5 dependencies.` / `Contracts: 4 kept, 0 broken.` |
+
+The immediately preceding run on `main`
+([34713186693](https://github.com/meedo1985/autonomous-quant-trader/actions/runs/34713186693),
+commit `c5b5d6c`) reported `206 passed`, `19 source files` and
+`3 dependencies`. The deltas are therefore exactly this task's contribution:
+**+424 passing cases and +4 skips, +1 source file, +2 import edges**
+(`aqt.benchmarks -> aqt.data` and `aqt.benchmarks -> aqt.features`), with all
+four frozen contracts still kept.
+
+The 4 skips are intended and are the only skips in the suite: the two
+warm-up-rejection tests are parametrized over all five benchmarks and skip for
+`CASH` and `BUY_AND_HOLD` (2 tests x 2 benchmarks), because a benchmark whose
+required history is a single bar has no "one bar short" case to reject.
+
+The only annotation is the runner-level `Node.js 20 is deprecated` notice for
+`actions/checkout@v4` and `actions/setup-python@v5`. It is infrastructure
+deprecation, unrelated to this change, and the CI workflow was not modified to
+address it because that is outside the authorized Task 5 scope.
+
+Nothing here should be read as a claim that a check passed before its run
+reported success. Local execution of these five commands remains **blocked**;
+CI is the evidence.
 
 Still **not** verified anywhere for Task 5:
 `python review/task1/verify_task1.py` and `pre-commit validate-config`. Both
