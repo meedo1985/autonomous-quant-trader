@@ -60,7 +60,7 @@ Findings:
 
 ## Task 4 — causal feature factory
 
-**Verdict: PASS on the code gate. Scientific sign-off awaits `T4-Q1`.**
+**Verdict: PASS. Scientific sign-off completed after `T4-Q1` disposition.**
 
 All eighteen frozen formulas are represented. Fable found no future leakage,
 no volume or calendar input entering a formula, and no current disagreement
@@ -86,6 +86,15 @@ Findings:
   modules, creating future drift risk but no current divergence.
 - `T4-N4` — NON-BLOCKING: tests could document that rolling maximum includes
   the current close and that EMA uses the full supplied history.
+
+### Post-review disposition
+
+The user approved the coordinator's recommendation to preserve the current
+EMA seed/recursion and trailing arithmetic-mean ATR definitions before any
+registered trial. `review/task4/SCIENTIFIC_DECISION.md` records the exact
+conventions, reasoning, and reviewed file hashes. This resolves `T4-Q1`.
+The same decision requires the cycle data manifest to bind the supplied series
+start, resolving the operational requirement in `T4-Q2`.
 
 ## Shared assumptions
 
@@ -117,4 +126,6 @@ restricted repository location and failed with access errors. Reruns using a
 writable temporary cache and `--no-cache` respectively passed. Pytest emitted
 only the analogous cache-write warning; all tests completed successfully.
 
-This review does not authorize live trading, a frozen amendment, or Task 6.
+With the recorded scientific disposition, Tasks 2, 3, and 4 pass their review
+gates. This review does not authorize live trading, a frozen amendment, or
+Task 6.

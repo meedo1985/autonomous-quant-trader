@@ -15,9 +15,12 @@ gates remain **OPEN** for Task 4 by the user's instruction.
 
 Later status: Claude Fable 5.1 independently reviewed the current Task 4
 snapshot at repository HEAD `3054805` and returned **PASS on the code gate**.
-Scientific sign-off remains open only for the EMA/ATR convention disposition
-identified as `T4-Q1`. See `review/FABLE_5_1_TASKS_2_3_4_REVIEW.md` and its
-model-proof JSON. The paragraph above is retained as historical context.
+The user subsequently approved the recommended current EMA and ATR conventions
+before any registered trial, resolving `T4-Q1`; the data manifest must bind the
+series start as required by the same decision. Task 4 review status is **PASS**.
+See `review/FABLE_5_1_TASKS_2_3_4_REVIEW.md`, its model-proof JSON, and
+`review/task4/SCIENTIFIC_DECISION.md`. The paragraph above is retained as
+historical context.
 
 ## Scope
 
