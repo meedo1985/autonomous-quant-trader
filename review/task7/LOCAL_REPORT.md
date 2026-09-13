@@ -117,6 +117,7 @@ or performance thresholds. Discrete trade/HOLD decisions are asserted exactly.
 ## Changed files
 
 - `pyproject.toml` (NumPy in the development extra only)
+- `README.md` (Task 7 status only)
 - `tests/reference/__init__.py`
 - `tests/reference/_numpy_reference.py`
 - `tests/reference/_error_bounds.py`
@@ -133,6 +134,7 @@ or performance thresholds. Discrete trade/HOLD decisions are asserted exactly.
 
 ```text
 8263a407fdc5f0652c71bdc44319d1d62e856931df341d75c6d31e86c49fc59f  pyproject.toml
+d48e6f5b53b687a2401767ebb9232fee539d34f9e7f552d3ff3718e441b902ed  README.md
 68a65e8f80eb34381cad798f69d970007a78db48d1fc4b5f9123d8a853fee3f1  tests/reference/__init__.py
 ee578ccff74212c9707505a2d7fa8b9f56edafa1cbe08f71ea707df3aa49e873  tests/reference/_error_bounds.py
 c9c47299739433178faef51a004e97d20ccd6e11fb404d1caa8607860346ec1d  tests/reference/_fixtures.py

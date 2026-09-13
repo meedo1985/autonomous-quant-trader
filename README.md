@@ -1,7 +1,7 @@
 # autonomous-quant-trader
 
 Scientifically defensible, reproducible, cost-aware crypto spot research.
-Current status: **Milestone 0.1 / Task 6 — accepted oracle/canary suite frozen**.
+Current status: **Milestone 0.1 / Task 7 — NumPy reference accepted**.
 **NO EDGE FOUND (`NO_EDGE_FOUND`) is a valid result.**
 
 V1 is Binance Spot BTC/ETH research: no leverage, margin, futures, or
@@ -40,13 +40,13 @@ Import contracts cover direct and indirect dependencies, including descendants.
 Research-agent code belongs under `aqt.research`; any future agent package
 elsewhere must be added to the live-path forbidden contracts before use.
 
-## Backtester trust suite (Task 6)
+## Backtester trust suite (Tasks 6–7)
 
-Task 6 adds exact-arithmetic, synthetic-only mathematical oracles and leakage
-canaries under `tests/oracles/` and `tests/canaries/`. They are independent of
-the future production backtester. The NumPy reference and production engine
-remain deferred until these tests receive the human acceptance required by the
-Constitution. Evidence is in `review/task6/`.
+Task 6 adds the frozen exact-arithmetic oracle and leakage canaries under
+`tests/oracles/` and `tests/canaries/`. Task 7 adds the independent NumPy
+`float64` reference under `tests/reference/`, with derived numerical error
+bounds and comparison tests. The production engine remains deferred to its
+scheduled task. Evidence is in `review/task6/` and `review/task7/`.
 
 ## Bar semantics (Task 2)
 
