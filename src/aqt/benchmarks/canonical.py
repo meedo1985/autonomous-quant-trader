@@ -73,10 +73,12 @@ No silent correction
 Invalid input raises `CanonicalBenchmarkError`. Every function that takes a
 `decision_time` resolves a decision, so it re-raises the underlying
 `BarSemanticsError` from `aqt.data.bars` as `CanonicalBenchmarkError`, the
-same way Tasks 3 and 4 do. `ExposureState.last_risk_increase_time` is a bare
-timestamp rather than a decision, so its `BarSemanticsError` surfaces
-unchanged. Exposure outside `[0, 1]` supplied by a caller is rejected, never
-clipped; the only clip performed is the one the frozen
+same way Tasks 3 and 4 do. `ExposureState.last_risk_increase_time` is validated
+as a bare timestamp rather than as a decision, so a naive, non-UTC, or
+unaligned value raises `BarSemanticsError` unchanged; the separate canonical
+requirement that it sit on the scheduled `00:00` UTC anchor raises
+`CanonicalBenchmarkError`. Exposure outside `[0, 1]` supplied by a caller is
+rejected, never clipped; the only clip performed is the one the frozen
 `clip(0.60 / vol, 0, 1)` prescribes.
 
 Conventions the frozen spec leaves open
@@ -120,6 +122,23 @@ These are documented, not silently taken; they are listed again in
    history at all. That is deliberate: silently accepting a series known to be
    broken, or quietly reading only the post-gap tail, is exactly what
    `review/task3/SCIENTIFIC_DECISION.md` item 4 forbids.
+8. The 10 percentage-point band is a threshold on the *decimal* change the
+   frozen documents describe, not on its binary rendering. A change stated as
+   exactly 10 percentage points therefore reaches the band even when the
+   subtraction yields `0.09999999999999998`, as `0.3 - 0.2` and `1.0 - 0.9`
+   both do. `reaches_rebalance_band` is the one place this is decided, and
+   `REBALANCE_BAND_TOLERANCE` bounds the slack at four units in the last place
+   of `1.0`. The alternative — a literal `>= 0.10` — would make canonical
+   exposure depend on floating-point representation.
+9. The exported lookup tables `SIGNAL_LABELS` and
+   `REQUIRED_HISTORY_BARS_BY_BENCHMARK` are read-only mappings. The benchmark
+   set is frozen and hash-bound, so its behaviour must not be changeable at
+   runtime without a code change.
+10. A non-null `ExposureState.last_risk_increase_time` must be a timestamp at
+    which the frozen rules permit a risk increase: 1h-aligned, UTC, at the
+    scheduled `00:00` anchor. Anything else is a state the rules cannot
+    produce, and it would give the 24h minimum-hold clock a noncanonical
+    origin, so it is rejected rather than accepted or normalised.
 
 Out of scope for this module, because they belong to later scheduled tasks:
 the backtester itself, PnL, turnover, cost application, performance metrics,
@@ -131,10 +150,11 @@ models, the research engine, the lockbox, the governor, and all Task 6+ work.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Final
 
 from aqt.data.bars import (
@@ -143,7 +163,6 @@ from aqt.data.bars import (
     BarSemanticsError,
     BarSeries,
     require_aligned_utc,
-    require_utc,
 )
 from aqt.features.factory import (
     ANNUALIZATION_HOURS,
@@ -165,6 +184,7 @@ __all__ = [
     "MINIMUM_HOLD_HOURS_FOR_RISK_INCREASE",
     "PROMOTION_BENCHMARK",
     "REBALANCE_BAND_ABSOLUTE",
+    "REBALANCE_BAND_TOLERANCE",
     "REQUIRED_HISTORY_BARS",
     "REQUIRED_HISTORY_BARS_BY_BENCHMARK",
     "SCHEDULED_DECISION_ANCHOR_HOUR_UTC",
@@ -189,6 +209,7 @@ __all__ = [
     "canonical_tsmom_exposure",
     "cash_exposure",
     "is_scheduled_decision",
+    "reaches_rebalance_band",
     "rebalance",
     "require_canonical_benchmark",
     "trend_reference",
@@ -207,6 +228,22 @@ MAX_EXPOSURE: Final[float] = 1.0
 
 REBALANCE_BAND_ABSOLUTE: Final[float] = 0.10
 """Shared 10 percentage-point rebalance band."""
+
+REBALANCE_BAND_TOLERANCE: Final[float] = 4.0 * math.ulp(MAX_EXPOSURE)
+"""Binary-representation slack allowed when comparing a change with the band.
+
+An exposure change of exactly 10 percentage points is frequently *not* the
+float `0.10`: `0.3 - 0.2` and `1.0 - 0.9` both evaluate to
+`0.09999999999999998`, because neither operand is exactly its decimal value.
+The error in such a difference is bounded by the rounding error of the two
+operands plus that of the subtraction, so for exposures in `[0, 1]` it cannot
+exceed a small multiple of `ulp(1.0)`; four units of last place covers it with
+room to spare. The slack is about `9e-16` in exposure units, roughly `1e-13`
+percentage points: many orders of magnitude below any change the frozen
+documents could intend to distinguish, so it widens no economically meaningful
+behaviour — it only stops the frozen band from depending on binary
+representation.
+"""
 
 MINIMUM_HOLD_HOURS_FOR_RISK_INCREASE: Final[int] = 24
 """Frozen minimum holding period before another risk increase, in hours."""
@@ -273,27 +310,44 @@ Recorded here as the predeclared comparator. Eligibility, promotion, and
 lockbox comparisons that use it belong to later scheduled tasks.
 """
 
-SIGNAL_LABELS: Final[dict[BenchmarkId, str]] = {
+_SIGNAL_LABELS: Final[dict[BenchmarkId, str]] = {
     BenchmarkId.CASH: "constant_zero_exposure",
     BenchmarkId.BUY_AND_HOLD: "constant_full_exposure",
     BenchmarkId.VOL_TARGET_BUY_AND_HOLD: "annualized_ewma_168h_forecast_vol",
     BenchmarkId.CANONICAL_TREND: "close_over_sma_4800_minus_1",
     BenchmarkId.CANONICAL_TSMOM: "trailing_180d_log_return",
 }
-"""What `BenchmarkSignal.signal` holds, per benchmark."""
 
-REQUIRED_HISTORY_BARS_BY_BENCHMARK: Final[dict[BenchmarkId, int]] = {
+SIGNAL_LABELS: Final[Mapping[BenchmarkId, str]] = MappingProxyType(_SIGNAL_LABELS)
+"""What `BenchmarkSignal.signal` holds, per benchmark.
+
+Exported read-only. The benchmark set and its definitions are frozen and
+hash-bound, so a caller must not be able to alter what an identically named
+benchmark reports without a code change; a mutable mapping would let the fixed
+identity drift at runtime. The backing `dict` is module-private and is never
+written after construction.
+"""
+
+_REQUIRED_HISTORY_BARS_BY_BENCHMARK: Final[dict[BenchmarkId, int]] = {
     BenchmarkId.CASH: 1,
     BenchmarkId.BUY_AND_HOLD: 1,
     BenchmarkId.VOL_TARGET_BUY_AND_HOLD: VOL_TARGET_HALF_LIFE_HOURS + 1,
     BenchmarkId.CANONICAL_TREND: TREND_SMA_WINDOW,
     BenchmarkId.CANONICAL_TSMOM: TSMOM_LOOKBACK_HOURS + 1,
 }
+
+REQUIRED_HISTORY_BARS_BY_BENCHMARK: Final[Mapping[BenchmarkId, int]] = MappingProxyType(
+    _REQUIRED_HISTORY_BARS_BY_BENCHMARK
+)
 """Contiguous 1h bars each benchmark needs through its decision bar.
 
 `CASH` and `BUY_AND_HOLD` need only the decision bar itself, because their
 exposure is constant; the bar is still required so the decision timestamp is
 resolved against real data rather than accepted blindly.
+
+Exported read-only, for the same reason as `SIGNAL_LABELS`: these warm-up
+requirements decide what history a benchmark refuses to run on, so mutating
+them at runtime would change validation behaviour without a code change.
 """
 
 REQUIRED_HISTORY_BARS: Final[int] = max(REQUIRED_HISTORY_BARS_BY_BENCHMARK.values())
@@ -343,6 +397,19 @@ def _require_exposure(value: float, name: str) -> float:
 def _clip_exposure(value: float) -> float:
     """Return `value` clipped into `[0, 1]`, as the frozen documents specify."""
     return min(MAX_EXPOSURE, max(MIN_EXPOSURE, _require_finite(value, "exposure")))
+
+
+def reaches_rebalance_band(exposure_change: float) -> bool:
+    """True when `exposure_change` reaches the frozen 10 percentage-point band.
+
+    This is the single place the band threshold is evaluated, so every caller
+    classifies the same change the same way. The comparison is representation-
+    aware: a change the frozen documents describe as exactly 10 percentage
+    points reaches the band even when binary floating point renders it as
+    `0.09999999999999998`. See `REBALANCE_BAND_TOLERANCE` for the bound.
+    """
+    magnitude = abs(_require_finite(exposure_change, "exposure_change"))
+    return magnitude >= REBALANCE_BAND_ABSOLUTE - REBALANCE_BAND_TOLERANCE
 
 
 def is_scheduled_decision(decision_time: datetime) -> bool:
@@ -553,6 +620,14 @@ class ExposureState:
     `last_risk_increase_time` is the decision timestamp of the most recent
     risk increase, or `None` when no risk increase has happened yet, in which
     case the 24h minimum hold cannot block anything.
+
+    A non-null `last_risk_increase_time` must be a timestamp at which a risk
+    increase could actually have occurred: a UTC bar close aligned to the 1h
+    interval, at the scheduled `00:00` UTC anchor. The frozen rules let risk
+    rise only at the scheduled decision, so any other value describes a state
+    the rules cannot reach, and `rebalance` would then run its 24h minimum-hold
+    clock off a noncanonical origin. Such a state is rejected rather than
+    normalised, so a reconstructed or resumed path cannot silently adopt it.
     """
 
     current_exposure: float
@@ -565,14 +640,19 @@ class ExposureState:
             _require_exposure(self.current_exposure, "current_exposure"),
         )
         if self.last_risk_increase_time is not None:
-            object.__setattr__(
-                self,
-                "last_risk_increase_time",
-                require_utc(
-                    self.last_risk_increase_time,
-                    field_name="last_risk_increase_time",
-                ),
+            moment = require_aligned_utc(
+                self.last_risk_increase_time,
+                BAR_INTERVAL,
+                field_name="last_risk_increase_time",
             )
+            if moment.hour != SCHEDULED_DECISION_ANCHOR_HOUR_UTC:
+                raise CanonicalBenchmarkError(
+                    f"last_risk_increase_time {moment.isoformat()} is not the "
+                    f"scheduled {SCHEDULED_DECISION_ANCHOR_HOUR_UTC:02d}:00 UTC "
+                    "decision; risk increases happen only there, so no risk "
+                    "increase can have occurred at this timestamp"
+                )
+            object.__setattr__(self, "last_risk_increase_time", moment)
 
 
 @dataclass(frozen=True, slots=True)
@@ -654,7 +734,7 @@ def rebalance(
             last_risk_increase_time=state.last_risk_increase_time,
         )
 
-    if abs(delta) < REBALANCE_BAND_ABSOLUTE:
+    if not reaches_rebalance_band(delta):
         return hold(
             f"|target - current| = {abs(delta)!r} is inside the "
             f"{REBALANCE_BAND_ABSOLUTE} rebalance band"

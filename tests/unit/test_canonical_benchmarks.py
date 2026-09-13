@@ -7,7 +7,7 @@ the implementation a second time.
 
 import math
 import statistics
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta, timezone
 from functools import cache
 
@@ -25,6 +25,7 @@ from aqt.benchmarks.canonical import (
     MINIMUM_HOLD_HOURS_FOR_RISK_INCREASE,
     PROMOTION_BENCHMARK,
     REBALANCE_BAND_ABSOLUTE,
+    REBALANCE_BAND_TOLERANCE,
     REQUIRED_HISTORY_BARS,
     REQUIRED_HISTORY_BARS_BY_BENCHMARK,
     SCHEDULED_DECISION_ANCHOR_HOUR_UTC,
@@ -48,6 +49,7 @@ from aqt.benchmarks.canonical import (
     canonical_tsmom_exposure,
     cash_exposure,
     is_scheduled_decision,
+    reaches_rebalance_band,
     rebalance,
     require_canonical_benchmark,
     trend_reference,
@@ -925,11 +927,11 @@ def test_intraday_risk_increase_is_refused() -> None:
 
 
 def test_intraday_reduction_across_the_band_is_allowed() -> None:
-    state = ExposureState(current_exposure=0.9, last_risk_increase_time=_ts(28))
+    state = ExposureState(current_exposure=0.9, last_risk_increase_time=_MIDNIGHT)
     decision = rebalance(state, 0.4, _INTRADAY)
     assert decision.action is RebalanceAction.INTRADAY_REDUCTION
     assert decision.new_exposure == 0.4
-    assert decision.last_risk_increase_time == _ts(28)
+    assert decision.last_risk_increase_time == _MIDNIGHT
 
 
 def test_intraday_reduction_inside_the_band_is_refused() -> None:
@@ -963,18 +965,135 @@ def test_a_change_just_inside_the_band_is_refused() -> None:
     assert decision.action is RebalanceAction.HOLD
 
 
-@pytest.mark.parametrize("elapsed_hours", [1, 12, 23])
-def test_minimum_hold_blocks_an_early_increase(elapsed_hours: int) -> None:
-    last = _MIDNIGHT - timedelta(hours=elapsed_hours)
-    state = ExposureState(current_exposure=0.3, last_risk_increase_time=last)
+# ---------------------------------------------------------------------------
+# Band threshold semantics (regression for the floating-point boundary)
+# ---------------------------------------------------------------------------
+
+_TENTHS: tuple[float, ...] = tuple(step / 10.0 for step in range(11))
+_ADJACENT_TENTHS: tuple[tuple[float, float], ...] = tuple(
+    (_TENTHS[index], _TENTHS[index + 1]) for index in range(len(_TENTHS) - 1)
+)
+
+
+def test_the_floating_point_band_hazard_still_exists() -> None:
+    """Guard the guard: some tenth steps really do render below `0.10`.
+
+    If binary floating point ever stopped misrendering these differences this
+    test would fail, signalling that the regressions below no longer exercise
+    the hazard they were written for.
+    """
+    misrendered = [
+        (lower, upper)
+        for lower, upper in _ADJACENT_TENTHS
+        if abs(upper - lower) < REBALANCE_BAND_ABSOLUTE
+    ]
+    assert misrendered, "a literal >= 0.10 comparison would now be safe"
+
+
+@pytest.mark.parametrize(("lower", "upper"), _ADJACENT_TENTHS)
+def test_every_adjacent_tenth_step_increase_reaches_the_band(
+    lower: float, upper: float
+) -> None:
+    decision = rebalance(ExposureState(current_exposure=lower), upper, _MIDNIGHT)
+    assert decision.action is RebalanceAction.SCHEDULED_INCREASE
+    assert decision.new_exposure == upper
+
+
+@pytest.mark.parametrize(("lower", "upper"), _ADJACENT_TENTHS)
+@pytest.mark.parametrize("hour", [24, 29])
+def test_every_adjacent_tenth_step_reduction_reaches_the_band(
+    lower: float, upper: float, hour: int
+) -> None:
+    moment = _ts(hour)
+    decision = rebalance(ExposureState(current_exposure=upper), lower, moment)
+    expected = (
+        RebalanceAction.SCHEDULED_REDUCTION
+        if moment.hour == SCHEDULED_DECISION_ANCHOR_HOUR_UTC
+        else RebalanceAction.INTRADAY_REDUCTION
+    )
+    assert decision.action is expected
+    assert decision.new_exposure == lower
+
+
+def test_the_representable_neighbour_just_below_the_band_reaches_it() -> None:
+    """One ULP below `0.10` is `0.10` as far as the frozen band is concerned."""
+    target = math.nextafter(REBALANCE_BAND_ABSOLUTE, 0.0)
+    decision = rebalance(ExposureState(current_exposure=0.0), target, _MIDNIGHT)
+    assert target < REBALANCE_BAND_ABSOLUTE
+    assert decision.action is RebalanceAction.SCHEDULED_INCREASE
+
+
+def test_the_representable_neighbour_just_above_the_band_reaches_it() -> None:
+    target = math.nextafter(REBALANCE_BAND_ABSOLUTE, 1.0)
+    decision = rebalance(ExposureState(current_exposure=0.0), target, _MIDNIGHT)
+    assert target > REBALANCE_BAND_ABSOLUTE
+    assert decision.action is RebalanceAction.SCHEDULED_INCREASE
+
+
+def test_a_change_clear_of_the_band_tolerance_is_refused() -> None:
+    """The slack is representation noise only; a real shortfall still holds."""
+    target = REBALANCE_BAND_ABSOLUTE - 1e-12
+    decision = rebalance(ExposureState(current_exposure=0.0), target, _MIDNIGHT)
+    assert decision.action is RebalanceAction.HOLD
+    assert decision.new_exposure == 0.0
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        REBALANCE_BAND_ABSOLUTE,
+        0.3 - 0.2,
+        0.2 - 0.3,
+        1.0 - 0.9,
+        0.7 - 0.6,
+        0.5,
+        -0.5,
+        1.0,
+    ],
+)
+def test_reaches_rebalance_band_accepts_changes_at_or_past_the_band(
+    change: float,
+) -> None:
+    assert reaches_rebalance_band(change) is True
+    assert reaches_rebalance_band(-change) is True
+
+
+@pytest.mark.parametrize("change", [0.0, 0.09, -0.09, 1e-9, 0.05, -0.0999])
+def test_reaches_rebalance_band_refuses_changes_inside_the_band(
+    change: float,
+) -> None:
+    assert reaches_rebalance_band(change) is False
+
+
+@pytest.mark.parametrize("change", [math.nan, math.inf, -math.inf])
+def test_reaches_rebalance_band_rejects_a_nonfinite_change(change: float) -> None:
+    with pytest.raises(CanonicalBenchmarkError, match="finite"):
+        reaches_rebalance_band(change)
+
+
+def test_rebalance_band_tolerance_is_representation_noise_only() -> None:
+    assert REBALANCE_BAND_TOLERANCE == 4.0 * math.ulp(MAX_EXPOSURE)
+    assert 0.0 < REBALANCE_BAND_TOLERANCE < 1e-14
+
+
+def test_minimum_hold_blocks_a_second_increase_at_the_same_decision() -> None:
+    """Zero elapsed hours is the only reachable state the 24h hold can block.
+
+    Risk rises only at the 00:00 UTC scheduled decision, so a valid
+    `last_risk_increase_time` is always a midnight and the gap to any later
+    scheduled decision is a whole multiple of 24h. The one shorter gap the
+    rules can produce is a second increase attempt at the very decision that
+    already raised risk, which is exactly what a re-applied `next_state` does.
+    """
+    state = ExposureState(current_exposure=0.3, last_risk_increase_time=_MIDNIGHT)
     decision = rebalance(state, 0.9, _MIDNIGHT)
     assert decision.action is RebalanceAction.HOLD
     assert decision.new_exposure == 0.3
     assert "minimum" in decision.reason
-    assert decision.last_risk_increase_time == last
+    assert decision.last_risk_increase_time == _MIDNIGHT
 
 
-@pytest.mark.parametrize("elapsed_hours", [24, 25, 48, 1000])
+@pytest.mark.parametrize("elapsed_hours", [24, 48, 72, 1008])
 def test_minimum_hold_permits_a_later_increase(elapsed_hours: int) -> None:
     last = _MIDNIGHT - timedelta(hours=elapsed_hours)
     state = ExposureState(current_exposure=0.3, last_risk_increase_time=last)
@@ -985,12 +1104,12 @@ def test_minimum_hold_permits_a_later_increase(elapsed_hours: int) -> None:
 
 
 def test_minimum_hold_never_blocks_a_reduction() -> None:
-    last = _MIDNIGHT - timedelta(hours=1)
-    state = ExposureState(current_exposure=0.9, last_risk_increase_time=last)
+    """The hold is active (zero elapsed) yet a reduction still goes through."""
+    state = ExposureState(current_exposure=0.9, last_risk_increase_time=_MIDNIGHT)
     decision = rebalance(state, 0.2, _MIDNIGHT)
     assert decision.action is RebalanceAction.SCHEDULED_REDUCTION
     assert decision.new_exposure == 0.2
-    assert decision.last_risk_increase_time == last
+    assert decision.last_risk_increase_time == _MIDNIGHT
 
 
 def test_a_reduction_does_not_restart_the_hold_clock() -> None:
@@ -1022,7 +1141,7 @@ def test_hold_reports_the_unchanged_exposure_and_target() -> None:
 
 
 def test_rebalance_rejects_a_future_last_risk_increase() -> None:
-    state = ExposureState(current_exposure=0.5, last_risk_increase_time=_ts(100))
+    state = ExposureState(current_exposure=0.5, last_risk_increase_time=_ts(96))
     with pytest.raises(CanonicalBenchmarkError, match="after the decision"):
         rebalance(state, 1.0, _ts(48))
 
@@ -1091,5 +1210,114 @@ def test_walking_a_benchmark_obeys_the_shared_rules(bench: BenchmarkId) -> None:
             increases.append(decision.decision_time)
         elif decision.new_exposure < state.current_exposure:
             drop = state.current_exposure - decision.new_exposure
-            assert drop >= REBALANCE_BAND_ABSOLUTE
+            assert reaches_rebalance_band(drop)
         state = decision.next_state
+
+
+# ---------------------------------------------------------------------------
+# Exported lookup tables are immutable
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    [SIGNAL_LABELS, REQUIRED_HISTORY_BARS_BY_BENCHMARK],
+    ids=["SIGNAL_LABELS", "REQUIRED_HISTORY_BARS_BY_BENCHMARK"],
+)
+def test_exported_lookup_mappings_reject_assignment(
+    mapping: Mapping[BenchmarkId, object],
+) -> None:
+    with pytest.raises(TypeError):
+        mapping[BenchmarkId.CASH] = "tampered"
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    [SIGNAL_LABELS, REQUIRED_HISTORY_BARS_BY_BENCHMARK],
+    ids=["SIGNAL_LABELS", "REQUIRED_HISTORY_BARS_BY_BENCHMARK"],
+)
+def test_exported_lookup_mappings_reject_deletion(
+    mapping: Mapping[BenchmarkId, object],
+) -> None:
+    with pytest.raises(TypeError):
+        del mapping[BenchmarkId.CASH]
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    [SIGNAL_LABELS, REQUIRED_HISTORY_BARS_BY_BENCHMARK],
+    ids=["SIGNAL_LABELS", "REQUIRED_HISTORY_BARS_BY_BENCHMARK"],
+)
+def test_exported_lookup_mappings_expose_no_mutators(
+    mapping: Mapping[BenchmarkId, object],
+) -> None:
+    for mutator in ("clear", "update", "pop", "popitem", "setdefault"):
+        assert not hasattr(mapping, mutator)
+
+
+def test_a_refused_signal_label_mutation_leaves_output_unchanged() -> None:
+    series = _base_series()
+    labels: Mapping[BenchmarkId, object] = SIGNAL_LABELS
+    before = benchmark_signal(BenchmarkId.CASH, series, _decision(_LAST))
+    with pytest.raises(TypeError):
+        labels[BenchmarkId.CASH] = "tampered"
+    after = benchmark_signal(BenchmarkId.CASH, series, _decision(_LAST))
+    assert before.signal_label == after.signal_label
+    assert after.signal_label == "constant_zero_exposure"
+
+
+def test_a_refused_warmup_mutation_leaves_validation_unchanged() -> None:
+    warmups: Mapping[BenchmarkId, object] = REQUIRED_HISTORY_BARS_BY_BENCHMARK
+    required = REQUIRED_HISTORY_BARS_BY_BENCHMARK[BenchmarkId.CANONICAL_TREND]
+    with pytest.raises(TypeError):
+        warmups[BenchmarkId.CANONICAL_TREND] = 1
+    assert REQUIRED_HISTORY_BARS_BY_BENCHMARK[BenchmarkId.CANONICAL_TREND] == required
+    with pytest.raises(CanonicalBenchmarkError, match="contiguous 1h bars"):
+        benchmark_signal(
+            BenchmarkId.CANONICAL_TREND, _base_series(), _decision(required - 2)
+        )
+
+
+# ---------------------------------------------------------------------------
+# `ExposureState.last_risk_increase_time` must be a reachable risk-increase time
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("hour", [0, 24, 48, 4800])
+def test_state_accepts_a_scheduled_midnight_risk_increase(hour: int) -> None:
+    state = ExposureState(current_exposure=0.5, last_risk_increase_time=_ts(hour))
+    assert state.last_risk_increase_time == _ts(hour)
+    assert state.last_risk_increase_time is not None
+    assert state.last_risk_increase_time.hour == SCHEDULED_DECISION_ANCHOR_HOUR_UTC
+
+
+@pytest.mark.parametrize("hour", [1, 5, 12, 23, 29])
+def test_state_rejects_a_risk_increase_away_from_the_scheduled_anchor(
+    hour: int,
+) -> None:
+    with pytest.raises(CanonicalBenchmarkError, match="scheduled 00:00 UTC"):
+        ExposureState(current_exposure=0.5, last_risk_increase_time=_ts(hour))
+
+
+@pytest.mark.parametrize("minutes", [1, 30, 59])
+def test_state_rejects_an_unaligned_risk_increase(minutes: int) -> None:
+    with pytest.raises(BarSemanticsError, match="aligned"):
+        ExposureState(
+            current_exposure=0.5,
+            last_risk_increase_time=_MIDNIGHT + timedelta(minutes=minutes),
+        )
+
+
+def test_state_rejects_a_non_utc_risk_increase() -> None:
+    elsewhere = _MIDNIGHT.astimezone(timezone(timedelta(hours=2)))
+    with pytest.raises(BarSemanticsError, match="zero UTC offset"):
+        ExposureState(current_exposure=0.5, last_risk_increase_time=elsewhere)
+
+
+@pytest.mark.parametrize("hour", list(range(24, 48)))
+def test_every_decision_hour_leaves_a_constructible_next_state(hour: int) -> None:
+    """`rebalance` can only ever record a scheduled 00:00 UTC risk increase."""
+    decision = rebalance(ExposureState(current_exposure=0.0), 1.0, _ts(hour))
+    recorded = decision.next_state.last_risk_increase_time
+    if recorded is not None:
+        assert recorded.hour == SCHEDULED_DECISION_ANCHOR_HOUR_UTC

@@ -1,5 +1,14 @@
 # Task 5 — canonical benchmarks: local implementation report
 
+> **Superseded in part.** This report describes commit `b98d9a0`. That state was
+> externally reviewed in `review/task5/SOL_HIGH_REVIEW.md`, which returned
+> LOCAL GATE BLOCKED on three blockers. The corrections are in
+> `review/task5/FIX_REPORT.md`; where the two disagree — the 10pp band
+> comparison, the mutability of the exported lookup mappings, the validation of
+> `ExposureState.last_risk_increase_time`, the conventions list, and the test
+> counts — the fix report is current. This report is left unedited as the
+> historical record of `b98d9a0`.
+
 Executed by Claude Opus 5 (`claude-opus-5`) on 2026-09-12 under explicit user
 authorization to implement **Task 5 only**. The authorization text is preserved
 verbatim at `review/task5/authorized-spec.txt`.
