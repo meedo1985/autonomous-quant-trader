@@ -1,0 +1,14 @@
+{
+  "requested_model": "claude-fable-5-1",
+  "observed_substantive_model": "claude-fable-5-1",
+  "reviewed_head": "3054805",
+  "session_id": "54a39571-4c85-45f4-a166-067c9feb1a04",
+  "is_error": false,
+  "terminal_reason": "completed",
+  "permission_denials": [],
+  "tools": ["Read", "Glob", "Grep"],
+  "commands_executed_by_reviewer": false,
+  "files_modified_by_reviewer": false,
+  "other_reported_model_usage": ["claude-haiku-4-5-20251001"],
+  "note": "Fable produced the substantive 35,740-token review. Haiku usage was auxiliary according to Claude response metadata. Local commands were run separately by the coordinator."
+}

@@ -3,13 +3,18 @@
 Executed by Claude Opus 5 (`claude-opus-5`) on 2026-09-12 under explicit user
 authorization to implement **Task 2 only**.
 
-**EXTERNAL REVIEW: DEFERRED UNTIL USAGE RESET.**
+**HISTORICAL STATUS AT IMPLEMENTATION: EXTERNAL REVIEW DEFERRED.**
 No independent-model review was run for Task 2. Task 2 is **not** externally
 reviewed, not adversarially reviewed, and not adjudicated. Nothing in this
 report should be read as an independent sign-off. `AGENTS.md` requires
 `task-gate-review`, `scientific-reproducibility-review`, `quant-code-review`
 and a `claude-adversarial-review` packet before a task is declared complete;
 those gates remain **OPEN** for Task 2 by the user's instruction.
+
+Later status: Claude Fable 5.1 independently reviewed the current Task 2
+snapshot at repository HEAD `3054805` and returned **PASS with no blocker**.
+See `review/FABLE_5_1_TASKS_2_3_4_REVIEW.md` and its model-proof JSON. The
+paragraph above is retained as the truthful historical status of this report.
 
 ## Scope
 

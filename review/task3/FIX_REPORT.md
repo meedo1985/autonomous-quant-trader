@@ -24,3 +24,9 @@ Final validation after user approval:
 All commands above rerun successfully; pytest112 passed in0.60s. Original verify_task1.py governance/configuration/boundaries assertions all ran, with only evidence output redirected to review/task3 and existing site-packages supplied to portable Python child processes. 20 direct/indirect mutation probes rejected, all controls passed; boundary-probes.json contains evidence. Task1 historical evidence untouched. No validation assertion changed.
 
 User approved SCIENTIFIC_DECISION.md explicitly. Astra focused correction review PASS (ASTRA_FINAL_REVIEW.md); all material code findings addressed. LOCAL GATE: PASS for Task3 cost-model scope. Prior Fable findings adjudicated; corrected snapshot has not been resent to Fable. Review packet prepared, Claude status NOT SENT for this snapshot. Scientific approval does not authorize live trading or any frozen amendment. Task4 not started. GitHub CI outcome will be checked after commit.
+
+Later status: Claude Fable 5.1 independently reviewed the corrected current
+Task 3 snapshot at repository HEAD `3054805` and returned **PASS**, confirming
+A1, A2, and A4 are closed and the approved scientific conventions are applied.
+See `review/FABLE_5_1_TASKS_2_3_4_REVIEW.md` and its model-proof JSON. The
+paragraph above is retained as the truthful status at correction time.

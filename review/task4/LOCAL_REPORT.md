@@ -4,7 +4,7 @@ Executed by Claude Opus 5 (`claude-opus-5`) on 2026-09-12 under explicit user
 authorization to implement **Task 4 only**. The authorization text is preserved
 verbatim at `review/task4/authorized-spec.txt`.
 
-**EXTERNAL REVIEW: DEFERRED UNTIL USAGE RESET.**
+**HISTORICAL STATUS AT IMPLEMENTATION: EXTERNAL REVIEW DEFERRED.**
 No independent-model review, adversarial review, or adjudication was run for
 Task 4. Task 4 is **not** externally reviewed. Nothing in this report is an
 independent sign-off; it is the implementing model's own account of its own
@@ -12,6 +12,12 @@ work. `AGENTS.md` requires `task-gate-review`,
 `scientific-reproducibility-review`, `quant-code-review` and a
 `claude-adversarial-review` packet before a task is declared complete; those
 gates remain **OPEN** for Task 4 by the user's instruction.
+
+Later status: Claude Fable 5.1 independently reviewed the current Task 4
+snapshot at repository HEAD `3054805` and returned **PASS on the code gate**.
+Scientific sign-off remains open only for the EMA/ATR convention disposition
+identified as `T4-Q1`. See `review/FABLE_5_1_TASKS_2_3_4_REVIEW.md` and its
+model-proof JSON. The paragraph above is retained as historical context.
 
 ## Scope
 
