@@ -1,0 +1,12 @@
+TASK 5 — CANONICAL BENCHMARKS
+
+Authorization: user requested continuation and delegated sequencing to ChatGPT.
+Scope is derived directly from frozen specs/CANONICAL_BENCHMARKS_v1.md, protocol benchmark identities, and existing Task 2–4 semantics.
+
+Implement pure deterministic canonical benchmark signal/exposure definitions only for CASH, BUY_AND_HOLD, VOL_TARGET_BUY_AND_HOLD, CANONICAL_TREND, and CANONICAL_TSMOM as specified by the frozen benchmark document and protocol. Reuse the existing bar, cost, and feature semantics where required; preserve scheduled decision/causal timing and spot exposure bounds.
+
+Required synthetic tests: fixed identities and parameters, causal decision timing, exposure bounds/no shorting, deterministic outputs, benchmark set completeness, insufficient/gapped history rejection, and no future leakage. Do not implement a full backtester or performance/promotion engine.
+
+Explicit exclusions: live/exchange/network access, Binance credentials, trading/execution, ML/LLM, research engine, lockbox, governor, allocation orchestration, full backtester, Task 6+.
+
+Frozen artifacts are immutable. Run applicable tests, lint, type, import-boundary, diff-check and frozen verification; record exact results in review/task5/LOCAL_REPORT.md. Include literal EXTERNAL REVIEW: DEFERRED UNTIL USAGE RESET. Commit/push only after validation; never modify frozen files or start Task 6.
