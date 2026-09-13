@@ -253,7 +253,39 @@ edge at all (only stdlib `types` and the already-imported `math` are used, and
 
 ### CI evidence for the corrected snapshot
 
-<!-- CI_RESULT -->
+| Run | Commit | Result |
+|---|---|---|
+| [34739517692](https://github.com/meedo1985/autonomous-quant-trader/actions/runs/34739517692) | `e9dd4d2` | **SUCCESS**, 26s, ubuntu-latest, Python 3.12 |
+
+Per-step output of run `34739517692`:
+
+| CI step | Exact output |
+|---|---|
+| `ruff format --check .` | `26 files already formatted` |
+| `ruff check .` | `All checks passed!` |
+| `mypy src` | `Success: no issues found in 20 source files` |
+| `python -m pytest` | `725 passed, 4 skipped in 7.92s` |
+| `lint-imports` | `Analyzed 20 files, 5 dependencies.` / `Contracts: 4 kept, 0 broken.` |
+
+Against run [34738503803](https://github.com/meedo1985/autonomous-quant-trader/actions/runs/34738503803)
+on the reviewed commit `b98d9a0` (`630 passed, 4 skipped`), the delta is
+**+95 passing cases**, with the skip count, source-file count (20), dependency
+count (5) and all four frozen import contracts unchanged. The +95 is the net of
+the added regressions (all ten adjacent tenth-step pairs as increases, the same
+ten as reductions at two decision hours, the neighbour and tolerance cases, the
+band-helper unit cases, six mapping-immutability cases, and the risk-increase
+timestamp cases) minus the three unreachable minimum-hold fixtures that were
+replaced by one reachable case. No test was deleted without a replacement that
+asserts the same rule on a state the frozen rules can actually produce.
+
+The only annotation is the runner-level `Node.js 20 is deprecated` notice for
+`actions/checkout@v4` and `actions/setup-python@v5`. It is infrastructure
+deprecation, unrelated to this change, and the CI workflow was not modified,
+because that is outside the authorized scope.
+
+Nothing here should be read as a claim that a check passed before its run
+reported success. Local execution of these five commands remains **blocked**;
+CI is the evidence.
 
 ## Status
 
