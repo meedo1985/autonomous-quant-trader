@@ -92,6 +92,7 @@ from reference._numpy_reference import (
     compounded_gross_equity,
     compounded_net_equity,
     increase_is_eligible,
+    net_equity_curve,
     reaches_rebalance_band,
     segment_pnl,
     segment_returns,
@@ -301,10 +302,9 @@ def test_the_reference_takes_exactly_the_oracle_decisions() -> None:
                 traded_exactly = segment.traded != _EXACT_ZERO
                 traded_in_float = path.action[index] is not Action.HOLD
                 assert traded_in_float == traded_exactly, f"{tag}[{index}]"
-                assert (
-                    int(path.execution_hour[index])
-                    == segment.execution_time.hour
-                ), f"{tag}[{index}]"
+                assert int(path.execution_hour[index]) == segment.execution_time.hour, (
+                    f"{tag}[{index}]"
+                )
 
 
 def test_every_band_decision_is_provably_robust() -> None:
@@ -527,9 +527,9 @@ def test_the_derived_bounds_are_not_vacuous() -> None:
             ):
                 bounded: Bounded = getattr(bounds, name)
                 assert bounded.error < probe, f"{tag}.{name}"
-                assert not bounded.contains(
-                    float(bounded.value) + float(probe)
-                ), f"{tag}.{name}"
+                assert not bounded.contains(float(bounded.value) + float(probe)), (
+                    f"{tag}.{name}"
+                )
 
 
 def test_binary_paths_agree_with_the_oracle_exactly() -> None:
@@ -552,8 +552,9 @@ def test_binary_paths_agree_with_the_oracle_exactly() -> None:
             ), tag
 
 
-def test_the_target_reference_matches_the_executed_state_oracle_on_binary_paths(
-) -> None:
+def test_the_target_reference_matches_the_executed_state_oracle_on_binary_paths() -> (
+    None
+):
     """On admissible binary paths the target ledger and the executed-state
     ledger describe the same path, so the reference is compared against both
     accepted Task 6 constructors, not only the sequential one."""
@@ -562,9 +563,7 @@ def test_the_target_reference_matches_the_executed_state_oracle_on_binary_paths(
         if not case.binary_executed or case.name.startswith("clipping"):
             continue
         for label, rate, stress in COST_CASES:
-            executed = build_ledger(
-                case.start, case.opens, case.targets, rate, stress
-            )
+            executed = build_ledger(case.start, case.opens, case.targets, rate, stress)
             target = _oracle(case, rate, stress)
             assert executed.segments == target.segments, f"{case.name}/{label}"
             path = _reference(case, rate, stress)
@@ -596,12 +595,26 @@ def test_zero_cost_leaves_net_exactly_equal_to_gross() -> None:
     for case in FIXTURES:
         path = _reference(case, _EXACT_ZERO, _EXACT_ONE)
         assert float(total_cost(path)) == 0.0, case.name
-        assert float(additive_net_pnl(path)) == float(
-            additive_gross_pnl(path)
-        ), case.name
+        assert float(additive_net_pnl(path)) == float(additive_gross_pnl(path)), (
+            case.name
+        )
         assert float(compounded_net_equity(path)) == float(
             compounded_gross_equity(path)
         ), case.name
+
+
+def test_compounded_cost_is_charged_before_the_following_return() -> None:
+    path = _reference(
+        fixture("binary.rising_then_falling.buy_and_hold"), FLOOR_RATE, _EXACT_ONE
+    )
+    curve = net_equity_curve(path)
+
+    assert float(path.cost[0]) > 0.0
+    assert float(curve.before[0]) == 1.0
+    assert float(curve.after_cost[0]) == 1.0 - float(path.cost[0])
+    assert float(curve.after_return[0]) == float(curve.after_cost[0]) * (
+        1.0 + float(path.exposure[0] * path.gross_return[0])
+    )
 
 
 def test_higher_cost_never_improves_net_performance() -> None:
@@ -628,9 +641,9 @@ def test_higher_cost_never_improves_net_performance() -> None:
             ), tag
         for lower, higher in zip(ordered, ordered[1:], strict=False):
             assert float(total_cost(higher)) >= float(total_cost(lower)), case.name
-            assert float(additive_net_pnl(higher)) <= float(
-                additive_net_pnl(lower)
-            ), case.name
+            assert float(additive_net_pnl(higher)) <= float(additive_net_pnl(lower)), (
+                case.name
+            )
             assert float(compounded_net_equity(higher)) <= float(
                 compounded_net_equity(lower)
             ), case.name
@@ -663,9 +676,9 @@ def test_the_leaking_signal_is_absurd_and_the_causal_control_is_not() -> None:
         assert not bool(np.any(leaking_pnl < 0.0)), grid
         assert bool(np.any(leaking_pnl > 0.0)), grid
         assert bool(np.any(causal_pnl < 0.0)), grid
-        assert float(additive_gross_pnl(causal)) < float(
-            additive_gross_pnl(leaking)
-        ), grid
+        assert float(additive_gross_pnl(causal)) < float(additive_gross_pnl(leaking)), (
+            grid
+        )
         assert float(compounded_gross_equity(causal)) < float(
             compounded_gross_equity(leaking)
         ), grid
@@ -842,8 +855,9 @@ def test_the_bound_derivation_refuses_an_undecidable_branch() -> None:
             "clip straddling 0",
         ),
         (
-            lambda: bounded_clip(RawBounded(_EXACT_ONE + Fraction(1, 10**6),
-                                            Fraction(1, 10**3))),
+            lambda: bounded_clip(
+                RawBounded(_EXACT_ONE + Fraction(1, 10**6), Fraction(1, 10**3))
+            ),
             "clip straddling 1",
         ),
     ):
