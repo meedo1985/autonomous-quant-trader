@@ -17,4 +17,3 @@ Claude Fable 5.1 was asked for a bounded decision. Its returned holdout/
 evaluation proposal was rejected because it assumed undeclared fields and
 crossed the protected validation/promotion boundary. The scope in
 `AUTHORIZED_SPEC.md` is the adopted decision.
-

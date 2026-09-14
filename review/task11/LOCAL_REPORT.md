@@ -24,7 +24,7 @@ All commands ran from the repository root with Python 3.12.10.
 
 - Focused metrics/import tests after review corrections: exit 0; 55 passed.
 - Full `python -m pytest -q`: exit 0; 1000 passed, 4 pre-existing skips.
-- Ruff check and format check after review corrections: exit 0; 54 files formatted.
+- Ruff check and format check after review corrections: exit 0; 55 files formatted.
 - mypy `src`: exit 0; 27 source files clean.
 - import-linter: exit 0; 4 contracts kept, 0 broken.
 - `git diff --check`: exit 0.

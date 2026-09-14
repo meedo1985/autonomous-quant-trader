@@ -39,4 +39,3 @@ Questions:
 Return stable finding IDs under BLOCKER, NON-BLOCKING, and QUESTION. For each
 finding name file/line, triggering scenario, evidence, impact, and the minimal
 correction or clarification. End with PASS or BLOCK. Do not modify files.
-
