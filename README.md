@@ -1,7 +1,7 @@
 # autonomous-quant-trader
 
 Scientifically defensible, reproducible, cost-aware crypto spot research.
-Current status: **Milestone 0.1 / Task 8 — production backtester accepted**.
+Current status: **Milestone 0.1 / Task 10 — deterministic preregistration registry implemented**.
 **NO EDGE FOUND (`NO_EDGE_FOUND`) is a valid result.**
 
 V1 is Binance Spot BTC/ETH research: no leverage, margin, futures, or
@@ -33,8 +33,8 @@ git diff --check
 ```
 
 Source lives in `src/aqt`. Implemented foundations cover bar semantics,
-costs, causal features, canonical benchmark definitions, and the deterministic
-production backtester.
+costs, causal features, canonical benchmark definitions, the deterministic
+production backtester, data/code identities, and tamper-evident preregistration.
 `core.paths.REPOSITORY_ROOT` describes this source checkout,
 not an installed wheel's data location. It performs no filesystem reads.
 Import contracts cover direct and indirect dependencies, including descendants.
@@ -50,6 +50,16 @@ bounds and comparison tests. Task 8 adds the pure production engine under
 `aqt.backtest.engine` and verifies it against both accepted reference layers.
 Delay stress remains explicitly rejected until pending-fill exposure semantics
 are bound. Evidence is in `review/task6/`, `review/task7/`, and `review/task8/`.
+
+## Identity and preregistration (Tasks 9–10)
+
+Task 9 records deterministic data manifests and clean Git source identity without
+binding a real experiment cycle. Task 10 adds frozen-schema-validated hypothesis and
+experiment records, deterministic full SHA-256 trial seeds, fixed grid enumeration,
+and a canonical hash-chained JSON Lines ledger with cross-process Windows locking.
+These layers record identities and facts only; they do not authorize trials, enforce
+budgets, read confirmation/lockbox data, compute metrics, or make promotion decisions.
+Evidence is in `review/task9/` and `review/task10/`.
 
 ## Bar semantics (Task 2)
 
