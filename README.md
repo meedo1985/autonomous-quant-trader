@@ -1,7 +1,7 @@
 # autonomous-quant-trader
 
 Scientifically defensible, reproducible, cost-aware crypto spot research.
-Current status: **Milestone 0.1 / Task 7 — NumPy reference accepted**.
+Current status: **Milestone 0.1 / Task 8 — production backtester accepted**.
 **NO EDGE FOUND (`NO_EDGE_FOUND`) is a valid result.**
 
 V1 is Binance Spot BTC/ETH research: no leverage, margin, futures, or
@@ -33,20 +33,23 @@ git diff --check
 ```
 
 Source lives in `src/aqt`. Implemented foundations cover bar semantics,
-costs, causal features, and canonical benchmark definitions.
+costs, causal features, canonical benchmark definitions, and the deterministic
+production backtester.
 `core.paths.REPOSITORY_ROOT` describes this source checkout,
 not an installed wheel's data location. It performs no filesystem reads.
 Import contracts cover direct and indirect dependencies, including descendants.
 Research-agent code belongs under `aqt.research`; any future agent package
 elsewhere must be added to the live-path forbidden contracts before use.
 
-## Backtester trust suite (Tasks 6–7)
+## Backtester trust suite and production engine (Tasks 6–8)
 
 Task 6 adds the frozen exact-arithmetic oracle and leakage canaries under
 `tests/oracles/` and `tests/canaries/`. Task 7 adds the independent NumPy
 `float64` reference under `tests/reference/`, with derived numerical error
-bounds and comparison tests. The production engine remains deferred to its
-scheduled task. Evidence is in `review/task6/` and `review/task7/`.
+bounds and comparison tests. Task 8 adds the pure production engine under
+`aqt.backtest.engine` and verifies it against both accepted reference layers.
+Delay stress remains explicitly rejected until pending-fill exposure semantics
+are bound. Evidence is in `review/task6/`, `review/task7/`, and `review/task8/`.
 
 ## Bar semantics (Task 2)
 
