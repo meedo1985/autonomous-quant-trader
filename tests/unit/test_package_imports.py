@@ -19,6 +19,8 @@ import pytest
         "aqt.benchmarks",
         "aqt.validation",
         "aqt.backtest",
+        "aqt.metrics",
+        "aqt.metrics.descriptive",
         "aqt.allocation",
         "aqt.governor",
         "aqt.execution",
