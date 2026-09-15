@@ -10,9 +10,9 @@
   including a conventional i.i.d. method, requires complete independent
   calibration. The owner must select a calibrated active path or keep DSR
   diagnostic-only with promotion blocked.
-- **BLOCKER — ETH 2x rule requires an explicit owner decision.** The proposal
-  makes the stricter ETH stress requirement conditional, so it cannot be treated
-  as active until accepted in the signed decision record.
+- **RESOLVED — ETH modeled-cost stress.** The owner rejected the proposed ETH
+  2.0x cost-stress gate and preserved the frozen 1.0x fee/spread/slippage rule.
+  Exposure remains in `[0,1]`; neither multiplier means leverage.
 - **NON-BLOCKING — Versioned artifacts are illustrative only.** The proposed
   v1.1 names must be replaced by the human-authored final paths and included in
   the new manifest and sidecars; v1.0 hashes must remain unchanged.
@@ -26,9 +26,9 @@
 - **BLOCKER — Final specification/code/hash migration is unresolved.** A changed
   convention binding changes deterministic bootstrap streams and therefore needs
   a reviewed implementation binding and refreshed reference vectors.
-- **QUESTION — C1 status must be recorded.** The owner checklist asks whether
-  C1 started; the signed decision must state its outcome and confirm no result is
-  being carried retroactively into C2.
+- **RESOLVED — C1 status.** Repository inspection found no evaluated-trial,
+  lockbox, promotion, or cycle-outcome artifact, and the owner confirmed C1 never
+  started. No C1 result may be carried retroactively into C2.
 
 ## Constitution check
 

@@ -9,6 +9,10 @@
 - Every task finishes with applicable tests, lint, type, and import-boundary checks. Record exact commands and results; justify N/A checks. Failed or unavailable mandatory validation blocks completion.
 - Invoke `task-gate-review` at every task end, before declaring a major task complete. For scientific/quant tasks also invoke `scientific-reproducibility-review` and `quant-code-review`.
 - After local review passes, prepare a `claude-adversarial-review` packet. Claude is an independent adversarial reviewer, not an authority; adjudicate feedback with evidence instead of applying it blindly. Use human relay when no authorized connection exists.
+- Invoke `binance-quant-review` for changes involving Binance Spot market data,
+  exchange rules, orders, fills, fees, reconciliation, credentials, or live-path
+  safety. Keep the review read-only and verify changing exchange behavior against
+  official Binance sources when authorized.
 - Architecture, protocol, statistical, safety, or frozen-governance changes from review are proposals, never automatic edits. Follow the applicable owner/human approval process. Constitution section 16 requires different-model and human PR review before merging its enumerated protected components.
 - Repository skills live in `.agents/skills/<name>/SKILL.md`. Read the relevant skill before using it; if discovery has not refreshed, open that file directly.
 - Consider new external skills only when needed: inspect source, provenance, permissions, dependencies, and relevance first. Prefer OpenAI-maintained skills. Do not install arbitrary third-party skills automatically; stop and report any proposed third-party skill before installation.

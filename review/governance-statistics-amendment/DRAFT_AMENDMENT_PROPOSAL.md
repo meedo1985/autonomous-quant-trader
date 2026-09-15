@@ -148,11 +148,12 @@ therefore keeps promotion blocked; it does not remove or waive the gate.
   `<=0.30`; ESS at `>=120`; fold wins require strict positive paired improvement
   and the fraction remains `>=0.60`.
 - Drawdown passes when candidate minus comparison MDD is `<=0.05`.
-- ETH 1x sanity requires positive paired improvement and the same drawdown rule.
-- Proposed 2x stress reruns both candidate and comparison on both assets. BTC
-  requires positive paired improvement, positive net return, and drawdown pass;
-  ETH requires positive paired improvement and drawdown pass at 2x. This ETH 2x
-  tightening needs explicit owner acceptance.
+- ETH sanity retains the frozen 1.0x modeled fee/spread/slippage cost multiplier,
+  requiring positive paired improvement and the same drawdown rule. This is a
+  cost-stress multiplier, not leverage; spot exposure remains in `[0,1]`.
+- BTC retains the frozen 2.0x modeled-cost stress requirement. Extending that
+  stress gate to ETH was considered and rejected by the owner on 2026-09-15;
+  it is a historical alternative and is not part of this proposal.
 
 ### Lockbox prediction distribution
 
@@ -182,17 +183,12 @@ fold-win fraction 0.60; null percentile 0.95; or 81 trials per family.
 
 ## Blockers before activation
 
-The owner must choose a candidate DSR path for calibration:
+The owner selected diagnostic-only DSR. Promotion therefore remains blocked
+until a separately named complete DSR procedure is calibrated, independently
+reviewed, and accepted through a later formal decision.
 
-1. calibrate a separately named conventional i.i.d. procedure, including its
-   complete selection-bias and finite-sample behavior;
-2. calibrate and approve a separately named dependence-aware procedure;
-3. keep DSR diagnostic-only and keep promotion blocked until a validated method
-   exists.
-
-The owner must also explicitly accept or reject the ETH 2x tightening. Rejection
-preserves the frozen ETH 1x rule; acceptance adds ETH 2x alongside ETH 1x. No AI
-should make either decision without independent scientific review.
+The owner rejected the historical ETH 2.0x modeled-cost alternative. The frozen
+ETH 1.0x modeled-cost sanity rule remains unchanged; no leverage is introduced.
 
 Before activation, the lockbox estimand and the final specification/code/hash
 migration must also be frozen and independently verified as described above.
