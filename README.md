@@ -1,7 +1,7 @@
 # autonomous-quant-trader
 
 Scientifically defensible, reproducible, cost-aware crypto spot research.
-Current status: **Milestone 0.1 / Task 11 — deterministic descriptive metrics implemented**.
+Current status: **Milestone 0.1 / Task 12 — inactive deterministic statistical primitives implemented**.
 **NO EDGE FOUND (`NO_EDGE_FOUND`) is a valid result.**
 
 V1 is Binance Spot BTC/ETH research: no leverage, margin, futures, or

@@ -21,6 +21,7 @@ import pytest
         "aqt.backtest",
         "aqt.metrics",
         "aqt.metrics.descriptive",
+        "aqt.metrics.statistics",
         "aqt.allocation",
         "aqt.governor",
         "aqt.execution",
