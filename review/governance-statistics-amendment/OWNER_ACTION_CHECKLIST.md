@@ -14,6 +14,12 @@ Status: owner choices recorded; scientific and formal activation work remains.
       prediction statistic, quantiles, and deterministic reference vectors.
 - [ ] Review and accept the final specification/code/hash migration, including
       refreshed bootstrap reference vectors.
+
+Preparation references:
+
+- `DSR_CALIBRATION_PLAN.md` — proposed calibration evidence; no method selected.
+- `LOCKBOX_PREDICTION_PROPOSAL.md` — proposed joint-leg estimand; not accepted.
+- `ASTRA_DESIGN_REVIEW.md` and `BINANCE_LOCKBOX_REVIEW.md` — independent reviews.
 - [ ] Obtain different-model and human PR review for later validation-engine and
       protocol-enforcement code under Constitution section 16.
 - [ ] Have a human author the final versioned statistical spec and C2 protocol.
