@@ -1,5 +1,25 @@
 # Codex collaboration
 
+## Default coding skill
+
+- Use `ponytail` at **full** intensity for coding, debugging, refactoring, and
+  design tasks. Read its installed `SKILL.md` before applying it; look in
+  `$CODEX_HOME/skills/ponytail/` (default `~/.codex/skills/ponytail/`).
+- Ponytail is the default implementation style: understand the code first,
+  reuse existing solutions, prefer the standard library, and make the smallest
+  complete change. It does not replace any project rule or required review below.
+- Preserve all required tests, scientific checks, error handling, frozen
+  artifacts, data-access boundaries, and task scope. Ponytail's test minimum
+  and brevity preferences never reduce these requirements or requested work.
+- Use `ponytail-review` for complexity review, `find-skills` for requested skill
+  discovery, `gh-fix-ci` for GitHub Actions failures, and
+  `security-best-practices` when security guidance or review is requested.
+- Respect explicit user changes to Ponytail mode. If a skill is absent, report
+  it; see `review/skill-setup/SETUP_AND_REVIEW.md` for the inspected sources and
+  installation commands. Installation does not authorize trading or promotion.
+
+## Project requirements
+
 - Preserve frozen v1.0 artifacts in `docs/`, `protocols/`, `schemas/`, and `specs/`, plus `FROZEN_HASHES.json` and every SHA-256 sidecar. Never casually edit, normalize, regenerate, or update hashes to hide changes. Amendments require the Constitution's formal process; AI cannot author, merge, activate, or self-approve them.
 - Before scientific implementation, read `docs/RESEARCH_CONSTITUTION.md`, `protocols/protocol_v1.yaml`, and the applicable frozen specifications. These instructions and skills do not amend governance.
 - No secrets in the repository, logs, prompts, artifacts, or tests. No Binance credentials during Milestone 0.1.
