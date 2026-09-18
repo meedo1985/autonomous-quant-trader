@@ -24,6 +24,8 @@ Preparation references:
   was superseded as an execution plan after reconciliation; do not run it.
 - `DSR_CALIBRATION_RECONCILIATION.md` — current unsigned decision record and
   no-go recommendation for simulation.
+- [x] Owner selected `DEFER` for the narrow DSR baseline on 2026-09-18; no
+      calibration engine or simulation is authorized.
 - [ ] Obtain different-model and human PR review for later validation-engine and
       protocol-enforcement code under Constitution section 16.
 - [ ] Have a human author the final versioned statistical spec and C2 protocol.

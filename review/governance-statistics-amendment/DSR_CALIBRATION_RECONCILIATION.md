@@ -4,6 +4,7 @@
 **Status:** AI recommendation only; human/statistician acceptance pending
 **Simulation decision:** **NO-GO**
 **Governed status:** DSR remains diagnostic-only; promotion remains blocked
+**Owner decision:** **DEFER** the narrow baseline experiment (2026-09-18)
 
 ## Inputs reconciled
 
@@ -152,6 +153,9 @@ Owner/statistician name and signature:
 Date/time UTC:
 Commit:
 ```
+
+The owner selected `DEFER` in the project conversation on 2026-09-18. The other
+fields remain intentionally incomplete because no simulation is authorized.
 
 Until every applicable field is completed through the required human process,
 the decision is NO-GO. Do not implement a calibration engine, run simulations,
