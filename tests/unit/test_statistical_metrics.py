@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import random
+import sys
 from dataclasses import FrozenInstanceError, asdict, replace
 from datetime import UTC, datetime, timedelta, timezone
 from fractions import Fraction
@@ -484,6 +485,8 @@ def test_rejection_sampling_and_restart_wraparound(monkeypatch):
         {"evaluation_window_id": "x"},
         {"evaluation_window_id": "[1,2]"},
         {"evaluation_window_id": '["2020-01-02T00:00:00Z","2020-01-01T00:00:00Z"]'},
+        {"evaluation_window_id": '["2020-01-01T12:00:00Z","2020-02-02T00:00:00Z"]'},
+        {"evaluation_window_id": '["2020-01-01T00:00:00Z", "2020-02-02T00:00:00Z"]'},
     ],
 )
 def test_bad_stream_identity(change):
@@ -587,9 +590,29 @@ def test_real_interval_rerun_no_mutation_global_rng_or_io(monkeypatch):
         asdict(second), sort_keys=True, allow_nan=False
     )
     assert random.getstate() == rng and values == before
-    assert "3.12" in first.python_runtime
+    assert first.python_runtime == f"{sys.implementation.name} {sys.version}"
     with pytest.raises(FrozenInstanceError):
         first.lower = 1
+
+
+def test_real_non_degenerate_interval_regression():
+    candidate = tuple(
+        (((index * 7) % 19) - 9) / 1000 + ((index % 3) - 1) / 10000
+        for index in range(32)
+    )
+    benchmark = tuple(
+        (((index * 5) % 17) - 8) / 1200 + ((index % 4) - 1.5) / 12000
+        for index in range(32)
+    )
+
+    result = s.paired_sharpe_improvement_interval(candidate, benchmark, stream=stream())
+
+    assert result.available and not result.invalid_replicates
+    assert result.block.value == pytest.approx(3.364204950824314)
+    assert result.block.cutoff == 1 and result.block.bandwidth == 2
+    assert result.point_estimate == pytest.approx(-0.5093860335740883)
+    assert result.lower == pytest.approx(-5.239570989138896)
+    assert result.upper == pytest.approx(4.22066064884921)
 
 
 def test_invalid_original_executes_no_replicates(monkeypatch):
