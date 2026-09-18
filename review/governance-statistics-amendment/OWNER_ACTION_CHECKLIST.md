@@ -20,6 +20,10 @@ Preparation references:
 - `DSR_CALIBRATION_PLAN.md` — proposed calibration evidence; no method selected.
 - `LOCKBOX_PREDICTION_PROPOSAL.md` — proposed joint-leg estimand; not accepted.
 - `ASTRA_DESIGN_REVIEW.md` and `BINANCE_LOCKBOX_REVIEW.md` — independent reviews.
+- `CALIBRATION_PREREGISTRATION_DRAFT.md` — proposed numerical registration that
+  was superseded as an execution plan after reconciliation; do not run it.
+- `DSR_CALIBRATION_RECONCILIATION.md` — current unsigned decision record and
+  no-go recommendation for simulation.
 - [ ] Obtain different-model and human PR review for later validation-engine and
       protocol-enforcement code under Constitution section 16.
 - [ ] Have a human author the final versioned statistical spec and C2 protocol.
