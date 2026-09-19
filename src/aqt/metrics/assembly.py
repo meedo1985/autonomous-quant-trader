@@ -111,7 +111,11 @@ def assemble_inactive_paired_evaluation(
     stream: ReplicateStream | None = None,
 ) -> InactivePairedEvaluation:
     """Return an inactive in-memory view over existing production primitives."""
-    if isinstance(horizon_hours, bool) or horizon_hours not in _HORIZONS:
+    if (
+        isinstance(horizon_hours, bool)
+        or not isinstance(horizon_hours, int)
+        or horizon_hours not in _HORIZONS
+    ):
         raise AssemblyError("INVALID_HORIZON", "horizon_hours must be 24, 72, or 168")
     if identities is not None and not isinstance(identities, OpaqueIdentities):
         raise AssemblyError("INVALID_IDENTITY", "OpaqueIdentities required")

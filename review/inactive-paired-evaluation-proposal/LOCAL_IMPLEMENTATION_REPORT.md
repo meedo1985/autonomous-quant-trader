@@ -20,8 +20,8 @@ the production dependency the assembler is explicitly authorized to consume.
 
 ## Validation
 
-- Focused tests after adjudication: **8 passed in 0.60s**.
-- Full suite after adjudication: **1105 passed, 4 skipped in 75.66s**.
+- Focused tests after Astra adjudication: **12 passed in 0.59s**.
+- Full suite after Astra adjudication: **1109 passed, 4 skipped in 79.19s**.
 - Ruff format: **60 files already formatted**.
 - Ruff check: **all checks passed**.
 - strict mypy: **29 source files clean**.
@@ -45,6 +45,9 @@ the production dependency the assembler is explicitly authorized to consume.
   acceptance question remains.
 - `claude-adversarial-review`: observed model `claude-opus-5`; B1 and all useful
   advisories were adjudicated in `IMPLEMENTATION_ADJUDICATION.md`.
+
+- Astra PR review: gpt-6-astra requested stronger ESS attribution and
+  metamorphic evidence; both findings were corrected, revalidated, and approved.
 
 The implementation remains inactive. Constitution section 16 requires a human
 pull-request review before merge. No claim of edge, Binance parity, research

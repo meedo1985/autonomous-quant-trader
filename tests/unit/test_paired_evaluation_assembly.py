@@ -29,6 +29,7 @@ from aqt.metrics.descriptive import MetricsError, describe
 from aqt.metrics.statistics import (
     CONVENTION_DOCUMENT_SHA256,
     ReplicateStream,
+    effective_sample_size,
     paired_daily_returns,
     paired_sharpe_improvement_interval,
     paired_sharpe_statistics,
@@ -308,3 +309,72 @@ def test_stream_path_uses_no_selected_external_entry_points(
     assert result.interval_absence_reason is None
     assert result.interval.stream == stream
     assert random.getstate() == rng
+
+
+def test_ess_results_are_bound_to_the_correct_leg() -> None:
+    candidate = _result(tuple(0.001 * index for index in range(8)))
+    benchmark = _result((0.0,) * 8)
+    result = assemble_inactive_paired_evaluation(candidate, benchmark, horizon_hours=24)
+    daily = paired_daily_returns(candidate, benchmark)
+
+    assert result.candidate_effective_sample_size == effective_sample_size(
+        daily.candidate.returns, horizon_hours=24
+    )
+    assert result.benchmark_effective_sample_size == effective_sample_size(
+        daily.benchmark.returns, horizon_hours=24
+    )
+    assert result.candidate_effective_sample_size.method == "NEWEY_WEST"
+    assert result.benchmark_effective_sample_size.method == "HORIZON_FALLBACK"
+    assert (
+        result.candidate_effective_sample_size != result.benchmark_effective_sample_size
+    )
+
+
+def test_candidate_mutation_cannot_change_benchmark_diagnostics() -> None:
+    benchmark = _result((0.002, 0.004, -0.001, 0.003))
+    baseline = assemble_inactive_paired_evaluation(
+        _result((0.01, -0.02, 0.03, 0.005)), benchmark, horizon_hours=24
+    )
+    mutated = assemble_inactive_paired_evaluation(
+        _result((0.04, -0.01, 0.02, -0.005)), benchmark, horizon_hours=24
+    )
+
+    assert baseline.benchmark_descriptive == mutated.benchmark_descriptive
+    assert (
+        baseline.benchmark_effective_sample_size
+        == mutated.benchmark_effective_sample_size
+    )
+    assert baseline.candidate_descriptive != mutated.candidate_descriptive
+    assert baseline.paired_statistics != mutated.paired_statistics
+
+
+def test_future_suffix_cannot_change_a_prefix_evaluation() -> None:
+    candidate_days = (0.01, -0.02, 0.03, 0.005)
+    benchmark_days = (0.002, 0.004, -0.001, 0.003)
+    baseline = assemble_inactive_paired_evaluation(
+        _result(candidate_days), _result(benchmark_days), horizon_hours=72
+    )
+    extended_candidate = _result(candidate_days + (0.5, -0.4))
+    extended_benchmark = _result(benchmark_days + (-0.3, 0.2))
+    prefix_segments = 24 * len(candidate_days)
+    replayed_prefix = assemble_inactive_paired_evaluation(
+        replace(
+            extended_candidate, segments=extended_candidate.segments[:prefix_segments]
+        ),
+        replace(
+            extended_benchmark, segments=extended_benchmark.segments[:prefix_segments]
+        ),
+        horizon_hours=72,
+    )
+
+    assert replayed_prefix == baseline
+
+
+def test_invalid_horizon_types_fail_with_stable_assembly_error() -> None:
+    for value in (24.0, [], None):
+        with pytest.raises(AssemblyError, match="INVALID_HORIZON"):
+            assemble_inactive_paired_evaluation(
+                _result((0.01, 0.02)),
+                _result((0.0, 0.01)),
+                horizon_hours=value,  # type: ignore[arg-type]
+            )
