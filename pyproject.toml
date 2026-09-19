@@ -77,3 +77,23 @@ type = "forbidden"
 source_modules = ["aqt.allocation", "aqt.governor", "aqt.execution", "aqt.monitoring"]
 forbidden_modules = ["aqt.research"]
 allow_indirect_imports = false
+
+[[tool.importlinter.contracts]]
+name = "Inactive paired evaluation cannot reach governed or external workflows"
+type = "forbidden"
+source_modules = ["aqt.metrics.assembly"]
+forbidden_modules = [
+    "aqt.core.code_identity",
+    "aqt.data.manifest",
+    "aqt.core.ledger",
+    "aqt.core.preregistration",
+    "aqt.research",
+    "aqt.validation",
+    "aqt.allocation",
+    "aqt.governor",
+    "aqt.execution",
+    "aqt.lockbox_eval",
+    "aqt.models",
+    "aqt.monitoring",
+]
+allow_indirect_imports = false

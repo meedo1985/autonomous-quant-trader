@@ -49,7 +49,7 @@ would not recompute, repair, reinterpret, or silently default their inputs.
 - No protocol-threshold comparison, including 0.0, 120, 0.95, 0.30, or 0.60.
 - No trial-seed derivation or `ReplicateStream` construction. An absent stream
   makes the interval explicitly unavailable and is not an error.
-- No serialization, mapping export, hashing, persistence, filesystem,
+- No module-provided serialization, mapping export, hashing, persistence, filesystem,
   environment, process, network, exchange, credential, or hidden-data access.
 - No import from code identity, manifests, ledgers, preregistration, research,
   governor, execution, lockbox, or model modules.
