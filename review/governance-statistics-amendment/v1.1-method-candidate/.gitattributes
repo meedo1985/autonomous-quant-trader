@@ -1,0 +1,25 @@
+# Packaging integrity only. This file changes no scientific content, no review
+# verdict, no source inventory, no recommendation, and no governance status.
+#
+# MANIFEST.sha256 records SHA-256 over the raw bytes of this directory's Markdown
+# files with LF line endings. Under Windows Git with core.autocrlf=true, a fresh
+# checkout would otherwise rewrite those files with CRLF line endings, changing
+# every byte count and invalidating every manifest entry even though no content
+# changed. The rules below pin LF in the index and in the working tree so the
+# manifest stays verifiable on every platform.
+#
+# Added on owner instruction when this directory was committed, applying the
+# remedy README.md section 6.2 prescribed. It mirrors
+# ../external-review-packet/.gitattributes, which is the existing precedent.
+#
+# The MANIFEST.sha256 rule below is redundant with the repository-root
+# `*.sha256 -text` rule and is kept only for parity with that precedent, so that
+# the two packets can be compared line for line. Recorded as redundant rather
+# than omitted (finding F-N4).
+#
+# This file is deliberately NOT listed in MANIFEST.sha256: the manifest contract
+# covers every Markdown file in this directory and nothing else.
+
+*.md            text eol=lf
+MANIFEST.sha256 text eol=lf
+.gitattributes  text eol=lf

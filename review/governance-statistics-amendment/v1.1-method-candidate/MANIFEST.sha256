@@ -1,0 +1,22 @@
+# Generated after all four Markdown files in this directory were final.
+# SHA-256 of raw working-tree bytes with LF line endings, not canonicalized.
+# Scientific source baseline: commit a7f6a5cfdc1d2a3f77b6757201889fe4b49f06f2.
+# Any commit containing this directory is necessarily later than this file.
+# Paths are relative to this file.
+# Verify:  Get-FileHash -Algorithm SHA256 <file>
+#     or:  sha256sum -c MANIFEST.sha256   (after removing these comment lines)
+# This file covers every Markdown file in this directory (4 of 4) and does not
+# hash itself; no author-supplied value for its own digest can exist.
+# The directory contains exactly six files, four of them Markdown. The
+# .gitattributes is packaging only and is deliberately not hashed here.
+# A .gitattributes in this directory pins eol=lf, so these values stay
+# verifiable on every platform; see README.md section 6.2.
+# SHA-256 values for every source document read are in README.md section 5.
+# Regenerated after the R-1/R-2 corrections (README.md section 6.3) and the
+# A-1/A-2/A-3 corrections (README.md section 6.4).
+# Regenerated again after .gitattributes was added on owner instruction.
+# Regenerated again after the C-1 line-ending correction (README.md section 5).
+d5ee7f463e307fa9674bc45353fa6396a995504115a3b4955a01e67f79586432  HUMAN_DECISION_MATRIX.md
+61ab9095675cb3cbfd98d87f7bf7c20cee8ddc206a87b8e91c7639bfc41e3964  METHOD_CANDIDATE.md
+85e08f4e6453045b82638f64e5a7a741b6041daf300f427afa4b53138059ad66  PREREGISTRATION_TEMPLATE.md
+4919b7f3e57a2a44f96e6113270eecef836772a67e80019bae0067b52064c4a3  README.md
