@@ -16,7 +16,9 @@
 # A-1/A-2/A-3 corrections (README.md section 6.4).
 # Regenerated again after .gitattributes was added on owner instruction.
 # Regenerated again after the C-1 line-ending correction (README.md section 5).
+# Regenerated after the S1/S2 repairs from the third adversarial check
+# (README.md section 6.5).
 d5ee7f463e307fa9674bc45353fa6396a995504115a3b4955a01e67f79586432  HUMAN_DECISION_MATRIX.md
 61ab9095675cb3cbfd98d87f7bf7c20cee8ddc206a87b8e91c7639bfc41e3964  METHOD_CANDIDATE.md
 85e08f4e6453045b82638f64e5a7a741b6041daf300f427afa4b53138059ad66  PREREGISTRATION_TEMPLATE.md
-4919b7f3e57a2a44f96e6113270eecef836772a67e80019bae0067b52064c4a3  README.md
+4079430784d623fa6d8a3af78a7acb18cdafe025a4bf235ffbcf6a6388e8c0f4  README.md

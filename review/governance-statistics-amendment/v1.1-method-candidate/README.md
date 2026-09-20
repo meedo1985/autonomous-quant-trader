@@ -7,13 +7,17 @@ documentation task, AI author. (Claude Opus 5.1 was the preferred author model;
 the metadata actually observed in this session is `claude-opus-5`, recorded as
 observed rather than as preferred.)
 **Repository HEAD at preparation:** `a7f6a5cfdc1d2a3f77b6757201889fe4b49f06f2`
-**Independent reviews received:** two AI reviews. (1) `../V1_1_CANDIDATE_REVIEW.md`
+**Independent reviews received:** three AI reviews, none of them authoritative.
+(1) `../V1_1_CANDIDATE_REVIEW.md`
 (Claude, observed model ID `claude-opus-5`, 2026-09-20, verdict
 `REVISION_REQUIRED`, two defects corrected in place — see §6.3). (2)
 `../V1_1_FABLE_ADVERSARIAL_REVIEW.md` (Claude, observed model ID
 `claude-fable-5-1`, 2026-09-20, adversarial check of this directory and of
 review (1); three further defects corrected in place — see §6.4 — and
-substantive questions for the statistician recorded there, not here). An AI
+substantive questions for the statistician recorded there, not here). (3) A third
+read-only check by Claude (self-reported model ID `claude-fable-5-1`) of
+everything changed after review (2), including the first commit; five write-up
+defects corrected in place — see §6.5. An AI
 review confers no scientific or governance authority, and no human, owner, or
 statistician review of this directory exists.
 
@@ -56,11 +60,19 @@ directory is explicitly **not**:
 - a resolution of Astra findings `B1`–`B5` or of `DEC-01` to `DEC-03`.
 
 **No simulation was run, no data was accessed, no network or exchange call was
-made, no credential was used, and nothing was committed or pushed.**
+made, and no credential was used. At preparation and review time nothing was
+committed or pushed; on owner instruction this directory was subsequently
+committed as a non-binding proposal on branch `review/v1.1-method-candidate`
+(PR #2 against `main`), which changes none of the above and confers no
+authority.**
 
-Constitution §16 requires different-model **and** human PR review before any
-later validation-engine, promotion-gate, governor, executor, lockbox-ACL, or
-protocol-enforcement code is merged. An AI review satisfies neither requirement.
+Constitution §16 requires different-model **and** human PR review before merging
+its enumerated components: validation engine, promotion gate, governor, executor
+state machine, lockbox ACL tooling, and protocol enforcement. This directory
+contains none of them, so §16 is **not applicable** to it — that is not a claim
+that §16 is satisfied, and it is untouched for the code it does govern. For that
+later code, a review by a different AI model does not supply the human prong and
+is no substitute for statistician acceptance.
 
 **No universal binding is claimed.** The protocol requests a paired Sharpe-like
 statistic in thirteen distinct clause groups, enumerated once as rows 1–13 of the
@@ -137,30 +149,54 @@ repository-relative.
 
 **Line endings, stated precisely (`C-1`).** These values were computed on a
 Windows checkout with `core.autocrlf=true`. Twenty of the twenty-one files below
-are LF on disk, so their values are platform-independent. **One is not:**
+are LF in this working tree, and those twenty values equal the SHA-256 of each
+file's **Git index blob**, so they reproduce anywhere via
+`git show a7f6a5c:<path> | sha256sum`. They are **not** reproducible from a
+working-tree file on every platform: fifteen of the twenty carry no `text`,
+`eol`, or `-text` attribute (`git check-attr text eol -- <path>` reports
+`unspecified`), so on a fresh Windows clone with `core.autocrlf=true` they
+materialize as CRLF and the recorded value stops matching the file on disk.
+**One file is the exact reverse:**
 `DSR_METHOD_PREREGISTRATION_DRAFT.md` (§5.4) is **CRLF** in this working tree —
 208 CRLF, zero bare LF — because no `eol=lf` attribute protects it
 (`git ls-files --eol` reports `i/lf w/crlf attr/`). Its recorded value
-`1391f81e…` is therefore the hash of **CRLF** bytes and will **not** reproduce on
-a checkout that materializes LF. For that file only, both values are given so a
-reviewer can verify on any platform:
+`1391f81e…` is therefore the hash of **CRLF** bytes: it reproduces on a Windows
+`autocrlf=true` checkout and **not** from its index blob. For that file only, both
+values are given. A reviewer verifying on an arbitrary platform should hash index
+blobs, not working-tree files:
 
 | File | CRLF bytes (this Windows working tree, recorded in §5.4) | LF-normalized bytes |
 | --- | --- | --- |
 | `DSR_METHOD_PREREGISTRATION_DRAFT.md` | `1391f81edbcfdb2aaad2d49d8c0843688514b5c224dfc4e9f4d8332cdd00ce91` | `5c7119a56a35427b3a370e86cb9d2a46a46c2f0cf50891baeac92eadf606e899` |
 
 The first revision of this section claimed "LF line endings" for all twenty-one
-files. That claim was false for this one file, and neither AI review caught it:
-both verified that every recorded hash matched the bytes on disk, which it did,
-without testing whether the stated *characterization* of those bytes was true.
-The file itself is **not** modified, normalized, or re-hashed here: it is a
-committed artifact of another task, and giving it an `eol=lf` attribute would
-change its working-tree bytes on the next checkout and thus invalidate the very
-value §5.4 records. **Proposal for the owner, not applied:** decide whether the
+files, which was false for this one file. Attributing that miss precisely: the
+adversarial review recomputed all twenty-one recorded hashes and found no
+mismatch (`../V1_1_FABLE_ADVERSARIAL_REVIEW.md` §3, source-inventory check) —
+correctly, because each did match the bytes on disk — but tested equality only,
+never the stated *characterization* of those bytes. The first review
+(`../V1_1_CANDIDATE_REVIEW.md` §4) did not recompute these twenty-one hashes at
+all; it verified `MANIFEST.sha256` and the frozen inventory. **The defect is also
+inherited, not new to this directory:** `../external-review-packet/README.md` §5
+records the same `1391f81e…` value for the same file and characterizes its hashes
+the same way, and that packet's own two reviews did not catch it either. Counting
+the authoring pass, five passes over two packets carried it.
+The file itself is **not** modified, normalized, or re-hashed here, for two
+reasons stated plainly. It and its neighbours are committed artifacts of other
+tasks, outside the owner instruction that produced this commit. And the same value
+is recorded in `../external-review-packet/README.md`, which is manifest-covered
+and `eol=lf`-pinned, so correcting the characterization at its source cannot be
+done here without invalidating that packet's manifest. An earlier revision of this
+paragraph gave a different and **incorrect** reason — that an `eol=lf` attribute
+would invalidate the value §5.4 records. It would in fact make the published
+LF value `5c7119a5…` the reproducible one; the obstacle is authority and blast
+radius, not arithmetic. **Proposal for the owner, not applied:** decide whether the
 `eol=lf` protection that `../external-review-packet/` and this directory now have
-should be extended to the Markdown files directly under
-`review/governance-statistics-amendment/`, and if so, re-record every hash that
-references them in the same change.
+should be extended to the Markdown directly under
+`review/governance-statistics-amendment/` — three files there are currently CRLF
+in this working tree (`DSR_AGENT_REVIEW_ADDENDUM.md`, `DSR_DRAFT_REVIEW_PACKET.md`,
+`DSR_METHOD_PREREGISTRATION_DRAFT.md`) — and if so, re-record every hash that
+references them in the same change, including the one in the external packet.
 
 ### 5.1 Frozen governance (read-only; unchanged)
 
@@ -228,7 +264,7 @@ confirming those bytes are unchanged between HEAD `fad5564` and HEAD `a7f6a5c`.
 | Frozen citation audit | every `protocol_v1.yaml` and `RESEARCH_CONSTITUTION.md` line number cited in these four files re-read at HEAD | `PASS` — all resolve to the asserted clause; one incomplete citation noted as non-blocking (§6.3, `N-2`); one omitted frozen clause (Constitution §9 line 106) added to §3.3 `F-1` by the second review (§6.4, `A-3`) |
 | Source line endings | every §5 source classified by raw bytes and by `git ls-files --eol` | `PASS after correction` — 21/21 recorded hashes match raw bytes, but 1/21 is CRLF, not LF as §5 originally claimed (`C-1`) |
 | Whitespace | `git diff --check` | `PASS` — no output |
-| Working tree | `git status --short --untracked-files=all` | Only untracked files: this directory (five files), `../V1_1_CANDIDATE_REVIEW.md`, and `../V1_1_FABLE_ADVERSARIAL_REVIEW.md`; no tracked file modified, renamed, or deleted |
+| Working tree | `git status --short --untracked-files=all` | `PASS` **at preparation time**: only untracked files — this directory, `../V1_1_CANDIDATE_REVIEW.md`, and `../V1_1_FABLE_ADVERSARIAL_REVIEW.md`; no tracked file modified, renamed, or deleted. The directory now holds six files (§3), and all eight are committed as described in §1 and §2 |
 | Frozen verifier | `review/task6/verify_frozen.ps1` | **CANNOT RUN in this environment** — independently reproduced instead, `PASS`; see §6.1 |
 | Tests, Ruff, mypy, import-linter | — | `N/A` — review Markdown only; no executable code, configuration, dependency, or import boundary is added or changed |
 
@@ -270,6 +306,36 @@ as not re-executed is therefore now **independently verified**, not merely
 inferred from byte-identity. The owner or reviewer should still run the verifier
 itself, on PowerShell 7, to obtain its own `PASS` lines from the original script.
 
+### 6.5 Third check, after the first commit
+
+A third adversarial check (Claude, self-reported model ID `claude-fable-5-1`,
+read-only) reviewed everything changed *after* the second review, including the
+commit itself. It confirmed the mechanics — `C-1` is real, both published hashes
+are correct, the `.gitattributes` works under a fresh `autocrlf=true` clone, the
+manifest verifies against the committed blob bytes, and no frozen artifact was
+touched — and found the write-up defective in five places. All five are repaired
+above:
+
+| ID | Defect | Repair |
+| --- | --- | --- |
+| `S1-2` | §5 claimed the other twenty values were "platform-independent" because they are LF on disk. False reasoning: fifteen of them carry no eol attribute, so they do **not** reproduce from a working-tree file on a fresh Windows clone — while the one labelled non-portable does | §5 now states what actually reproduces (index blobs) and what does not, with the attribute evidence |
+| `S1-3` | `C-1` was presented as new to this directory when `../external-review-packet/README.md` carries the same value and the same characterization | §5 records the inheritance and that five passes over two packets carried it |
+| `S1-4` | §5 said *both* reviews had verified the twenty-one hashes. Only the adversarial review did | §5 attributes each check to the review that made it, with its section |
+| `S1-5` | The stated reason for not normalizing the CRLF file was wrong, and "one file there is CRLF" undercounted — three are | §5 and §6.2 give the real reasons (authority and blast radius) and the correct count |
+| `S2-3` | Two self-descriptions were false in the commit that contained them: §2 asserted "nothing was committed or pushed", and §6's working-tree row still said five files. §6.4 had declared every self-description re-verified | §2 and §6 corrected and time-scoped; a full sweep of every count and status claim was re-run afterwards |
+
+`S2-3` is the same defect class as `A-2`, recurring for the third time in this
+document, and it is the reason the project's statistics agent now carries an
+explicit rule to re-sweep every self-description after *every* later edit,
+including edits made at commit time. Also corrected, from the same check:
+§2's reading of Constitution §16, which is **not applicable** to a
+Markdown-only directory rather than unsatisfied by it (`S3-2`).
+
+Findings left unrepaired by choice, with reasons, are listed in that check's
+report. The previous commit message cannot be amended without a force-push, so
+its repetition of the `S1-4` error is corrected here and in the follow-up commit
+rather than rewritten.
+
 ### 6.2 Packaging limitation — remedied at commit time
 
 `MANIFEST.sha256` records SHA-256 over **LF** bytes. The first revision of this
@@ -301,8 +367,10 @@ The two review records **outside** this directory
 (`../V1_1_CANDIDATE_REVIEW.md`, `../V1_1_FABLE_ADVERSARIAL_REVIEW.md`) are
 deliberately left unprotected: no manifest covers them, so a CRLF checkout
 changes nothing verifiable. Extending protection to that directory is the open
-proposal recorded in §5 under `C-1`, and it cannot be done blanket-style, because
-one file there is already hash-recorded over CRLF bytes.
+proposal recorded in §5 under `C-1`. Extending it there requires re-recording
+every hash that references those files: three Markdown files directly under that
+directory are currently CRLF in this working tree (`git ls-files --eol`), and one
+of the affected values also appears in the manifest-covered external packet.
 
 ### 6.3 Corrections applied after independent AI review
 
@@ -334,7 +402,7 @@ still byte-identical to its first revision.
 | ID | Defect | Correction |
 | --- | --- | --- |
 | `A-1` | `HUMAN_DECISION_MATRIX.md` §7 said `D-20` is triggered by the first acceptance among `D-03`, `D-08`, or `D-11`. `D-20` is scoped to bootstrap-backed clauses; PBO (`D-08`, `protocol_v1.yaml:234–241`, `METHOD_CANDIDATE.md` §4) uses no bootstrap. Only rows 5 (`D-03`) and 9 (`D-11`) are bootstrap-backed | Trigger list corrected to `D-03` or `D-11`, with the reason stated |
-| `A-2` | This README's §6 "Working tree" row still described only the five-file directory after `../V1_1_CANDIDATE_REVIEW.md` had been added, contradicting §1 | Row and file-count statements updated; every self-description re-verified true |
+| `A-2` | This README's §6 "Working tree" row still described only the five-file directory after `../V1_1_CANDIDATE_REVIEW.md` had been added, contradicting §1 | Row and file-count statements updated. The accompanying claim that "every self-description re-verified true" did **not** hold: two were still false at the first commit, found later as `S2-3` (§6.5) |
 | `A-3` | `METHOD_CANDIDATE.md` §3.3 `F-1` stated that the `raw_trial_count` fallback trigger "is undefined in frozen text". `docs/RESEARCH_CONSTITUTION.md` §9 line 106 is frozen trigger text: "If no frozen effective-count method exists, raw count is used." Neither the packet nor the first review cited it. Whether the method *named but not defined* at `protocol_v1.yaml:232` "exists" is undecided, so `D-16` stays `BLOCKING` | `F-1`, the §3.3 table, the §8 traceability row, `HUMAN_DECISION_MATRIX.md` `D-16`, and §4 `Q4` above now cite line 106 and state that its applicability is part of `D-16` |
 
 Substantive questions raised by that review for the human statistician — in
