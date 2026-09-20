@@ -1,0 +1,20 @@
+# Regenerated after all packet Markdown files were final, following the
+# independent claude-fable-5-1 review (verdict REVISION_REQUIRED), the
+# claude-fable-5-1 closure review (verdict PASS_WITH_ADVISORIES, finding F-07),
+# and the corrections recorded in REVIEW_ADJUDICATION.md.
+# SHA-256 of raw working-tree bytes (LF line endings), repository HEAD
+# fad5564044f6d368029bcf153fd879ec04f97fe4. Paths are relative to this file.
+# Verify:  Get-FileHash -Algorithm SHA256 <file>
+#     or:  sha256sum -c MANIFEST.sha256   (after removing these comment lines)
+# This file covers every Markdown file in this directory (7 of 7) and does not
+# hash itself. Its own SHA-256 is a reviewer-filled field in
+# REVIEWER_DECISION_FORM.md section 5.1, which explains why no author-supplied
+# value for it can exist.
+# SHA-256 values for every source document read are in README.md section 5.
+f1227fa30e54f3df379cafc29547144fafe4878cb9c71aa47fb82da988a061a8  CLAUDE_FABLE_5_1_CLOSURE_REVIEW.md
+7c0d66862a5c660ba46e51c0fb202cdc96f55aa6d346e9eacba6d6748037c758  CLAUDE_FABLE_5_1_REVIEW.md
+6eaaf21d60b663b8d3a06158717c10a5956dec75ae2e9f1f94daa5a5223b6fbd  README.md
+3b6f6dbf14761e27969e87ea600be4184d42707f07a9a039567fd8f61769a2f7  REVIEW_ADJUDICATION.md
+5c9be1a2aba724bb6fe2c717d00c4e632722af95f9f243397d0f3decf01f5347  REVIEWER_DECISION_FORM.md
+809ba3ea5d40a23f3d246653ed52ed249ffa8a8be9783502981dd853b10a2b4f  STATISTICAL_BINDING_CANDIDATE.md
+915f804f10262d98b32849c2fa2454f7b8efb75d21d9fdeab7df6a831467ab1b  TECHNICAL_APPENDIX.md
