@@ -33,6 +33,10 @@
   exchange rules, orders, fills, fees, reconciliation, credentials, or live-path
   safety. Keep the review read-only and verify changing exchange behavior against
   official Binance sources when authorized.
+- Invoke `statistical-binding-review` for unresolved definitions or bindings of
+  paired Sharpe, DSR, PBO, CPCV, ESS, bootstrap intervals, lockbox prediction,
+  or promotion statistics. The reviewer proposes and checks bindings but cannot
+  supply human/statistician acceptance or activate governance.
 - Architecture, protocol, statistical, safety, or frozen-governance changes from review are proposals, never automatic edits. Follow the applicable owner/human approval process. Constitution section 16 requires different-model and human PR review before merging its enumerated protected components.
 - Repository skills live in `.agents/skills/<name>/SKILL.md`. Read the relevant skill before using it; if discovery has not refreshed, open that file directly.
 - Consider new external skills only when needed: inspect source, provenance, permissions, dependencies, and relevance first. Prefer OpenAI-maintained skills. Do not install arbitrary third-party skills automatically; stop and report any proposed third-party skill before installation.
