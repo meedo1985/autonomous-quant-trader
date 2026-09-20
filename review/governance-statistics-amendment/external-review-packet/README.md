@@ -45,6 +45,7 @@ external statistician. It assembles, in reviewable form:
 | `CLAUDE_FABLE_5_1_CLOSURE_REVIEW.md` | Record of the independent `claude-fable-5-1` closure review after those corrections: verdict `PASS_WITH_ADVISORIES`, F-01 to F-06 closed, one LOW advisory F-07 |
 | `REVIEW_ADJUDICATION.md` | Author response to each finding — AGREE / PARTIAL / DISAGREE, the exact correction applied, and the evidence |
 | `MANIFEST.sha256` | SHA-256 of the seven Markdown files above, generated after they were final; it does not hash itself |
+| `.gitattributes` | Packaging integrity only: pins LF line endings for this directory so `MANIFEST.sha256` stays verifiable after a checkout on Windows (`core.autocrlf=true`). It is not hashed, because the manifest contract covers every Markdown file and nothing else |
 
 Read `STATISTICAL_BINDING_CANDIDATE.md` first, then `TECHNICAL_APPENDIX.md`, then
 `CLAUDE_FABLE_5_1_REVIEW.md` and `CLAUDE_FABLE_5_1_CLOSURE_REVIEW.md` with
@@ -97,7 +98,7 @@ scientific outcomes in this project.
 
 No frozen artifact, sidecar, `FROZEN_HASHES.json` entry, source file, test, or
 pre-existing review record was modified in preparing this packet, or in revising
-it after the `claude-fable-5-1` reviews; only the eight files in this directory
+it after the `claude-fable-5-1` reviews; only the nine files in this directory
 were added or edited, and nothing outside this directory was touched.
 
 ## 4. Recommendation carried into review

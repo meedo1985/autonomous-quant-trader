@@ -261,6 +261,13 @@ eight. The 6/6 figure recorded in `CLAUDE_FABLE_5_1_CLOSURE_REVIEW.md` §3 is le
 as reported, because it is what the reviewer verified at review time, before this
 file existed.
 
+A later packaging-only change added a directory-local `.gitattributes` pinning LF
+line endings, so the directory file count is now **nine**: seven Markdown files,
+`MANIFEST.sha256`, and `.gitattributes`. The Markdown count remains seven and the
+manifest still holds seven entries — `.gitattributes` is deliberately not hashed,
+because the manifest contract covers every Markdown file and nothing else. No
+scientific content, verdict, finding, or governance status was affected.
+
 ## What did not change
 
 - The recommendation: `KEEP_BLOCKED` for any single universal binding.

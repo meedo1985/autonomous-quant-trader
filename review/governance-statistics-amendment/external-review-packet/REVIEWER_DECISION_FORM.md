@@ -142,7 +142,7 @@ Recorded by the preparing agent; the reviewer is invited to re-run them.
 | Manifest verification | Recompute each hash and compare to `MANIFEST.sha256` | `PASS` — 7/7 match |
 | Packet link and path check | Every repository-relative path and every intra-packet file reference resolved against the working tree | `PASS` — all paths exist |
 | Whitespace | `git diff --check` | `PASS` — no output |
-| Working tree | `git status --short` | Only the untracked directory `review/governance-statistics-amendment/external-review-packet/` (eight files); no modification, rename, or deletion elsewhere |
+| Working tree | `git status --short` | Only the untracked directory `review/governance-statistics-amendment/external-review-packet/` (nine files: seven Markdown, `MANIFEST.sha256`, and `.gitattributes`); no modification, rename, or deletion elsewhere |
 | Protected-path diff | Frozen artifacts, sidecars, `FROZEN_HASHES.json`, source, tests, and existing review records | Empty — unchanged |
 | Tests, Ruff, mypy, import-linter | — | N/A: review Markdown only; no executable code, configuration, or import boundary changed |
 
