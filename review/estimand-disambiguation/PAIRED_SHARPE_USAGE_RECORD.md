@@ -28,8 +28,8 @@ E-IMPROV = A * Sharpe_daily(c) - A * Sharpe_daily(b)
 E-DIFF   = A * Sharpe_daily(c - b)
 ```
 
-`E-IMPROV` is named `paired_sharpe_improvement` and `E-DIFF` is named
-`difference_series_sharpe` in `src/aqt/metrics/statistics.py`. The accepted
+`E-IMPROV` is named `paired_sharpe_improvement`; `E-DIFF` is the `.scaled`
+value of `difference_series_sharpe` in `src/aqt/metrics/statistics.py`. The accepted
 inactive conventions are recorded in `review/task12/IMPLEMENTATION_CONVENTIONS.md`.
 Neither quantity can generally be reconstructed from the other, and a
 difference-return series alone cannot reconstruct `E-IMPROV`.
@@ -103,7 +103,7 @@ and different-model review requirements still apply to later protected code.
 
 ```text
 Decision: ACCEPT BINDING PROPOSAL / REVISE / RETAIN PAUSE
-DSR difference-series input preserved: YES / NO
+DSR difference-series input preserved: YES (required; NO is out of scope and requires a formal amendment)
 PBO input and ranking contract accepted: YES / NO
 Interval and gate estimands accepted: YES / NO
 Lockbox estimand and remaining B4 work acknowledged: YES / NO
