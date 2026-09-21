@@ -101,6 +101,16 @@ pre-existing review record was modified in preparing this packet, or in revising
 it after the `claude-fable-5-1` reviews; only the nine files in this directory
 were added or edited, and nothing outside this directory was touched.
 
+That statement is scoped to the preparation and review of this packet. This
+`README.md` and `MANIFEST.sha256` were subsequently edited once more, on owner
+instruction, to correct the three line-ending mischaracterizations recorded in
+§5 and to re-record the affected values after `eol=lf` was pinned on the parent
+directory. That later change touched one file outside this directory — the
+parent `.gitattributes`, newly added — plus `../v1.1-method-candidate/README.md`
+and its manifest, where the same correction is recorded. It changed no content of
+any hashed source, no estimand, no threshold, no recommendation, no review
+verdict, and no governance status.
+
 ## 4. Recommendation carried into review
 
 **`KEEP_BLOCKED` for any single universal binding of "paired delta-Sharpe".**
@@ -181,10 +191,38 @@ governance acts that no reviewer, and no AI, can perform.
 ## 5. Source inventory
 
 Every source read in preparing this packet is listed below with the SHA-256 of its
-working-tree bytes at HEAD `fad5564044f6d368029bcf153fd879ec04f97fe4`. Hashes are
-over raw file bytes as checked out on Windows with LF line endings; they are not
+raw file bytes at HEAD `fad5564044f6d368029bcf153fd879ec04f97fe4`. They are not
 canonicalized and must not be compared to hashes computed after a line-ending
-conversion. Paths are repository-relative.
+conversion. Paths are repository-relative. Each value equals the SHA-256 of the
+file's **Git index blob**, so a reviewer on any platform reproduces it with
+`git show fad5564:<path> | sha256sum`.
+
+**Three values were corrected, and what the original ones were.** The first
+revision of this section said every hash was taken "as checked out on Windows
+with LF line endings". That was false for three files, which no `eol` attribute
+protected and which the authoring machine therefore checked out **CRLF**:
+
+| Path (prefix `review/governance-statistics-amendment/`) | Pre-pin CRLF value, as originally recorded here | Value now recorded (LF, = index blob) |
+| --- | --- | --- |
+| `DSR_AGENT_REVIEW_ADDENDUM.md` | `6a9a764b056fffc6a7efcf56a340cea90262359dd00876fa2e5d3ad34d0e49cc` | `d89c2e5585942eccfc188522a442a271a497cbfdac5cc7e7f2768a1d426232c0` |
+| `DSR_DRAFT_REVIEW_PACKET.md` | `b0854fdc6444936b277a8188d2954224525ff7225bb1d00e9d17de3a31639568` | `12dc8fb69bafde2546ed1b53a49687820dbe017f41816260a35e1508ad61487c` |
+| `DSR_METHOD_PREREGISTRATION_DRAFT.md` | `1391f81edbcfdb2aaad2d49d8c0843688514b5c224dfc4e9f4d8332cdd00ce91` | `5c7119a56a35427b3a370e86cb9d2a46a46c2f0cf50891baeac92eadf606e899` |
+
+**No file's content changed.** The pre-pin values are the SHA-256 of the same
+bytes with CRLF line endings and remain correct for a pre-pin Windows checkout;
+they are preserved above rather than erased. On owner instruction a
+`.gitattributes` pinning `eol=lf` was added to the parent directory in the same
+commit, so from that commit onward every file listed here materializes
+identically on every platform and the recorded value is reproducible by hashing
+either the working-tree file or the index blob.
+
+**How this was missed.** `v1.1-method-candidate/README.md` recorded this defect
+as `C-1` for **one** of the three, because only that one appeared in that
+packet's own twenty-one-file inventory. This packet's inventory contains all
+three. Two independent reviews of this packet and four checks of the v1.1 packet
+recomputed or verified these values and none caught the other two, because every
+one of them tested digest equality against the bytes on disk — which held — and
+not the stated characterization of those bytes.
 
 ### 5.1 Frozen governance (read-only; unchanged by this packet)
 
@@ -230,11 +268,11 @@ conversion. Paths are repository-relative.
 | `f6bdb1d50ef557da39f450ea7df8fe9d9117c83b24cceea460c66505e91f9a5d` | `CALIBRATION_PREREGISTRATION_DRAFT.md` |
 | `9dff6580938d8bf435a873eb3d4e507cf5c9f3266051ea2a1543ba455c4a92f9` | `DESIGN_GATE.md` |
 | `6aaa2cab0e3da51dbede9e2ce11f7404d09cb6bf431b2c17e3df12a59cd03979` | `DRAFT_AMENDMENT_PROPOSAL.md` |
-| `6a9a764b056fffc6a7efcf56a340cea90262359dd00876fa2e5d3ad34d0e49cc` | `DSR_AGENT_REVIEW_ADDENDUM.md` |
+| `d89c2e5585942eccfc188522a442a271a497cbfdac5cc7e7f2768a1d426232c0` | `DSR_AGENT_REVIEW_ADDENDUM.md` |
 | `c0120d23eea20f37ce951be5436cec19ce19538eb19f04decf4094c71e5c2c4b` | `DSR_CALIBRATION_PLAN.md` |
 | `4017d27d784e81db18245aae233e5cfc025ccffcc2c5bcff3184b78f0da47da8` | `DSR_CALIBRATION_RECONCILIATION.md` |
-| `b0854fdc6444936b277a8188d2954224525ff7225bb1d00e9d17de3a31639568` | `DSR_DRAFT_REVIEW_PACKET.md` |
-| `1391f81edbcfdb2aaad2d49d8c0843688514b5c224dfc4e9f4d8332cdd00ce91` | `DSR_METHOD_PREREGISTRATION_DRAFT.md` |
+| `12dc8fb69bafde2546ed1b53a49687820dbe017f41816260a35e1508ad61487c` | `DSR_DRAFT_REVIEW_PACKET.md` |
+| `5c7119a56a35427b3a370e86cb9d2a46a46c2f0cf50891baeac92eadf606e899` | `DSR_METHOD_PREREGISTRATION_DRAFT.md` |
 | `1234bee0e962306c1041588a57f2d091b4f14ef79fd05b552b5f39429e36d4d1` | `DSR_RECONCILIATION_REVIEW_PACKET.md` |
 | `b5f5de16adb9538725a9b5c1219b00ef5dfaa74e3e8550f2395d5cb232ef9324` | `INDEPENDENT_REVIEW_PACKET.md` |
 | `2c9dc1bcf6bc0b33574b9825df8f9337ec61fd1a45c28ad52c0b0d694f59f8af` | `LOCAL_REVIEW.md` |

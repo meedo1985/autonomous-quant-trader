@@ -32,15 +32,25 @@ The directory name refers to a **candidate successor method set** for the
 statistics the frozen v1.0 protocol requests but does not define. It does
 **not** mean that a protocol version 1.1 exists, has been drafted, has been
 proposed, or is planned. `protocols/protocol_v1.yaml` remains `status: "FROZEN"`
-at `protocol_version: "1.0"`, cycle `C1`, and is untouched. No tracked file
-**outside the eight this work added** has been modified, renamed, deleted, or
-regenerated at any point in preparing, reviewing, committing, or revising this
-directory. Exactly eight files were added: the six listed in §3, plus
-`../V1_1_CANDIDATE_REVIEW.md` and `../V1_1_FABLE_ADVERSARIAL_REVIEW.md`; no
-ninth file has been added since. Within this directory, the only post-review
-changes are the corrections in §6.3, §6.4, §6.5, and §6.6, the `.gitattributes`
-added on owner instruction at commit time (§6.2), and the resulting
-`MANIFEST.sha256` regenerations. Every one of those changes is confined to
+at `protocol_version: "1.0"`, cycle `C1`, and is untouched. No **frozen** artifact,
+sidecar, `FROZEN_HASHES.json` entry, source file, or test has been modified,
+renamed, deleted, or regenerated at any point in preparing, reviewing,
+committing, or revising this directory.
+
+The work that produced this directory added exactly **eight** files: the six
+listed in §3, plus `../V1_1_CANDIDATE_REVIEW.md` and
+`../V1_1_FABLE_ADVERSARIAL_REVIEW.md`. Through the fourth check (§6.6) it
+touched no tracked file outside those eight. The line-ending change of
+2026-09-21 (§6.7) then added a **ninth** file by owner instruction,
+`review/governance-statistics-amendment/.gitattributes`, and modified two
+outside this directory, `../external-review-packet/README.md` and its
+`MANIFEST.sha256`. None of those changed the content of any hashed file: the
+three re-recorded values changed because the checkout rule changed, not the
+bytes' meaning.
+
+Within this directory, the only post-review changes are the corrections in §6.3,
+§6.4, §6.5, §6.6, and §6.7, the `.gitattributes` added on owner instruction at
+commit time (§6.2), and the resulting `MANIFEST.sha256` regenerations. Every one of those changes is confined to
 `README.md` and `MANIFEST.sha256`: `METHOD_CANDIDATE.md`,
 `HUMAN_DECISION_MATRIX.md`, and `PREREGISTRATION_TEMPLATE.md` are each
 byte-identical to their first committed revision.
@@ -165,13 +175,35 @@ working-tree file on every platform: **fourteen** of the twenty carry no `text`,
 `unspecified`), so on a fresh Windows clone with `core.autocrlf=true` they
 materialize as CRLF and the recorded value stops matching the file on disk.
 **One file is the exact reverse:**
-`DSR_METHOD_PREREGISTRATION_DRAFT.md` (§5.4) is **CRLF** in this working tree —
+`DSR_METHOD_PREREGISTRATION_DRAFT.md` (§5.4) **was CRLF** in the working tree at
+the time this section was written —
 208 CRLF, zero bare LF — because no `eol=lf` attribute protects it
 (`git ls-files --eol` reports `i/lf w/crlf attr/`). Its recorded value
 `1391f81e…` is therefore the hash of **CRLF** bytes: it reproduces on a Windows
 `autocrlf=true` checkout and **not** from its index blob. For that file only, both
 values are given. A reviewer verifying on an arbitrary platform should hash index
-blobs, not working-tree files:
+blobs, not working-tree files.
+
+**`C-1` is now closed, and it undercounted (owner instruction, 2026-09-21).** An
+`eol=lf` attribute was pinned on `review/governance-statistics-amendment/`, so
+every Markdown file there — including this one file and the two others named
+below — now materializes LF on every platform. The value recorded in §5.4 is
+updated to the LF value `5c7119a5…`, which is both the index blob and, from that
+commit onward, the working-tree file. The CRLF value is preserved in the table
+below rather than erased, because it remains correct for a pre-pin Windows
+checkout of HEAD `a7f6a5c`.
+
+`C-1` named **one** file because only one appeared in this packet's twenty-one
+source inventory. The parent directory had **three** CRLF files, and
+`../external-review-packet/README.md` §5 recorded and mischaracterized **all
+three**: `DSR_AGENT_REVIEW_ADDENDUM.md` and `DSR_DRAFT_REVIEW_PACKET.md` as well
+as this one. All three are corrected there in the same commit, with their pre-pin
+values preserved. Six passes over the two packets — the external packet's
+authoring pass and its two reviews, this directory's authoring pass, and the
+third and fourth checks — recomputed or verified those values and none caught the
+other two, for the same reason `C-1` itself survived three passes: every check
+tested digest equality against the bytes on disk, which held, and not the stated
+characterization of those bytes.
 
 | File | CRLF bytes (this Windows working tree, recorded in §5.4) | LF-normalized bytes |
 | --- | --- | --- |
@@ -210,13 +242,14 @@ done here without invalidating that packet's manifest. An earlier revision of th
 paragraph gave a different and **incorrect** reason — that an `eol=lf` attribute
 would invalidate the value §5.4 records. It would in fact make the published
 LF value `5c7119a5…` the reproducible one; the obstacle is authority and blast
-radius, not arithmetic. **Proposal for the owner, not applied:** decide whether the
-`eol=lf` protection that `../external-review-packet/` and this directory now have
-should be extended to the Markdown directly under
-`review/governance-statistics-amendment/` — three files there are currently CRLF
-in this working tree (`DSR_AGENT_REVIEW_ADDENDUM.md`, `DSR_DRAFT_REVIEW_PACKET.md`,
-`DSR_METHOD_PREREGISTRATION_DRAFT.md`) — and if so, re-record every hash that
-references them in the same change, including the one in the external packet.
+radius, not arithmetic. **That proposal has since been accepted and applied
+(owner instruction, 2026-09-21):** the `eol=lf` protection that
+`../external-review-packet/` and this directory already had was extended to the
+Markdown directly under `review/governance-statistics-amendment/`, where three
+files were CRLF (`DSR_AGENT_REVIEW_ADDENDUM.md`, `DSR_DRAFT_REVIEW_PACKET.md`,
+`DSR_METHOD_PREREGISTRATION_DRAFT.md`), and every hash referencing them was
+re-recorded in the same commit, including the three in the external packet. Both
+manifests were regenerated afterwards. No hashed file's content changed.
 
 ### 5.1 Frozen governance (read-only; unchanged)
 
@@ -249,7 +282,7 @@ references them in the same change, including the one in the external packet.
 | SHA-256 | Path |
 | --- | --- |
 | `6aaa2cab0e3da51dbede9e2ce11f7404d09cb6bf431b2c17e3df12a59cd03979` | `DRAFT_AMENDMENT_PROPOSAL.md` |
-| `1391f81edbcfdb2aaad2d49d8c0843688514b5c224dfc4e9f4d8332cdd00ce91` | `DSR_METHOD_PREREGISTRATION_DRAFT.md` |
+| `5c7119a56a35427b3a370e86cb9d2a46a46c2f0cf50891baeac92eadf606e899` | `DSR_METHOD_PREREGISTRATION_DRAFT.md` (see the `C-1` closure note above) |
 | `4017d27d784e81db18245aae233e5cfc025ccffcc2c5bcff3184b78f0da47da8` | `DSR_CALIBRATION_RECONCILIATION.md` |
 | `c0120d23eea20f37ce951be5436cec19ce19538eb19f04decf4094c71e5c2c4b` | `DSR_CALIBRATION_PLAN.md` |
 | `17c7945c3ed2b5ffb8c678bd2d03487bb8f49ef4f52257b5662ed4bccf1ebc17` | `LOCKBOX_PREDICTION_PROPOSAL.md` |
@@ -282,7 +315,7 @@ confirming those bytes are unchanged between HEAD `fad5564` and HEAD `a7f6a5c`.
 | Invariant-ID resolution | `I-1`–`I-12` traced to their cited source | `PASS after correction` — `I-1`–`I-9` are introduced by this packet, not by the cited source; the mapping is now declared (§6.3, `R-2`) |
 | Exact-arithmetic reverification | Lemma `L-1`, the `TECHNICAL_APPENDIX.md` §4 trial table, `C(16,8) = 12,870 = 2 × 6,435`, the `N = 2` PBO `omega`/`logit` branches including the `0.5` tie branch, and the negative-`v` plateau inversion, recomputed from exact rationals | `PASS` — every published value reproduced to full double precision; no discrepancy |
 | Frozen citation audit | every `protocol_v1.yaml` and `RESEARCH_CONSTITUTION.md` line number cited in these four files re-read at HEAD | `PASS` — all resolve to the asserted clause; one incomplete citation noted as non-blocking (§6.3, `N-2`); one omitted frozen clause (Constitution §9 line 106) added to §3.3 `F-1` by the second review (§6.4, `A-3`) |
-| Source line endings | every §5 source classified by raw bytes and by `git ls-files --eol` | `PASS after correction` — 21/21 recorded hashes match raw bytes, but 1/21 is CRLF, not LF as §5 originally claimed (`C-1`) |
+| Source line endings | every §5 source classified by raw bytes and by `git ls-files --eol` | `PASS after correction` — 21/21 recorded hashes matched raw bytes, but 1/21 was CRLF, not LF as §5 originally claimed (`C-1`). Closed 2026-09-21: `eol=lf` pinned on the parent directory, §5.4 re-recorded to the LF value, and the two further mischaracterized values `C-1` had missed corrected in the external packet |
 | Whitespace | `git diff --check` | `PASS` — no output |
 | Working tree | `git status --short --untracked-files=all` | `PASS` **at preparation time**: only untracked files — this directory, `../V1_1_CANDIDATE_REVIEW.md`, and `../V1_1_FABLE_ADVERSARIAL_REVIEW.md`; no tracked file modified, renamed, or deleted. The directory now holds six files (§3), and all eight are committed as described in §1 and §2 |
 | Frozen verifier | `review/task6/verify_frozen.ps1` | **CANNOT RUN in this environment** — independently reproduced instead, `PASS`; see §6.1 |
@@ -354,13 +387,12 @@ were computed from LF bytes in the working tree and verified again after this
 file was added.
 
 The two review records **outside** this directory
-(`../V1_1_CANDIDATE_REVIEW.md`, `../V1_1_FABLE_ADVERSARIAL_REVIEW.md`) are
-deliberately left unprotected: no manifest covers them, so a CRLF checkout
-changes nothing verifiable. Extending protection to that directory is the open
-proposal recorded in §5 under `C-1`. Extending it there requires re-recording
-every hash that references those files: three Markdown files directly under that
-directory are currently CRLF in this working tree (`git ls-files --eol`), and one
-of the affected values also appears in the manifest-covered external packet.
+(`../V1_1_CANDIDATE_REVIEW.md`, `../V1_1_FABLE_ADVERSARIAL_REVIEW.md`) were
+originally left unprotected: no manifest covers them, so a CRLF checkout changed
+nothing verifiable. They are now covered anyway, because the `eol=lf` extension
+accepted on 2026-09-21 pins `*.md` for the whole parent directory. `git ls-files
+--eol` now reports no CRLF file anywhere under
+`review/governance-statistics-amendment/`.
 
 ### 6.3 Corrections applied after independent AI review
 
@@ -507,3 +539,42 @@ describe it. For the same reason `N-C`'s citation is recorded here rather than
 added to `METHOD_CANDIDATE.md` §2 or `HUMAN_DECISION_MATRIX.md` `D-08`/`D-14`,
 although the `A-3` precedent would support a citation-only edit; whether to carry
 it in is the owner's call, not an AI's.
+
+### 6.7 Line-ending extension — `C-1` closed, and what it had missed
+
+Owner instruction, 2026-09-21, accepting the proposal §5 had recorded as open.
+
+A `.gitattributes` pinning `*.md text eol=lf` was added to
+`review/governance-statistics-amendment/`. The index blobs are unchanged by it;
+only the working-tree materialization changes, and `git ls-files --eol` now
+reports no CRLF file anywhere under that directory. Three files that had been
+checked out CRLF now materialize LF on every platform, so their recorded hashes
+are reproducible by hashing either the working-tree file or the index blob.
+
+**`C-1` undercounted by two.** It named `DSR_METHOD_PREREGISTRATION_DRAFT.md`
+alone, because that was the only one of the three inside this packet's
+twenty-one-source inventory. `../external-review-packet/README.md` §5 has a
+thirty-two-row inventory that contains all three, and its preamble characterized
+every value as taken "as checked out on Windows with LF line endings" — false
+for three of them:
+
+| Path (prefix `review/governance-statistics-amendment/`) | Pre-pin CRLF value | LF value now recorded |
+| --- | --- | --- |
+| `DSR_AGENT_REVIEW_ADDENDUM.md` | `6a9a764b…` | `d89c2e55…` |
+| `DSR_DRAFT_REVIEW_PACKET.md` | `b0854fdc…` | `12dc8fb6…` |
+| `DSR_METHOD_PREREGISTRATION_DRAFT.md` | `1391f81e…` | `5c7119a5…` |
+
+All three are re-recorded in the external packet, and the first of the three in
+§5.4 here, with the pre-pin values preserved beside them rather than erased. No
+hashed file's content changed; the bytes changed because the checkout rule
+changed. Both manifests were regenerated and verified afterwards.
+
+**Why six passes missed two of the three.** The external packet's authoring pass
+and its two `claude-fable-5-1` reviews, this directory's authoring pass, and the
+third and fourth checks all recomputed or verified these values. Each compared a
+digest against the bytes on disk, and each comparison held. None compared the
+digest against the *stated characterization* of those bytes, which is the check
+rule 3 of the statistics agent's verification protocol now requires, and which
+found `C-1` in the first place. The rule caught one instance and not the other
+two because the pass that applied it was working from this packet's inventory,
+not the external packet's — a scope limit, not a method failure.

@@ -18,9 +18,12 @@
 # hashed here: this manifest's contract covers every Markdown file and nothing
 # else. The directory therefore holds nine files, seven of them Markdown.
 # SHA-256 values for every source document read are in README.md section 5.
+# Regenerated on owner instruction after README.md section 5 re-recorded the
+# three values affected by pinning eol=lf on the parent directory. README.md
+# only; the other six Markdown files are unchanged.
 f1227fa30e54f3df379cafc29547144fafe4878cb9c71aa47fb82da988a061a8  CLAUDE_FABLE_5_1_CLOSURE_REVIEW.md
 7c0d66862a5c660ba46e51c0fb202cdc96f55aa6d346e9eacba6d6748037c758  CLAUDE_FABLE_5_1_REVIEW.md
-b1d449f1e7f92e1a74853ce6f1143dc6abc3a7f2491372eb1306e0d8df43f45b  README.md
+c22726fa16d2e9912c70306b18f21dd8157bf6c43436bc7201226e933ed8468b  README.md
 0c8f5c11e297c7faceeecb97feda61be89f25415db786c80105ab4d84012871e  REVIEW_ADJUDICATION.md
 7beae0fabbc44820ba34b08a8ec761f0dab949688a9788bcc7adff811b70fa11  REVIEWER_DECISION_FORM.md
 809ba3ea5d40a23f3d246653ed52ed249ffa8a8be9783502981dd853b10a2b4f  STATISTICAL_BINDING_CANDIDATE.md
