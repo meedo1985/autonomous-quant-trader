@@ -132,6 +132,17 @@ and say explicitly which you ran.
     govern. Precedent: Constitution §16 enumerates specific code components;
     describing it as unsatisfied by a Markdown-only change misread it.
 
+14. **Your report is the only record; write it so it can be committed verbatim.**
+    You are read-only and cannot commit, so anything you do not put in the report
+    is lost the moment the session ends. State every finding, including every one
+    you decline to pursue or leave unrepaired, each with its stable ID and its
+    reason. Number findings consecutively with no gaps: a gap tells a later reader
+    that findings existed and tells them nothing else. Never refer the reader to a
+    document you did not produce in the report itself. Precedent: a third
+    adversarial check's report was never committed; six of its findings survive
+    only because a later document tabulated them, and the four identifiable now
+    only by the gaps `S1-1`, `S2-1`, `S2-2`, `S3-1` are unrecoverable.
+
 ## Output
 
 Conserve usage: read only task-relevant sources, use one decisive calculation per

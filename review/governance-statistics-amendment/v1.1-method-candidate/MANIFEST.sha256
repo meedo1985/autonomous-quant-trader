@@ -24,7 +24,12 @@
 # 6.5 now records that the third check's report was not preserved. README.md
 # only; the other three Markdown files remain byte-identical to their first
 # committed revision.
+# Regenerated again on owner instruction of 2026-09-21 after section 6.7: eol=lf
+# pinned on the parent directory, C-1 closed, section 5.4 re-recorded to the LF
+# value, and the two further mischaracterized values C-1 had missed corrected in
+# the external packet. README.md only; the other three Markdown files remain
+# byte-identical to their first committed revision.
 d5ee7f463e307fa9674bc45353fa6396a995504115a3b4955a01e67f79586432  HUMAN_DECISION_MATRIX.md
 61ab9095675cb3cbfd98d87f7bf7c20cee8ddc206a87b8e91c7639bfc41e3964  METHOD_CANDIDATE.md
 85e08f4e6453045b82638f64e5a7a741b6041daf300f427afa4b53138059ad66  PREREGISTRATION_TEMPLATE.md
-157f8420ae1ba3a7334f0f4771504d6ac6770a5ca7729f84568bc177f1166f93  README.md
+8beddb42fa5cba3e7c56cd6e220d0794d4d56b42b526fb24a217a79ffa7e18ca  README.md

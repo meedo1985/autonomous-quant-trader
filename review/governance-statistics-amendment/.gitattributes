@@ -1,0 +1,27 @@
+# Packaging integrity only. This file changes no scientific content, no review
+# verdict, no recommendation, no estimand, no threshold, and no governance status.
+#
+# Two packets in this tree record SHA-256 values over the working-tree bytes of
+# Markdown files in this directory. Without an eol attribute, Git materializes
+# those files according to each machine's core.autocrlf setting, so the same
+# commit yields different working-tree bytes on Windows and on Linux and the
+# recorded values stop matching. Three files here were checked out CRLF on the
+# authoring machine for exactly that reason:
+#
+#   DSR_AGENT_REVIEW_ADDENDUM.md
+#   DSR_DRAFT_REVIEW_PACKET.md
+#   DSR_METHOD_PREREGISTRATION_DRAFT.md
+#
+# Pinning eol=lf makes the working-tree bytes equal the index blob on every
+# platform, so a reviewer can verify either way and get the same answer. The
+# index blobs are unchanged by this file; only the working-tree materialization
+# changes.
+#
+# Added on owner instruction, applying the remedy proposed under C-1 in
+# v1.1-method-candidate/README.md section 5. It mirrors the .gitattributes in
+# external-review-packet/ and in v1.1-method-candidate/, which are the existing
+# precedent. The recorded hashes affected by it are re-recorded in the same
+# commit, in both packets, with the pre-pin values preserved rather than erased.
+
+*.md            text eol=lf
+.gitattributes  text eol=lf
