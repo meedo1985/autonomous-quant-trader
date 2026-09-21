@@ -1,0 +1,30 @@
+# Generated after all four Markdown files in this directory were final.
+# SHA-256 of raw working-tree bytes with LF line endings, not canonicalized.
+# Scientific source baseline: commit a7f6a5cfdc1d2a3f77b6757201889fe4b49f06f2.
+# Any commit containing this directory is necessarily later than this file.
+# Paths are relative to this file.
+# Verify:  Get-FileHash -Algorithm SHA256 <file>
+#     or:  sha256sum -c MANIFEST.sha256   (after removing these comment lines)
+# This file covers every Markdown file in this directory (4 of 4) and does not
+# hash itself; no author-supplied value for its own digest can exist.
+# The directory contains exactly six files, four of them Markdown. The
+# .gitattributes is packaging only and is deliberately not hashed here.
+# A .gitattributes in this directory pins eol=lf, so these values stay
+# verifiable on every platform; see README.md section 6.2.
+# SHA-256 values for every source document read are in README.md section 5.
+# Regeneration history, in order: after the R-1/R-2 corrections (README.md
+# section 6.3); after the A-1/A-2/A-3 corrections (section 6.4); after
+# .gitattributes was added on owner instruction (section 6.2); after the C-1
+# line-ending correction (section 5); after the S1/S2/S3 repairs from the third
+# check (section 6.5); and after the V-02/V-04/V-05 and N-A/N-B/N-C write-up
+# repairs from the fourth check, the independent different-model adjudication
+# (section 6.6). In that last regeneration only README.md changed; the other
+# three Markdown files are byte-identical to their first committed revision.
+# Regenerated again after the owner decision of 2026-09-21 closing V-01: section
+# 6.5 now records that the third check's report was not preserved. README.md
+# only; the other three Markdown files remain byte-identical to their first
+# committed revision.
+d5ee7f463e307fa9674bc45353fa6396a995504115a3b4955a01e67f79586432  HUMAN_DECISION_MATRIX.md
+61ab9095675cb3cbfd98d87f7bf7c20cee8ddc206a87b8e91c7639bfc41e3964  METHOD_CANDIDATE.md
+85e08f4e6453045b82638f64e5a7a741b6041daf300f427afa4b53138059ad66  PREREGISTRATION_TEMPLATE.md
+157f8420ae1ba3a7334f0f4771504d6ac6770a5ca7729f84568bc177f1166f93  README.md
