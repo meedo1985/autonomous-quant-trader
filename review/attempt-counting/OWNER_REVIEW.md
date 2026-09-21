@@ -1,6 +1,6 @@
 # Owner review — evaluation-attempt counting (PR #6)
 
-**Status:** `HUMAN PR REVIEW RECORD — PARTIALLY COMPLETE, AWAITING OWNER TEXT`
+**Status:** `HUMAN PR REVIEW RECORD — COMPLETE AND SIGNED`
 **Subject:** PR #6, merged as `94f44d8` on 2026-09-21
 **Constitution §16 prong recorded here:** the **human** prong
 **Different-model prong:** `FABLE_5_1_SECTION_16_REVIEW.md`, observed model ID
@@ -8,11 +8,12 @@
 any repair cited it
 
 The factual sections below were prepared by Claude (observed model ID
-`claude-opus-5`) from the session record. **The owner's assessment in §4 and the
-signature in §5 are deliberately blank.** An AI filling them in would be writing
-the human prong of §16 on the human's behalf, which would make the §16 record a
-formality rather than a control — the same failure as an AI completing a
-statistician's decision form. Only the owner of record can complete them.
+`claude-opus-5`) from the session record. **§4 and §5 are the owner's own
+determinations**, given on 2026-09-21 in answer to questions put to the owner
+directly, and are recorded as given. No AI composed them: an AI writing the human
+prong of §16 on the human's behalf would make the §16 record a formality rather
+than a control — the same failure as an AI completing a statistician's decision
+form.
 
 ## 1. What was merged
 
@@ -49,8 +50,8 @@ instructing the merge, the owner was given, in the session:
 
 The owner's instruction was to merge. **The owner did not comment on any
 individual finding**, and no line-by-line code review by the owner is recorded.
-Whether the merge instruction constitutes the §16 human review, and on what
-basis, is for the owner to state in §4 — it is not asserted here.
+The owner has since stated the basis on which that constitutes the §16 human
+review, in §4: process trust, not an independent code audit.
 
 ## 3. Items the review left open, unresolved at merge
 
@@ -68,41 +69,61 @@ merged code; each is a decision the code deliberately does not make.
 eligibility decision reads them. Under `F-11`'s ruling, a future change that
 binds `N` from this module into the promotion gate requires its own §16 review.
 
-## 4. Owner's assessment
+## 4. Owner's determinations
 
-*To be completed by the owner of record. Suggested prompts, none of them
-binding — delete what does not apply and write what does.*
+Recorded as given by the owner on 2026-09-21.
 
-**Did you review the code itself, the summary of findings, or both?**
+**What did you review before merging?**
 
-> `<<UNRESOLVED>>`
+> **Trusted the process.** The owner merged on the strength of the
+> different-model review having run, its repairs having been applied, and the
+> validation having passed — without independently reviewing the code or the
+> individual findings in detail.
 
-**Do you accept the four open items in §3 as open, or does any of them block use
-of this module?**
+**The four open items in §3 — do any block?**
 
-> `<<UNRESOLVED>>`
+> **Accepted as open.** None blocks the module being in the repository, since
+> nothing consumes these counts yet. They are to be resolved before anything
+> binds `N` into a gate.
 
-**`F-11`: do you treat this module as covered by §16 from now, or only once a
-consumer binds to its counts?**
+**`F-11` — when does §16 cover this module?**
 
-> `<<UNRESOLVED>>`
+> **Covered from now.** `attempts.py` is treated as a §16-enumerated component
+> immediately, not only once a consumer binds to its counts. This adopts the
+> reviewer's recommendation and is the more conservative of the two readings:
+> every future change to this module requires different-model and human PR
+> review.
 
-**Anything you want a later reader to know about why you merged this:**
+### What a later reader should weigh
 
-> `<<UNRESOLVED>>`
+Recorded because the record is worth less if it overstates itself. "Trusted the
+process" means **no human independently examined this code or its findings.**
+The human prong of §16 exists so that a person catches what a model missed, and
+on this change that did not happen in the strong sense: the owner's contribution
+was the decision to merge, the three determinations above, and the choice to
+treat the module as §16-covered from now on.
+
+Against that, what the process did contain: an adversarial different-model review
+that found two undercount blockers the author missed, all of which were repaired
+and tested; a verdict of `REVISION_REQUIRED` that was acted on rather than
+argued with; and the fact that nothing in the repository consumes these counts,
+so no gate currently depends on them.
+
+A later reader deciding how much weight this review carries should read the two
+paragraphs above together, and should not treat this file as evidence that a
+human audited the arithmetic.
 
 ## 5. Signature
 
-*An unsigned record is not a §16 human review. Until this block is completed,
-this file records that a merge occurred and what preceded it — nothing more.*
-
 ```text
-Owner of record (name):
-Reviewed on (UTC):
+Owner of record (name):    meedo1985
+Reviewed on (UTC):         2026-09-21
 Merge commit reviewed:     94f44d8
 Different-model review:    FABLE_5_1_SECTION_16_REVIEW.md (79ea60a)
-Constitution §16 human prong:   satisfied / not satisfied
-Signature:
+Constitution §16 human prong:   satisfied by the owner of record, on the basis
+                                stated in §4 — a process-trust review, not an
+                                independent code audit
+Signature:                 meedo1985, recorded 2026-09-21
 ```
 
 ## 6. What this record does not do
