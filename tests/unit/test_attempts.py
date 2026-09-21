@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -15,7 +18,7 @@ from aqt.core.attempts import (
     OUTCOME_FAILED,
     PARTITION_CONFIRMATION,
     PARTITION_EXPLORATION,
-    PARTITION_TRAINING,
+    PARTITION_LOCKBOX,
     AttemptCounts,
     AttemptError,
     attempt_counts,
@@ -24,7 +27,13 @@ from aqt.core.attempts import (
     start_attempt,
     started_attempt_ids,
 )
-from aqt.core.ledger import LedgerEntry, read_entries, verify_ledger
+from aqt.core.ledger import (
+    LedgerEntry,
+    LedgerError,
+    append_entry,
+    read_entries,
+    verify_ledger,
+)
 
 _HYPOTHESIS_HASH = "c" * 64
 _OTHER_HYPOTHESIS_HASH = "d" * 64
@@ -40,7 +49,7 @@ def _start(
     *,
     family: str = _FAMILY,
     cycle: str = _CYCLE,
-    partition: str = PARTITION_TRAINING,
+    partition: str = PARTITION_CONFIRMATION,
     hypothesis_hash: str = _HYPOTHESIS_HASH,
     trial_index: int = 0,
     symbols: tuple[str, ...] = ("BTC", "ETH"),
@@ -71,8 +80,11 @@ def _counts(path: Path, *, family: str = _FAMILY, cycle: str = _CYCLE) -> Attemp
 def test_attempt_counts_even_when_evaluation_raises(tmp_path: Path) -> None:
     """Constitution section 9: aborted evaluated runs count, all failures count.
 
-    The attempt is recorded before evaluation begins, so an exception raised
-    inside the evaluation body cannot remove it from the count.
+    An in-process exception after `start_attempt` returns. This is the weakest
+    form of the property and cannot fail once the call has returned; the real
+    test of durability is `test_attempt_survives_process_death` below, which the
+    section 16 review supplied after observing that this test alone proved
+    nothing (finding F-10).
     """
     ledger = tmp_path / "ledger.jsonl"
 
@@ -81,6 +93,43 @@ def test_attempt_counts_even_when_evaluation_raises(tmp_path: Path) -> None:
         raise RuntimeError("evaluation blew up after the record was written")
 
     assert _counts(ledger).cycle_attempts == 1
+
+
+def test_attempt_survives_process_death(tmp_path: Path) -> None:
+    """The durability claim, tested by actually killing a process.
+
+    A child records an attempt and then calls `os._exit`, which runs no
+    finalizers, flushes no buffers, and unwinds no stack. If the record were not
+    durable at the moment `start_attempt` returned, the parent would count zero.
+    """
+    ledger = tmp_path / "ledger.jsonl"
+    script = textwrap.dedent(
+        f"""
+        import os
+        from aqt.core.attempts import PARTITION_CONFIRMATION, start_attempt
+
+        start_attempt(
+            {str(ledger)!r},
+            attempt_id="attempt-killed",
+            family={_FAMILY!r},
+            cycle={_CYCLE!r},
+            partition=PARTITION_CONFIRMATION,
+            hypothesis_hash={_HYPOTHESIS_HASH!r},
+            protocol_hash={_PROTOCOL_HASH!r},
+            trial_index=0,
+            symbols=("BTC", "ETH"),
+        )
+        os._exit(1)
+        """
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True
+    )
+
+    assert result.returncode == 1, result.stderr
+    assert _counts(ledger).cycle_attempts == 1
+    assert verify_ledger(ledger).intact
 
 
 def test_attempt_with_no_outcome_counts_like_a_completed_one(tmp_path: Path) -> None:
@@ -169,7 +218,7 @@ def test_distinct_points_never_exceeds_attempts(tmp_path: Path) -> None:
 def test_exploration_is_excluded_but_reported(tmp_path: Path) -> None:
     """Section 9: exploration is not a registered trial."""
     ledger = tmp_path / "ledger.jsonl"
-    _start(ledger, "attempt-0001", partition=PARTITION_TRAINING)
+    _start(ledger, "attempt-0001", partition=PARTITION_CONFIRMATION)
     _start(ledger, "explore-0001", partition=PARTITION_EXPLORATION)
     _start(ledger, "explore-0002", partition=PARTITION_EXPLORATION)
 
@@ -277,7 +326,10 @@ def test_outcome_without_a_start_is_refused(tmp_path: Path) -> None:
         ("attempt_id", "has spaces in it"),
         ("family", ""),
         ("cycle", ""),
-        ("partition", "lockbox"),
+        ("partition", "training"),
+        ("partition", "TRAINING"),
+        ("family", "family-one "),
+        ("cycle", " C1"),
         ("hypothesis_hash", "C" * 64),
         ("hypothesis_hash", "abc"),
         ("trial_index", -1),
@@ -295,7 +347,7 @@ def test_malformed_fields_are_refused(
         "attempt_id": "attempt-0001",
         "family": _FAMILY,
         "cycle": _CYCLE,
-        "partition": PARTITION_TRAINING,
+        "partition": PARTITION_CONFIRMATION,
         "hypothesis_hash": _HYPOTHESIS_HASH,
         "protocol_hash": _PROTOCOL_HASH,
         "trial_index": 0,
@@ -321,3 +373,139 @@ def test_unknown_outcome_is_refused(tmp_path: Path) -> None:
             outcome="cancelled",
             recorded_at_utc=_MOMENT,
         )
+
+
+# ---------------------------------------------------------------------------
+# Repairs from the section 16 different-model review
+# ---------------------------------------------------------------------------
+
+
+def test_contradicting_redelivery_is_refused_not_dropped(tmp_path: Path) -> None:
+    """F-1: a colliding attempt_id must raise, never silently lose the attempt."""
+    ledger = tmp_path / "ledger.jsonl"
+    _start(ledger, "attempt-0001", family="family-one")
+
+    with pytest.raises(AttemptError, match="already recorded with a different"):
+        _start(ledger, "attempt-0001", family="family-two", cycle="C2")
+
+    assert _counts(ledger, family="family-one").lifetime_attempts == 1
+
+
+def test_identical_redelivery_is_still_idempotent(tmp_path: Path) -> None:
+    ledger = tmp_path / "ledger.jsonl"
+    assert _start(ledger, "attempt-0001") is not None
+    assert _start(ledger, "attempt-0001") is None
+    assert _counts(ledger).cycle_attempts == 1
+
+
+def test_unrecognized_started_record_stops_the_count(tmp_path: Path) -> None:
+    """F-2: counting fails closed rather than silently omitting a record."""
+    ledger = tmp_path / "ledger.jsonl"
+    _start(ledger, "attempt-0001")
+    append_entry(
+        ledger,
+        record_type=ATTEMPT_STARTED_RECORD_TYPE,
+        payload={
+            "attempt_id": "attempt-0002",
+            "family": _FAMILY,
+            "cycle": _CYCLE,
+            "partition": "some-future-partition",
+            "hypothesis_hash": _HYPOTHESIS_HASH,
+            "protocol_hash": _PROTOCOL_HASH,
+            "trial_index": 0,
+            "symbols": ["BTC"],
+        },
+        recorded_at_utc=_MOMENT,
+    )
+
+    with pytest.raises(AttemptError, match="partition must be one of"):
+        _counts(ledger)
+
+
+def test_started_record_missing_a_field_stops_the_count(tmp_path: Path) -> None:
+    ledger = tmp_path / "ledger.jsonl"
+    append_entry(
+        ledger,
+        record_type=ATTEMPT_STARTED_RECORD_TYPE,
+        payload={"attempt_id": "attempt-0002", "family": _FAMILY},
+        recorded_at_utc=_MOMENT,
+    )
+
+    with pytest.raises(AttemptError, match="missing field"):
+        _counts(ledger)
+
+
+def test_unknown_extra_field_stops_the_count(tmp_path: Path) -> None:
+    ledger = tmp_path / "ledger.jsonl"
+    entry = _start(ledger, "attempt-0001")
+    assert entry is not None
+    append_entry(
+        ledger,
+        record_type=ATTEMPT_STARTED_RECORD_TYPE,
+        payload={**entry.payload, "attempt_id": "attempt-0002", "extra": "field"},
+        recorded_at_utc=_MOMENT,
+    )
+
+    with pytest.raises(AttemptError, match="unrecognized field"):
+        _counts(ledger)
+
+
+def test_another_familys_bad_record_also_stops_the_count(tmp_path: Path) -> None:
+    """Validation precedes the family filter, so no family hides another's damage."""
+    ledger = tmp_path / "ledger.jsonl"
+    _start(ledger, "attempt-0001", family="family-one")
+    append_entry(
+        ledger,
+        record_type=ATTEMPT_STARTED_RECORD_TYPE,
+        payload={"attempt_id": "attempt-0002", "family": "family-two"},
+        recorded_at_utc=_MOMENT,
+    )
+
+    with pytest.raises(AttemptError):
+        _counts(ledger, family="family-one")
+
+
+def test_lockbox_attempts_are_counted_separately(tmp_path: Path) -> None:
+    """Section 9 excludes exploration and is silent on lockbox; neither is merged."""
+    ledger = tmp_path / "ledger.jsonl"
+    _start(ledger, "attempt-0001", partition=PARTITION_CONFIRMATION)
+    _start(ledger, "lockbox-0001", partition=PARTITION_LOCKBOX)
+    _start(ledger, "explore-0001", partition=PARTITION_EXPLORATION)
+
+    counts = _counts(ledger)
+    assert counts.cycle_attempts == 1
+    assert counts.lifetime_attempts == 1
+    assert counts.lockbox_attempts == 1
+    assert counts.excluded_exploration_attempts == 1
+
+
+def test_padded_identifiers_are_refused(tmp_path: Path) -> None:
+    """F-4: drift is refused rather than silently splitting a lifetime count."""
+    ledger = tmp_path / "ledger.jsonl"
+    _start(ledger, "attempt-0001", family="family-one")
+
+    with pytest.raises(AttemptError, match="whitespace"):
+        _start(ledger, "attempt-0002", family="family-one ")
+
+    assert _counts(ledger, family="family-one").lifetime_attempts == 1
+
+
+def test_excluded_exploration_is_cycle_scoped(tmp_path: Path) -> None:
+    """F-9: the docstring now states this scope; the test pins it."""
+    ledger = tmp_path / "ledger.jsonl"
+    _start(ledger, "explore-0001", partition=PARTITION_EXPLORATION, cycle="C0")
+
+    assert _counts(ledger, cycle="C1").excluded_exploration_attempts == 0
+    assert _counts(ledger, cycle="C0").excluded_exploration_attempts == 1
+
+
+def test_damaged_ledger_refuses_rather_than_reading_as_zero(tmp_path: Path) -> None:
+    """An unreadable ledger must never count as no attempts."""
+    ledger = tmp_path / "ledger.jsonl"
+    _start(ledger, "attempt-0001")
+    ledger.write_bytes(ledger.read_bytes()[:-10])
+
+    with pytest.raises(LedgerError):
+        _start(ledger, "attempt-0002")
+    with pytest.raises(LedgerError):
+        read_entries(ledger)

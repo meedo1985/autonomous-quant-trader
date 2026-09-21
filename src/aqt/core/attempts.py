@@ -16,10 +16,21 @@ occasion, including the ones that failed.
 Why the record is written first
 -------------------------------
 The attempt count is an input to the deflated Sharpe ratio hurdle
-`S0 = sqrt(V) * A(N)` (`protocols/protocol_v1.yaml` lines 227-233), and `A` is
-monotone in `N`. An undercounted `N` lowers the hurdle, and a lowered hurdle
-promotes noise. The counting error that matters is therefore the *missing*
-attempt, not the mistaken one.
+`S0 = sqrt(V) * A(N)`, where `A(N)` is the expected maximum of `N` standard
+normals. `A` is increasing in `N`, so an undercounted `N` lowers the hurdle, and
+a lowered hurdle promotes noise. The counting error that matters is therefore
+the *missing* attempt, not the mistaken one.
+
+`protocols/protocol_v1.yaml` lines 227-233 fix the DSR series, the
+`minimum: 0.95` gate, the effective-count method and its fallback; they do not
+state the equation, and an earlier revision of this docstring cited them as
+though they did (finding F-7). The equation is Bailey and Lopez de Prado (2014)
+as recorded in
+`review/governance-statistics-amendment/DSR_METHOD_PREREGISTRATION_DRAFT.md`,
+which is an unaccepted draft: treat the specific functional form as an external
+assumption rather than as frozen text. What this module depends on is only that
+the hurdle is non-decreasing in the trial count, which holds for the maximum of
+`N` draws regardless of the form eventually accepted.
 
 Attempts go missing when the count depends on someone remembering to record a
 run that crashed, or that was abandoned once its equity curve looked wrong.
@@ -36,17 +47,36 @@ completed one.
 Redelivery, reruns, and joint legs
 ----------------------------------
 `attempt_id` is supplied by the caller and identifies one occasion. Recording
-the same `attempt_id` twice is redelivery of one event and adds no attempt;
-each genuinely new occasion needs a new identifier. `protocols/protocol_v1.yaml`
-lines 178-180 make BTC and ETH one joint trial, so one attempt carries the
-whole symbol set and counts once.
+the same `attempt_id` twice, with the same payload, is redelivery of one event
+and adds no attempt; a different payload under the same identifier is refused
+rather than dropped; each genuinely new occasion needs a new identifier.
 
-Exploration
------------
-Section 9 excludes exploration from registered trials. Exploration attempts may
-be recorded for audit, and `PARTITION_EXPLORATION` keeps them out of every
-count in this module. The partition is a required field so that the exclusion
-is stated rather than assumed.
+The redelivery check is **not atomic**. It reads the ledger before
+`append_entry` takes its exclusive lock, so two processes starting the same
+`attempt_id` at the same moment can both append (finding F-3). The resulting
+error is an over-count, which raises the hurdle and is therefore the safe
+direction, but a caller must not treat a `None` return as a lock: it means
+"already recorded", not "no one else is running this".
+
+`protocols/protocol_v1.yaml` lines 178-180 make BTC and ETH one joint trial, so
+one attempt carries the whole symbol set and counts once. Splitting the legs
+across two `attempt_id`s would count two, which this module cannot detect and
+cannot prevent; it over-counts, so it fails in the safe direction.
+
+Partitions
+----------
+`protocols/protocol_v1.yaml` lines 64-66 define exactly three partitions:
+`exploration`, `confirmation`, and `lockbox`. Section 9 excludes exploration
+from registered trials, so exploration attempts are recorded for audit and
+counted separately. The lockbox stage is a separate one-shot evaluation that
+section 9 does not address, so it is also counted separately and merged into
+nothing. The partition is a required field, and an unrecognized one is refused,
+so an exclusion is always stated rather than assumed.
+
+A caller supplies the label, and section 9's criterion is a fact about the data
+mounted rather than about the label — so a caller that mislabels a confirmation
+run as exploration lowers `N`. This module cannot detect that (finding F-5).
+Whoever mounts the partition should set the label, not the research caller.
 
 Boundary
 --------
@@ -63,7 +93,7 @@ module deliberately supplies the raw counts separately and merges none of them.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -79,7 +109,7 @@ __all__ = [
     "OUTCOME_FAILED",
     "PARTITION_CONFIRMATION",
     "PARTITION_EXPLORATION",
-    "PARTITION_TRAINING",
+    "PARTITION_LOCKBOX",
     "AttemptCounts",
     "AttemptError",
     "attempt_counts",
@@ -92,14 +122,27 @@ __all__ = [
 ATTEMPT_STARTED_RECORD_TYPE: Final[str] = "aqt.evaluation.attempt_started.v1"
 ATTEMPT_OUTCOME_RECORD_TYPE: Final[str] = "aqt.evaluation.attempt_outcome.v1"
 
+# The frozen vocabulary, and only it: `protocols/protocol_v1.yaml` lines 64-66
+# define exactly these three partitions. An earlier revision of this module also
+# defined a `training` partition, which appears nowhere in the frozen corpus as a
+# partition name; line 68 `exploration_may_enter_training_folds` is a fold rule.
+# Inventing a fourth partition here would have let a caller label an attempt with
+# a name no frozen text recognizes (finding F-5).
 PARTITION_EXPLORATION: Final[str] = "exploration"
-PARTITION_TRAINING: Final[str] = "training"
 PARTITION_CONFIRMATION: Final[str] = "confirmation"
+PARTITION_LOCKBOX: Final[str] = "lockbox"
 
-_COUNTED_PARTITIONS: Final[frozenset[str]] = frozenset(
-    {PARTITION_TRAINING, PARTITION_CONFIRMATION}
+_PARTITIONS: Final[frozenset[str]] = frozenset(
+    {PARTITION_EXPLORATION, PARTITION_CONFIRMATION, PARTITION_LOCKBOX}
 )
-_PARTITIONS: Final[frozenset[str]] = _COUNTED_PARTITIONS | {PARTITION_EXPLORATION}
+
+# Constitution section 9 excludes exploration from registered trials, and says
+# nothing about the lockbox stage, which is a separate one-shot evaluation rather
+# than a family trial. Counting it as a family trial, or not counting it, are both
+# decisions this module is not entitled to make, so `lockbox` is reported in its
+# own field and merged into nothing. Which, if any, of these counts enters `A(N)`
+# remains decision `D-17`.
+_COUNTED_PARTITIONS: Final[frozenset[str]] = frozenset({PARTITION_CONFIRMATION})
 
 OUTCOME_COMPLETED: Final[str] = "completed"
 OUTCOME_FAILED: Final[str] = "failed"
@@ -120,8 +163,20 @@ class AttemptError(ValueError):
 
 
 def _require_text(value: object, name: str) -> str:
+    """Require non-empty text with no surrounding whitespace.
+
+    `aqt.core.ledger._require_text` rejects padded text, and an earlier revision
+    of this module did not, so `"family-one "` and `"family-one"` were two
+    families and a lifetime count silently split between them (finding F-4).
+    Case is left significant rather than folded, because folding would merge
+    families a caller meant to keep apart; drift is refused, not repaired.
+    """
     if not isinstance(value, str) or not value.strip():
         raise AttemptError(f"{name} must be a non-empty string, got {value!r}")
+    if value != value.strip():
+        raise AttemptError(
+            f"{name} must not have leading or trailing whitespace, got {value!r}"
+        )
     return value
 
 
@@ -168,8 +223,59 @@ def _require_symbols(value: object) -> tuple[str, ...]:
     return tuple(sorted(symbols))
 
 
+_ATTEMPT_FIELDS: Final[tuple[str, ...]] = (
+    "attempt_id",
+    "family",
+    "cycle",
+    "partition",
+    "hypothesis_hash",
+    "protocol_hash",
+    "trial_index",
+    "symbols",
+)
+
+
+def _validated_attempt(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Re-validate a stored started record, raising on anything unrecognized.
+
+    Counting must fail closed. An earlier revision filtered on partition and
+    family membership, so a started record with an unknown partition or a
+    missing field matched no filter and disappeared from every count while
+    remaining in the ledger — a recorded attempt that was counted nowhere
+    (finding F-2). Reading is therefore strict: a record this module cannot
+    interpret stops the count rather than being skipped, because a count that
+    silently omits an attempt is worse than no count at all.
+    """
+    unknown = set(payload) - set(_ATTEMPT_FIELDS)
+    if unknown:
+        raise AttemptError(
+            f"started record has unrecognized field(s) {sorted(unknown)!r}; "
+            "refusing to count a record this version cannot interpret"
+        )
+    missing = [field for field in _ATTEMPT_FIELDS if field not in payload]
+    if missing:
+        raise AttemptError(
+            f"started record is missing field(s) {missing!r}: {payload!r}"
+        )
+    symbols = payload["symbols"]
+    if not isinstance(symbols, list):
+        raise AttemptError(f"symbols must be a list, got {symbols!r}")
+    return {
+        "attempt_id": _require_attempt_id(payload["attempt_id"]),
+        "family": _require_text(payload["family"], "family"),
+        "cycle": _require_text(payload["cycle"], "cycle"),
+        "partition": _require_choice(payload["partition"], _PARTITIONS, "partition"),
+        "hypothesis_hash": _require_sha256(
+            payload["hypothesis_hash"], "hypothesis_hash"
+        ),
+        "protocol_hash": _require_sha256(payload["protocol_hash"], "protocol_hash"),
+        "trial_index": _require_trial_index(payload["trial_index"]),
+        "symbols": list(_require_symbols(symbols)),
+    }
+
+
 def recorded_attempts(entries: Iterable[LedgerEntry]) -> tuple[dict[str, Any], ...]:
-    """Return the `EVALUATION_STARTED` payloads, in ledger order."""
+    """Return the `EVALUATION_STARTED` payloads, in ledger order, unvalidated."""
     return tuple(
         entry.payload
         for entry in entries
@@ -204,10 +310,23 @@ def start_attempt(
     a crash at any later point leaves the attempt counted, which is what
     Constitution section 9 requires.
 
-    Returns `None` when `attempt_id` is already recorded as started. That is
-    event redelivery, not a new attempt, and it adds nothing to the ledger. A
-    genuine rerun of the same trial point is a new occasion and needs its own
-    `attempt_id`.
+    Returns `None` when this exact attempt is already recorded — the same
+    `attempt_id` with a byte-identical payload. That is event redelivery, not a
+    new attempt, and it adds nothing to the ledger. A genuine rerun of the same
+    trial point is a new occasion and needs its own `attempt_id`.
+
+    Raises `AttemptError` when the `attempt_id` is already recorded with a
+    *different* payload. An earlier revision returned `None` for that case too,
+    which silently discarded a real attempt whenever an identifier collided or a
+    caller keyed identifiers by trial point rather than by occasion — the missing
+    attempt this module exists to prevent (finding F-1). A collision is a caller
+    bug, and the safe response is to refuse rather than to drop or to guess.
+
+    Raises `LedgerError`, not `AttemptError`, when the ledger itself is damaged:
+    a torn trailing write or an altered historical entry stops the append and
+    leaves the file exactly as found. Counting is then unavailable until a human
+    repairs it, which is the intended behaviour — an unreadable ledger must not
+    silently read as zero attempts.
 
     Recording an attempt is not permission to run one.
     """
@@ -224,8 +343,16 @@ def start_attempt(
     }
 
     existing = read_entries(target) if target.is_file() else ()
-    if payload["attempt_id"] in started_attempt_ids(existing):
-        return None
+    for recorded in recorded_attempts(existing):
+        if recorded.get("attempt_id") != payload["attempt_id"]:
+            continue
+        if _validated_attempt(recorded) == payload:
+            return None
+        raise AttemptError(
+            f"attempt_id {payload['attempt_id']!r} is already recorded with a "
+            "different payload; a new occasion needs its own attempt_id. "
+            f"recorded={recorded!r} offered={payload!r}"
+        )
 
     return append_entry(
         target,
@@ -284,14 +411,26 @@ class AttemptCounts:
     `(hypothesis_hash, trial_index)` pairs attempted in the named cycle, and is
     always less than or equal to `cycle_attempts`.
 
-    `excluded_exploration_attempts` counts recorded exploration attempts, which
-    section 9 excludes from registered trials and which enter none of the three
-    counts above. It is reported so the exclusion is visible rather than silent.
+    `excluded_exploration_attempts` counts this family's exploration attempts
+    **in the named cycle**, which section 9 excludes from registered trials and
+    which enter none of the counts above. `lockbox_attempts` counts this
+    family's lockbox attempts in the named cycle. Both are reported so that an
+    exclusion is visible rather than silent, and neither is merged into
+    anything: section 9 excludes exploration explicitly and says nothing about
+    the lockbox stage, so treating a lockbox evaluation as a family trial is a
+    decision this module does not make.
+
+    Every count here is scoped to the named cycle except `lifetime_attempts`,
+    which spans cycles because section 9 makes lifetime family accounting
+    persist — and which spans only the ledger file it is given.
 
     Which of these enters `A(N)` is decision `D-17` and is not settled here.
-    None of these is an effective trial count; that is `D-16`. `K`, the count
-    of usable complete difference vectors, is a property of evaluation results
-    rather than of attempts and is deliberately not computed by this module.
+    None of these is an effective trial count; that is `D-16`, and Constitution
+    section 9 line 106 — "If no frozen effective-count method exists, raw count
+    is used" — is the frozen clause that makes these raw counts load-bearing
+    until `D-16` is closed. `K`, the count of usable complete difference
+    vectors, is a property of evaluation results rather than of attempts and is
+    deliberately not computed by this module.
     """
 
     family: str
@@ -300,6 +439,7 @@ class AttemptCounts:
     lifetime_attempts: int
     distinct_trial_points: int
     excluded_exploration_attempts: int
+    lockbox_attempts: int
 
 
 def attempt_counts(
@@ -309,32 +449,32 @@ def attempt_counts(
 
     Counts come from `EVALUATION_STARTED` records alone. Outcome records are
     not consulted, so an attempt that crashed before writing one still counts.
+
+    Every started record in `entries` is re-validated first, whatever family it
+    belongs to, and `AttemptError` is raised if any one of them cannot be
+    interpreted. Counting fails closed: a ledger holding a record this version
+    does not understand yields an error, never a count that quietly omits it.
     """
     wanted_family = _require_text(family, "family")
     wanted_cycle = _require_text(cycle, "cycle")
 
-    payloads = [
-        payload
-        for payload in recorded_attempts(entries)
-        if payload.get("family") == wanted_family
-    ]
+    validated = [_validated_attempt(payload) for payload in recorded_attempts(entries)]
+    payloads = [payload for payload in validated if payload["family"] == wanted_family]
 
     counted = [
-        payload
-        for payload in payloads
-        if payload.get("partition") in _COUNTED_PARTITIONS
+        payload for payload in payloads if payload["partition"] in _COUNTED_PARTITIONS
     ]
-    in_cycle = [payload for payload in counted if payload.get("cycle") == wanted_cycle]
+    in_cycle = [payload for payload in counted if payload["cycle"] == wanted_cycle]
     points = {
-        (str(payload["hypothesis_hash"]), int(payload["trial_index"]))
-        for payload in in_cycle
+        (payload["hypothesis_hash"], payload["trial_index"]) for payload in in_cycle
     }
-    excluded = sum(
-        1
-        for payload in payloads
-        if payload.get("partition") == PARTITION_EXPLORATION
-        and payload.get("cycle") == wanted_cycle
-    )
+
+    def _in_cycle_with(partition: str) -> int:
+        return sum(
+            1
+            for payload in payloads
+            if payload["partition"] == partition and payload["cycle"] == wanted_cycle
+        )
 
     return AttemptCounts(
         family=wanted_family,
@@ -342,5 +482,6 @@ def attempt_counts(
         cycle_attempts=len(in_cycle),
         lifetime_attempts=len(counted),
         distinct_trial_points=len(points),
-        excluded_exploration_attempts=excluded,
+        excluded_exploration_attempts=_in_cycle_with(PARTITION_EXPLORATION),
+        lockbox_attempts=_in_cycle_with(PARTITION_LOCKBOX),
     )
