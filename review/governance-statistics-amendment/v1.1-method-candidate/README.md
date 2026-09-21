@@ -7,7 +7,7 @@ documentation task, AI author. (Claude Opus 5.1 was the preferred author model;
 the metadata actually observed in this session is `claude-opus-5`, recorded as
 observed rather than as preferred.)
 **Repository HEAD at preparation:** `a7f6a5cfdc1d2a3f77b6757201889fe4b49f06f2`
-**Independent reviews received:** three AI reviews, none of them authoritative.
+**Independent reviews received:** four AI checks, none of them authoritative.
 (1) `../V1_1_CANDIDATE_REVIEW.md`
 (Claude, observed model ID `claude-opus-5`, 2026-09-20, verdict
 `REVISION_REQUIRED`, two defects corrected in place — see §6.3). (2)
@@ -16,8 +16,12 @@ observed rather than as preferred.)
 review (1); three further defects corrected in place — see §6.4 — and
 substantive questions for the statistician recorded there, not here). (3) A third
 read-only check by Claude (self-reported model ID `claude-fable-5-1`) of
-everything changed after review (2), including the first commit; five write-up
-defects corrected in place — see §6.5. An AI
+everything changed after review (2), including the first commit; six write-up
+defects corrected in place — see §6.5. (4) A fourth check after this branch was
+pushed: an adversarial pass by Claude (observed model ID `claude-opus-5`) and an
+independent adjudication of it by Claude (observed model ID `claude-fable-5-1`),
+the first check by a model other than the one that authored this directory; six
+write-up defects corrected in place and two items left open — see §6.6. An AI
 review confers no scientific or governance authority, and no human, owner, or
 statistician review of this directory exists.
 
@@ -27,15 +31,18 @@ The directory name refers to a **candidate successor method set** for the
 statistics the frozen v1.0 protocol requests but does not define. It does
 **not** mean that a protocol version 1.1 exists, has been drafted, has been
 proposed, or is planned. `protocols/protocol_v1.yaml` remains `status: "FROZEN"`
-at `protocol_version: "1.0"`, cycle `C1`, and is untouched. No **tracked** file
-anywhere in this repository was modified, renamed, deleted, or regenerated in
-preparing, reviewing, or committing this directory. Exactly eight files were
-added: the six listed in §3, plus `../V1_1_CANDIDATE_REVIEW.md` and
-`../V1_1_FABLE_ADVERSARIAL_REVIEW.md`. Within this directory, the only
-post-review changes are the corrections in §6.3 and §6.4, the `.gitattributes`
+at `protocol_version: "1.0"`, cycle `C1`, and is untouched. No tracked file
+**outside the eight this work added** has been modified, renamed, deleted, or
+regenerated at any point in preparing, reviewing, committing, or revising this
+directory. Exactly eight files were added: the six listed in §3, plus
+`../V1_1_CANDIDATE_REVIEW.md` and `../V1_1_FABLE_ADVERSARIAL_REVIEW.md`; no
+ninth file has been added since. Within this directory, the only post-review
+changes are the corrections in §6.3, §6.4, §6.5, and §6.6, the `.gitattributes`
 added on owner instruction at commit time (§6.2), and the resulting
-`MANIFEST.sha256` regenerations; `PREREGISTRATION_TEMPLATE.md` is byte-identical
-to its first revision.
+`MANIFEST.sha256` regenerations. Every one of those changes is confined to
+`README.md` and `MANIFEST.sha256`: `METHOD_CANDIDATE.md`,
+`HUMAN_DECISION_MATRIX.md`, and `PREREGISTRATION_TEMPLATE.md` are each
+byte-identical to their first committed revision.
 
 ## 2. Authority and non-authorization
 
@@ -152,7 +159,7 @@ Windows checkout with `core.autocrlf=true`. Twenty of the twenty-one files below
 are LF in this working tree, and those twenty values equal the SHA-256 of each
 file's **Git index blob**, so they reproduce anywhere via
 `git show a7f6a5c:<path> | sha256sum`. They are **not** reproducible from a
-working-tree file on every platform: fifteen of the twenty carry no `text`,
+working-tree file on every platform: **fourteen** of the twenty carry no `text`,
 `eol`, or `-text` attribute (`git check-attr text eol -- <path>` reports
 `unspecified`), so on a fresh Windows clone with `core.autocrlf=true` they
 materialize as CRLF and the recorded value stops matching the file on disk.
@@ -179,8 +186,20 @@ never the stated *characterization* of those bytes. The first review
 all; it verified `MANIFEST.sha256` and the frozen inventory. **The defect is also
 inherited, not new to this directory:** `../external-review-packet/README.md` §5
 records the same `1391f81e…` value for the same file and characterizes its hashes
-the same way, and that packet's own two reviews did not catch it either. Counting
-the authoring pass, five passes over two packets carried it.
+the same way, and that packet's own two reviews did not catch it either.
+**Who found it, and how many passes carried it.** `C-1` was found by this
+directory's author (`claude-opus-5`) while committing, not by either recorded
+review; the token `C-1` appears in neither review file, and the attribution is
+recorded here because it was previously stated nowhere. An earlier revision said
+"five passes over two packets carried it" without stating the counting criterion,
+which made the number unauditable. Stated precisely: **four** passes recorded the
+value or verified it and did not catch the mischaracterization — the external
+packet's authoring pass, the external `claude-fable-5-1` review (which verified
+§5's hashes, its line 38), this directory's authoring pass, and the adversarial
+review (which recomputed all twenty-one, its line 60). Two further passes had the
+opportunity and made no §5 hash claim: the external closure review and review (1)
+(which did not recompute them, as stated above). Six passes in total touched the
+two packets; four carried the claim.
 The file itself is **not** modified, normalized, or re-hashed here, for two
 reasons stated plainly. It and its neighbours are committed artifacts of other
 tasks, outside the owner instruction that produced this commit. And the same value
@@ -306,36 +325,6 @@ as not re-executed is therefore now **independently verified**, not merely
 inferred from byte-identity. The owner or reviewer should still run the verifier
 itself, on PowerShell 7, to obtain its own `PASS` lines from the original script.
 
-### 6.5 Third check, after the first commit
-
-A third adversarial check (Claude, self-reported model ID `claude-fable-5-1`,
-read-only) reviewed everything changed *after* the second review, including the
-commit itself. It confirmed the mechanics — `C-1` is real, both published hashes
-are correct, the `.gitattributes` works under a fresh `autocrlf=true` clone, the
-manifest verifies against the committed blob bytes, and no frozen artifact was
-touched — and found the write-up defective in five places. All five are repaired
-above:
-
-| ID | Defect | Repair |
-| --- | --- | --- |
-| `S1-2` | §5 claimed the other twenty values were "platform-independent" because they are LF on disk. False reasoning: fifteen of them carry no eol attribute, so they do **not** reproduce from a working-tree file on a fresh Windows clone — while the one labelled non-portable does | §5 now states what actually reproduces (index blobs) and what does not, with the attribute evidence |
-| `S1-3` | `C-1` was presented as new to this directory when `../external-review-packet/README.md` carries the same value and the same characterization | §5 records the inheritance and that five passes over two packets carried it |
-| `S1-4` | §5 said *both* reviews had verified the twenty-one hashes. Only the adversarial review did | §5 attributes each check to the review that made it, with its section |
-| `S1-5` | The stated reason for not normalizing the CRLF file was wrong, and "one file there is CRLF" undercounted — three are | §5 and §6.2 give the real reasons (authority and blast radius) and the correct count |
-| `S2-3` | Two self-descriptions were false in the commit that contained them: §2 asserted "nothing was committed or pushed", and §6's working-tree row still said five files. §6.4 had declared every self-description re-verified | §2 and §6 corrected and time-scoped; a full sweep of every count and status claim was re-run afterwards |
-
-`S2-3` is the same defect class as `A-2`, recurring for the third time in this
-document, and it is the reason the project's statistics agent now carries an
-explicit rule to re-sweep every self-description after *every* later edit,
-including edits made at commit time. Also corrected, from the same check:
-§2's reading of Constitution §16, which is **not applicable** to a
-Markdown-only directory rather than unsatisfied by it (`S3-2`).
-
-Findings left unrepaired by choice, with reasons, are listed in that check's
-report. The previous commit message cannot be amended without a force-push, so
-its repetition of the `S1-4` error is corrected here and in the follow-up commit
-rather than rewritten.
-
 ### 6.2 Packaging limitation — remedied at commit time
 
 `MANIFEST.sha256` records SHA-256 over **LF** bytes. The first revision of this
@@ -410,3 +399,91 @@ particular the consequence of Lemma `L-1` for the row-12 pass event proposed in
 `METHOD_CANDIDATE.md` §6.2 — are recorded in the review file and were
 deliberately **not** written into the candidate, so that the candidate a
 statistician judges is the one the reviews describe.
+
+### 6.5 Third check, after the first commit
+
+A third adversarial check (Claude, self-reported model ID `claude-fable-5-1`,
+read-only) reviewed everything changed *after* the second review, including the
+commit itself. It confirmed the mechanics — `C-1` is real, both published hashes
+are correct, the `.gitattributes` works under a fresh `autocrlf=true` clone, the
+manifest verifies against the committed blob bytes, and no frozen artifact was
+touched — and found the write-up defective in six places. All six are repaired
+above:
+
+| ID | Defect | Repair |
+| --- | --- | --- |
+| `S1-2` | §5 claimed the other twenty values were "platform-independent" because they are LF on disk. False reasoning: fourteen of them carry no eol attribute, so they do **not** reproduce from a working-tree file on a fresh Windows clone — while the one labelled non-portable does | §5 now states what actually reproduces (index blobs) and what does not, with the attribute evidence |
+| `S1-3` | `C-1` was presented as new to this directory when `../external-review-packet/README.md` carries the same value and the same characterization | §5 records the inheritance, the counting criterion, and which passes carried it |
+| `S1-4` | §5 said *both* reviews had verified the twenty-one hashes. Only the adversarial review did | §5 attributes each check to the review that made it, with its section |
+| `S1-5` | The stated reason for not normalizing the CRLF file was wrong, and "one file there is CRLF" undercounted — three are | §5 and §6.2 give the real reasons (authority and blast radius) and the correct count |
+| `S2-3` | Two self-descriptions were false in the commit that contained them: §2 asserted "nothing was committed or pushed", and §6's working-tree row still said five files. §6.4 had declared every self-description re-verified | §2 and §6 corrected and time-scoped; a full sweep of every count and status claim was re-run afterwards |
+| `S3-2` | §2 reported Constitution §16 as unsatisfied by this directory. §16 enumerates six code components (`RESEARCH_CONSTITUTION.md` lines 147–152); a Markdown-only directory contains none, so §16 is **not applicable** to it, and saying otherwise misreads the clause in the conservative direction | §2 now states non-applicability and preserves §16 for the code it does govern |
+
+`S2-3` is the same defect class as `A-2`, recurring for the third time in this
+document, and it is the reason the project's statistics agent carries an explicit
+rule to re-sweep every self-description after *every* later edit, including edits
+made at commit time. That rule was added on `main` in PR #3 (commit `1d716b3`,
+merged as `4687c90`) **after** this branch was cut: the agent definition in this
+branch's tree does not contain it. An earlier revision of this paragraph asserted
+the rule as already present, which was true of `main` and false of the tree the
+sentence sits in.
+
+Findings left unrepaired by choice, with reasons, are listed in that check's
+report. The previous commit message cannot be amended without a force-push, so
+its repetition of the `S1-4` error is corrected here and in the follow-up commit
+rather than rewritten.
+
+### 6.6 Fourth check — independent different-model adjudication
+
+A fourth read-only check was run after this branch was pushed: an adversarial
+pass by Claude (observed model ID `claude-opus-5`), then an independent
+adjudication of that pass by Claude (observed model ID `claude-fable-5-1`) under
+the verification protocol added to the project's statistics agent in PR #3. The
+adjudicating model is deliberately not the model that authored this directory or
+wrote review (1), both of which observed `claude-opus-5`. Neither is human,
+owner, or statistician acceptance, and neither moves any `D-nn`.
+
+Repaired in this revision, all write-up only:
+
+| ID | Defect | Repair |
+| --- | --- | --- |
+| `V-02` | §5 and the `S1-2` row said "fifteen of the twenty" carry no `text`, `eol`, or `-text` attribute. Fourteen do. Fifteen is the count across all twenty-one, which includes the one CRLF file §5 explicitly excludes from "the twenty": `20 − 2` (`-text`) `− 4` (`eol=lf`) `= 14`. Confirmed by `git check-attr` per path and by a fresh `core.autocrlf=true` clone materializing exactly fourteen as `w/crlf` | Both statements corrected |
+| `V-04` | §6 subsections ran `6.1, 6.5, 6.2, 6.3, 6.4`; `§6.5` was inserted after `§6.1` in commit `e03b6fa` | `§6.5` moved after `§6.4`; its number and every cross-reference are unchanged |
+| `V-05` | `C-1`'s discoverer was stated nowhere, and "five passes over two packets carried it" gave no counting criterion, so the number could not be audited | §5 now names the discoverer and states the criterion and the count |
+| `N-A` | The header and §6.5 said the third check found five write-up defects; six were repaired, `S3-2` being recorded outside the table | Corrected to six; `S3-2` is now a table row |
+| `N-B` | §6.5 said the statistics agent "now carries" the self-description rule. True of `main` after PR #3, false of this branch's tree, where the agent definition does not contain it | The sentence now states when the rule was added and that this branch predates it |
+| `N-C` | `protocol_v1.yaml:27` — "One predeclared comparator is used for every eligibility, robustness, DSR/PBO, null, and lockbox comparison" — is the frozen clause that makes the benchmark leg common across trials and null draws. It underpins both the `L-1` argument in `D-08` and `F-Q1`/`D-14`, and is cited by no packet file and by neither review | Recorded here. The citation is **not** added to `METHOD_CANDIDATE.md` or the matrix: see the authority note below |
+
+Two items are recorded as **open, not repaired**:
+
+- **`V-01` (BLOCKER, owner decision).** §6.5 says "Findings left unrepaired by
+  choice, with reasons, are listed in that check's report." No such report exists
+  on this branch, and the gap in the `S`-numbering (`S1-1`, `S2-1`, `S2-2`,
+  `S3-1` are absent) implies at least four findings a reader is pointed at and
+  cannot read. The remedy is the owner's: commit the third check's record if it
+  survives, or amend §6.5 to state that the record was not preserved and
+  enumerate the unrepaired findings. An AI cannot reconstruct them without
+  inventing them, so the sentence is left standing and wrong rather than
+  half-corrected.
+- **`Q-SW` (QUESTION for the statistician).** `F-Q1`'s cancellation argument for
+  row 12 additionally assumes the 500 null draws and the realized candidate are
+  evaluated on the **same window**. Lines `134–140` do not state it. The
+  adjudication verified the mathematics — type-7 quantiles are
+  translation-equivariant, so under a shared `b` the event reduces exactly to a
+  percentile gate on the candidate's own Sharpe, which is in effect what `I-12`
+  forbids — and confirmed that rows 3–7 do **not** collapse.
+
+**Authority note.** `V-03` in the adversarial pass — the `L-1` collapse of row 12
+and the `D-14`/`D-08` asymmetry — is **not** a new finding: it is `F-Q1`
+(`../V1_1_FABLE_ADVERSARIAL_REVIEW.md` lines 158–173), verified independently in
+review (1) lines 246–250, and commit `4f65d2e` records the owner electing to
+leave row 12 `PROPOSED` with the question standing so the statistician rules on
+it. `V-06` — that the PBO `0.5` branch is reachable without ties for odd `N` — is
+correct but already on record as `F-N3` (review (2), lines 205–209), and
+`METHOD_CANDIDATE.md` §4.1's sentence is scoped to `N = 2`, where a tie is the
+only route, so it is incomplete rather than wrong. Neither is carried into the
+candidate, because the owner elected to freeze the candidate text as the reviews
+describe it. For the same reason `N-C`'s citation is recorded here rather than
+added to `METHOD_CANDIDATE.md` §2 or `HUMAN_DECISION_MATRIX.md` `D-08`/`D-14`,
+although the `A-3` precedent would support a citation-only edit; whether to carry
+it in is the owner's call, not an AI's.

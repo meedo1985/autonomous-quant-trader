@@ -12,13 +12,15 @@
 # A .gitattributes in this directory pins eol=lf, so these values stay
 # verifiable on every platform; see README.md section 6.2.
 # SHA-256 values for every source document read are in README.md section 5.
-# Regenerated after the R-1/R-2 corrections (README.md section 6.3) and the
-# A-1/A-2/A-3 corrections (README.md section 6.4).
-# Regenerated again after .gitattributes was added on owner instruction.
-# Regenerated again after the C-1 line-ending correction (README.md section 5).
-# Regenerated after the S1/S2 repairs from the third adversarial check
-# (README.md section 6.5).
+# Regeneration history, in order: after the R-1/R-2 corrections (README.md
+# section 6.3); after the A-1/A-2/A-3 corrections (section 6.4); after
+# .gitattributes was added on owner instruction (section 6.2); after the C-1
+# line-ending correction (section 5); after the S1/S2/S3 repairs from the third
+# check (section 6.5); and after the V-02/V-04/V-05 and N-A/N-B/N-C write-up
+# repairs from the fourth check, the independent different-model adjudication
+# (section 6.6). In that last regeneration only README.md changed; the other
+# three Markdown files are byte-identical to their first committed revision.
 d5ee7f463e307fa9674bc45353fa6396a995504115a3b4955a01e67f79586432  HUMAN_DECISION_MATRIX.md
 61ab9095675cb3cbfd98d87f7bf7c20cee8ddc206a87b8e91c7639bfc41e3964  METHOD_CANDIDATE.md
 85e08f4e6453045b82638f64e5a7a741b6041daf300f427afa4b53138059ad66  PREREGISTRATION_TEMPLATE.md
-4079430784d623fa6d8a3af78a7acb18cdafe025a4bf235ffbcf6a6388e8c0f4  README.md
+bb3840388590392388825e5ca7ce9caec42312d2a63d7c3a8cb098824902f82d  README.md
