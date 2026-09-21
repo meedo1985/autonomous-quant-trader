@@ -136,16 +136,50 @@ bias? And what does the participation ratio say?
   0.99     0.249                1.5                   1.0
 ```
 
-**The participation ratio understates the effective count by roughly threefold
-across the realistic range.** At `rho = 0.3` the selection bias is that of 32
-independent trials; the participation ratio reports 10. Feed 10 into `A(N)` and
-the hurdle is materially too low.
+At `rho = 0.3` the selection bias is that of 32 independent trials; the
+participation ratio reports 10. Feed 10 into `A(N)` and the hurdle is materially
+too low.
+
+**But equicorrelation is not what a parameter sweep looks like**, and the
+magnitude above is therefore too flattering to the argument. A real sweep has
+neighbouring lookbacks far more alike than distant ones. Under structures that
+resemble one, the understatement is **about twofold**, not threefold:
+
+| Correlation structure | true effective `N` | participation ratio | understates by |
+| --- | ---: | ---: | ---: |
+| Equicorrelated, `rho = 0.3` | 32.1 | 10.1 | 3.2x |
+| Equicorrelated, `rho = 0.6` | 10.1 | 2.7 | 3.7x |
+| AR decay, `corr = 0.9^abs(i-j)` | 25.6 | 11.0 | **2.3x** |
+| AR decay, `corr = 0.97^abs(i-j)` | 8.1 | 3.6 | **2.2x** |
+| 10 blocks of 10, within-block `0.90` | 23.3 | 12.0 | **1.9x** |
+
+An earlier revision of this lesson claimed "roughly threefold across the
+realistic range" on the strength of the equicorrelated rows alone. That was an
+overstatement: threefold is the equicorrelated figure, and equicorrelation is the
+least realistic of the three structures. The **direction is unchanged and is the
+point** — the participation ratio understates, and understating lowers the hurdle
+— but the honest magnitude for a parameter sweep is roughly a factor of two.
+
+Why the direction matters more than the size: `A(N)` is non-decreasing in `N`, so
+a smaller `N_eff` gives a smaller `S0`, which is a lower bar. An error of 2x in
+the permissive direction is still an error in the direction that promotes noise.
 
 This is Astra finding `B1` made concrete: a construction can collapse correlated
 trials toward one effective trial while selection over their maximum still
-biases. `B1` says neither candidate is validated for maxima. The table shows why
+biases. `B1` says neither candidate is validated for maxima. The tables show why
 that warning has teeth, and why adopting the participation ratio because it
-"looks principled" would be an expensive mistake.
+"looks principled" would be a mistake in the permissive direction.
+
+**What this does and does not establish.** It shows the participation ratio is
+unsuitable for selection over a maximum. It does **not** establish that the
+frozen eigenvalue method at `protocol_v1.yaml:232` is suitable — that method was
+never evaluated, and `B1` doubts both. Nor does it supply a correct construction.
+Defining `N_eff` as the inverse image under `A` — the independent-trial count
+producing the same expected maximum — is the right definition *for this purpose*,
+because `A(N)` is exactly where the number is consumed; but it is a simulation
+result under an assumed correlation model, not a theorem, and whether any real
+trial family matches any of the three structures above is
+`UNVERIFIED_EXTERNAL_ASSUMPTION`.
 
 ### Reproduce it
 
