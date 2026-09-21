@@ -33,6 +33,11 @@
   exchange rules, orders, fills, fees, reconciliation, credentials, or live-path
   safety. Keep the review read-only and verify changing exchange behavior against
   official Binance sources when authorized.
+- Consult `sharpe-selection-statistics` when a question turns on what a statistic
+  means or whether a number can be trusted: Sharpe inference under selection,
+  DSR, effective trial count, PBO, the paired estimands, block bootstrap, CPCV.
+  It is a curriculum, not an authority; understanding a method is not accepting
+  one, and it closes no `D-nn`. The `quant-statistics-tutor` agent works from it.
 - Invoke `statistical-binding-review` for unresolved definitions or bindings of
   paired Sharpe, DSR, PBO, CPCV, ESS, bootstrap intervals, lockbox prediction,
   or promotion statistics. The reviewer proposes and checks bindings but cannot
