@@ -20,7 +20,11 @@
 # repairs from the fourth check, the independent different-model adjudication
 # (section 6.6). In that last regeneration only README.md changed; the other
 # three Markdown files are byte-identical to their first committed revision.
+# Regenerated again after the owner decision of 2026-09-21 closing V-01: section
+# 6.5 now records that the third check's report was not preserved. README.md
+# only; the other three Markdown files remain byte-identical to their first
+# committed revision.
 d5ee7f463e307fa9674bc45353fa6396a995504115a3b4955a01e67f79586432  HUMAN_DECISION_MATRIX.md
 61ab9095675cb3cbfd98d87f7bf7c20cee8ddc206a87b8e91c7639bfc41e3964  METHOD_CANDIDATE.md
 85e08f4e6453045b82638f64e5a7a741b6041daf300f427afa4b53138059ad66  PREREGISTRATION_TEMPLATE.md
-bb3840388590392388825e5ca7ce9caec42312d2a63d7c3a8cb098824902f82d  README.md
+157f8420ae1ba3a7334f0f4771504d6ac6770a5ca7729f84568bc177f1166f93  README.md

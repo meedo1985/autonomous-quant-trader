@@ -21,7 +21,8 @@ defects corrected in place — see §6.5. (4) A fourth check after this branch w
 pushed: an adversarial pass by Claude (observed model ID `claude-opus-5`) and an
 independent adjudication of it by Claude (observed model ID `claude-fable-5-1`),
 the first check by a model other than the one that authored this directory; six
-write-up defects corrected in place and two items left open — see §6.6. An AI
+write-up defects corrected in place, one blocker since closed by owner decision,
+and one question left open — see §6.6. An AI
 review confers no scientific or governance authority, and no human, owner, or
 statistician review of this directory exists.
 
@@ -428,9 +429,29 @@ branch's tree does not contain it. An earlier revision of this paragraph asserte
 the rule as already present, which was true of `main` and false of the tree the
 sentence sits in.
 
-Findings left unrepaired by choice, with reasons, are listed in that check's
-report. The previous commit message cannot be amended without a force-push, so
-its repetition of the `S1-4` error is corrected here and in the follow-up commit
+**The third check's report was not preserved, and its unrepaired findings are
+lost (`V-01`).** An earlier revision of this paragraph said those findings "are
+listed in that check's report". No such report exists in this repository. That
+was verified, not assumed: no commit reachable from any ref adds such a file, and
+the tokens `S1-1`, `S2-1`, `S2-2`, and `S3-1` appear in no blob in the entire
+history except this README. Where the check's output went is not recorded
+anywhere, and is not reconstructed here. The finding IDs
+tabulated above are `S1-2` to `S1-5`, `S2-3`, and `S3-2`; the gaps at `S1-1`,
+`S2-1`, `S2-2`, and `S3-1` are that check's remaining findings, which it chose
+not to repair and whose content is now unrecoverable. They are not enumerated
+here because no AI can reconstruct them without inventing them, and inventing
+them would be worse than recording the loss.
+
+What a reader should take from this: the six repairs above are the complete
+record of that check, an unknown number of its findings — at least four, by the
+numbering — were deliberately left unrepaired for reasons no longer available,
+and the packet is therefore **not** accompanied by a full account of the known
+defects in it. The remedy is preservation going forward, not reconstruction:
+`§6.6` records its own check in full, in the repository, before the branch moved.
+Owner decision, 2026-09-21, on the `V-01` blocker raised by the fourth check.
+
+The first commit's message cannot be amended without a force-push, so its
+repetition of the `S1-4` error is corrected here and in the follow-up commit
 rather than rewritten.
 
 ### 6.6 Fourth check — independent different-model adjudication
@@ -454,17 +475,16 @@ Repaired in this revision, all write-up only:
 | `N-B` | §6.5 said the statistics agent "now carries" the self-description rule. True of `main` after PR #3, false of this branch's tree, where the agent definition does not contain it | The sentence now states when the rule was added and that this branch predates it |
 | `N-C` | `protocol_v1.yaml:27` — "One predeclared comparator is used for every eligibility, robustness, DSR/PBO, null, and lockbox comparison" — is the frozen clause that makes the benchmark leg common across trials and null draws. It underpins both the `L-1` argument in `D-08` and `F-Q1`/`D-14`, and is cited by no packet file and by neither review | Recorded here. The citation is **not** added to `METHOD_CANDIDATE.md` or the matrix: see the authority note below |
 
-Two items are recorded as **open, not repaired**:
+`V-01`, the blocker that check raised, was **closed by owner decision on
+2026-09-21**: §6.5 pointed readers at a third-check report that exists nowhere in
+this repository. The owner elected to record that the record was not preserved
+rather than reconstruct it, and §6.5 now states the loss, identifies the missing
+findings by their numbering gap, and says why they are not enumerated. The
+underlying defect is not undone by this — an unknown number of that check's
+findings remain unrepaired and unrecorded, and §6.5 says so plainly.
 
-- **`V-01` (BLOCKER, owner decision).** §6.5 says "Findings left unrepaired by
-  choice, with reasons, are listed in that check's report." No such report exists
-  on this branch, and the gap in the `S`-numbering (`S1-1`, `S2-1`, `S2-2`,
-  `S3-1` are absent) implies at least four findings a reader is pointed at and
-  cannot read. The remedy is the owner's: commit the third check's record if it
-  survives, or amend §6.5 to state that the record was not preserved and
-  enumerate the unrepaired findings. An AI cannot reconstruct them without
-  inventing them, so the sentence is left standing and wrong rather than
-  half-corrected.
+One item is recorded as **open, not repaired**:
+
 - **`Q-SW` (QUESTION for the statistician).** `F-Q1`'s cancellation argument for
   row 12 additionally assumes the 500 null draws and the realized candidate are
   evaluated on the **same window**. Lines `134–140` do not state it. The
