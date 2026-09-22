@@ -8,10 +8,22 @@ discovery had not refreshed; AGENTS.md permits opening the file)
 
 ## 1. Scope
 
-Two added files, no modifications, no deletions:
+Two added files and one modified, no deletions:
 
 - `review/pre-deployment/LOSS_BOUND_DEFAULTS.md` (new)
 - `review/pre-deployment/LOSS_BOUND_DEFAULTS_GATE.md` (this record, new)
+- `review/pre-deployment/LOSS_BOUNDS_AND_OPEN_DECISIONS.md` (modified: the
+  `F-2` citation repair only, one paragraph rewrapped, nothing else)
+- `review/pre-deployment/OWNER_ACKNOWLEDGMENT_S25.md` (new: the §25
+  acknowledgment written out for signature, unsigned)
+
+The §25 document was added after the first gate pass, so the validation in §2
+and the frozen verification in §3 were **re-run** over the expanded change:
+porcelain status over frozen paths still zero lines, Constitution canonical
+self-hash still `4cb6c7d3…4fb8d7`, 1153 passed / 4 skipped, ruff clean, mypy
+clean on 30 files. Its nine clauses were checked one by one against §25 lines
+187–188 and map in order to `C-1`–`C-9`; §2 line 34, §12 lines 118–119 and §14
+lines 128–135 were each read and verified as cited.
 
 `git status --porcelain docs protocols schemas specs FROZEN_HASHES.json` returned
 zero lines. No code, test, config, schema or spec file changed. No out-of-scope
@@ -80,8 +92,10 @@ doubling is a judgment rather than a citation, and giving the argument for it.
 `276–278`, not `276–277`, and the clause reads *confirmation* OOS max drawdown,
 which the draft had dropped. The cooling-off floors are at `303–304`; `305` is
 `safety_amendment_activation_delay_hours`, which is not cited. Both corrected.
-Note the error exists in the already-merged predecessor document and is **not**
-repaired there by this change.
+The `276-277` error also existed in the already-merged predecessor document and
+**is repaired there by this change**, in the same branch. The cooling-off cite in
+that document (`protocol_v1.yaml:303`, capital-increase only) was checked and is
+correct, so it was left alone.
 
 **`F-3` — `NON-BLOCKING`, repaired.** `protocol_v1.yaml:244` defines a fallback
 effective-decisions method, `raw_decisions / ceil(horizon_hours/24)`, which is a
@@ -124,8 +138,9 @@ and produced `F-2` and `F-3`.
 
 Claude adversarial review status: **`NOT SENT`**, and per `F-5` it would not be
 independent if sent to the same model. The independent review that would have
-value here is by a different model family; Codex is installed and available. It
-has not been run and this record does not claim it.
+value here is by a different model family. Codex is installed but the owner
+reported it **unavailable** on 2026-09-22, so no different-model review has been
+run and this record does not claim one.
 
 Outstanding before anything in this document takes effect:
 

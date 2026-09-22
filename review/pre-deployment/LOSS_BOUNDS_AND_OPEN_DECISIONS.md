@@ -95,9 +95,10 @@ period short enough to contain a handful of decisions tests almost nothing.
 
 A drawdown level at which you stop, expressed in money, decided in advance, and
 not conditional on the model's opinion at the time. The frozen protocol has a
-*relative* drawdown constraint (`btc_drawdown_constraint`, line 276-277: OOS max
-drawdown no worse than benchmark by more than 0.05) — but that is a
-**promotion gate**, evaluated on backtest data. It is not a live stop.
+*relative* drawdown constraint (`btc_drawdown_constraint`, lines 276-278:
+*confirmation* OOS max drawdown point estimate no worse than benchmark by more
+than 0.05) — but that is a **promotion gate**, evaluated on backtest data. It is
+not a live stop.
 
 The distinction matters: a relative constraint can be satisfied while you lose a
 great deal of money, if the benchmark is losing too.
