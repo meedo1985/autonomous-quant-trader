@@ -1,0 +1,3 @@
+- [Owner constraints](owner-constraints.md) — not a statistician, cannot share the work, trading his own capital; shapes what advice is useful.
+- [Project state](quant-trader-project-state.md) — where autonomous-quant-trader stands as of 2026-09-22, what is blocked, what to resume.
+- [AI review record discipline](ai-review-record-discipline.md) — commit a review's record before citing it; never write the owner's review for him.
