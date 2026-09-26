@@ -21,9 +21,9 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Final, Protocol, TextIO
 
-from aqt.core.ledger import append_entry
+from aqt.core.ledger import LedgerError, append_entry, read_entries, verify_ledger
 from aqt.data.manifest import canonical_json_bytes
-from aqt.monitoring.events import Event, EventKind, Severity
+from aqt.monitoring.events import Event, EventKind, FieldValue, Severity
 
 __all__ = [
     "LEDGER_RECORD_TYPE",
@@ -31,12 +31,16 @@ __all__ = [
     "AlertConfigError",
     "AlertRouter",
     "LedgerSink",
+    "ROTATION_RECORD_TYPE",
+    "RotatingLedgerSink",
     "Sink",
     "StreamSink",
     "redact",
+    "verify_rotated_log",
 ]
 
 LEDGER_RECORD_TYPE: Final[str] = "aqt.monitoring.event.v1"
+ROTATION_RECORD_TYPE: Final[str] = "aqt.monitoring.rotation.v1"
 REDACTED: Final[str] = "[REDACTED]"
 
 _SECRET_NAME: Final = re.compile(
@@ -90,17 +94,99 @@ class LedgerSink:
         )
 
 
-def redact(event: Event) -> tuple[Event, tuple[str, ...]]:
-    """Return the event with credential-shaped fields replaced, and their names."""
-    fields = dict(event.fields)
-    replaced: list[str] = []
-    for name, value in fields.items():
-        suspicious = bool(_SECRET_NAME.search(name)) or (
-            isinstance(value, str) and any(p.search(value) for p in _SECRET_VALUE)
+def _looks_secret(text: str) -> bool:
+    return any(pattern.search(text) for pattern in _SECRET_VALUE)
+
+
+class RotatingLedgerSink:
+    """A hash-chained log that starts a new file each UTC day.
+
+    Files are `<directory>/<prefix>-YYYY-MM-DD.jsonl`, one ledger each. The
+    first entry of every file after the first is a rotation record naming the
+    previous file and its verified head hash, so the chain continues across
+    files. An event is never written to a file older than the newest one, so
+    a late timestamp at midnight cannot reopen yesterday's file.
+    """
+
+    def __init__(
+        self, directory: Path, min_severity: Severity, *, prefix: str = "operations"
+    ) -> None:
+        self.directory = directory
+        self.min_severity = min_severity
+        self.prefix = prefix
+
+    def _files(self) -> list[Path]:
+        return sorted(self.directory.glob(f"{self.prefix}-*.jsonl"))
+
+    def write(self, event: Event) -> None:
+        self.directory.mkdir(parents=True, exist_ok=True)
+        target = self.directory / f"{self.prefix}-{event.at:%Y-%m-%d}.jsonl"
+        files = self._files()
+        if files and target.name < files[-1].name:
+            target = files[-1]
+        if not target.exists() and files:
+            previous = verify_ledger(files[-1])
+            previous.require_intact()
+            append_entry(
+                target,
+                record_type=ROTATION_RECORD_TYPE,
+                payload={
+                    "previous_entry_count": previous.entry_count,
+                    "previous_file": files[-1].name,
+                    "previous_head_hash": previous.head_hash,
+                },
+                recorded_at_utc=event.at,
+            )
+        append_entry(
+            target,
+            record_type=LEDGER_RECORD_TYPE,
+            payload=event.as_mapping(),
+            recorded_at_utc=event.at,
         )
-        if suspicious and value is not None:
+
+
+def verify_rotated_log(directory: Path, prefix: str = "operations") -> int:
+    """Verify every file and every link between files; return the file count.
+
+    Raises `LedgerError` on any damaged file, a missing or mismatched rotation
+    record, or a gap in the sequence of files.
+    """
+    files = sorted(directory.glob(f"{prefix}-*.jsonl"))
+    for number, path in enumerate(files):
+        verify_ledger(path).require_intact()
+        if number == 0:
+            continue
+        first = read_entries(path)[0]
+        previous = verify_ledger(files[number - 1])
+        link = first.payload
+        if first.record_type != ROTATION_RECORD_TYPE or link != {
+            "previous_entry_count": previous.entry_count,
+            "previous_file": files[number - 1].name,
+            "previous_head_hash": previous.head_hash,
+        }:
+            raise LedgerError(f"{path.name} does not continue {files[number - 1].name}")
+    return len(files)
+
+
+def redact(event: Event) -> tuple[Event, tuple[str, ...]]:
+    """Return the event with credential-shaped fields replaced, and the names
+    of the replaced fields. A field whose *name* looks like a credential is
+    renamed too, so no returned name can carry one."""
+    fields: dict[str, FieldValue] = {}
+    replaced: list[str] = []
+    for index, (name, value) in enumerate(event.fields.items()):
+        if _looks_secret(name):
+            safe = f"redacted_field_{index}"
+            fields[safe] = REDACTED
+            replaced.append(safe)
+        elif value is not None and (
+            _SECRET_NAME.search(name)
+            or (isinstance(value, str) and _looks_secret(value))
+        ):
             fields[name] = REDACTED
             replaced.append(name)
+        else:
+            fields[name] = value
     if not replaced:
         return event, ()
     return Event(event.kind, event.severity, event.at, fields), tuple(replaced)
@@ -123,10 +209,13 @@ class AlertRouter:
         """Redact, then deliver. A sink failure propagates; nothing is swallowed."""
         clean, replaced = redact(event)
         if replaced:
+            # At least the original severity, so every sink that receives the
+            # event also receives the record that it was redacted.
+            severity = max(Severity.WARNING, event.severity, key=lambda s: s.rank)
             self._deliver(
                 Event(
                     EventKind.REDACTION,
-                    Severity.WARNING,
+                    severity,
                     event.at,
                     {"event_kind": str(event.kind), "fields": ",".join(replaced)},
                 )

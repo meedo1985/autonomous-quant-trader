@@ -48,7 +48,8 @@ contract "Live packages cannot reach research agent code" already covers
 
 ### Deliberate differences from the roadmap
 
-- **T19-01. No rotating file.** The roadmap says "stdout plus a rotating file".
+- **T19-01. No rotating file.** *(Superseded after review: a rotating log was
+  added; see `ADJUDICATION.md` R-3.)* The roadmap says "stdout plus a rotating file".
   Rotation would break a single hash chain unless each new file linked to the
   last, which is new design. The file sink is the ledger at a path the caller
   chooses (for example one per UTC day, each its own chain). Linking files

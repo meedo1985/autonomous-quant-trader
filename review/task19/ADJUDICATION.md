@@ -17,4 +17,26 @@ Adjudicator: Claude Opus 5.5 (`claude-opus-5-5`), the implementing model.
 Deviation T19-02 (health checks return events rather than routing them): the
 reviewer accepts it. Agreed.
 
-All three are to be repaired in a later commit on this branch.
+All three are repaired below.
+
+## Repairs (Claude Opus 5.5, 2026-09-26)
+
+| ID | Change | Regression test |
+|---|---|---|
+| R-1 | The `REDACTION` record takes the higher of WARNING and the original event's severity, so every sink that receives the event also receives the record. | `test_the_redaction_record_reaches_a_critical_only_log` |
+| R-2 | A field whose **name** looks like a credential is renamed `redacted_field_<index>` with a `[REDACTED]` value; the audit record lists only the safe names. | `test_a_credential_shaped_field_name_never_reaches_a_sink` |
+| R-3 | `RotatingLedgerSink` writes one hash-chained ledger file per UTC day. Every file after the first opens with a rotation record naming the previous file, its entry count and its verified head hash; a late timestamp never reopens an older file. `verify_rotated_log` checks every file and every link. | `test_the_log_rotates_daily_and_the_chain_continues`, `test_a_late_timestamp_never_reopens_an_older_file`, `test_damage_to_a_rotated_log_is_detected` (edited first file; deleted middle file) |
+
+`LEDGER_RECORD_TYPE` and the single-file `LedgerSink` remain for callers that
+want one file. T19-01 in `LOCAL_REPORT.md` is marked superseded.
+
+Mutation check: with `alerts.py` from `016d136` restored (and a single-file
+stand-in for the rotation API so the tests can import), the R-1, R-2 and three
+of the four rotation tests fail. The edited-file case passes there too,
+because the underlying ledger detects edits by itself.
+
+Validation after repair, `.venv` Python 3.14.7: `pytest -q` 1295 passed, 4 skipped in 63.02s (0:01:03);
+ruff, format, mypy and `lint-imports` pass; `git diff --check main...HEAD`
+clean (after commit); no change under the frozen paths.
+
+These repairs have not been re-reviewed by a different model.
