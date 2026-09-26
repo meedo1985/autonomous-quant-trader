@@ -152,3 +152,30 @@ def test_outage_rows_are_still_checked_for_shape() -> None:
         parse_archive(
             archive([row(JAN_2020 + 1) + ",x"]), symbol="BTCUSDT", year=2020, month=1
         )
+
+
+_SHORT = JAN_2020 + 1_000  # a bar that closes one second after it opens
+
+
+@pytest.mark.parametrize(
+    ("open_ms", "close_ms"),
+    [(JAN_2020, _SHORT), (JAN_2020 + 1_694_789, JAN_2020 + 1_694_789 + HOUR_MS - 1)],
+)
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"o": "nan"},
+        {"v": "abc"},
+        {"v": "-1"},
+        {"h": "80.0"},  # high below low
+        {"low": "0"},
+        {"c": "inf"},
+    ],
+)
+def test_malformed_values_fail_even_on_an_outage_row(
+    open_ms: int, close_ms: int, values: dict[str, str]
+) -> None:
+    """R-1: an irregular time must not let a malformed row pass as an outage."""
+    rows = [row(open_ms, close_ms=close_ms, **values), row(JAN_2020 + 5 * HOUR_MS)]
+    with pytest.raises(KlineError, match="line 1"):
+        parse_archive(archive(rows), symbol="BTCUSDT", year=2020, month=1)

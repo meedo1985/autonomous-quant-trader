@@ -186,3 +186,12 @@ def test_cli_output_is_write_once(raw: Path, tmp_path: Path) -> None:
     manifest_path.write_bytes(written + b" ")
     with pytest.raises(KlineError, match="refusing to replace"):
         cli.main(args)
+
+
+def test_malformed_outage_row_stops_the_build(tmp_path: Path) -> None:
+    """R-1: the manifest is not built when an outage row carries bad values."""
+    start = _ms(MAR)
+    bad = f"{start},nan,110.0,90.0,105.0,abc,{start + 1_000},1,1,1,1,0"
+    _store(tmp_path, 2020, 3, _hours(MAR + HOUR, 3), (bad,))
+    with pytest.raises(KlineError, match="line 4"):
+        build_exploration_manifest("exploration", "BTCUSDT", tmp_path)

@@ -16,7 +16,8 @@ Constitution obligations
   around exchange outages (bars cut short by a maintenance stop, bars running
   on a mid-hour offset after a restart). A row is **regular** only if it opens
   exactly on the hour and closes exactly 1 ms before the next hour. Every
-  other well-formed row is an **outage row**: it becomes no bar, it is listed
+  other well-formed row (its prices and volume pass the same checks as a
+  regular bar) is an **outage row**: it becomes no bar, it is listed
   in the build report with its file, line, times, and reason, and the hours it
   would have covered are left to the declared gaps. Nothing is shifted onto
   the hour grid or stretched to a full hour.
@@ -165,23 +166,28 @@ def parse_archive(
         close_ms = _millis(row[6], where)
         if not first_ms <= open_ms < end_ms:
             raise KlineError(f"{where}: open_time lies outside {year:04d}-{month:02d}")
+        # Every row's values pass the `aqt.data.bars` checks before it is
+        # classified, so a malformed row cannot pass as an outage. For an
+        # outage row the Bar is labelled with its hour only to run those checks
+        # and is then discarded; the raw times go to the report unchanged.
+        try:
+            bar = Bar(
+                open_time=datetime.fromtimestamp(
+                    (open_ms - open_ms % _HOUR_MS) / 1000, tz=UTC
+                ),
+                open=float(row[1]),
+                high=float(row[2]),
+                low=float(row[3]),
+                close=float(row[4]),
+                volume=float(row[5]),
+            )
+        except (ValueError, BarSemanticsError) as error:
+            raise KlineError(f"{where}: {error}") from None
         reason = _irregularity(open_ms, close_ms)
         if reason is not None:
             outages.append(OutageRow(f"{name}.csv", line_no, open_ms, close_ms, reason))
             continue
-        try:
-            bars.append(
-                Bar(
-                    open_time=datetime.fromtimestamp(open_ms / 1000, tz=UTC),
-                    open=float(row[1]),
-                    high=float(row[2]),
-                    low=float(row[3]),
-                    close=float(row[4]),
-                    volume=float(row[5]),
-                )
-            )
-        except (ValueError, BarSemanticsError) as error:
-            raise KlineError(f"{where}: {error}") from None
+        bars.append(bar)
     if not bars and not outages:
         raise KlineError(f"{name}.csv has no rows")
     return ParsedArchive(tuple(bars), tuple(outages))
