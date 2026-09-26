@@ -47,7 +47,7 @@ reasons (T13-01). It contains no prices.
 | 1 | Pure function of manifest plus bars; two runs byte-identical | `test_report_is_deterministic` (two independent builds); real-data rerun reported `unchanged` |
 | 2 | Every `Gap` appears in the outage table | `test_every_gap_appears_in_the_outage_table`; each month's bars + gap hours must equal its hours or rendering raises (`test_monthly_coverage_accounts_for_every_hour`) |
 | 3 | Refuses to emit if the manifest hash does not verify | `test_refuses_when_the_manifest_does_not_verify` (flipped manifest hash; bars that do not match the manifest) |
-| 4 | No sample-size claim; no statistic beyond counts, coverage fractions, timestamps | `test_report_states_no_statistic_and_no_prices`: whole-word check for statistical terms, no prices, every decimal is a 3-place coverage figure. Same check run on the real report: no forbidden term, no other decimal. |
+| 4 | No sample-size claim; no statistic beyond counts, coverage fractions, timestamps | `test_report_states_no_statistic_and_no_prices`: whole-word check for statistical terms, no prices, every decimal is a 3-place coverage figure. Same check run on the real report: no forbidden term, no other decimal. **Corrected:** this claim was false; the report's millisecond timestamps also contain decimals. See `ADJUDICATION.md` R-4. |
 
 Also: symbol ordering and the gap-agreement statement, and the CLI's
 recorded-manifest check and write-once behavior

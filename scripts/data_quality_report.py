@@ -5,9 +5,9 @@ Usage:
         --manifests data/processed/manifests \
         --out review/task15/DATA_QUALITY_REPORT.md
 
-Rebuilds each symbol's exploration manifest from the raw archives and refuses
-to continue unless it is byte-identical to the manifest Task 14 wrote, so the
-report always describes the recorded manifest. The report file is write-once:
+The report is derived from the raw archives and refused unless each rebuilt
+manifest is byte-identical to the manifest Task 14 wrote, so it always
+describes the recorded manifest. The report file is write-once:
 an identical rerun is a no-op, a different one is refused.
 """
 
@@ -18,8 +18,7 @@ import sys
 from pathlib import Path
 
 from aqt.data.binance_public import ALLOWED_SYMBOLS
-from aqt.data.klines import EXPLORATION, build_exploration_manifest
-from aqt.data.manifest import canonical_json_bytes
+from aqt.data.klines import EXPLORATION
 from aqt.data.quality import QualityReportError, render_report
 
 
@@ -30,18 +29,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
 
-    builds = []
-    for symbol in ALLOWED_SYMBOLS:
-        build = build_exploration_manifest(EXPLORATION, symbol, args.raw)
-        recorded = args.manifests / f"{EXPLORATION}-{symbol}-1h.json"
-        if recorded.read_bytes() != canonical_json_bytes(build.manifest.as_mapping()):
-            raise QualityReportError(
-                f"{symbol}: the rebuilt manifest differs from {recorded}; "
-                "rebuild the manifests with scripts/build_manifests.py first"
-            )
-        builds.append(build)
-
-    content = render_report(builds).encode("utf-8")
+    recorded = {
+        symbol: (args.manifests / f"{EXPLORATION}-{symbol}-1h.json").read_bytes()
+        for symbol in ALLOWED_SYMBOLS
+    }
+    content = render_report(args.raw, recorded).encode("utf-8")
     if args.out.exists():
         # A committed copy may have been checked out with CRLF line endings.
         if args.out.read_bytes().replace(b"\r\n", b"\n") != content:

@@ -10,20 +10,36 @@ the data is fit to explore on, not an analysis of it.
 - Section 23: bar counts are stated as bar counts. The report contains counts,
   coverage fractions, and timestamps only: no prices and no statistic.
 
-The report refuses to render unless each manifest verifies against its own
-parsed bars, so it can never describe data other than what the manifest names.
+The report is derived entirely from the raw archives: it builds each
+exploration manifest itself (Task 14), refuses unless that manifest is
+byte-identical to the recorded one and verifies against its own parsed bars,
+and takes every other fact (outage rows, missing archives) from the same build.
+No caller can supply evidence the manifest check does not cover.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_EVEN, Context, Decimal
+from pathlib import Path
+from typing import Final
 
 from aqt.data.bars import BAR_INTERVAL
 from aqt.data.binance_public import EXPLORATION_MONTHS, months_between
-from aqt.data.klines import WINDOW_END_EXCLUSIVE, WINDOW_START, ExplorationBuild
-from aqt.data.manifest import AvailabilityRecord, Gap, verify_partition_manifest
+from aqt.data.klines import (
+    EXPLORATION,
+    WINDOW_END_EXCLUSIVE,
+    WINDOW_START,
+    ExplorationBuild,
+    build_exploration_manifest,
+)
+from aqt.data.manifest import (
+    AvailabilityRecord,
+    Gap,
+    canonical_json_bytes,
+    verify_partition_manifest,
+)
 
 __all__ = ["QualityReportError", "render_report"]
 
@@ -45,9 +61,14 @@ def _hours(start: datetime, end: datetime) -> int:
     return (end - start) // BAR_INTERVAL
 
 
+_DECIMAL: Final = Context(prec=28, rounding=ROUND_HALF_EVEN)
+"""Fixed arithmetic for coverage figures, independent of the ambient context."""
+
+
 def _percent(part: int, whole: int) -> str:
     """A coverage fraction as a percentage, exact decimal arithmetic."""
-    return f"{(Decimal(part) * 100 / Decimal(whole)).quantize(Decimal('0.001'))} %"
+    ratio = _DECIMAL.divide(_DECIMAL.multiply(Decimal(part), Decimal(100)), whole)
+    return f"{ratio.quantize(Decimal('0.001'), context=_DECIMAL)} %"
 
 
 def _month_span(year: int, month: int) -> tuple[datetime, datetime]:
@@ -157,14 +178,25 @@ def _section(build: ExplorationBuild) -> list[str]:
     return lines + [""]
 
 
-def render_report(builds: Sequence[ExplorationBuild]) -> str:
-    """Render the report; a pure function of the builds' manifests and bars."""
-    if not builds:
-        raise QualityReportError("no builds to report on")
-    symbols = [build.manifest.symbol for build in builds]
-    if len(set(symbols)) != len(symbols):
-        raise QualityReportError(f"duplicate symbols: {symbols}")
-    ordered = sorted(builds, key=lambda build: build.manifest.symbol)
+def render_report(raw_root: Path, recorded_manifests: Mapping[str, bytes]) -> str:
+    """Render the report for every symbol in `recorded_manifests`.
+
+    A pure function of the raw archives under `raw_root` and the recorded
+    manifest bytes: each symbol is rebuilt from the archives, and the report is
+    refused unless the rebuilt manifest equals the recorded one exactly.
+    """
+    if not recorded_manifests:
+        raise QualityReportError("no recorded manifests to report on")
+    ordered: list[ExplorationBuild] = []
+    for symbol in sorted(recorded_manifests):
+        build = build_exploration_manifest(EXPLORATION, symbol, raw_root)
+        rebuilt = canonical_json_bytes(build.manifest.as_mapping())
+        if rebuilt != recorded_manifests[symbol]:
+            raise QualityReportError(
+                f"{symbol}: the manifest rebuilt from the raw archives differs "
+                "from the recorded manifest; no report"
+            )
+        ordered.append(build)
     gap_sets = {tuple(build.manifest.gaps) for build in ordered}
 
     lines = [
