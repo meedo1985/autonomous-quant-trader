@@ -145,9 +145,12 @@ files and this report.
   disagreement with the reviewer**: the AI keeps routine reductions on the
   hourly decision schedule and carries immediate de-risking to Task 23. See
   `REVIEW_3.md` and `ADJUDICATION_3.md`.
-- **Requirement for Task 23:** HALT and FLATTEN must reduce exposure at once,
-  at any time, including while a governor reservation is outstanding, without
-  an overlapping authorization that could conflict with an order in flight.
+- **Requirement for Task 23** (corrected after the fourth review): **FLATTEN**
+  must reduce exposure at once, at any time, including while a governor
+  reservation is outstanding, in coordination with that reservation. HALT
+  places no order, and FREEZE makes no autonomous risk change.
+- Fourth Astra review: **ACCEPT**, no new findings; R3-1 deferral accepted,
+  R3-2 repaired. See `REVIEW_4.md` and `ADJUDICATION_4.md`.
 - **QUESTION T21-Q1 (owner):** the upper limit on how long after a decision an
   order may still be authorized. The AI proposes 5 minutes; the owner may
   confirm it or choose less.
