@@ -48,8 +48,8 @@ MAX_DECISION_WINDOW: Final[timedelta] = timedelta(minutes=5)
 
 The frozen rule says risk increases happen "only at 00:00 UTC". A window
 as long as a bar would let a 00:00 increase be issued at 00:59. Five
-minutes is the coding AI's **proposal**, pending the owner (question
-T21-Q1); the owner may confirm it or lower it. It can only tighten the rule.
+minutes was proposed by the coding AI and **confirmed by the owner** on
+2026-09-26 (question T21-Q1, `review/task21/OWNER_ANSWER_Q1.md`).
 """
 
 MAX_DECIMAL_EXPONENT: Final[int] = 20

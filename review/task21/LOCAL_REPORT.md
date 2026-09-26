@@ -151,7 +151,6 @@ files and this report.
   places no order, and FREEZE makes no autonomous risk change.
 - Fourth Astra review: **ACCEPT**, no new findings; R3-1 deferral accepted,
   R3-2 repaired. See `REVIEW_4.md` and `ADJUDICATION_4.md`.
-- **QUESTION T21-Q1 (owner):** the upper limit on how long after a decision an
-  order may still be authorized. The AI proposes 5 minutes; the owner may
-  confirm it or choose less.
+- T21-Q1 answered: the owner said "confirm 5 minutes for T21-Q1"
+  (`OWNER_ANSWER_Q1.md`). `MAX_DECISION_WINDOW` is 5 minutes.
 - The owner's own PR review is required before merge (section 16).
