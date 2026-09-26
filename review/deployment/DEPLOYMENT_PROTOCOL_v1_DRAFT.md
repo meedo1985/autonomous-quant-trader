@@ -27,9 +27,11 @@ document restates but cannot relax.
 
 - **[FROZEN §<n>]** / **[FROZEN protocol:<line>]**: restates frozen text. The
   frozen text governs where they differ.
-- **[PENDING L-<nn>]**: a value proposed in
-  `review/pre-deployment/LOSS_BOUND_DEFAULTS.md` and **not adopted**. It stays a
-  placeholder until the owner adopts it there.
+- **[ADOPTED L-<nn>]**: a loss bound the owner adopted in their own hand in
+  section 6 of `review/pre-deployment/LOSS_BOUND_DEFAULTS.md` on 2026-09-26
+  (record `review/pre-deployment/LOSS_BOUNDS_ADOPTION_RECORD.md`). It is the
+  owner's self-imposed bound, not frozen text, and this draft is still not
+  adopted as a whole.
 - **[OPEN]**: a value or choice no frozen text or proposal supplies. The owner
   must decide it before activation. The AI has deliberately not proposed a
   number where none exists in the sources, so an invented default cannot pass
@@ -41,12 +43,12 @@ Activation is blocked until each of these exists:
 
 | Input | Status on 2026-09-26 | Source |
 |---|---|---|
-| Owner's §25 acknowledgment, signed and dated | Unsigned | [FROZEN §25]; `review/pre-deployment/OWNER_ACKNOWLEDGMENT_S25.md` |
-| `L-01` deployable amount | Proposed `0`; not adopted | [PENDING L-01] |
-| `L-02` forward paper period | Proposed ≥ 240 effective decisions; not adopted | [PENDING L-02] |
-| `L-03` absolute live stop | Proposed 20% from peak live equity; not adopted | [PENDING L-03] |
-| `L-04` risk-increase rule | Proposed written record + no increase below peak; not adopted | [PENDING L-04] |
-| Different-model + human review of governor, executor state machine, protocol-enforcement logic | No reviewer named (roadmap Q2) | [FROZEN §16] |
+| Owner's §25 acknowledgment, signed and dated | Signed 2026-09-26 (`review/pre-deployment/S25_SIGNATURE_RECORD.md`) | [FROZEN §25]; `review/pre-deployment/OWNER_ACKNOWLEDGMENT_S25.md` |
+| `L-01` deployable amount | `0` for now; to be revisited before canary | [ADOPTED L-01] |
+| `L-02` forward paper period | ≥ 240 effective decisions, no real capital deployed | [ADOPTED L-02] |
+| `L-03` absolute live stop | 20% from peak live equity | [ADOPTED L-03] |
+| `L-04` risk-increase rule | Written record + no increase below peak | [ADOPTED L-04] |
+| Different-model + human review of governor, executor state machine, protocol-enforcement logic | AI reviewer named: GPT-6 Astra (roadmap Q2, `review/roadmap/OWNER_ANSWER_Q2.md`); the human PR review is recorded separately before each protected merge | [FROZEN §16] |
 | Governor, executor, HALT/FLATTEN/FREEZE, paper loop | Not written (roadmap Tasks 21-25) | roadmap |
 | A promoted candidate, or the deployable baseline | No cycle has started; verdict `KEEP_BLOCKED` | [FROZEN §11, §13] |
 | An external alert channel | None exists; each needs a credential and network path | §5 below |
@@ -62,7 +64,7 @@ apply") but does not define them. **Proposed definitions:**
 | **Replay** | Historical, already known | Sent to the simulated exchange (Task 18) only | None |
 | **Forward paper** | Live, as it arrives | Sent to the simulated exchange (Task 18) only | None |
 | **Shadow** | Live | Computed, authorized, and logged, but **never sent** | None |
-| **Canary** | Live | Sent to Binance Spot | At most `L-01` [PENDING L-01] |
+| **Canary** | Live | Sent to Binance Spot | At most `L-01` [ADOPTED L-01] |
 
 Replay is a test of the machinery only. **Only forward paper counts toward
 `L-02`**: `L-02` is defined as forward evidence, data that did not exist when
@@ -84,7 +86,7 @@ canary amount is a risk increase under §6.
 
 1. Every §1 input except `L-01` exists and is adopted.
 2. **Forward paper** (not replay) has run for the `L-02` period
-   [PENDING L-02] and ended with no open incident.
+   [ADOPTED L-02] and ended with no open incident.
 3. An alert channel that reaches the owner outside the machine running the
    loop exists and has been tested end to end (§5) [OPEN: which channel].
 4. This protocol has been activated by the owner under §4.
@@ -162,7 +164,7 @@ The loop must not start if any of these holds. Each is logged.
   falls under §8.
 - **Must alert CRITICAL:** any entry to HALT, FLATTEN, or FREEZE; any
   `REFUSE_START`; any reconciliation mismatch; any ambiguous order reaching
-  `UNKNOWN`; any credential anomaly; any `L-03` breach [PENDING L-03].
+  `UNKNOWN`; any credential anomaly; any `L-03` breach [ADOPTED L-03].
 - **Channel test:** before shadow and then every [OPEN: interval], a test
   alert must be received and acknowledged by the owner, and the test recorded.
 
@@ -174,7 +176,7 @@ reconciliation."
 
 | State | Entered on | Allowed | Exit |
 |---|---|---|---|
-| **HALT** | Any incident (**proposed**; §0 defines an incident but does not say it causes HALT); `L-03` breach [PENDING L-03]; owner command | No new risk [FROZEN §22] | The HALT exit procedure below [FROZEN §14] |
+| **HALT** | Any incident (**proposed**; §0 defines an incident but does not say it causes HALT); `L-03` breach [ADOPTED L-03]; owner command | No new risk [FROZEN §22] | The HALT exit procedure below [FROZEN §14] |
 | **FLATTEN** | Owner command, or [OPEN: automatic triggers] | Bounded de-risking [FROZEN §22], within [OPEN: bounds] | Zero exposure, then HALT (**proposed**) |
 | **FREEZE** | An ambiguous order reaching `UNKNOWN` [FROZEN §21]; a reconciliation failure while running (**proposed**) | No autonomous risk change [FROZEN §22] | Successful reconciliation [FROZEN §22] |
 
@@ -244,7 +246,7 @@ anomaly: an incident [FROZEN §0].
   hours since the last increase [FROZEN protocol:56-58].
 - Safety-amendment activation delay: at least 72 hours [FROZEN §4; FROZEN
   protocol:305].
-- `L-04` [PENDING]: a written record for every increase, and no increase while
+- `L-04` [ADOPTED L-04]: a written record for every increase, and no increase while
   equity is below its peak.
 - Moving from shadow to canary, and any increase of the canary amount, is a
   risk increase.
@@ -281,7 +283,9 @@ anomaly: an incident [FROZEN §0].
 | §7 | NOT_FOUND delay and confirmed-absence rule |
 | §8 | Executor IP address(es); key storage mechanism |
 
-Plus `L-01`–`L-04`, the §25 signature, and a §16 reviewer (§1).
+The §1 inputs `L-01`–`L-04`, the §25 signature and the §16 AI reviewer were
+settled by the owner on 2026-09-26; `L-01` stays `0` until the owner revisits
+it before canary.
 
 ## 12. Activation
 
