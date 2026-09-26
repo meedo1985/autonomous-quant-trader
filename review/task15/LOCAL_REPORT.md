@@ -78,7 +78,7 @@ Frozen verification: `git diff main` over `docs/`, `protocols/`, `schemas/`,
   repaired before commit. The committed check was confirmed to catch
   `sample size`, `Sharpe`, `mean`, `ESS`, `returns` and `std` and to ignore
   `postdates`, `Missing archives`, `process`, `address` and `untradeable`.
-- **T15-02 NON-BLOCKING.** Section 23's requirements for reports on decision
+- **T15-02 NON-BLOCKING.** Section 23's requirements for decision
   reports (raw decisions, overlap factor, ESS, trial counts, benchmark, costs)
   do not apply: this is a data report with no decisions. It states only what
   the roadmap asks for.
