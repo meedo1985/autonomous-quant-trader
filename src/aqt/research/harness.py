@@ -12,10 +12,13 @@ paired or promotion statistic: those bindings (`D-16`, `D-17`) are open.
 
 Partition boundary
 ------------------
-Only an exploration manifest is accepted (section 7a, section 15). Any other
-partition is refused before the loader is called, so no confirmation or
-lockbox bar is ever read. The loaded bars are then checked against the
-manifest's parsed hash, so a run is bound to the data it names.
+Only an exploration manifest is accepted (section 7a, section 15). A manifest
+is refused before the loader is called unless it is labelled `exploration`
+**and** its declared window lies inside the protocol exploration window
+(`aqt.data.klines.WINDOW_START` to `WINDOW_END_EXCLUSIVE`); the label alone
+proves nothing about the dates. The loaded bars are then checked against the
+manifest, which confines them to its window and binds them to its parsed hash,
+so no confirmation or lockbox bar is read.
 
 Gaps
 ----
@@ -42,6 +45,7 @@ from aqt.benchmarks.canonical import (
     require_canonical_benchmark,
 )
 from aqt.data.bars import BAR_INTERVAL, Bar, BarSeries
+from aqt.data.klines import WINDOW_END_EXCLUSIVE, WINDOW_START
 from aqt.data.manifest import PartitionManifest, verify_partition_manifest
 from aqt.metrics.descriptive import DescriptiveMetrics, describe
 
@@ -182,6 +186,16 @@ def run_exploration(
             f"the research harness runs on the {EXPLORATION_PARTITION!r} "
             f"partition only; {manifest.partition!r} is refused before any "
             "data is read"
+        )
+    if (
+        manifest.window_start_utc < WINDOW_START
+        or manifest.window_end_exclusive_utc > WINDOW_END_EXCLUSIVE
+    ):
+        raise HarnessError(
+            f"manifest window [{manifest.window_start_utc.isoformat()}, "
+            f"{manifest.window_end_exclusive_utc.isoformat()}) leaves the "
+            f"exploration window [{WINDOW_START.isoformat()}, "
+            f"{WINDOW_END_EXCLUSIVE.isoformat()}); refused before any data is read"
         )
     series = load(manifest)
     verify_partition_manifest(manifest, series=series)

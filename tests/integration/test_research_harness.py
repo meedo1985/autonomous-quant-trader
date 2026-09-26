@@ -142,6 +142,56 @@ def test_other_partitions_are_refused_before_data_is_read(partition: str) -> Non
     assert calls == []
 
 
+def _outside(
+    start: datetime, hours: int, end: datetime
+) -> tuple[PartitionManifest, BarSeries]:
+    series = BarSeries(
+        symbol="BTCUSDT",
+        bars=tuple(
+            dataclasses.replace(bar, open_time=start + index * HOUR)
+            for index, bar in enumerate(SERIES.bars[:hours])
+        ),
+    )
+    manifest = build_partition_manifest(
+        partition="exploration",
+        series=series,
+        raw_artifacts=[RawArtifact("synthetic.zip", b"synthetic")],
+        parser_code_sha256="0" * 64,
+        window_start_utc=start,
+        window_end_exclusive_utc=end,
+        fees=unavailable("synthetic"),
+        exchange_filters=unavailable("synthetic"),
+        symbol_status=unavailable("synthetic"),
+    )
+    return manifest, series
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        # R-1: confirmation-dated bars under an "exploration" label.
+        (datetime(2023, 3, 1, tzinfo=UTC), datetime(2023, 3, 3, 2, tzinfo=UTC)),
+        # A window that runs past the exploration end.
+        (datetime(2021, 12, 31, 12, tzinfo=UTC), datetime(2022, 1, 3, tzinfo=UTC)),
+        # A window that starts before the exploration start.
+        (datetime(2017, 8, 15, tzinfo=UTC), datetime(2017, 8, 17, 2, tzinfo=UTC)),
+    ],
+)
+def test_a_window_outside_the_exploration_partition_is_refused(
+    start: datetime, end: datetime
+) -> None:
+    manifest, series = _outside(start, 50, end)
+    calls: list[PartitionManifest] = []
+
+    def load(requested: PartitionManifest) -> BarSeries:
+        calls.append(requested)
+        return series
+
+    with pytest.raises(HarnessError, match="exploration window"):
+        run_exploration(manifest, load, HarnessConfig(BenchmarkId.BUY_AND_HOLD))
+    assert calls == []
+
+
 def test_bars_that_do_not_match_the_manifest_are_refused() -> None:
     bars = list(SERIES.bars)
     bars[10] = dataclasses.replace(bars[10], volume=2.0)

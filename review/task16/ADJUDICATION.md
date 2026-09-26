@@ -19,3 +19,25 @@ Implementer error recorded: the first draft of the R-1 test was set up wrongly
 (one window too short for its bars, and a loader returning unrelated bars), so
 it failed for the wrong reason. It was corrected to the reviewer's exact
 scenario before being used as the reproduction.
+
+## Repair
+
+`run_exploration` now refuses, before the loader is called, any manifest whose
+declared window leaves `[2017-08-17T00:00:00Z, 2022-01-01T00:00:00Z)`
+(`aqt.data.klines.WINDOW_START` / `WINDOW_END_EXCLUSIVE`, which match
+`protocols/protocol_v1.yaml` line 65). Together with `verify_partition_manifest`,
+which confines the loaded bars to the manifest window, no out-of-window bar
+reaches the backtest. The module docstring now states this.
+
+Test: `test_a_window_outside_the_exploration_partition_is_refused` (3 cases:
+confirmation-dated, past the end, before the start), each asserting the loader
+is never called. Mutation check: all 3 fail on `b9e7580` (`DID NOT RAISE`) and
+pass after the repair.
+
+Validation after repair, `.venv` Python 3.14.7: `pytest -q` 1370 passed, 4
+skipped in 134.46s; `ruff check .` and `ruff format --check .` pass; `mypy src
+scripts` no issues in 41 files; `lint-imports` 5 kept, 0 broken; no change under
+the frozen paths.
+
+This repair has not been re-reviewed by a different model.
+

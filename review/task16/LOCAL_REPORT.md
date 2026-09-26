@@ -104,7 +104,8 @@ Frozen verification: `git diff --name-only main` over `docs`, `protocols`,
 
 ## Outstanding
 
-- An independent review by a different model has not been done.
+- Claude Fable review: FIX, R-1 (partition checked by label only) repaired;
+  see `REVIEW.md` and `ADJUDICATION.md`. The repair is not re-reviewed.
 - **QUESTION T16-Q1 (owner):** section 16 lists "protocol-enforcement logic"
   among the components that need a different-model and a human PR review. The
   harness's refusal of non-exploration partitions enforces section 7a, so it
