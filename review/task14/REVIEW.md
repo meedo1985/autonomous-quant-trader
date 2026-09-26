@@ -1,6 +1,6 @@
 # Task 14 adversarial review
 
-Reviewer: GPT-6 Astra  
+Reviewer: GPT-6 Astra
 Scope: supplied diff and context for `task14-klines-manifests` against `main`.
 
 Checks were **not rerun by me**. The supplied passing checks and real-data builds were produced by the implementer, Claude Opus 5.5, at `18a1ff9` on 2026-09-26.
