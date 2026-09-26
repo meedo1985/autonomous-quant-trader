@@ -221,3 +221,36 @@ def test_concurrent_writers_produce_one_valid_chain(tmp_path: Path, repo: Path) 
     report = verify_ledger(log)
     assert (report.intact, report.entry_count) == (True, 30)
     assert review_status(log, "cycle-1", repo).job_count == 30
+
+
+def test_a_clearance_beyond_the_job_count_is_refused(
+    tmp_path: Path, repo: Path
+) -> None:
+    """R-1: a clearance cannot cover jobs that do not exist yet."""
+    log = tmp_path / "jobs.jsonl"
+    _log_jobs(log, 3)
+    _commit_clearance(repo, "Cleared through job: 100000\n")
+    with pytest.raises(JobLogError, match="beyond"):
+        review_status(log, "cycle-1", repo)
+
+
+def test_an_unreadable_clearance_is_refused_before_the_job_runs(
+    tmp_path: Path, repo: Path
+) -> None:
+    """R-3: a non-UTF-8 clearance raises JobLogError and nothing is logged."""
+    record = repo / clearance_path("cycle-1")
+    record.parent.mkdir(parents=True)
+    record.write_bytes(b"Cleared through job: 1\n\xff\n")
+    _git(repo, "add", clearance_path("cycle-1"))
+    _git(repo, "commit", "-q", "-m", "clearance")
+    log = tmp_path / "jobs.jsonl"
+    ran: list[PartitionManifest] = []
+
+    def load(manifest: PartitionManifest) -> BarSeries:
+        ran.append(manifest)
+        return SERIES
+
+    with pytest.raises(JobLogError, match="UTF-8"):
+        run_logged(log, "cycle-1", repo, MANIFEST, load, CONFIG)
+    assert ran == []
+    assert not log.exists()

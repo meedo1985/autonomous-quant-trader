@@ -57,8 +57,10 @@ Source: `protocols/protocol_v1.yaml` `partitions.sandbox_exploration_policy`,
   harness does not import the ledger (its tests forbid `aqt.core` imports), so
   logging happens only through `run_logged`. A caller that uses the harness
   directly is not logged. Scripts should use `run_logged`.
-- **T17-05. The cycle id is caller-supplied text** (letters, digits, `.`, `_`,
-  `-`), because no cycle registry exists yet.
+- **T17-05. The cycle id and the log path are caller-supplied** (the id is
+  letters, digits, `.`, `_`, `-`), because no cycle registry exists yet. So a
+  caller that uses a fresh log file or a fresh cycle id for each batch resets
+  the count, and the trigger never fires (Fable R-2). See T17-Q2.
 - **T17-06. The 250-job test samples counts** 1, 2, 125, 248, 249 and 250 of
   one real 250-job log, rather than all 250: each status call re-verifies the
   chain, and checking every count took about 35 s.
@@ -95,7 +97,14 @@ Frozen verification: `git diff --name-only main` lists only the two new files.
 
 ## Outstanding
 
-- An independent review by a different model has not been done.
+- Claude Fable review: FIX, no blockers. R-1 and R-3 repaired; R-2 and R-4
+  are owner questions T17-Q2 and T17-Q3. See `REVIEW.md` and
+  `ADJUDICATION.md`. The repairs are not yet re-reviewed.
+- **QUESTION T17-Q2 (owner, from R-2):** fix the log to one repository path
+  (for example `data/exploration_jobs.jsonl`) so a caller cannot start a
+  fresh count, or leave it caller-chosen and disclosed.
+- **QUESTION T17-Q3 (owner, from R-4):** read the clearance from the `main`
+  branch (merged, PR-reviewed) instead of whatever commit is checked out.
 - **QUESTION T17-Q1 (owner):** like T16-Q1, this implements a protocol rule
   (`sandbox_exploration_policy`), so it may be section 16 "protocol-enforcement
   logic", which needs a human PR review as well as a different-model review.

@@ -82,14 +82,22 @@ def clearance_path(cycle_id: str) -> str:
 
 def _cleared_through(repo_root: Path, cycle_id: str) -> int:
     """The highest job number cleared in the committed clearance record."""
-    shown = subprocess.run(
-        ["git", "-C", str(repo_root), "show", f"HEAD:{clearance_path(cycle_id)}"],
-        capture_output=True,
-        check=False,
-    )
+    try:
+        shown = subprocess.run(
+            ["git", "-C", str(repo_root), "show", f"HEAD:{clearance_path(cycle_id)}"],
+            capture_output=True,
+            check=False,
+        )
+    except OSError as error:
+        raise JobLogError(f"cannot run git to read the clearance: {error}") from None
     if shown.returncode != 0:
         return 0
-    text = shown.stdout.decode("utf-8")
+    try:
+        text = shown.stdout.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise JobLogError(
+            f"clearance {clearance_path(cycle_id)} is not UTF-8 text: {error}"
+        ) from None
     return max((int(n) for n in _CLEARED.findall(text)), default=0)
 
 
@@ -108,11 +116,18 @@ def _job_count(log_path: Path, cycle_id: str) -> int:
 def review_status(log_path: Path, cycle_id: str, repo_root: Path) -> ReviewStatus:
     """Count the cycle's jobs and compare them with the committed clearance.
 
-    Raises `LedgerError` if the log fails verification.
+    Raises `LedgerError` if the log fails verification, and `JobLogError` if
+    the clearance cannot be read or clears jobs that do not exist yet (a typo,
+    or the cycle continuing in a different log file).
     """
     _require_cycle_id(cycle_id)
     count = _job_count(log_path, cycle_id)
     cleared = _cleared_through(repo_root, cycle_id)
+    if cleared > count:
+        raise JobLogError(
+            f"clearance for {cycle_id!r} covers job {cleared}, beyond the "
+            f"{count} jobs in {log_path}"
+        )
     return ReviewStatus(
         cycle_id=cycle_id,
         job_count=count,
@@ -150,9 +165,12 @@ def run_logged(
 ) -> tuple[HarnessResult, ReviewStatus]:
     """Log the job, run it, log its result digest, and report review status.
 
-    The job is logged before it runs. A due review is reported, not enforced:
-    the policy says review is triggered, not that exploration stops.
+    The status is checked first, so an unreadable or invalid clearance stops
+    the job before anything is logged or run. The job is then logged before it
+    runs. A due review is reported, not enforced: the policy says review is
+    triggered, not that exploration stops.
     """
+    review_status(log_path, cycle_id, repo_root)
     sequence = record_job(log_path, cycle_id, manifest, config)
     result = run_exploration(manifest, load, config)
     append_entry(
