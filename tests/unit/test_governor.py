@@ -392,3 +392,41 @@ def test_an_abandoned_authorization_can_never_be_redeemed() -> None:
     assert governor.release(authorization, MIDNIGHT) is None
     refused = governor.redeem(authorization, state, MIDNIGHT)
     assert _code(refused) is RefusalCode.EXPIRED
+
+
+def test_an_invalid_timestamp_leaves_the_governor_usable() -> None:
+    """Astra R3-2: a naive `now` must not poison the clock."""
+    governor = Governor(CONFIG)
+    state = _state("0.2")
+    with pytest.raises(ValueError, match="now"):
+        governor.decide(Proposal("XRPUSDT", 0.5, MIDNIGHT), state, datetime(2026, 1, 5))
+    outcome = governor.decide(Proposal("BTCUSDT", 0.8, MIDNIGHT), state, MIDNIGHT)
+    assert isinstance(outcome, Authorization)
+    with pytest.raises(ValueError, match="now"):
+        governor.redeem(outcome, state, datetime(2026, 1, 5))
+    assert governor.redeem(outcome, state, MIDNIGHT) is None
+
+
+def test_a_reservation_on_one_symbol_does_not_block_the_other() -> None:
+    governor = Governor(CONFIG)
+    btc = governor.decide(Proposal("BTCUSDT", 0.8, MIDNIGHT), _state("0.2"), MIDNIGHT)
+    eth_state = dataclasses.replace(_state("0.2"), symbol="ETHUSDT")
+    eth = governor.decide(Proposal("ETHUSDT", 0.8, MIDNIGHT), eth_state, MIDNIGHT)
+    assert isinstance(btc, Authorization) and isinstance(eth, Authorization)
+
+
+def test_after_a_late_release_the_next_reduction_is_at_the_next_bar() -> None:
+    """Astra R3-1, deferred to Task 23: routine reductions follow the hourly
+    decision schedule; off-schedule de-risking is HALT and FLATTEN."""
+    governor = Governor(CONFIG)
+    state = ActualState("BTCUSDT", Decimal(2), Decimal(800), Decimal(100), MIDNIGHT)
+    buy = governor.decide(Proposal("BTCUSDT", 0.5, MIDNIGHT), state, MIDNIGHT)
+    assert isinstance(buy, Authorization)
+    assert governor.redeem(buy, state, MIDNIGHT + MINUTE) is None
+    assert governor.release(buy, MIDNIGHT + 6 * MINUTE) is None
+    one_am = MIDNIGHT + HOUR
+    filled = ActualState(
+        "BTCUSDT", Decimal(5), Decimal(500), Decimal(100), one_am, MIDNIGHT
+    )
+    reduce = governor.decide(Proposal("BTCUSDT", 0.2, one_am), filled, one_am)
+    assert isinstance(reduce, Authorization) and reduce.side is Side.SELL

@@ -39,3 +39,19 @@ Reproduced on `fb84c36`:
 
 Also addressed from the review's notes: a test that a reservation on one
 symbol does not block the other.
+
+## Repair
+
+- R3-2: `Governor._clock` validates `now` with `require_utc` before storing or
+  comparing it, in `decide`, `redeem` and `release`. Test:
+  `test_an_invalid_timestamp_leaves_the_governor_usable`. Removing the check
+  fails it.
+- Also added: `test_a_reservation_on_one_symbol_does_not_block_the_other`, and
+  `test_after_a_late_release_the_next_reduction_is_at_the_next_bar`, which
+  documents the R3-1 behaviour kept here.
+
+Validation after repair, `.venv` Python 3.14.7: `pytest -q` 1402 passed, 4
+skipped in 187.76s; `ruff check .` and `ruff format --check .` pass; `mypy src
+scripts` no issues in 43 files; `lint-imports` 5 kept, 0 broken.
+
+This repair has not been re-reviewed.

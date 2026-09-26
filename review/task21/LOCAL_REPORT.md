@@ -140,6 +140,14 @@ files and this report.
 - **Contract for Task 22:** after redeeming an authorization, the executor
   must call `Governor.release` only once reconciliation shows the order
   finished or cancelled. Until then, the symbol takes no new authorization.
+- Third Astra review: FIX. R3-2 (a naive timestamp poisoned the clock)
+  repaired. R3-1 (no off-schedule reduction after a late release) is an **open
+  disagreement with the reviewer**: the AI keeps routine reductions on the
+  hourly decision schedule and carries immediate de-risking to Task 23. See
+  `REVIEW_3.md` and `ADJUDICATION_3.md`.
+- **Requirement for Task 23:** HALT and FLATTEN must reduce exposure at once,
+  at any time, including while a governor reservation is outstanding, without
+  an overlapping authorization that could conflict with an order in flight.
 - **QUESTION T21-Q1 (owner):** the upper limit on how long after a decision an
   order may still be authorized. The AI proposes 5 minutes; the owner may
   confirm it or choose less.

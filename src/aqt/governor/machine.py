@@ -46,6 +46,7 @@ from aqt.benchmarks.canonical import (
     reaches_rebalance_band,
     rebalance,
 )
+from aqt.data.bars import require_utc
 from aqt.governor.authorization import (
     PROTOCOL_SYMBOLS,
     ActualState,
@@ -89,6 +90,9 @@ class Governor:
         self._latest: datetime | None = None
 
     def _clock(self, now: datetime) -> Refusal | None:
+        # Validated before it is stored or compared (Astra R3-2): an invalid
+        # `now` raises and leaves the governor as it was.
+        now = require_utc(now, field_name="now")
         if self._latest is not None and now < self._latest:
             return Refusal(
                 RefusalCode.CLOCK_WENT_BACKWARDS,
