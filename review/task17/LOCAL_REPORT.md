@@ -35,9 +35,12 @@ Source: `protocols/protocol_v1.yaml` `partitions.sandbox_exploration_policy`,
 - **Flag:** `review_status` reports `review_required` when the cycle has at
   least 250 jobs beyond the last clearance. The log is verified first, so a
   damaged log raises instead of being counted.
-- **Clearance:** only a file committed at
-  `review/exploration-review/<cycle_id>.md`, read from `HEAD` with
-  `git show`. Its highest `Cleared through job: <n>` line counts. The module has
+- **Log location (owner answer T17-Q2):** always
+  `data/exploration_jobs.jsonl` under the repository root; callers pass the
+  root, never a log path.
+- **Clearance (owner answer T17-Q3):** only a file at
+  `review/exploration-review/<cycle_id>.md` on the `main` branch, read with
+  `git show main:<path>`. Its highest `Cleared through job: <n>` line counts. The module has
   no code path that writes a file (checked by a test).
 
 ### Deliberate choices the owner should know about
@@ -59,10 +62,9 @@ Source: `protocols/protocol_v1.yaml` `partitions.sandbox_exploration_policy`,
   `run_logged` supplies the ledger writer; the harness still does not import
   the ledger. A caller can still pass a callback that does nothing; that is
   procedural, like T17-03. This changes the merged Task 16 signature.
-- **T17-05. The cycle id and the log path are caller-supplied** (the id is
-  letters, digits, `.`, `_`, `-`), because no cycle registry exists yet. So a
-  caller that uses a fresh log file or a fresh cycle id for each batch resets
-  the count, and the trigger never fires (Fable R-2). See T17-Q2.
+- **T17-05. The cycle id is caller-supplied** (letters, digits, `.`, `_`,
+  `-`), because no cycle registry exists yet, so a fresh cycle id still starts
+  a fresh count. The log path is no longer caller-supplied (T17-Q2).
 - **T17-06. The 250-job test samples counts** 1, 2, 125, 248, 249 and 250 of
   one real 250-job log, rather than all 250: each status call re-verifies the
   chain, and checking every count took about 35 s.
@@ -105,11 +107,13 @@ Frozen verification: `git diff --name-only main` lists only the two new files.
 - GPT-6 Astra review: FIX, blockers A-1 and A-2, plus A-3 and A-4; all four
   repaired. See `REVIEW_ASTRA.md` and `ADJUDICATION_ASTRA.md`. These repairs
   are not re-reviewed.
-- **QUESTION T17-Q2 (owner, from R-2):** fix the log to one repository path
-  (for example `data/exploration_jobs.jsonl`) so a caller cannot start a
-  fresh count, or leave it caller-chosen and disclosed.
-- **QUESTION T17-Q3 (owner, from R-4):** read the clearance from the `main`
-  branch (merged, PR-reviewed) instead of whatever commit is checked out.
+- T17-Q2 and T17-Q3: the owner answered "yes to both T17-Q2 and T17-Q3"
+  (`OWNER_ANSWERS_Q2_Q3.md`); implemented, with tests
+  `test_the_log_path_is_fixed_by_the_repository` and
+  `test_only_a_clearance_on_main_counts` (reading `HEAD` instead of `main`
+  fails the latter). Validation after this change: `pytest -q` 1387 passed, 4
+  skipped; ruff, format, mypy (42 files) and `lint-imports` (5 kept) pass. Not
+  re-reviewed by a different model.
 - **QUESTION T17-Q1 (owner):** like T16-Q1, this implements a protocol rule
   (`sandbox_exploration_policy`), so it may be section 16 "protocol-enforcement
   logic", which needs a human PR review as well as a different-model review.

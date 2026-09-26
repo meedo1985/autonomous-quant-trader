@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import inspect
 import multiprocessing
 import os
 import subprocess
@@ -28,6 +29,7 @@ from aqt.research.joblog import (
     REVIEW_TRIGGER_JOBS,
     JobLogError,
     clearance_path,
+    job_log_path,
     record_job,
     review_status,
     run_logged,
@@ -75,24 +77,26 @@ def _git(root: Path, *args: str) -> None:
 def repo(tmp_path: Path) -> Path:
     root = tmp_path / "repo"
     root.mkdir()
-    _git(root, "init", "-q")
+    _git(root, "init", "-q", "-b", "main")
+    (root / "data").mkdir()
     (root / "README").write_text("x\n")
     _git(root, "add", "README")
     _git(root, "commit", "-q", "-m", "init")
     return root
 
 
-def _log_jobs(log: Path, count: int, cycle: str = "cycle-1") -> None:
+def _log_jobs(root: Path, count: int, cycle: str = "cycle-1") -> None:
     for _ in range(count):
-        record_job(log, cycle, MANIFEST, CONFIG)
+        record_job(root, cycle, MANIFEST, CONFIG)
 
 
 @pytest.fixture(scope="module")
 def full_log(tmp_path_factory: pytest.TempPathFactory) -> bytes:
     """The bytes of a log holding exactly 250 jobs of `cycle-1`, built once."""
-    log = tmp_path_factory.mktemp("full") / "jobs.jsonl"
-    _log_jobs(log, REVIEW_TRIGGER_JOBS)
-    return log.read_bytes()
+    root = tmp_path_factory.mktemp("full")
+    (root / "data").mkdir()
+    _log_jobs(root, REVIEW_TRIGGER_JOBS)
+    return job_log_path(root).read_bytes()
 
 
 def test_job_250_raises_the_flag_and_jobs_1_to_249_do_not(
@@ -100,19 +104,19 @@ def test_job_250_raises_the_flag_and_jobs_1_to_249_do_not(
 ) -> None:
     lines = full_log.splitlines(keepends=True)
     assert len(lines) == REVIEW_TRIGGER_JOBS
-    log = tmp_path / "jobs.jsonl"
+    log = job_log_path(repo)
     # Every prefix of a hash-chained log is the log as it stood after that job.
     # Each status call re-verifies the chain, so a sample of counts is checked
     # rather than all 250.
     flags = {}
     for count in (1, 2, 125, 248, 249, 250):
         log.write_bytes(b"".join(lines[:count]))
-        status = review_status(log, "cycle-1", repo)
+        status = review_status(repo, "cycle-1")
         assert status.job_count == count
         flags[count] = status.review_required
     assert flags == {1: False, 2: False, 125: False, 248: False, 249: False, 250: True}
     # Jobs of another cycle are counted separately.
-    assert review_status(log, "cycle-2", repo).job_count == 0
+    assert review_status(repo, "cycle-2").job_count == 0
 
 
 def _commit_clearance(repo: Path, text: str) -> None:
@@ -126,23 +130,23 @@ def _commit_clearance(repo: Path, text: str) -> None:
 def test_only_a_committed_clearance_clears_the_flag(
     tmp_path: Path, repo: Path, full_log: bytes
 ) -> None:
-    log = tmp_path / "jobs.jsonl"
+    log = job_log_path(repo)
     log.write_bytes(full_log)
     record = repo / clearance_path("cycle-1")
     record.parent.mkdir(parents=True)
     record.write_text("Reviewed by the owner.\nCleared through job: 250\n")
-    assert review_status(log, "cycle-1", repo).review_required  # not committed
+    assert review_status(repo, "cycle-1").review_required  # not committed
     _git(repo, "add", clearance_path("cycle-1"))
-    assert review_status(log, "cycle-1", repo).review_required  # staged only
+    assert review_status(repo, "cycle-1").review_required  # staged only
     _git(repo, "commit", "-q", "-m", "clearance")
-    status = review_status(log, "cycle-1", repo)
+    status = review_status(repo, "cycle-1")
     assert (status.cleared_through, status.review_required) == (250, False)
     # Review is due again 250 jobs after the last clearance: with job 1
     # cleared, 249 uncleared jobs do not raise it; with none cleared, 250 do.
     _commit_clearance(repo, "Cleared through job: 1\n")
-    assert not review_status(log, "cycle-1", repo).review_required
+    assert not review_status(repo, "cycle-1").review_required
     _commit_clearance(repo, "Nothing cleared.\n")
-    assert review_status(log, "cycle-1", repo).review_required
+    assert review_status(repo, "cycle-1").review_required
 
 
 def test_the_library_has_no_way_to_write_a_clearance() -> None:
@@ -170,24 +174,22 @@ def test_the_library_has_no_way_to_write_a_clearance() -> None:
 def test_the_log_is_hash_chained_and_a_mutation_fails(
     tmp_path: Path, repo: Path
 ) -> None:
-    log = tmp_path / "jobs.jsonl"
-    _log_jobs(log, 3)
+    log = job_log_path(repo)
+    _log_jobs(repo, 3)
     assert verify_ledger(log).intact
     lines = log.read_bytes().splitlines(keepends=True)
     lines[1] = lines[1].replace(b"BUY_AND_HOLD", b"CASH_AND_HOLD")
     log.write_bytes(b"".join(lines))
     assert not verify_ledger(log).intact
     with pytest.raises(LedgerError):
-        review_status(log, "cycle-1", repo)
+        review_status(repo, "cycle-1")
 
 
 def test_run_logged_logs_the_job_before_the_run_and_its_result_after(
     tmp_path: Path, repo: Path
 ) -> None:
-    log = tmp_path / "jobs.jsonl"
-    result, status = run_logged(
-        log, "cycle-1", repo, MANIFEST, lambda _: SERIES, CONFIG
-    )
+    log = job_log_path(repo)
+    result, status = run_logged(repo, "cycle-1", MANIFEST, lambda _: SERIES, CONFIG)
     entries = read_entries(log)
     assert [e.record_type for e in entries] == [
         JOB_RECORD_TYPE,
@@ -200,8 +202,8 @@ def test_run_logged_logs_the_job_before_the_run_and_its_result_after(
         raise RuntimeError("load failed")
 
     with pytest.raises(RuntimeError):
-        run_logged(log, "cycle-1", repo, MANIFEST, fail, CONFIG)
-    assert review_status(log, "cycle-1", repo).job_count == 2
+        run_logged(repo, "cycle-1", MANIFEST, fail, CONFIG)
+    assert review_status(repo, "cycle-1").job_count == 2
 
 
 @pytest.mark.parametrize("cycle", ["", "../x", "a/b", "cycle 1"])
@@ -218,12 +220,12 @@ def _worker(path: str, count: int, barrier: Any, pids: Any) -> None:
 
 def test_concurrent_writers_produce_one_valid_chain(tmp_path: Path, repo: Path) -> None:
     """Astra A-4: two distinct processes, released together, write one chain."""
-    log = tmp_path / "jobs.jsonl"
+    log = job_log_path(repo)
     context = multiprocessing.get_context("spawn")
     barrier = context.Barrier(2)
     pids = context.Queue()
     writers = [
-        context.Process(target=_worker, args=(str(log), 15, barrier, pids))
+        context.Process(target=_worker, args=(str(repo), 15, barrier, pids))
         for _ in range(2)
     ]
     for writer in writers:
@@ -234,18 +236,17 @@ def test_concurrent_writers_produce_one_valid_chain(tmp_path: Path, repo: Path) 
     assert len({pids.get(timeout=5), pids.get(timeout=5)}) == 2
     report = verify_ledger(log)
     assert (report.intact, report.entry_count) == (True, 30)
-    assert review_status(log, "cycle-1", repo).job_count == 30
+    assert review_status(repo, "cycle-1").job_count == 30
 
 
 def test_a_clearance_beyond_the_job_count_is_refused(
     tmp_path: Path, repo: Path
 ) -> None:
     """R-1: a clearance cannot cover jobs that do not exist yet."""
-    log = tmp_path / "jobs.jsonl"
-    _log_jobs(log, 3)
+    _log_jobs(repo, 3)
     _commit_clearance(repo, "Cleared through job: 100000\n")
     with pytest.raises(JobLogError, match="beyond"):
-        review_status(log, "cycle-1", repo)
+        review_status(repo, "cycle-1")
 
 
 def test_an_unreadable_clearance_is_refused_before_the_job_runs(
@@ -257,7 +258,7 @@ def test_an_unreadable_clearance_is_refused_before_the_job_runs(
     record.write_bytes(b"Cleared through job: 1\n\xff\n")
     _git(repo, "add", clearance_path("cycle-1"))
     _git(repo, "commit", "-q", "-m", "clearance")
-    log = tmp_path / "jobs.jsonl"
+    log = job_log_path(repo)
     ran: list[PartitionManifest] = []
 
     def load(manifest: PartitionManifest) -> BarSeries:
@@ -265,7 +266,7 @@ def test_an_unreadable_clearance_is_refused_before_the_job_runs(
         return SERIES
 
     with pytest.raises(JobLogError, match="UTF-8"):
-        run_logged(log, "cycle-1", repo, MANIFEST, load, CONFIG)
+        run_logged(repo, "cycle-1", MANIFEST, load, CONFIG)
     assert ran == []
     assert not log.exists()
 
@@ -274,32 +275,49 @@ def test_a_failed_job_still_reports_a_due_review(
     tmp_path: Path, repo: Path, full_log: bytes
 ) -> None:
     """Astra A-2: job 250 fails, and the failure still carries the flag."""
-    log = tmp_path / "jobs.jsonl"
+    log = job_log_path(repo)
     log.write_bytes(b"".join(full_log.splitlines(keepends=True)[:249]))
 
     def fail(_: PartitionManifest) -> BarSeries:
         raise RuntimeError("load failed")
 
     with pytest.raises(RuntimeError, match="load failed") as caught:
-        run_logged(log, "cycle-1", repo, MANIFEST, fail, CONFIG)
+        run_logged(repo, "cycle-1", MANIFEST, fail, CONFIG)
     assert any("review_required=True" in note for note in caught.value.__notes__)
-    assert review_status(log, "cycle-1", repo).job_count == 250
+    assert review_status(repo, "cycle-1").job_count == 250
 
 
 def test_a_clearance_committed_during_a_status_check_is_not_rejected(
     tmp_path: Path, repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Astra A-3: another process appends job 250 and it is cleared mid-check."""
-    log = tmp_path / "jobs.jsonl"
-    _log_jobs(log, 249)
+    _log_jobs(repo, 249)
 
     def cleared_after_job_250(root: Path, cycle: str) -> int:
         if review_status_calls == []:
             review_status_calls.append(1)
-            _log_jobs(log, 1)
+            _log_jobs(repo, 1)
         return 250
 
     review_status_calls: list[int] = []
     monkeypatch.setattr(joblog, "_cleared_through", cleared_after_job_250)
-    status = review_status(log, "cycle-1", repo)
+    status = review_status(repo, "cycle-1")
     assert (status.job_count, status.review_required) == (250, False)
+
+
+def test_only_a_clearance_on_main_counts(repo: Path, full_log: bytes) -> None:
+    """Owner answer T17-Q3: a clearance on another branch does not count."""
+    job_log_path(repo).write_bytes(full_log)
+    _git(repo, "switch", "-q", "-c", "ai-feature")
+    _commit_clearance(repo, "Cleared through job: 250\n")
+    assert review_status(repo, "cycle-1").review_required  # checked out, not main
+    _git(repo, "switch", "-q", "main")
+    _git(repo, "merge", "-q", "ai-feature")
+    assert not review_status(repo, "cycle-1").review_required
+
+
+def test_the_log_path_is_fixed_by_the_repository() -> None:
+    """Owner answer T17-Q2: no public function takes a log path."""
+    for function in (record_job, review_status, run_logged):
+        assert "log_path" not in inspect.signature(function).parameters
+    assert job_log_path(Path("r")) == Path("r") / "data" / "exploration_jobs.jsonl"

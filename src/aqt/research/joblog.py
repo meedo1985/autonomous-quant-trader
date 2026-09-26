@@ -2,8 +2,11 @@
 
 `protocols/protocol_v1.yaml` `partitions.sandbox_exploration_policy`: "all jobs
 logged; human review triggered after 250 jobs". Every exploration job run
-through `run_logged` is appended to a hash-chained `aqt.core.ledger` file
-before it runs, so a job that later fails is still counted.
+through `run_logged` is appended, before it runs, to the one hash-chained
+`aqt.core.ledger` file of the repository, `data/exploration_jobs.jsonl`, so a
+job that later fails is still counted. The path is fixed (owner answer
+T17-Q2): a caller passes the repository root, never a log path, so it cannot
+start a fresh count by choosing a new file.
 
 Job numbers are not stored. A job's number is its position among the cycle's
 job entries in the ledger's sequence order, which the ledger's cross-process
@@ -13,9 +16,9 @@ The review flag
 ---------------
 The flag is raised once a cycle has `REVIEW_TRIGGER_JOBS` jobs beyond the last
 human clearance. Nothing in this module can clear it: a clearance exists only
-as a human-written file committed to the repository at
-`review/exploration-review/<cycle_id>.md`, read from the `HEAD` commit (an
-uncommitted or unstaged file does not count). Each line of the form
+as a human-written file at `review/exploration-review/<cycle_id>.md` on the
+repository's `main` branch (owner answer T17-Q3). A file that is uncommitted,
+only staged, or committed only on another branch does not count. Each line of the form
 `Cleared through job: <n>` clears the jobs up to `n`; the highest one counts.
 The coding AI must never write that file (Constitution section 4).
 """
@@ -40,13 +43,17 @@ __all__ = [
     "REVIEW_TRIGGER_JOBS",
     "JobLogError",
     "ReviewStatus",
+    "JOB_LOG_PATH",
     "clearance_path",
+    "job_log_path",
     "record_job",
     "review_status",
     "run_logged",
 ]
 
 REVIEW_TRIGGER_JOBS: Final[int] = 250
+JOB_LOG_PATH: Final[str] = "data/exploration_jobs.jsonl"
+CLEARANCE_BRANCH: Final[str] = "main"
 JOB_RECORD_TYPE: Final[str] = "exploration_job"
 RESULT_RECORD_TYPE: Final[str] = "exploration_job_result"
 _CLEARED: Final[re.Pattern[str]] = re.compile(
@@ -80,11 +87,22 @@ def clearance_path(cycle_id: str) -> str:
     return f"review/exploration-review/{_require_cycle_id(cycle_id)}.md"
 
 
+def job_log_path(repo_root: Path) -> Path:
+    """The repository's one exploration job log."""
+    return Path(repo_root) / JOB_LOG_PATH
+
+
 def _cleared_through(repo_root: Path, cycle_id: str) -> int:
     """The highest job number cleared in the committed clearance record."""
     try:
         shown = subprocess.run(
-            ["git", "-C", str(repo_root), "show", f"HEAD:{clearance_path(cycle_id)}"],
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "show",
+                f"{CLEARANCE_BRANCH}:{clearance_path(cycle_id)}",
+            ],
             capture_output=True,
             check=False,
         )
@@ -113,7 +131,7 @@ def _job_count(log_path: Path, cycle_id: str) -> int:
     )
 
 
-def review_status(log_path: Path, cycle_id: str, repo_root: Path) -> ReviewStatus:
+def review_status(repo_root: Path, cycle_id: str) -> ReviewStatus:
     """Count the cycle's jobs and compare them with the committed clearance.
 
     Raises `LedgerError` if the log fails verification, and `JobLogError` if
@@ -124,6 +142,7 @@ def review_status(log_path: Path, cycle_id: str, repo_root: Path) -> ReviewStatu
     # The clearance is read before the count: jobs only grow, so a clearance
     # read first can exceed a count taken after it only if it is really
     # beyond the log, never because a job was appended in between.
+    log_path = job_log_path(repo_root)
     cleared = _cleared_through(repo_root, cycle_id)
     count = _job_count(log_path, cycle_id)
     if cleared > count:
@@ -140,11 +159,14 @@ def review_status(log_path: Path, cycle_id: str, repo_root: Path) -> ReviewStatu
 
 
 def record_job(
-    log_path: Path, cycle_id: str, manifest: PartitionManifest, config: HarnessConfig
+    repo_root: Path,
+    cycle_id: str,
+    manifest: PartitionManifest,
+    config: HarnessConfig,
 ) -> int:
     """Append one job entry and return the ledger sequence it was given."""
     entry = append_entry(
-        log_path,
+        job_log_path(repo_root),
         record_type=JOB_RECORD_TYPE,
         payload={
             "benchmark": config.benchmark.value,
@@ -159,9 +181,8 @@ def record_job(
 
 
 def run_logged(
-    log_path: Path,
-    cycle_id: str,
     repo_root: Path,
+    cycle_id: str,
     manifest: PartitionManifest,
     load: Callable[[PartitionManifest], BarSeries],
     config: HarnessConfig,
@@ -176,11 +197,11 @@ def run_logged(
     runs. A due review is reported, not enforced: the policy says review is
     triggered, not that exploration stops.
     """
-    review_status(log_path, cycle_id, repo_root)
+    review_status(repo_root, cycle_id)
     sequences: list[int] = []
 
     def log_job(logged: PartitionManifest, logged_config: HarnessConfig) -> None:
-        sequences.append(record_job(log_path, cycle_id, logged, logged_config))
+        sequences.append(record_job(repo_root, cycle_id, logged, logged_config))
 
     try:
         result = run_exploration(manifest, load, config, log_job=log_job)
@@ -188,15 +209,13 @@ def run_logged(
         # The job was logged, and may be the one that makes review due; say
         # so on the original failure rather than losing it.
         try:
-            note = (
-                f"exploration job log: {review_status(log_path, cycle_id, repo_root)!r}"
-            )
+            note = f"exploration job log: {review_status(repo_root, cycle_id)!r}"
         except Exception as status_error:  # noqa: BLE001 - keep the original error
             note = f"exploration job log: review status unavailable: {status_error}"
         error.add_note(note)
         raise
     append_entry(
-        log_path,
+        job_log_path(repo_root),
         record_type=RESULT_RECORD_TYPE,
         payload={
             "cycle_id": cycle_id,
@@ -204,4 +223,4 @@ def run_logged(
             "result_digest": result.digest(),
         },
     )
-    return result, review_status(log_path, cycle_id, repo_root)
+    return result, review_status(repo_root, cycle_id)
