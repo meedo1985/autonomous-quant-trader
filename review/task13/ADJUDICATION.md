@@ -97,3 +97,22 @@ src scripts/download_market_data.py` no issues in 32 files; `lint-imports` 5
 kept, 0 broken; `git diff --check` clean; no change under the frozen paths.
 
 This repair has not been re-reviewed by a different model.
+
+## Third review: R2-1 repair (`REVIEW_3.md`)
+
+Reviewer: GPT-6 Astra (`gpt-6-astra`, reasoning effort high), Codex CLI 0.154.0,
+session `01a0dd3e-a1d8-7700-b61e-78c560d14b87`, read-only sandbox, no tools.
+Input: the second review, this file, implementer-run check output at `faf5013`,
+the code diff `28ba68c..faf5013`, and the full current module, CLI and test
+file. The reviewer did not rerun the checks. Verdict: **FIX**. Saved unedited.
+
+| ID | Reviewer status | Adjudication |
+|---|---|---|
+| R-1..R-3 | RESOLVED | Agreed. |
+| R-4 | OPEN | Agreed; owner decision. |
+| R2-1 / R-5 | PARTIAL | Agreed: the three named paths are repaired; the remainder is R3-1. |
+| R3-1 | NON-BLOCKING | **Accepted.** Verified in `download_market_data.py`: the progress `print` (`:54`) runs before `records.append` (`:55`), so a stdout `OSError` drops a stored artifact from the summary; the stderr `print` in the handler (`:60`) runs before the summary is written; the final `print` (`:74`) can replace the intended return code. Coverage gaps also confirmed: no test injects a filesystem `OSError`, and none asserts that a summary-write failure propagates. Practical trigger is a failing console stream (for example a closed pipe). Not yet repaired. |
+
+The reviewer's note that a sidecar-write failure leaves an orphan artifact
+that later runs refuse predates these repairs and is the fail-closed behavior
+already recorded as T13-02.
