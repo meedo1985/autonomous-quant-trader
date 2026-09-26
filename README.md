@@ -61,6 +61,21 @@ These layers record identities and facts only; they do not authorize trials, enf
 budgets, read confirmation/lockbox data, compute metrics, or make promotion decisions.
 Evidence is in `review/task9/` and `review/task10/`.
 
+## Public market-data download (roadmap Task 13, pending approval)
+
+`aqt.data.binance_public` fetches Binance Spot public 1h kline archives for
+BTCUSDT and ETHUSDT from `data.binance.vision`, verifies each against its
+published `.CHECKSUM`, and writes it once with a source sidecar. It uses no
+credentials and refuses to start if a Binance key variable is set. A missing
+archive is reported as unavailable, never filled. Only the exploration window
+is fetched. The owner runs it; the coding AI does not make network calls:
+
+```text
+python scripts/download_market_data.py --root data/raw
+```
+
+Its tests run offline with sockets blocked. Evidence is in `review/task13/`.
+
 ## Bar semantics (Task 2)
 
 `aqt.data.bars` is the single tested bar-semantics module required by the
