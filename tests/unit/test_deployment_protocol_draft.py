@@ -33,7 +33,10 @@ def _sections() -> dict[str, str]:
 DRAFT_TEXT = _flat(DRAFT.read_text(encoding="utf-8"))
 SECTIONS = _sections()
 CITED = sorted(set(re.findall(r"FROZEN (§\w+)", DRAFT_TEXT)))
-QUOTES = re.findall(r"\[FROZEN (§\w+)(?:\]:|:) \"([^\"]+)\"", DRAFT_TEXT)
+# Every quotation form the draft uses: `[FROZEN §n: "..."]`,
+# `[FROZEN §n]: "..."`, `[FROZEN §n] "..."` and `[FROZEN §n "..."]`
+# (review finding R-5).
+QUOTES = re.findall(r"\[FROZEN (§\w+)(?:\]:?|:)? \"([^\"]+)\"", DRAFT_TEXT)
 PROTOCOL_REFS = sorted(set(re.findall(r"FROZEN protocol:(\d+)(?:-(\d+))?", DRAFT_TEXT)))
 
 
@@ -55,6 +58,7 @@ def test_every_quotation_is_verbatim(section: str, quote: str) -> None:
 @pytest.mark.parametrize(("first", "last"), PROTOCOL_REFS)
 def test_every_protocol_line_reference_exists(first: str, last: str) -> None:
     lines = PROTOCOL.read_text(encoding="utf-8").splitlines()
+    assert int(last or first) >= int(first), f"reversed range {first}-{last}"
     for number in range(int(first), int(last or first) + 1):
         assert lines[number - 1].strip(), f"protocol line {number} is blank"
 
@@ -75,3 +79,9 @@ def test_protocol_lines_hold_the_keys_the_draft_names(line: int, key: str) -> No
 
 def test_the_draft_declares_itself_inactive() -> None:
     assert "NOT ACTIVATED" in DRAFT_TEXT and "NOT FROZEN" in DRAFT_TEXT
+
+
+def test_every_frozen_marker_followed_by_a_quotation_is_checked() -> None:
+    """R-5: no quotation after a FROZEN marker escapes the verbatim check."""
+    attached = re.findall(r"\[FROZEN §\w+[^\]\"]*\]?:? \"", DRAFT_TEXT)
+    assert len(attached) == len(QUOTES)

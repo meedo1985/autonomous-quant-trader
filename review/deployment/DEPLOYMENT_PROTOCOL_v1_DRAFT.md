@@ -59,14 +59,20 @@ apply") but does not define them. **Proposed definitions:**
 
 | Stage | Market data | Orders | Capital at risk |
 |---|---|---|---|
-| **Paper** | Historical or live | Sent to the simulated exchange (Task 18) only | None |
+| **Replay** | Historical, already known | Sent to the simulated exchange (Task 18) only | None |
+| **Forward paper** | Live, as it arrives | Sent to the simulated exchange (Task 18) only | None |
 | **Shadow** | Live | Computed, authorized, and logged, but **never sent** | None |
 | **Canary** | Live | Sent to Binance Spot | At most `L-01` [PENDING L-01] |
+
+Replay is a test of the machinery only. **Only forward paper counts toward
+`L-02`**: `L-02` is defined as forward evidence, data that did not exist when
+the strategy was chosen, and a historical replay cannot supply that (review
+finding R-2).
 
 There is no stage beyond canary in this draft. Increasing capital beyond the
 canary amount is a risk increase under §6.
 
-### 2.1 Entry to paper
+### 2.1 Entry to replay or forward paper
 
 1. The full path runs in the order [FROZEN §19] "predictor → governor →
    executor → exchange", with the simulator as the exchange.
@@ -77,8 +83,8 @@ canary amount is a risk increase under §6.
 ### 2.2 Entry to shadow
 
 1. Every §1 input except `L-01` exists and is adopted.
-2. The paper stage has run for the `L-02` period [PENDING L-02] and ended with
-   no open incident.
+2. **Forward paper** (not replay) has run for the `L-02` period
+   [PENDING L-02] and ended with no open incident.
 3. An alert channel that reaches the owner outside the machine running the
    loop exists and has been tested end to end (§5) [OPEN: which channel].
 4. This protocol has been activated by the owner under §4.
@@ -105,10 +111,15 @@ Required at every start [FROZEN §19 "Startup reconciliation required"]:
 3. Every local order must resolve, by query on its `clientOrderId`, to a
    terminal exchange state that matches the local record. An order the
    exchange reports as unknown follows §7.
-4. Balances must match the local record within [OPEN: tolerance, in base and
-   quote units]. Any difference outside it is an incident [FROZEN §0:
-   "reconciliation mismatch ... unexplained exposure"].
-5. The result, pass or fail with every difference, is written to the
+4. **In the other direction**, every open order on the exchange must match a
+   local order record. An exchange order with no local record is an incident
+   and a `REFUSE_START`, whatever the balances show: it can fill later outside
+   the executor's tracked state (review finding R-1).
+5. Free **and locked** balances must match the local record within
+   [OPEN: tolerance, in base and quote units]; every locked amount must be
+   explained by a matched open order. Any difference is an incident
+   [FROZEN §0: "reconciliation mismatch ... unexplained exposure"].
+6. The result, pass or fail with every difference, is written to the
    operational log (Task 19).
 
 A failed reconciliation is `REFUSE_START` and opens an incident.
@@ -128,8 +139,11 @@ The loop must not start if any of these holds. Each is logged.
 5. The system is in FREEZE, or in HALT without a completed HALT exit (§6).
 6. The exchange adapter is not the one the stage allows (simulator for paper;
    no order-sending adapter at all for shadow).
-7. A secret is present anywhere other than the executor identity
-   [FROZEN §28: "Production keys only under executor identity"].
+7. A production trading key is present anywhere other than the executor
+   identity [FROZEN §28: "Production keys only under executor identity"].
+   Other credentials, such as an alert channel's, are held as §8 describes
+   and never in the repository, logs or reports [FROZEN §28: "No secrets in
+   repo/artifacts/logs/reports/screenshots/LLM context/CI"].
 8. The operational log fails hash-chain verification (Task 19 ledger).
 9. A health check (Task 19) is in breach at startup: stale data, clock skew,
    or loop lag, at thresholds [OPEN: each threshold and its severity].
@@ -237,12 +251,21 @@ anomaly: an incident [FROZEN §0].
 
 ## 10. Rollback
 
-1. Any stage can return to an earlier one at any time; that is a risk
-   reduction and is immediate [FROZEN §14].
-2. Rolling back deployed code or configuration is done from HALT: enter HALT,
+1. Returning from shadow to forward paper, or from paper to replay, is
+   immediate: neither sends orders.
+2. **Returning from canary** starts from HALT, because orders already sent to
+   Binance can still fill after the order-sending adapter is removed (review
+   finding R-3). In order: (a) enter HALT, which adds no risk
+   [FROZEN §22]; (b) resolve every outstanding order through its
+   `clientOrderId` (§7), cancelling any still open; (c) decide what happens
+   to the live position that remains: hold it under HALT, or FLATTEN it
+   [OPEN: which, or who decides at the time]; (d) reconcile (§3); (e) only
+   then remove the order-sending adapter. Changing the stage label alone is
+   not a risk reduction.
+3. Rolling back deployed code or configuration is done from HALT: enter HALT,
    deploy the previous recorded code identity, run startup reconciliation, and
    pass every §4 condition before leaving HALT.
-3. A rollback is recorded in the operational log with the code identities
+4. A rollback is recorded in the operational log with the code identities
    before and after.
 
 ## 11. Open values the owner must set before activation
@@ -254,6 +277,7 @@ anomaly: an incident [FROZEN §0].
 | §3 | Reconciliation tolerance |
 | §4, §5 | Channel test interval; health-check thresholds and severities |
 | §6 | Automatic FLATTEN triggers and bounds; post-HALT cooling-off length |
+| §10 | Hold or FLATTEN the remaining live position when leaving canary |
 | §7 | NOT_FOUND delay and confirmed-absence rule |
 | §8 | Executor IP address(es); key storage mechanism |
 
