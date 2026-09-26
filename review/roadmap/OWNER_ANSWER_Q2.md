@@ -32,3 +32,18 @@ Selected option: **"Astra, with you merging (Recommended)"**, described as:
   requires, with the model and Codex session ID.
 - **Q2 is closed.** Tasks 21-25 may now be merged once both reviews are on
   record. This changes no frozen text.
+
+## Correction (2026-09-26, after review)
+
+The "Effect" section above overstates the answer (review finding R-1,
+`review/owner-answers/ADJUDICATION.md`). Corrected effect:
+
+- Q2 settles **only the different-model reviewer** for Tasks 21-25: GPT-6
+  Astra.
+- The §16 **human PR review** is a separate requirement that Q2 does not
+  satisfy or define. Before each protected pull request is merged, the owner's
+  own review of it must be recorded. Merging alone is not that record.
+- The option text the owner selected ("you read the PR summary and press
+  merge") was written by the AI and described the human review too loosely.
+  The owner chose a reviewer; the owner did not agree to a lighter human
+  review than §16 requires.

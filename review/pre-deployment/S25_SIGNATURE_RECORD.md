@@ -40,3 +40,11 @@ C-9.
   canary, promotion, or cycle start. `L-01`–`L-04`, the deployment protocol's
   open values, and its activation remain open. The verdict remains
   `KEEP_BLOCKED`.
+
+## Correction (2026-09-26, after review)
+
+The last bullet above says `L-01`-`L-04` "remain open". That was true when the
+owner signed. The owner adopted all four shortly afterwards; see
+`review/pre-deployment/LOSS_BOUNDS_ADOPTION_RECORD.md` (review finding R-2,
+`review/owner-answers/ADJUDICATION.md`). The deployment protocol's own open
+values and its activation remain open.
