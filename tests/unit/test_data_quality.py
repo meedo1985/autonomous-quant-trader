@@ -159,6 +159,9 @@ def _misplaced_decimals(report: str) -> list[str]:
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         if header is None:
             header = cells
+            # A header names columns; it never holds a number (R2-1).
+            if any(_DECIMAL.search(_TIMESTAMP.sub("", cell)) for cell in cells):
+                bad.append(line)
             continue
         if set(line) <= set("|-"):
             continue
@@ -189,6 +192,8 @@ def test_report_states_no_statistic_and_no_prices(tmp_path: Path) -> None:
         ("| Hourly bars | 9 |", "| Hourly bars | 9 |\n| Skewness | 1.234 % |"),
         ("| Hourly bars | 9 |", "| Hourly bars | 9.500 |"),
         ("## BTCUSDT\n", "## BTCUSDT\n\nSkewness: 1.234\n"),
+        # R2-1: a header-only table holding a statistic.
+        ("## BTCUSDT\n", "## BTCUSDT\n\n| Skewness | 1.234 % |\n|---|---|\n\n"),
     ],
 )
 def test_content_check_catches_a_planted_statistic(

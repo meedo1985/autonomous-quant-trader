@@ -53,4 +53,14 @@ rerun the checks. Verdict: **ACCEPT**. Saved unedited.
 | R-2 | RESOLVED | Agreed. The reviewer notes missing-archive and outside-window counts have no direct regression assertion; they come from the same rebuild as the outage rows, so they cannot be supplied by a caller. Not repaired. |
 | R-3 | RESOLVED | Agreed. The reviewer notes the determinism test detects a reintroduced timestamp only when builds straddle a ZIP time boundary. Not repaired: the fix is the fixed timestamp itself. |
 | R-4 | PARTIAL | Agreed in part. The `LOCAL_REPORT.md` correction exists (commit `a87ee9c`) but was not in the packet, an omission by the implementer. The remaining gap is R2-1. |
-| R2-1 | NON-BLOCKING | **Accepted, reproduced.** `_misplaced_decimals` treats the first row of each table as a header and never inspects it, so appending `\| Skewness \| 1.234 % \|` followed by `\|---\|---\|` passed both content checks. Not yet repaired. |
+| R2-1 | NON-BLOCKING | **Accepted, reproduced.** `_misplaced_decimals` treats the first row of each table as a header and never inspects it, so appending `\| Skewness \| 1.234 % \|` followed by `\|---\|---\|` passed both content checks. Repaired below. |
+
+### R2-1 repair (Claude Opus 5.5, 2026-09-26)
+
+`_misplaced_decimals` now inspects a table's header row as well: a header names
+columns and may hold no decimal at all. `test_content_check_catches_a_planted_statistic`
+gains the reviewer's header-only table as a fourth planted case; against the
+previous check it is not flagged, and now it is. The real report still passes
+the check and regenerates unchanged. `pytest -q` 1259 passed, 4 skipped; ruff,
+format, mypy, `lint-imports` and `git diff --check main...HEAD` pass. Not
+re-reviewed by a different model.
