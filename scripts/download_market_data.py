@@ -1,0 +1,108 @@
+"""Owner-run download of Binance Spot public 1h klines (roadmap Task 13).
+
+The coding AI never runs this: Constitution section 15 denies Cycle-1 research
+network access. Only the exploration partition is fetched until the owner
+answers roadmap question Q3 about confirmation and lockbox archives.
+
+Usage:
+    python scripts/download_market_data.py --root data/raw
+
+Every run writes a new summary under `<root>/runs/` listing each artifact as
+AVAILABLE with its hash or UNAVAILABLE with a reason. The exit code is 1 if
+anything was unavailable and 2 if the run stopped on an error, including a
+refusal to start; a stopped run still writes its summary, with the records
+completed so far and the failure.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import TextIO
+
+from aqt.data.binance_public import (
+    ALLOWED_SYMBOLS,
+    EXPLORATION_MONTHS,
+    BinancePublicClient,
+    DownloadError,
+    DownloadRecord,
+    months_between,
+    urllib_transport,
+)
+from aqt.data.manifest import UNAVAILABLE, canonical_json_bytes
+
+
+def _say(text: str, stream: TextIO | None = None) -> None:
+    """Console output is diagnostic only: the run summary is the record, so a
+    failing console (for example a closed pipe) must not change the run."""
+    target = stream or sys.stdout
+    try:
+        print(text, file=target, flush=True)
+    except OSError:
+        _silence(target)
+
+
+def _silence(stream: TextIO) -> None:
+    """Point a dead console stream at the null device, as the Python docs
+    advise for broken pipes, so the interpreter's final flush at exit cannot
+    fail and replace the intended exit code with 120."""
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, stream.fileno())
+        finally:
+            os.close(devnull)
+    except (OSError, ValueError):
+        pass  # not a real file descriptor; nothing is left to flush at exit
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--symbol", choices=ALLOWED_SYMBOLS, action="append")
+    args = parser.parse_args(argv)
+
+    started = datetime.now(UTC)
+    records: list[DownloadRecord] = []
+    failure: dict[str, object] | None = None
+    operation = "start"
+    try:
+        client = BinancePublicClient(urllib_transport, args.root)
+        operation = "exchangeInfo"
+        records.append(client.fetch_exchange_info())
+        for symbol in args.symbol or ALLOWED_SYMBOLS:
+            for year, month in months_between(*EXPLORATION_MONTHS):
+                operation = f"{symbol} {year:04d}-{month:02d}"
+                record = client.fetch_monthly_klines(symbol, year, month)
+                records.append(record)
+                _say(f"{record.availability.status} {record.name}")
+    except (DownloadError, OSError) as error:
+        # Expected operational failures end the run with a record. Anything
+        # else, and a failure to write the summary itself, stays uncaught.
+        failure = {"error": repr(error), "operation": operation}
+
+    summary = {
+        "failure": failure,
+        "partition": "exploration",
+        "records": [record.as_mapping() for record in records],
+        "started_utc": started.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    runs = args.root / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    out = runs / f"download-{started:%Y%m%dT%H%M%S%fZ}.json"
+    with out.open("xb") as handle:
+        handle.write(canonical_json_bytes(summary))
+    missing = [r.name for r in records if r.availability.status == UNAVAILABLE]
+    if failure is not None:
+        _say(f"STOPPED at {failure['operation']}: {failure['error']}", sys.stderr)
+    _say(f"summary: {out}; unavailable: {len(missing)}")
+    if failure is not None:
+        return 2
+    return 1 if missing else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
