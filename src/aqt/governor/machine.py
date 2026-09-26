@@ -23,7 +23,8 @@ import math
 import secrets
 from collections.abc import Callable
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Context, Decimal
+from fractions import Fraction
 
 from aqt.benchmarks.canonical import (
     MAX_EXPOSURE,
@@ -36,9 +37,7 @@ from aqt.benchmarks.canonical import (
     reaches_rebalance_band,
     rebalance,
 )
-from aqt.data.bars import BAR_INTERVAL
 from aqt.governor.authorization import (
-    DECIMAL_CONTEXT,
     PROTOCOL_SYMBOLS,
     ActualState,
     Authorization,
@@ -50,6 +49,13 @@ from aqt.governor.authorization import (
 )
 
 __all__ = ["Governor"]
+
+_ROUND_DOWN = Context(prec=34, rounding=ROUND_FLOOR)
+
+
+def _at_most(value: Fraction) -> Decimal:
+    """`value` (>= 0) as a Decimal that never exceeds it."""
+    return _ROUND_DOWN.divide(Decimal(value.numerator), Decimal(value.denominator))
 
 
 def _default_nonce() -> str:
@@ -69,6 +75,7 @@ class Governor:
         self._nonce_source = nonce_source
         self._issued: dict[str, Authorization] = {}
         self._used: set[str] = set()
+        self._outstanding: dict[str, Authorization] = {}
 
     def decide(
         self, proposal: Proposal, state: ActualState, now: datetime
@@ -90,13 +97,23 @@ class Governor:
             return Refusal(
                 RefusalCode.DECISION_IN_FUTURE, proposal.decision_time.isoformat()
             )
-        if now - proposal.decision_time >= BAR_INTERVAL:
-            # A decision belongs to its own bar: a 00:00 proposal presented at
-            # 03:00 must not pass as the scheduled decision.
+        window_end = proposal.decision_time + self._config.decision_window
+        if now >= window_end:
+            # A 00:00 proposal presented later must not pass as the scheduled
+            # decision (T21-02, Astra R-1).
             return Refusal(
                 RefusalCode.STALE_DECISION,
-                f"decision at {proposal.decision_time.isoformat()} is not the "
-                f"current bar at {now.isoformat()}",
+                f"decision at {proposal.decision_time.isoformat()} closed at "
+                f"{window_end.isoformat()}; it is now {now.isoformat()}",
+            )
+        pending = self._outstanding.get(proposal.symbol)
+        if pending is not None and now < pending.expires_at:
+            # One executable transition at a time (Astra R-2): two
+            # authorizations against the same state could together overshoot.
+            return Refusal(
+                RefusalCode.OUTSTANDING_AUTHORIZATION,
+                f"{pending.nonce} is outstanding until "
+                f"{pending.expires_at.isoformat()}",
             )
         if state.as_of > now:
             return Refusal(RefusalCode.STATE_FROM_FUTURE, state.as_of.isoformat())
@@ -118,14 +135,16 @@ class Governor:
 
         change = decision.new_exposure - current
         # Exact, from holdings: the base quantity the target implies at the
-        # mark price, minus the base quantity actually held.
-        target_base = DECIMAL_CONTEXT.divide(
-            DECIMAL_CONTEXT.multiply(Decimal(repr(decision.new_exposure)), equity),
-            state.mark_price,
+        # mark price, minus the base quantity actually held, rounded toward
+        # zero so the bound never exceeds it (Astra R-3).
+        price = Fraction(state.mark_price)
+        base = Fraction(state.base_quantity)
+        target_base = (
+            Fraction(Decimal(repr(decision.new_exposure)))
+            * (base * price + Fraction(state.quote_balance))
+            / price
         )
-        quantity = DECIMAL_CONTEXT.abs(
-            DECIMAL_CONTEXT.subtract(target_base, state.base_quantity)
-        )
+        quantity = _at_most(abs(target_base - base))
         nonce = self._nonce_source()
         if nonce in self._issued:
             raise RuntimeError("nonce source repeated a nonce; refusing to reuse it")
@@ -139,10 +158,11 @@ class Governor:
             max_base_quantity=quantity,
             max_slippage_bps=self._config.max_slippage_bps,
             issued_at=now,
-            expires_at=now + self._config.authorization_ttl,
+            expires_at=min(now + self._config.authorization_ttl, window_end),
             nonce=nonce,
         )
         self._issued[nonce] = authorization
+        self._outstanding[proposal.symbol] = authorization
         return authorization
 
     def redeem(

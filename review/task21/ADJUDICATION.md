@@ -21,3 +21,34 @@ Owner decision created by R-1: the value of `decision_window` (how long after
 the 00:00 or hourly decision an order may still be authorized and sent). It
 joins `max_slippage_bps` and `authorization_ttl` as open values in the
 deployment protocol draft.
+
+## Repair
+
+- R-1: `GovernorConfig.decision_window` (required, at most one bar). A
+  proposal is refused as `STALE_DECISION` once `now >= decision_time +
+  decision_window`, and `expires_at` is capped at that moment whatever the TTL.
+  Test: `test_a_decision_cannot_be_issued_or_redeemed_after_its_window` (a 00:00
+  proposal at 00:59 is refused; with a 4h TTL, redemption at 03:00 is refused).
+- R-2: one outstanding authorization per symbol until it expires; a new one is
+  refused as `OUTSTANDING_AUTHORIZATION`. Test:
+  `test_only_one_authorization_is_outstanding_per_symbol` (Astra's scenario).
+- R-3: the quantity bound is computed with `fractions.Fraction` and converted
+  to `Decimal` with `ROUND_FLOOR`. Test:
+  `test_the_quantity_bound_never_exceeds_the_exact_quantity` (6 cases against an
+  exact rational oracle, including 1/60 and 1/3).
+
+Mutation checks, each failing at least one test: TTL not capped; window set to
+a full bar; overlapping authorizations allowed; rounding to nearest.
+
+Implementer errors in the new tests, fixed before use: the property test
+shared one governor across out-of-order times, which the new
+one-at-a-time rule then blocked; one test stamped the proposal with the late
+time; one case targeted a change inside the band.
+
+Validation after repair, `.venv` Python 3.14.7: `pytest -q` 1391 passed, 4
+skipped in 171.57s; `ruff check .` and `ruff format --check .` pass; `mypy src
+scripts` no issues in 43 files; `lint-imports` 5 kept, 0 broken; no frozen
+path changed.
+
+These repairs have not been re-reviewed.
+

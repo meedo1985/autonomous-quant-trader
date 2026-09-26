@@ -70,9 +70,10 @@ modules.
   authorized as a scheduled risk increase. This was confirmed before the fix
   (`Authorization BUY 0.8` issued at 03:00). A decision is now accepted only
   within one bar of its `decision_time`.
-- **T21-03. `max_slippage_bps` and `authorization_ttl` have no defaults.** Both
-  are `[OPEN]` in the deployment protocol draft, so `GovernorConfig` requires
-  them. The tests use 15 bps and 5 minutes only as fixtures.
+- **T21-03. `max_slippage_bps`, `authorization_ttl` and `decision_window` have
+  no defaults.** All are `[OPEN]` values for the owner (the window was added by
+  Astra R-1), so `GovernorConfig` requires them. The tests use 15 bps, 5 minutes
+  and 10 minutes only as fixtures.
 - **T21-04. Nonces live in memory.** After a restart, an earlier authorization
   is refused as `NOT_ISSUED_HERE`, which fails safe. Persistence belongs to the
   executor and paper loop (Tasks 22-24).
@@ -126,5 +127,8 @@ files and this report.
 
 ## Outstanding
 
-- The GPT-6 Astra review (section 16, Q2) has not been done.
+- GPT-6 Astra review (section 16, Q2): FIX, blockers R-1 (late issue or
+  redemption), R-2 (overlapping authorizations) and R-3 (quantity rounding).
+  All three were reproduced and repaired; see `REVIEW.md` and
+  `ADJUDICATION.md`. The repairs are not re-reviewed.
 - The owner's own PR review is required before merge (section 16).

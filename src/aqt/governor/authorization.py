@@ -21,7 +21,7 @@ from decimal import Context, Decimal
 from enum import StrEnum
 from typing import Final
 
-from aqt.data.bars import require_utc
+from aqt.data.bars import BAR_INTERVAL, require_utc
 
 __all__ = [
     "DECIMAL_CONTEXT",
@@ -63,6 +63,7 @@ class RefusalCode(StrEnum):
     NO_EQUITY = "NO_EQUITY"
     DECISION_IN_FUTURE = "DECISION_IN_FUTURE"
     INVALID_DECISION_TIME = "INVALID_DECISION_TIME"
+    OUTSTANDING_AUTHORIZATION = "OUTSTANDING_AUTHORIZATION"
     STALE_DECISION = "STALE_DECISION"
     INVALID_STATE = "INVALID_STATE"
     STATE_FROM_FUTURE = "STATE_FROM_FUTURE"
@@ -83,20 +84,26 @@ class Refusal:
 
 @dataclass(frozen=True, slots=True)
 class GovernorConfig:
-    """Bounds the frozen documents leave open; both are required.
+    """Bounds the frozen documents leave open; all are required.
 
     Their values are `[OPEN]` in the deployment protocol draft, so none is
-    defaulted here.
+    defaulted here. `decision_window` is how long after its `decision_time` a
+    decision may still be authorized and redeemed; it caps the TTL, so a
+    00:00 decision cannot be carried later into the hour. It may not exceed
+    one bar.
     """
 
     max_slippage_bps: Decimal
     authorization_ttl: timedelta
+    decision_window: timedelta
 
     def __post_init__(self) -> None:
         if not self.max_slippage_bps.is_finite() or self.max_slippage_bps < 0:
             raise ValueError(f"invalid max_slippage_bps {self.max_slippage_bps}")
         if self.authorization_ttl <= timedelta(0):
             raise ValueError(f"invalid authorization_ttl {self.authorization_ttl}")
+        if not timedelta(0) < self.decision_window <= BAR_INTERVAL:
+            raise ValueError(f"invalid decision_window {self.decision_window}")
 
 
 @dataclass(frozen=True, slots=True)
