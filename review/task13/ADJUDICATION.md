@@ -192,3 +192,21 @@ src scripts/download_market_data.py` no issues in 32 files; `lint-imports` 5
 kept, 0 broken; `git diff --check` clean; no change under the frozen paths.
 
 This repair has not been re-reviewed by a different model.
+
+## Fifth review: R4-1 repair (`REVIEW_5.md`)
+
+Reviewer: GPT-6 Astra (`gpt-6-astra`, reasoning effort high), Codex CLI 0.154.0,
+session `01a0dd54-8a76-7a22-b9a3-35edbdb72e13`, read-only sandbox, no tools.
+Input: the fourth review, this file, implementer-run check output at `a8d5fe9`,
+the code diff `12cbd56..a8d5fe9`, and the full current CLI and test file. The
+reviewer did not rerun the checks or the mutation check. It was asked to report
+only concrete, reachable defects for an owner running the CLI by hand.
+Verdict: **ACCEPT**. Saved unedited.
+
+| ID | Reviewer status | Adjudication |
+|---|---|---|
+| R4-1, R3-1, R2-1 / R-5 | RESOLVED | Agreed. |
+| R-4 | OPEN | Agreed; the only remaining merge blocker, and an owner decision. |
+
+No new findings. Every code finding from the five reviews is repaired; R-4 is
+the only open item.
