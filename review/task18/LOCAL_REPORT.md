@@ -70,6 +70,13 @@ added lines, about 300 of them tests.
   `newClientOrderId` uniqueness among open orders, and its behavior for ids of
   already-filled orders should be verified against official documentation
   before the executor relies on deduplication by the venue.
+- **T18-06. `MARKET_LOT_SIZE` is not read** (disclosed after the second
+  review, `REVIEW2.md` F-1). `filters_from_exchange_info` takes quantity limits
+  from `LOT_SIZE` only, so a market order above a tighter `MARKET_LOT_SIZE`
+  maximum would fill here but be rejected by the venue. No committed snapshot or
+  test uses that filter. Before exchange-derived filters reach the executor
+  (Task 21), either honour it or keep this disclosure, after checking its exact
+  semantics against official Binance documentation.
 
 ## Acceptance criteria (roadmap Task 18)
 

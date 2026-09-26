@@ -47,3 +47,17 @@ ruff, format, mypy and `lint-imports` pass; `git diff --check main...HEAD`
 clean (after commit); no change under the frozen paths.
 
 These repairs have not been re-reviewed by a different model.
+
+## Second review: Claude Fable 5.1, 2026-09-26
+
+Record: `REVIEW2.md`, saved as returned. Reviewer: Claude Fable 5.1
+(`claude-fable-5-1`, reported by the reviewer), requested through the Claude
+Code Agent tool; a different model from the implementer (Claude Opus 5.5).
+Scope: the R-1 to R-4 repairs at `7483cb1`. Verdict: **ACCEPT**, R-1 to R-4
+REPAIRED.
+
+| ID | Severity | Decision | Action |
+| --- | --- | --- | --- |
+| F-1 | NON-BLOCKING | Accepted. Confirmed by reading: `filters_from_exchange_info` reads `LOT_SIZE`, `MIN_NOTIONAL` and `NOTIONAL` only, and never `MARKET_LOT_SIZE`. | Not repaired in this PR, deliberately: filters are a caller input (T18-02), no committed snapshot or test contains the filter, and its exact semantics (including `0` placeholder values) have not been checked against official Binance documentation. Disclosed as deviation T18-06 in `LOCAL_REPORT.md`, to be resolved before exchange-derived filters reach the executor (Task 21). |
+
+No code changed after this review, so the earlier validation results stand.
