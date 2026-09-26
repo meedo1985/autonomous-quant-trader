@@ -1,3 +1,8 @@
+---
+name: sharpe-selection-statistics
+description: "Curriculum for the statistics this project turns on: Sharpe inference under selection, DSR, effective trial count, PBO, the paired estimands, block bootstrap, CPCV. Use when a question turns on what a statistic means or whether a number can be trusted. A curriculum, not an authority; it closes no D-nn."
+---
+
 # Sharpe inference under selection — working curriculum
 
 The statistics this project actually turns on, taught in the order they depend on
