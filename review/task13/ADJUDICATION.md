@@ -54,3 +54,21 @@ is the fail-closed choice; allowing a redirect would require validating the
 target through `PublicRequest` first.
 
 These repairs have not been re-reviewed by a different model.
+
+## Second review: repairs (`REVIEW_2.md`)
+
+Reviewer: GPT-6 Astra (`gpt-6-astra`, reasoning effort high), Codex CLI 0.154.0,
+session `01a0dd30-75bf-7680-bc5c-56d4008555e9`, read-only sandbox, no tools.
+Input: the first review, this file, implementer-run check output at `f27e908`,
+the code diff `5c0d6bc..f27e908`, and the full current module and CLI. The new
+tests reached the reviewer only through that diff. The reviewer did not rerun
+the checks. Verdict: **FIX**. Saved unedited.
+
+| ID | Reviewer status | Adjudication |
+|---|---|---|
+| R-1 | RESOLVED | Agreed. |
+| R-2 | RESOLVED | Agreed. |
+| R-3 | RESOLVED | Agreed. 303/307/308 cases were suggested as optional; not required. |
+| R-4 | OPEN | Agreed; owner decision. |
+| R-5 | PARTIAL | **Accepted**; the remainder is tracked as R2-1. |
+| R2-1 | NON-BLOCKING | **Accepted.** Verified: `http.client.IncompleteRead` subclasses `HTTPException`, not `OSError`, so `_get` neither retries nor converts it (`binance_public.py:156`, `:306`); a malformed sidecar raises `JSONDecodeError`/`KeyError`/`ValueError` from `_existing` (`:354`, `:361`); client construction sits outside the CLI's handler (`download_market_data.py:41`). Not yet repaired. |
