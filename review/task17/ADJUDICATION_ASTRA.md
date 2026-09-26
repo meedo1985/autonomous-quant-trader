@@ -35,4 +35,3 @@ Validation after repair, `.venv` Python 3.14.7: `pytest -q` 1385 passed, 4
 skipped in 225.40s; `ruff check .` and `ruff format --check .` pass; `mypy src
 scripts` no issues in 42 files; `lint-imports` 5 kept, 0 broken; no frozen
 path changed.
-
