@@ -16,7 +16,8 @@ Semantics
   a buy costing more than the free quote balance, is rejected.
 - Market orders only: Cycle 1 allows taker-like orders and no passive limits,
   so `PRICE_FILTER` and `PERCENT_PRICE`, which govern limit prices, do not
-  apply. `LOT_SIZE` and `MIN_NOTIONAL` are enforced. The notional check uses
+  apply. `LOT_SIZE`, and the minimum and maximum notional limits flagged as
+  applying to market orders, are enforced. The notional check uses
   the decision bar's close, the last price known when the order is placed.
 - Quantities and balances are exact decimals, so step-size checks cannot be
   broken by binary rounding.
@@ -29,7 +30,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from decimal import ROUND_DOWN, Context, Decimal
+from decimal import Context, Decimal
 from enum import StrEnum
 from typing import Final, NoReturn
 
@@ -79,18 +80,21 @@ class SymbolFilters:
     min_qty: Decimal
     max_qty: Decimal
     min_notional: Decimal
+    max_notional: Decimal | None = None  # None: no maximum applies to market orders
 
     def __post_init__(self) -> None:
         if self.step_size <= 0 or self.min_qty < 0 or self.max_qty < self.min_qty:
             raise ValueError(f"inconsistent LOT_SIZE filter: {self}")
         if self.min_notional < 0:
             raise ValueError("min_notional must be non-negative")
+        if self.max_notional is not None and self.max_notional < self.min_notional:
+            raise ValueError("max_notional must not be below min_notional")
 
 
 def filters_from_exchange_info(
     payload: Mapping[str, object], symbol: str
 ) -> SymbolFilters:
-    """Read `LOT_SIZE` and `MIN_NOTIONAL` (or `NOTIONAL`) for `symbol` from an
+    """Read `LOT_SIZE`, `MIN_NOTIONAL` and `NOTIONAL` for `symbol` from an
     `exchangeInfo` response. A Task 13 snapshot shows today's filters, not
     historical ones (T13-01): use it only where today's rules are intended."""
     symbols = payload.get("symbols")
@@ -101,12 +105,27 @@ def filters_from_exchange_info(
         raise ValueError(f"{symbol} is not in the exchangeInfo payload")
     by_type = {f["filterType"]: f for f in entry["filters"]}
     lot = by_type["LOT_SIZE"]
-    notional = by_type.get("MIN_NOTIONAL") or by_type["NOTIONAL"]
+    # A market order is bound only by the notional limits flagged as applying
+    # to market orders. A missing flag is read as "applies", the stricter case.
+    min_notional, max_notional = Decimal(0), None
+    if "NOTIONAL" in by_type:
+        notional = by_type["NOTIONAL"]
+        if notional.get("applyMinToMarket", True):
+            min_notional = Decimal(notional["minNotional"])
+        if notional.get("applyMaxToMarket", True):
+            if "maxNotional" not in notional:
+                raise ValueError(f"{symbol}: NOTIONAL applies a maximum but gives none")
+            max_notional = Decimal(notional["maxNotional"])
+    if "MIN_NOTIONAL" in by_type and by_type["MIN_NOTIONAL"].get("applyToMarket", True):
+        min_notional = max(
+            min_notional, Decimal(by_type["MIN_NOTIONAL"]["minNotional"])
+        )
     return SymbolFilters(
         step_size=Decimal(lot["stepSize"]),
         min_qty=Decimal(lot["minQty"]),
         max_qty=Decimal(lot["maxQty"]),
-        min_notional=Decimal(notional["minNotional"]),
+        min_notional=min_notional,
+        max_notional=max_notional,
     )
 
 
@@ -239,32 +258,39 @@ class SimulatedExchange:
         except BarSemanticsError as error:
             self._reject(client_order_id, "INVALID_DECISION_TIME", str(error))
         known_price = Decimal(repr(decision_bar.close))
-        if _DEC.multiply(quantity, known_price) < filters.min_notional:
+        known_notional = _DEC.multiply(quantity, known_price)
+        if known_notional < filters.min_notional:
             self._reject(client_order_id, "FILTER_MIN_NOTIONAL", f"quantity {quantity}")
+        if filters.max_notional is not None and known_notional > filters.max_notional:
+            self._reject(client_order_id, "FILTER_MAX_NOTIONAL", f"quantity {quantity}")
 
         fault = self._scenario.faults.get(client_order_id, Fault())
-        executed = _DEC.multiply(quantity, fault.fill_fraction).quantize(
-            filters.step_size, rounding=ROUND_DOWN
+        # A whole number of steps, rounded down: quantize() would round to the
+        # step's exponent, which is not the same as a multiple of the step.
+        steps = _DEC.divide_int(
+            _DEC.multiply(quantity, fault.fill_fraction), filters.step_size
         )
+        executed = _DEC.multiply(steps, filters.step_size)
         try:
             cost = trade_cost(series, decision_time, side, fees=self._fees)
         except CostModelError as error:
             self._reject(client_order_id, "NO_FILL_BAR", str(error))
         price = Decimal(repr(cost.execution_price))
         cost_bps = Decimal(repr(cost.breakdown.total_bps))
+        base = symbol.removesuffix(_QUOTE)
+        # The whole requested order must be affordable before any partial-fill
+        # fault applies, as on the venue: a sell above the free base balance,
+        # or a buy the quote balance cannot cover, is rejected outright.
+        for asset, delta in self._deltas(side, base, quantity, price, cost_bps).items():
+            if _DEC.add(self._balances.get(asset, Decimal(0)), delta) < 0:
+                self._reject(client_order_id, "INSUFFICIENT_BALANCE", asset)
+        deltas = self._deltas(side, base, executed, price, cost_bps)
+        for asset, delta in deltas.items():
+            self._balances[asset] = _DEC.add(
+                self._balances.get(asset, Decimal(0)), delta
+            )
         notional = _DEC.multiply(executed, price)
         cost_quote = _DEC.divide(_DEC.multiply(notional, cost_bps), _BPS)
-
-        base = symbol.removesuffix(_QUOTE)
-        if side is Side.BUY:
-            deltas = {_QUOTE: -(notional + cost_quote), base: executed}
-        else:
-            deltas = {base: -executed, _QUOTE: notional - cost_quote}
-        for asset, delta in deltas.items():
-            if self._balances.get(asset, Decimal(0)) + delta < 0:
-                self._reject(client_order_id, "INSUFFICIENT_BALANCE", asset)
-        for asset, delta in deltas.items():
-            self._balances[asset] = self._balances.get(asset, Decimal(0)) + delta
 
         order = Order(
             client_order_id=client_order_id,
@@ -286,6 +312,18 @@ class SimulatedExchange:
             self._log("timeout", client_order_id)
             raise SimulatedTimeout(f"no response for {client_order_id}")
         return order
+
+    @staticmethod
+    def _deltas(
+        side: Side, base: str, quantity: Decimal, price: Decimal, cost_bps: Decimal
+    ) -> dict[str, Decimal]:
+        """Balance changes for `quantity` filled at `price`, all in the fixed
+        decimal context so the caller's context can never change a balance."""
+        notional = _DEC.multiply(quantity, price)
+        cost = _DEC.divide(_DEC.multiply(notional, cost_bps), _BPS)
+        if side is Side.BUY:
+            return {_QUOTE: _DEC.minus(_DEC.add(notional, cost)), base: quantity}
+        return {base: _DEC.minus(quantity), _QUOTE: _DEC.subtract(notional, cost)}
 
     def query_order(self, client_order_id: str) -> Order:
         seen = self._queries.get(client_order_id, 0)

@@ -61,8 +61,9 @@ added lines, about 300 of them tests.
   eras. The caller chooses.
 - **T18-03. `MIN_NOTIONAL` is checked at the decision bar's close**, the last
   price known when the order is placed, not at the fill price, which lies in
-  the future. Binance uses a recent average price; the decision close is the
-  causal equivalent at 1h resolution.
+  the future. Binance uses a recent average price; the decision close is a
+  causal approximation of it at 1h resolution, not an equivalent (corrected
+  after review, `ADJUDICATION.md`).
 - **T18-04. A reused `clientOrderId` returns the existing order if the
   parameters match, and is rejected if they differ.** It never fills twice.
   External fact, **not verified in this session:** real Binance enforces

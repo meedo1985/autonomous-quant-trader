@@ -227,30 +227,154 @@ def test_scenario_replay_is_byte_identical() -> None:
     assert b'"event": "timeout"' in first and b'"event": "reject"' in first
 
 
-@pytest.mark.parametrize("notional_filter", ["MIN_NOTIONAL", "NOTIONAL"])
-def test_filters_are_read_from_an_exchange_info_payload(notional_filter: str) -> None:
-    payload = {
-        "symbols": [
-            {
-                "symbol": "BTCUSDT",
-                "filters": [
-                    {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
-                    {
-                        "filterType": "LOT_SIZE",
-                        "stepSize": "0.00001000",
-                        "minQty": "0.00001000",
-                        "maxQty": "9000.00000000",
-                    },
-                    {"filterType": notional_filter, "minNotional": "5.00000000"},
-                ],
-            }
-        ]
+def _payload(*notional_filters: dict[str, object]) -> dict[str, object]:
+    lot = {
+        "filterType": "LOT_SIZE",
+        "stepSize": "0.00001000",
+        "minQty": "0.00001000",
+        "maxQty": "9000.00000000",
     }
-    assert filters_from_exchange_info(payload, "BTCUSDT") == SymbolFilters(
-        step_size=Decimal("0.00001"),
-        min_qty=Decimal("0.00001"),
-        max_qty=Decimal("9000"),
-        min_notional=Decimal("5"),
-    )
+    price = {"filterType": "PRICE_FILTER", "tickSize": "0.01"}
+    return {
+        "symbols": [{"symbol": "BTCUSDT", "filters": [price, lot, *notional_filters]}]
+    }
+
+
+@pytest.mark.parametrize(
+    ("notional_filters", "minimum", "maximum"),
+    [
+        (
+            [{"filterType": "MIN_NOTIONAL", "minNotional": "5", "applyToMarket": True}],
+            "5",
+            None,
+        ),
+        (
+            [
+                {
+                    "filterType": "MIN_NOTIONAL",
+                    "minNotional": "5",
+                    "applyToMarket": False,
+                }
+            ],
+            "0",
+            None,
+        ),
+        (
+            [
+                {
+                    "filterType": "NOTIONAL",
+                    "minNotional": "5",
+                    "applyMinToMarket": True,
+                    "maxNotional": "9000000",
+                    "applyMaxToMarket": False,
+                }
+            ],
+            "5",
+            None,
+        ),
+        (
+            [
+                {
+                    "filterType": "NOTIONAL",
+                    "minNotional": "10",
+                    "applyMinToMarket": True,
+                    "maxNotional": "40",
+                    "applyMaxToMarket": True,
+                }
+            ],
+            "10",
+            "40",
+        ),
+    ],
+)
+def test_filters_are_read_from_an_exchange_info_payload(
+    notional_filters: list[dict[str, object]], minimum: str, maximum: str | None
+) -> None:
+    filters = filters_from_exchange_info(_payload(*notional_filters), "BTCUSDT")
+    assert filters.step_size == Decimal("0.00001")
+    assert filters.min_qty == Decimal("0.00001") and filters.max_qty == Decimal("9000")
+    assert filters.min_notional == Decimal(minimum)
+    assert filters.max_notional == (None if maximum is None else Decimal(maximum))
     with pytest.raises(ValueError, match="not in the exchangeInfo"):
-        filters_from_exchange_info(payload, "ETHUSDT")
+        filters_from_exchange_info(_payload(*notional_filters), "ETHUSDT")
+
+
+def test_a_maximum_that_applies_but_is_missing_is_refused() -> None:
+    notional = {"filterType": "NOTIONAL", "minNotional": "5", "applyMaxToMarket": True}
+    with pytest.raises(ValueError, match="gives none"):
+        filters_from_exchange_info(_payload(notional), "BTCUSDT")
+
+
+# --- Review repairs (review/task18/REVIEW.md) ---------------------------------
+
+
+def _exchange_with(
+    filters: SymbolFilters, scenario: Scenario | None = None, **balances: str
+) -> SimulatedExchange:
+    return SimulatedExchange(
+        {"BTCUSDT": _series()},
+        {"BTCUSDT": filters},
+        {asset: Decimal(v) for asset, v in balances.items()},
+        scenario=scenario,
+    )
+
+
+@pytest.mark.parametrize(
+    ("step", "fraction", "executed"),
+    [
+        ("0.00001000", "0.33333333", "0.16666"),  # trailing zeros in the step
+        ("0.00001", "0.33333333", "0.16666"),
+        ("0.005", "0.3333", "0.165"),  # a step that is not a power of ten
+    ],
+)
+def test_partial_fills_are_whole_multiples_of_the_step(
+    step: str, fraction: str, executed: str
+) -> None:
+    """R-1: the executed quantity is rounded down to a multiple of the step."""
+    filters = SymbolFilters(Decimal(step), Decimal(step), Decimal("100"), Decimal("10"))
+    scenario = Scenario({"p": Fault(fill_fraction=Decimal(fraction))})
+    order = _exchange_with(filters, scenario, USDT="1000").place_order(
+        "p", "BTCUSDT", Side.BUY, Decimal("0.5"), DECISION
+    )
+    assert order.executed_qty == Decimal(executed)
+    assert order.executed_qty % Decimal(step) == 0
+
+
+def test_an_oversized_sell_is_rejected_even_if_only_part_would_fill() -> None:
+    """R-2: the whole requested quantity must be available."""
+    scenario = Scenario({"s": Fault(fill_fraction=Decimal("0.5"))})
+    exchange = _exchange_with(FILTERS, scenario, USDT="0", BTC="0.2")
+    with pytest.raises(ExchangeError) as caught:
+        exchange.place_order("s", "BTCUSDT", Side.SELL, Decimal("0.3"), DECISION)
+    assert caught.value.code == "INSUFFICIENT_BALANCE"
+    assert exchange.balances()["BTC"] == Decimal("0.2")
+
+
+def test_balances_ignore_the_callers_decimal_context() -> None:
+    """R-3: the balance reconciles with the recorded fill whatever the context."""
+    import decimal
+
+    with decimal.localcontext() as context:
+        context.prec = 6
+        context.rounding = decimal.ROUND_DOWN
+        exchange = _exchange(usdt="1000")
+        order = exchange.place_order("b", "BTCUSDT", Side.BUY, Decimal("0.5"), DECISION)
+    assert order.quote_amount == Decimal("50.5")
+    assert order.cost_quote == Decimal("0.06565")
+    assert exchange.balances()["USDT"] == Decimal("949.43435")
+    assert exchange.balances()["USDT"] == (
+        Decimal("1000") - order.quote_amount - order.cost_quote
+    )
+
+
+def test_an_applicable_maximum_notional_is_enforced() -> None:
+    """R-4: a 50 USDT order exceeds a 40 USDT market maximum."""
+    capped = SymbolFilters(
+        Decimal("0.001"), Decimal("0.001"), Decimal("100"), Decimal("10"), Decimal("40")
+    )
+    exchange = _exchange_with(capped, USDT="1000")
+    with pytest.raises(ExchangeError) as caught:
+        exchange.place_order("m", "BTCUSDT", Side.BUY, Decimal("0.5"), DECISION)
+    assert caught.value.code == "FILTER_MAX_NOTIONAL"
+    order = exchange.place_order("m2", "BTCUSDT", Side.BUY, Decimal("0.4"), DECISION)
+    assert order.status is OrderStatus.FILLED  # 0.4 * close 100 = 40, at the cap
