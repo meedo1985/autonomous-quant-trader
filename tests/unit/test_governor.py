@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import random
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from fractions import Fraction
 
@@ -424,9 +424,45 @@ def test_after_a_late_release_the_next_reduction_is_at_the_next_bar() -> None:
     assert isinstance(buy, Authorization)
     assert governor.redeem(buy, state, MIDNIGHT + MINUTE) is None
     assert governor.release(buy, MIDNIGHT + 6 * MINUTE) is None
+    six = MIDNIGHT + 6 * MINUTE
+    at_six = ActualState(
+        "BTCUSDT", Decimal(5), Decimal(500), Decimal(100), six, MIDNIGHT
+    )
+    same_bar = governor.decide(Proposal("BTCUSDT", 0.2, MIDNIGHT), at_six, six)
+    assert _code(same_bar) is RefusalCode.STALE_DECISION
+    off_bar = governor.decide(Proposal("BTCUSDT", 0.2, six), at_six, six)
+    assert _code(off_bar) is RefusalCode.INVALID_DECISION_TIME
     one_am = MIDNIGHT + HOUR
     filled = ActualState(
         "BTCUSDT", Decimal(5), Decimal(500), Decimal(100), one_am, MIDNIGHT
     )
     reduce = governor.decide(Proposal("BTCUSDT", 0.2, one_am), filled, one_am)
     assert isinstance(reduce, Authorization) and reduce.side is Side.SELL
+
+
+@pytest.mark.parametrize(
+    "bad_now",
+    [
+        datetime(2026, 1, 5),
+        datetime(2026, 1, 5, 3, tzinfo=timezone(timedelta(hours=3))),
+        "2026-01-05T00:00:00Z",
+    ],
+)
+def test_every_entry_point_rejects_a_bad_now_without_changing_state(
+    bad_now: object,
+) -> None:
+    """Astra R3-2 and its fourth-review notes: decide, redeem and release."""
+    governor = Governor(CONFIG)
+    state = _state("0.2")
+    authorization = governor.decide(Proposal("BTCUSDT", 0.8, MIDNIGHT), state, MIDNIGHT)
+    assert isinstance(authorization, Authorization)
+    calls = (
+        lambda: governor.decide(Proposal("BTCUSDT", 0.8, MIDNIGHT), state, bad_now),
+        lambda: governor.redeem(authorization, state, bad_now),
+        lambda: governor.release(authorization, bad_now),
+    )
+    for call in calls:
+        with pytest.raises((ValueError, AttributeError)):
+            call()
+    assert governor.redeem(authorization, state, MIDNIGHT + MINUTE) is None
+    assert governor.release(authorization, MIDNIGHT + MINUTE) is None
