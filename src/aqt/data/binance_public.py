@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -136,11 +137,22 @@ class FetchResponse:
 Transport = Callable[[PublicRequest], FetchResponse]
 
 
+class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    """Surface every 3xx as an error: a redirect target never passed through
+    `PublicRequest`, so following it would bypass the host allow-list."""
+
+    def redirect_request(self, *_: object, **__: object) -> None:
+        return None
+
+
+_OPENER: Final = urllib.request.build_opener(_RefuseRedirects)
+
+
 def urllib_transport(request: PublicRequest, *, timeout: float = 60.0) -> FetchResponse:
     """The real network transport. Only the owner-run CLI uses it."""
     req = urllib.request.Request(request.url, headers=dict(request.headers))
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
+        with _OPENER.open(req, timeout=timeout) as response:
             return FetchResponse(status=response.status, body=response.read())
     except urllib.error.HTTPError as error:
         return FetchResponse(status=error.code, body=b"")
@@ -169,6 +181,17 @@ def months_between(
         months.append((year, month))
         year, month = (year + 1, 1) if month == 12 else (year, month + 1)
     return months
+
+
+def _require_exploration_month(year: int, month: int) -> None:
+    """Refuse any month outside the exploration span before touching disk or
+    network: confirmation and lockbox months must not reach this root."""
+    first, last = EXPLORATION_MONTHS
+    if not 1 <= month <= 12 or not first <= (year, month) <= last:
+        raise DownloadError(
+            f"{year:04d}-{month:02d} is outside the exploration months "
+            f"{first[0]:04d}-{first[1]:02d}..{last[0]:04d}-{last[1]:02d}"
+        )
 
 
 def _require_symbol(symbol: str) -> None:
@@ -229,6 +252,7 @@ class BinancePublicClient:
     def fetch_monthly_klines(
         self, symbol: str, year: int, month: int
     ) -> DownloadRecord:
+        _require_exploration_month(year, month)
         url = archive_url(symbol, year, month)
         name = url.rsplit("/", 1)[1]
         path = self._root / "klines" / symbol / INTERVAL / name
@@ -289,7 +313,8 @@ class BinancePublicClient:
             if response.status >= 500:
                 failure = f"HTTP {response.status}"
                 continue
-            # 418/429 are rate-limit signals: stop rather than evade them.
+            # 3xx is a refused redirect; 418/429 are rate-limit signals.
+            # Stop rather than follow or evade them.
             raise DownloadError(f"HTTP {response.status} for {url}; stopping")
         raise DownloadError(
             f"gave up on {url} after {self._attempts} attempts: {failure}"
@@ -357,9 +382,15 @@ def _parse_checksum(checksum: bytes, name: str) -> str:
 def _write_once(path: Path, content: bytes) -> None:
     """Create `path` with `content`; fail if it already exists."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    partial = path.with_name(path.name + ".part")
-    partial.write_bytes(content)
+    # A unique, exclusively created temp file per writer: a shared name would
+    # let a second writer truncate the inode just linked to `path`.
+    handle, temp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=path.name + ".", suffix=".part"
+    )
+    partial = Path(temp_name)
     try:
+        with os.fdopen(handle, "wb") as temp:
+            temp.write(content)
         os.link(partial, path)  # fails if `path` exists, on every platform
     except FileExistsError:
         raise DownloadError(

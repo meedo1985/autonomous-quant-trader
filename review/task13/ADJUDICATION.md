@@ -28,3 +28,29 @@ did not rerun the checks itself**, and the review says so.
 
 No finding is rejected. R-1, R-2, R-3 and R-5 are to be repaired in a later
 commit on this branch; R-4 stays open until the owner approves the roadmap.
+
+## Repairs (Claude Opus 5.5, 2026-09-26)
+
+| ID | Status | Change | Regression test |
+|---|---|---|---|
+| R-1 | Fixed | `_write_once` writes through a unique `tempfile.mkstemp` file per writer, then `os.link`s it; the temp file is always removed. | `test_concurrent_writer_cannot_change_published_bytes` runs a second writer between link and cleanup: it is refused and the bytes are unchanged. |
+| R-2 | Fixed | `fetch_monthly_klines` calls `_require_exploration_month` first, before any disk lookup or request; invalid calendar months are refused too. | `test_months_outside_exploration_are_refused_before_disk_or_network` (2017-07, 2022-01, 2025-06, month 0, month 13), with a planted cached file. |
+| R-3 | Fixed | `urllib_transport` uses a module opener with `_RefuseRedirects`, so a 3xx comes back as its status and `_get` stops without retrying. | `test_real_transport_refuses_redirects` (HTTP downgrade, foreign host, `apiKey` query) and `test_module_opener_uses_the_redirect_refusing_handler`; 301/302 added to the stop-without-retry test. |
+| R-4 | Open | Needs the owner's approval of roadmap PR #13. | — |
+| R-5 | Fixed | The CLI catches `DownloadError`, writes the summary with the records so far and a `failure` entry naming the operation, and exits 2. | `test_cli_writes_a_summary_when_a_run_stops`. |
+
+Mutation check: with the pre-repair `binance_public.py` restored, the R-1, R-2
+and R-3 tests fail (10 failures); the R-3 tests partly because the handler does
+not exist there. The R-5 test covers the script, which that check left repaired.
+
+Validation after repair, `.venv` Python 3.14.7: `pytest -q` 1191 passed, 4
+skipped; `ruff check .` pass; `ruff format --check .` 65 files formatted; `mypy
+src scripts/download_market_data.py` no issues in 32 files; `lint-imports` 5
+kept, 0 broken; `git diff --check` clean; no change under the frozen paths.
+
+Behavior note: if `data.binance.vision` itself answers with a redirect, the
+download now stops with `HTTP 30x ... stopping` instead of following it. That
+is the fail-closed choice; allowing a redirect would require validating the
+target through `PublicRequest` first.
+
+These repairs have not been re-reviewed by a different model.

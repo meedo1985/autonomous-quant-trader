@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import email.message
 import hashlib
+import importlib.util
+import io
 import json
 import re
 import socket
+import urllib.request
+import urllib.response
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+from aqt.data import binance_public
 from aqt.data.binance_public import (
     EXPLORATION_MONTHS,
     BinancePublicClient,
@@ -21,6 +27,7 @@ from aqt.data.binance_public import (
     exchange_info_url,
     months_between,
     refuse_credentials,
+    urllib_transport,
 )
 from aqt.data.manifest import AVAILABLE, UNAVAILABLE
 
@@ -184,7 +191,7 @@ def test_transient_error_then_success(tmp_path: Path) -> None:
     assert record.availability.status == AVAILABLE
 
 
-@pytest.mark.parametrize("status", [418, 429, 403])
+@pytest.mark.parametrize("status", [301, 302, 403, 418, 429])
 def test_rate_limit_stops_without_retry(status: int, tmp_path: Path) -> None:
     transport = FakeTransport({URL: [FetchResponse(status, b"")]})
     with pytest.raises(DownloadError, match="stopping"):
@@ -222,3 +229,139 @@ def test_exploration_months_cover_the_protocol_window() -> None:
     months = months_between(*EXPLORATION_MONTHS)
     assert months[0] == (2017, 8) and months[-1] == (2021, 12)
     assert len(months) == 53
+
+
+# --- Review repairs (review/task13/REVIEW.md) --------------------------------
+
+
+@pytest.mark.parametrize(
+    ("year", "month"), [(2017, 7), (2022, 1), (2025, 6), (2020, 0), (2020, 13)]
+)
+def test_months_outside_exploration_are_refused_before_disk_or_network(
+    year: int, month: int, tmp_path: Path
+) -> None:
+    """R-2: the client, not only the CLI, confines downloads to exploration."""
+    cached = (
+        tmp_path / "klines" / "BTCUSDT" / "1h" / f"BTCUSDT-1h-{year}-{month:02d}.zip"
+    )
+    cached.parent.mkdir(parents=True)
+    cached.write_bytes(b"planted")
+    transport = _serving()
+    with pytest.raises(DownloadError, match="outside the exploration months"):
+        _client(transport, tmp_path).fetch_monthly_klines("BTCUSDT", year, month)
+    assert transport.requests == []
+    assert [p for p in tmp_path.rglob("*") if p.is_file()] == [cached]
+
+
+def test_concurrent_writer_cannot_change_published_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R-1: a second writer arriving between link and cleanup is refused."""
+    target = tmp_path / "artifact.zip"
+    real_link = binance_public.os.link
+    raced: list[BaseException] = []
+
+    def link_then_race(src: str, dst: str) -> None:
+        real_link(src, dst)
+        if not raced:
+            with pytest.raises(DownloadError) as caught:
+                binance_public._write_once(target, b"second writer")
+            raced.append(caught.value)
+
+    monkeypatch.setattr(binance_public.os, "link", link_then_race)
+    binance_public._write_once(target, ARCHIVE)
+
+    assert raced and "refusing to overwrite" in str(raced[0])
+    assert target.read_bytes() == ARCHIVE
+    assert [p.name for p in tmp_path.iterdir()] == ["artifact.zip"]
+
+
+class _RedirectingHTTPS(urllib.request.BaseHandler):
+    handler_order = 100  # ahead of the default HTTPS handler
+
+    def __init__(self, location: str) -> None:
+        self.location = location
+        self.opened: list[str] = []
+
+    def https_open(self, req: urllib.request.Request) -> urllib.response.addinfourl:
+        self.opened.append(req.full_url)
+        headers = email.message.Message()
+        headers["Location"] = self.location
+        response = urllib.response.addinfourl(
+            io.BytesIO(b""), headers, req.full_url, 302
+        )
+        response.msg = "Found"
+        return response
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "http://data.binance.vision/x.zip",
+        "https://evil.example/x.zip",
+        "https://data.binance.vision/x.zip?apiKey=k",
+    ],
+)
+def test_real_transport_refuses_redirects(
+    location: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R-3: a redirect target is never requested; the 3xx surfaces as-is."""
+    server = _RedirectingHTTPS(location)
+    opener = urllib.request.build_opener(binance_public._RefuseRedirects, server)
+    monkeypatch.setattr(binance_public, "_OPENER", opener)
+
+    response = urllib_transport(PublicRequest(URL))
+
+    assert response.status == 302
+    assert server.opened == [URL]
+
+
+def test_module_opener_uses_the_redirect_refusing_handler() -> None:
+    handlers = binance_public._OPENER.handlers
+    redirect = [
+        h for h in handlers if isinstance(h, urllib.request.HTTPRedirectHandler)
+    ]
+    assert [type(h) for h in redirect] == [binance_public._RefuseRedirects]
+
+
+def _load_cli() -> object:
+    path = Path(__file__).parents[2] / "scripts" / "download_market_data.py"
+    spec = importlib.util.spec_from_file_location("download_market_data", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_cli_writes_a_summary_when_a_run_stops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R-5: a failure after a successful archive still leaves a run record."""
+    first = archive_url("BTCUSDT", 2017, 8)
+    second = archive_url("BTCUSDT", 2017, 9)
+    info = exchange_info_url(("BTCUSDT", "ETHUSDT"))
+    first_name = first.rsplit("/", 1)[1]
+    transport = FakeTransport(
+        {
+            info: [FetchResponse(200, b"{}")],
+            first: [FetchResponse(200, ARCHIVE)],
+            first + ".CHECKSUM": [FetchResponse(200, _checksum(ARCHIVE, first_name))],
+            second: [FetchResponse(200, ARCHIVE)],
+            second + ".CHECKSUM": [FetchResponse(200, _checksum(b"x", "wrong.zip"))],
+        }
+    )
+    for name in [
+        n for n in __import__("os").environ if n.upper().startswith("BINANCE")
+    ]:
+        monkeypatch.delenv(name)
+    cli = _load_cli()
+    monkeypatch.setattr(cli, "urllib_transport", transport)
+
+    code = cli.main(["--root", str(tmp_path), "--symbol", "BTCUSDT"])  # type: ignore[attr-defined]
+
+    assert code == 2
+    [summary_path] = (tmp_path / "runs").iterdir()
+    summary = json.loads(summary_path.read_bytes())
+    assert summary["failure"]["operation"] == "BTCUSDT 2017-09"
+    assert [r["name"] for r in summary["records"]][1:] == [first_name]
+    assert len(transport.requests) == 5

@@ -9,7 +9,8 @@ Usage:
 
 Every run writes a new summary under `<root>/runs/` listing each artifact as
 AVAILABLE with its hash or UNAVAILABLE with a reason. The exit code is 1 if
-anything was unavailable, so a gap is never mistaken for success.
+anything was unavailable and 2 if the run stopped on an error; a stopped run
+still writes its summary, with the records completed so far and the failure.
 """
 
 from __future__ import annotations
@@ -23,6 +24,8 @@ from aqt.data.binance_public import (
     ALLOWED_SYMBOLS,
     EXPLORATION_MONTHS,
     BinancePublicClient,
+    DownloadError,
+    DownloadRecord,
     months_between,
     urllib_transport,
 )
@@ -37,14 +40,23 @@ def main(argv: list[str] | None = None) -> int:
 
     client = BinancePublicClient(urllib_transport, args.root)
     started = datetime.now(UTC)
-    records = [client.fetch_exchange_info()]
-    for symbol in args.symbol or ALLOWED_SYMBOLS:
-        for year, month in months_between(*EXPLORATION_MONTHS):
-            record = client.fetch_monthly_klines(symbol, year, month)
-            print(record.availability.status, record.name, flush=True)
-            records.append(record)
+    records: list[DownloadRecord] = []
+    failure: dict[str, object] | None = None
+    operation = "exchangeInfo"
+    try:
+        records.append(client.fetch_exchange_info())
+        for symbol in args.symbol or ALLOWED_SYMBOLS:
+            for year, month in months_between(*EXPLORATION_MONTHS):
+                operation = f"{symbol} {year:04d}-{month:02d}"
+                record = client.fetch_monthly_klines(symbol, year, month)
+                print(record.availability.status, record.name, flush=True)
+                records.append(record)
+    except DownloadError as error:
+        failure = {"error": str(error), "operation": operation}
+        print(f"STOPPED at {operation}: {error}", file=sys.stderr)
 
     summary = {
+        "failure": failure,
         "partition": "exploration",
         "records": [record.as_mapping() for record in records],
         "started_utc": started.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -56,6 +68,8 @@ def main(argv: list[str] | None = None) -> int:
         handle.write(canonical_json_bytes(summary))
     missing = [r.name for r in records if r.availability.status == UNAVAILABLE]
     print(f"summary: {out}; unavailable: {len(missing)}")
+    if failure is not None:
+        return 2
     return 1 if missing else 0
 
 
