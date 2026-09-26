@@ -71,4 +71,29 @@ the checks. Verdict: **FIX**. Saved unedited.
 | R-3 | RESOLVED | Agreed. 303/307/308 cases were suggested as optional; not required. |
 | R-4 | OPEN | Agreed; owner decision. |
 | R-5 | PARTIAL | **Accepted**; the remainder is tracked as R2-1. |
-| R2-1 | NON-BLOCKING | **Accepted.** Verified: `http.client.IncompleteRead` subclasses `HTTPException`, not `OSError`, so `_get` neither retries nor converts it (`binance_public.py:156`, `:306`); a malformed sidecar raises `JSONDecodeError`/`KeyError`/`ValueError` from `_existing` (`:354`, `:361`); client construction sits outside the CLI's handler (`download_market_data.py:41`). Not yet repaired. |
+| R2-1 | NON-BLOCKING | **Accepted.** Verified: `http.client.IncompleteRead` subclasses `HTTPException`, not `OSError`, so `_get` neither retries nor converts it (`binance_public.py:156`, `:306`); a malformed sidecar raises `JSONDecodeError`/`KeyError`/`ValueError` from `_existing` (`:354`, `:361`); client construction sits outside the CLI's handler (`download_market_data.py:41`). Repaired below. |
+
+### R2-1 repair (Claude Opus 5.5, 2026-09-26)
+
+- `_get` treats `http.client.HTTPException` (including `IncompleteRead`) as a
+  transport fault: retried within the same bound, then a `DownloadError`.
+- `_existing` turns an undecodable, non-object, or incomplete sidecar, or one
+  with an invalid `as_of_utc` or hash, into `DownloadError("unreadable
+  sidecar")`. It never rewrites the sidecar or the artifact.
+- The CLI builds the client inside its handler and catches `DownloadError` and
+  `OSError`, recording `operation: "start"` for a refusal to start. Other
+  exceptions, and a failure to write the summary itself, stay uncaught.
+
+Tests: `test_interrupted_response_is_retried`,
+`test_persistent_interrupted_response_is_a_download_error`,
+`test_malformed_sidecar_is_a_download_error` (6 cases),
+`test_cli_records_a_refusal_to_start`,
+`test_cli_records_an_interrupted_response_after_a_success`. With the module and
+CLI from `f27e908` restored, all 10 fail; with the repair, all pass.
+
+Validation after repair, `.venv` Python 3.14.7: `pytest -q` 1201 passed, 4
+skipped; `ruff check .` pass; `ruff format --check .` 65 files formatted; `mypy
+src scripts/download_market_data.py` no issues in 32 files; `lint-imports` 5
+kept, 0 broken; `git diff --check` clean; no change under the frozen paths.
+
+This repair has not been re-reviewed by a different model.

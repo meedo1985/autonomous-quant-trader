@@ -26,6 +26,7 @@ and `data-api.binance.vision`, Binance's public market-data-only host.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import tempfile
@@ -303,8 +304,10 @@ class BinancePublicClient:
                 self._sleep(self._backoff)
             try:
                 response = self._transport(request)
-            except OSError as error:
-                failure = f"transport error: {error}"
+            except (OSError, http.client.HTTPException) as error:
+                # HTTPException covers IncompleteRead: a cut-off body is a
+                # transport fault like any other, never a short artifact.
+                failure = f"transport error: {error!r}"
                 continue
             if response.status == 200:
                 return response.body
@@ -354,14 +357,20 @@ class BinancePublicClient:
             sidecar = json.loads(_sidecar(path).read_bytes())
         except FileNotFoundError:
             raise DownloadError(f"artifact without sidecar: {path}") from None
+        except ValueError:
+            raise DownloadError(f"unreadable sidecar: {_sidecar(path)}") from None
+        if not isinstance(sidecar, dict):
+            raise DownloadError(f"unreadable sidecar: {_sidecar(path)}")
         if sidecar.get("source_url") != url or sidecar.get("name") != name:
             raise DownloadError(f"sidecar does not describe {url}: {_sidecar(path)}")
         if _sha256(path.read_bytes()) != sidecar.get("sha256"):
             raise DownloadError(f"stored bytes no longer match their sidecar: {path}")
-        as_of = datetime.strptime(sidecar["as_of_utc"], "%Y-%m-%dT%H:%M:%SZ")
-        return DownloadRecord(
-            name, url, available(sidecar["sha256"], as_of.replace(tzinfo=UTC)), path
-        )
+        try:
+            as_of = datetime.strptime(sidecar["as_of_utc"], "%Y-%m-%dT%H:%M:%SZ")
+            record = available(sidecar["sha256"], as_of.replace(tzinfo=UTC))
+        except (KeyError, TypeError, ValueError):
+            raise DownloadError(f"unreadable sidecar: {_sidecar(path)}") from None
+        return DownloadRecord(name, url, record, path)
 
 
 def _sidecar(path: Path) -> Path:

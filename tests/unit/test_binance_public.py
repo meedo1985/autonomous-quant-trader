@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import email.message
+import functools
 import hashlib
+import http.client
 import importlib.util
 import io
 import json
@@ -48,7 +50,7 @@ def _no_sockets(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class FakeTransport:
-    def __init__(self, responses: dict[str, list[FetchResponse]]) -> None:
+    def __init__(self, responses: dict[str, list[FetchResponse | Exception]]) -> None:
         self.responses = responses
         self.requests: list[PublicRequest] = []
 
@@ -57,7 +59,10 @@ class FakeTransport:
         queue = self.responses.get(request.url)
         if not queue:
             return FetchResponse(404, b"")
-        return queue.pop(0) if len(queue) > 1 else queue[0]
+        item = queue.pop(0) if len(queue) > 1 else queue[0]
+        if isinstance(item, Exception):
+            raise item
+        return item
 
 
 def _checksum(data: bytes, name: str = NAME) -> bytes:
@@ -365,3 +370,119 @@ def test_cli_writes_a_summary_when_a_run_stops(
     assert summary["failure"]["operation"] == "BTCUSDT 2017-09"
     assert [r["name"] for r in summary["records"]][1:] == [first_name]
     assert len(transport.requests) == 5
+
+
+# --- Second-review repairs (review/task13/REVIEW_2.md, R2-1) ------------------
+
+
+def test_interrupted_response_is_retried(tmp_path: Path) -> None:
+    transport = _serving()
+    transport.responses[URL].insert(0, http.client.IncompleteRead(b"PK"))
+    record = _client(transport, tmp_path).fetch_monthly_klines("BTCUSDT", 2020, 1)
+    assert record.path is not None and record.path.read_bytes() == ARCHIVE
+
+
+def test_persistent_interrupted_response_is_a_download_error(tmp_path: Path) -> None:
+    transport = FakeTransport({URL: [http.client.IncompleteRead(b"PK")]})
+    with pytest.raises(DownloadError, match="IncompleteRead"):
+        _client(transport, tmp_path).fetch_monthly_klines("BTCUSDT", 2020, 1)
+    assert len(transport.requests) == 3
+    assert [p for p in tmp_path.rglob("*") if p.is_file()] == []
+
+
+def _valid_sidecar() -> dict[str, object]:
+    return {
+        "name": NAME,
+        "source_url": URL,
+        "sha256": hashlib.sha256(ARCHIVE).hexdigest(),
+        "as_of_utc": "2026-09-26T12:00:00Z",
+    }
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"not json",
+        bytes([0xFF, 0xFE]),
+        b"[]",
+        json.dumps({**_valid_sidecar(), "as_of_utc": None}).encode(),
+        json.dumps({**_valid_sidecar(), "as_of_utc": "yesterday"}).encode(),
+        json.dumps(
+            {k: v for k, v in _valid_sidecar().items() if k != "as_of_utc"}
+        ).encode(),
+    ],
+)
+def test_malformed_sidecar_is_a_download_error(content: bytes, tmp_path: Path) -> None:
+    first = _client(_serving(), tmp_path).fetch_monthly_klines("BTCUSDT", 2020, 1)
+    assert first.path is not None
+    first.path.with_name(NAME + ".source.json").write_bytes(content)
+    transport = _serving()
+    with pytest.raises(DownloadError, match="unreadable sidecar"):
+        _client(transport, tmp_path).fetch_monthly_klines("BTCUSDT", 2020, 1)
+    assert transport.requests == []
+    assert first.path.read_bytes() == ARCHIVE
+
+
+def _quiet_cli(monkeypatch: pytest.MonkeyPatch, transport: FakeTransport) -> object:
+    import os
+
+    for name in [n for n in os.environ if n.upper().startswith("BINANCE")]:
+        monkeypatch.delenv(name)
+    cli = _load_cli()
+    monkeypatch.setattr(cli, "urllib_transport", transport)
+    quiet = functools.partial(BinancePublicClient, sleep=lambda _: None)
+    monkeypatch.setattr(cli, "BinancePublicClient", quiet)
+    return cli
+
+
+def _only_summary(root: Path) -> dict[str, object]:
+    [path] = (root / "runs").iterdir()
+    summary = json.loads(path.read_bytes())
+    assert isinstance(summary, dict)
+    return summary
+
+
+def test_cli_records_a_refusal_to_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = FakeTransport({})
+    cli = _quiet_cli(monkeypatch, transport)
+    monkeypatch.setenv("BINANCE_API_KEY", "x")
+
+    code = cli.main(["--root", str(tmp_path)])  # type: ignore[attr-defined]
+
+    assert code == 2
+    summary = _only_summary(tmp_path)
+    assert summary["failure"] == {
+        "error": summary["failure"]["error"],  # type: ignore[index]
+        "operation": "start",
+    }
+    assert "BINANCE_API_KEY" in summary["failure"]["error"]  # type: ignore[index]
+    assert summary["records"] == []
+    assert transport.requests == []
+
+
+def test_cli_records_an_interrupted_response_after_a_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = archive_url("BTCUSDT", 2017, 8)
+    second = archive_url("BTCUSDT", 2017, 9)
+    first_name = first.rsplit("/", 1)[1]
+    transport = FakeTransport(
+        {
+            exchange_info_url(("BTCUSDT", "ETHUSDT")): [FetchResponse(200, b"{}")],
+            first: [FetchResponse(200, ARCHIVE)],
+            first + ".CHECKSUM": [FetchResponse(200, _checksum(ARCHIVE, first_name))],
+            second: [http.client.IncompleteRead(b"PK")],
+        }
+    )
+    cli = _quiet_cli(monkeypatch, transport)
+
+    code = cli.main(["--root", str(tmp_path), "--symbol", "BTCUSDT"])  # type: ignore[attr-defined]
+
+    assert code == 2
+    summary = _only_summary(tmp_path)
+    assert summary["failure"]["operation"] == "BTCUSDT 2017-09"  # type: ignore[index]
+    assert "IncompleteRead" in summary["failure"]["error"]  # type: ignore[index]
+    names = [r["name"] for r in summary["records"]]  # type: ignore[attr-defined]
+    assert names[1:] == [first_name]

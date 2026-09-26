@@ -9,8 +9,9 @@ Usage:
 
 Every run writes a new summary under `<root>/runs/` listing each artifact as
 AVAILABLE with its hash or UNAVAILABLE with a reason. The exit code is 1 if
-anything was unavailable and 2 if the run stopped on an error; a stopped run
-still writes its summary, with the records completed so far and the failure.
+anything was unavailable and 2 if the run stopped on an error, including a
+refusal to start; a stopped run still writes its summary, with the records
+completed so far and the failure.
 """
 
 from __future__ import annotations
@@ -38,12 +39,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--symbol", choices=ALLOWED_SYMBOLS, action="append")
     args = parser.parse_args(argv)
 
-    client = BinancePublicClient(urllib_transport, args.root)
     started = datetime.now(UTC)
     records: list[DownloadRecord] = []
     failure: dict[str, object] | None = None
-    operation = "exchangeInfo"
+    operation = "start"
     try:
+        client = BinancePublicClient(urllib_transport, args.root)
+        operation = "exchangeInfo"
         records.append(client.fetch_exchange_info())
         for symbol in args.symbol or ALLOWED_SYMBOLS:
             for year, month in months_between(*EXPLORATION_MONTHS):
@@ -51,8 +53,10 @@ def main(argv: list[str] | None = None) -> int:
                 record = client.fetch_monthly_klines(symbol, year, month)
                 print(record.availability.status, record.name, flush=True)
                 records.append(record)
-    except DownloadError as error:
-        failure = {"error": str(error), "operation": operation}
+    except (DownloadError, OSError) as error:
+        # Expected operational failures end the run with a record. Anything
+        # else, and a failure to write the summary itself, stays uncaught.
+        failure = {"error": repr(error), "operation": operation}
         print(f"STOPPED at {operation}: {error}", file=sys.stderr)
 
     summary = {
