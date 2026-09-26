@@ -486,3 +486,100 @@ def test_cli_records_an_interrupted_response_after_a_success(
     assert "IncompleteRead" in summary["failure"]["error"]  # type: ignore[index]
     names = [r["name"] for r in summary["records"]]  # type: ignore[attr-defined]
     assert names[1:] == [first_name]
+    # exchangeInfo, archive, CHECKSUM, then three bounded attempts; no more.
+    assert [r.url for r in transport.requests] == [
+        exchange_info_url(("BTCUSDT", "ETHUSDT")),
+        first,
+        first + ".CHECKSUM",
+        second,
+        second,
+        second,
+    ]
+
+
+# --- Third-review repairs (review/task13/REVIEW_3.md, R3-1) -------------------
+
+
+class _BrokenStream(io.StringIO):
+    def write(self, _: str) -> int:
+        raise BrokenPipeError("console closed")
+
+
+def _one_month_transport(second: FetchResponse | Exception) -> FakeTransport:
+    first = archive_url("BTCUSDT", 2017, 8)
+    first_name = first.rsplit("/", 1)[1]
+    return FakeTransport(
+        {
+            exchange_info_url(("BTCUSDT", "ETHUSDT")): [FetchResponse(200, b"{}")],
+            first: [FetchResponse(200, ARCHIVE)],
+            first + ".CHECKSUM": [FetchResponse(200, _checksum(ARCHIVE, first_name))],
+            archive_url("BTCUSDT", 2017, 9): [second],
+        }
+    )
+
+
+def test_cli_broken_console_does_not_change_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failing stdout neither drops stored records nor stops the run."""
+    transport = _one_month_transport(FetchResponse(404, b""))
+    cli = _quiet_cli(monkeypatch, transport)
+    monkeypatch.setattr("sys.stdout", _BrokenStream())
+
+    code = cli.main(["--root", str(tmp_path), "--symbol", "BTCUSDT"])  # type: ignore[attr-defined]
+
+    summary = _only_summary(tmp_path)
+    assert summary["failure"] is None
+    records = summary["records"]
+    assert isinstance(records, list)
+    assert len(records) == 1 + 53  # exchangeInfo plus every exploration month
+    assert records[1]["availability"]["status"] == AVAILABLE
+    assert code == 1  # months after the first are unavailable in this fake
+
+
+def test_cli_broken_console_during_failure_still_writes_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = _one_month_transport(http.client.IncompleteRead(b"PK"))
+    cli = _quiet_cli(monkeypatch, transport)
+    monkeypatch.setattr("sys.stdout", _BrokenStream())
+    monkeypatch.setattr("sys.stderr", _BrokenStream())
+
+    code = cli.main(["--root", str(tmp_path), "--symbol", "BTCUSDT"])  # type: ignore[attr-defined]
+
+    assert code == 2
+    summary = _only_summary(tmp_path)
+    assert summary["failure"]["operation"] == "BTCUSDT 2017-09"  # type: ignore[index]
+    assert len(summary["records"]) == 2  # type: ignore[arg-type]
+
+
+def test_cli_records_a_filesystem_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = _one_month_transport(FetchResponse(404, b""))
+    cli = _quiet_cli(monkeypatch, transport)
+
+    def denied(path: Path, content: bytes) -> None:
+        raise PermissionError(f"denied: {path}")
+
+    monkeypatch.setattr(binance_public, "_write_once", denied)
+
+    code = cli.main(["--root", str(tmp_path), "--symbol", "BTCUSDT"])  # type: ignore[attr-defined]
+
+    assert code == 2
+    summary = _only_summary(tmp_path)
+    assert summary["failure"]["operation"] == "exchangeInfo"  # type: ignore[index]
+    assert "PermissionError" in summary["failure"]["error"]  # type: ignore[index]
+    assert summary["records"] == []
+    assert len(transport.requests) == 1
+
+
+def test_cli_summary_write_failure_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = _one_month_transport(FetchResponse(404, b""))
+    cli = _quiet_cli(monkeypatch, transport)
+    (tmp_path / "runs").write_bytes(b"a file where the runs directory belongs")
+
+    with pytest.raises(OSError):
+        cli.main(["--root", str(tmp_path), "--symbol", "BTCUSDT"])  # type: ignore[attr-defined]

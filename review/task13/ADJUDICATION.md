@@ -111,8 +111,44 @@ file. The reviewer did not rerun the checks. Verdict: **FIX**. Saved unedited.
 | R-1..R-3 | RESOLVED | Agreed. |
 | R-4 | OPEN | Agreed; owner decision. |
 | R2-1 / R-5 | PARTIAL | Agreed: the three named paths are repaired; the remainder is R3-1. |
-| R3-1 | NON-BLOCKING | **Accepted.** Verified in `download_market_data.py`: the progress `print` (`:54`) runs before `records.append` (`:55`), so a stdout `OSError` drops a stored artifact from the summary; the stderr `print` in the handler (`:60`) runs before the summary is written; the final `print` (`:74`) can replace the intended return code. Coverage gaps also confirmed: no test injects a filesystem `OSError`, and none asserts that a summary-write failure propagates. Practical trigger is a failing console stream (for example a closed pipe). Not yet repaired. |
+| R3-1 | NON-BLOCKING | **Accepted.** Verified in `download_market_data.py`: the progress `print` (`:54`) runs before `records.append` (`:55`), so a stdout `OSError` drops a stored artifact from the summary; the stderr `print` in the handler (`:60`) runs before the summary is written; the final `print` (`:74`) can replace the intended return code. Coverage gaps also confirmed: no test injects a filesystem `OSError`, and none asserts that a summary-write failure propagates. Practical trigger is a failing console stream (for example a closed pipe). Repaired below. |
 
 The reviewer's note that a sidecar-write failure leaves an orphan artifact
 that later runs refuse predates these repairs and is the fail-closed behavior
 already recorded as T13-02.
+
+### R3-1 repair (Claude Opus 5.5, 2026-09-26)
+
+- Each completed record is appended before its progress line is printed.
+- All console output goes through `_say`, which ignores `OSError`: console
+  output is diagnostic, and the run summary is the record. The stop message
+  and the final line are printed only after the summary is written, so neither
+  can prevent the summary or change the return code.
+- A failure to write the summary itself still raises.
+
+**Deliberate difference from the reviewer's suggestion.** The review proposed
+tests asserting a nonzero result and no further requests after a
+progress-write failure. This repair instead treats a broken console as not a
+failure: the run continues and the summary lists every record. Stopping a data
+download because a terminal closed would lose no data but would add nothing,
+and the summary would still be the only record either way.
+
+Tests: `test_cli_broken_console_does_not_change_the_run`,
+`test_cli_broken_console_during_failure_still_writes_summary`,
+`test_cli_records_a_filesystem_error` (injected `PermissionError` from the
+artifact write), `test_cli_summary_write_failure_propagates`, and an exact
+request-sequence assertion added to
+`test_cli_records_an_interrupted_response_after_a_success`.
+
+Mutation checks: with the CLI from `27b6f0f` restored, the two console tests
+fail; the filesystem and summary-write tests pass there, because they cover
+behavior that was already correct but untested. With `OSError` removed from
+the CLI handler, `test_cli_records_a_filesystem_error` fails, which closes the
+coverage gap the reviewer named.
+
+Validation after repair, `.venv` Python 3.14.7: `pytest -q` 1205 passed, 4
+skipped; `ruff check .` pass; `ruff format --check .` 65 files formatted; `mypy
+src scripts/download_market_data.py` no issues in 32 files; `lint-imports` 5
+kept, 0 broken; `git diff --check` clean; no change under the frozen paths.
+
+This repair has not been re-reviewed by a different model.

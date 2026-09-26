@@ -20,6 +20,7 @@ import argparse
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TextIO
 
 from aqt.data.binance_public import (
     ALLOWED_SYMBOLS,
@@ -31,6 +32,15 @@ from aqt.data.binance_public import (
     urllib_transport,
 )
 from aqt.data.manifest import UNAVAILABLE, canonical_json_bytes
+
+
+def _say(text: str, stream: TextIO | None = None) -> None:
+    """Console output is diagnostic only: the run summary is the record, so a
+    failing console (for example a closed pipe) must not change the run."""
+    try:
+        print(text, file=stream or sys.stdout, flush=True)
+    except OSError:
+        pass
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,13 +61,12 @@ def main(argv: list[str] | None = None) -> int:
             for year, month in months_between(*EXPLORATION_MONTHS):
                 operation = f"{symbol} {year:04d}-{month:02d}"
                 record = client.fetch_monthly_klines(symbol, year, month)
-                print(record.availability.status, record.name, flush=True)
                 records.append(record)
+                _say(f"{record.availability.status} {record.name}")
     except (DownloadError, OSError) as error:
         # Expected operational failures end the run with a record. Anything
         # else, and a failure to write the summary itself, stays uncaught.
         failure = {"error": repr(error), "operation": operation}
-        print(f"STOPPED at {operation}: {error}", file=sys.stderr)
 
     summary = {
         "failure": failure,
@@ -71,7 +80,9 @@ def main(argv: list[str] | None = None) -> int:
     with out.open("xb") as handle:
         handle.write(canonical_json_bytes(summary))
     missing = [r.name for r in records if r.availability.status == UNAVAILABLE]
-    print(f"summary: {out}; unavailable: {len(missing)}")
+    if failure is not None:
+        _say(f"STOPPED at {failure['operation']}: {failure['error']}", sys.stderr)
+    _say(f"summary: {out}; unavailable: {len(missing)}")
     if failure is not None:
         return 2
     return 1 if missing else 0
