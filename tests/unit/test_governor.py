@@ -11,6 +11,7 @@ from fractions import Fraction
 import pytest
 
 from aqt.governor.authorization import (
+    MAX_DECISION_WINDOW,
     ActualState,
     Authorization,
     GovernorConfig,
@@ -29,8 +30,8 @@ EQUITY = Decimal("1000")
 MINUTE = timedelta(minutes=1)
 CONFIG = GovernorConfig(
     max_slippage_bps=Decimal("15"),
-    authorization_ttl=5 * MINUTE,
-    decision_window=10 * MINUTE,
+    authorization_ttl=2 * MINUTE,
+    decision_window=5 * MINUTE,
 )
 
 
@@ -59,24 +60,26 @@ def _code(outcome: Authorization | Refusal) -> RefusalCode | None:
 
 
 def test_a_risk_increase_happens_only_at_the_scheduled_decision() -> None:
-    governor = Governor(CONFIG)
     three_am = MIDNIGHT + 3 * HOUR
-    refused = _decide(governor, 0.5, _state("0.2", at=three_am), three_am)
+    refused = _decide(Governor(CONFIG), 0.5, _state("0.2", at=three_am), three_am)
     assert _code(refused) is RefusalCode.INCREASE_NOT_SCHEDULED
     # The last increase was the previous scheduled decision, 24h earlier.
-    authorized = _decide(governor, 0.5, _state("0.2", last=MIDNIGHT - DAY), MIDNIGHT)
+    authorized = _decide(
+        Governor(CONFIG), 0.5, _state("0.2", last=MIDNIGHT - DAY), MIDNIGHT
+    )
     assert isinstance(authorized, Authorization)
     assert (authorized.side, authorized.target_exposure) == (Side.BUY, 0.5)
 
 
 def test_a_risk_increase_inside_the_minimum_hold_is_refused() -> None:
-    governor = Governor(CONFIG)
     # 23h after the last increase is 23:00, which is refused as unscheduled.
     eleven_pm = MIDNIGHT + 23 * HOUR
-    late = _decide(governor, 0.5, _state("0.2", at=eleven_pm, last=MIDNIGHT), eleven_pm)
+    late = _decide(
+        Governor(CONFIG), 0.5, _state("0.2", at=eleven_pm, last=MIDNIGHT), eleven_pm
+    )
     assert _code(late) is RefusalCode.INCREASE_NOT_SCHEDULED
     # A second increase at the same scheduled decision is inside the 24h hold.
-    again = _decide(governor, 0.5, _state("0.2", last=MIDNIGHT), MIDNIGHT)
+    again = _decide(Governor(CONFIG), 0.5, _state("0.2", last=MIDNIGHT), MIDNIGHT)
     assert _code(again) is RefusalCode.MINIMUM_HOLD
 
 
@@ -144,8 +147,6 @@ def test_an_authorization_is_single_use_unexpired_and_bound_to_its_state() -> No
     authorization = governor.decide(Proposal("BTCUSDT", 0.8, MIDNIGHT), state, MIDNIGHT)
     assert isinstance(authorization, Authorization)
 
-    expired = governor.redeem(authorization, state, authorization.expires_at)
-    assert _code(expired) is RefusalCode.EXPIRED
     moved = _state("0.3")
     assert _code(governor.redeem(authorization, moved, MIDNIGHT)) is (
         RefusalCode.STATE_CHANGED
@@ -159,9 +160,15 @@ def test_an_authorization_is_single_use_unexpired_and_bound_to_its_state() -> No
         RefusalCode.NOT_ISSUED_HERE
     )
 
-    assert governor.redeem(authorization, state, MIDNIGHT + HOUR / 60) is None
-    again = governor.redeem(authorization, state, MIDNIGHT + HOUR / 60)
+    assert governor.redeem(authorization, state, MIDNIGHT + MINUTE) is None
+    again = governor.redeem(authorization, state, MIDNIGHT + MINUTE)
     assert _code(again) is RefusalCode.ALREADY_USED
+
+    lapsing = Governor(CONFIG)
+    unused = lapsing.decide(Proposal("BTCUSDT", 0.8, MIDNIGHT), state, MIDNIGHT)
+    assert isinstance(unused, Authorization)
+    expired = lapsing.redeem(unused, state, unused.expires_at)
+    assert _code(expired) is RefusalCode.EXPIRED
 
 
 def test_after_a_partial_fill_decisions_use_the_actual_exposure() -> None:
@@ -209,14 +216,13 @@ def test_no_input_increases_exposure_outside_the_scheduled_window() -> None:
 
 def test_a_stale_scheduled_proposal_cannot_increase_risk_later() -> None:
     """A 00:00 proposal presented at 03:00 is not a scheduled decision any more."""
-    governor = Governor(CONFIG)
     three_am = MIDNIGHT + 3 * HOUR
-    stale = governor.decide(
+    stale = Governor(CONFIG).decide(
         Proposal("BTCUSDT", 0.8, MIDNIGHT), _state("0.2", at=three_am), three_am
     )
     assert _code(stale) is RefusalCode.STALE_DECISION
     just_in_time = MIDNIGHT + CONFIG.decision_window - timedelta(seconds=1)
-    fresh = governor.decide(
+    fresh = Governor(CONFIG).decide(
         Proposal("BTCUSDT", 0.8, MIDNIGHT), _state("0.2", at=just_in_time), just_in_time
     )
     assert isinstance(fresh, Authorization)
@@ -238,7 +244,7 @@ def test_a_decision_cannot_be_issued_or_redeemed_after_its_window() -> None:
     long_ttl = dataclasses.replace(CONFIG, authorization_ttl=4 * HOUR)
     governor = Governor(long_ttl)
     state = _state("0.2")
-    issued_late = MIDNIGHT + 9 * MINUTE
+    issued_late = MIDNIGHT + 4 * MINUTE
     authorization = governor.decide(
         Proposal("BTCUSDT", 0.8, MIDNIGHT), state, issued_late
     )
@@ -257,11 +263,13 @@ def test_only_one_authorization_is_outstanding_per_symbol() -> None:
     assert isinstance(first, Authorization) and first.max_base_quantity == 3
     second = governor.decide(Proposal("BTCUSDT", 0.5, MIDNIGHT), state, MIDNIGHT)
     assert _code(second) is RefusalCode.OUTSTANDING_AUTHORIZATION
-    # Once the first has expired, a new decision starts from the actual state.
+    # Once the first has expired unredeemed, it is dead and a new one may
+    # be issued from the actual state.
     after = first.expires_at
-    filled = ActualState("BTCUSDT", Decimal(5), Decimal(500), Decimal(100), after)
-    later = governor.decide(Proposal("BTCUSDT", 0.2, MIDNIGHT), filled, after)
-    assert isinstance(later, Authorization) and later.side is Side.SELL
+    unchanged = ActualState("BTCUSDT", Decimal(2), Decimal(800), Decimal(100), after)
+    later = governor.decide(Proposal("BTCUSDT", 0.5, MIDNIGHT), unchanged, after)
+    assert isinstance(later, Authorization)
+    assert _code(governor.redeem(first, unchanged, after)) is RefusalCode.EXPIRED
 
 
 @pytest.mark.parametrize(
@@ -295,3 +303,92 @@ def test_the_quantity_bound_never_exceeds_the_exact_quantity(
     bound = Fraction(outcome.max_base_quantity)
     assert bound <= exact
     assert exact - bound <= exact * Fraction(1, 10**30) + Fraction(1, 10**60)
+
+
+def test_a_redeemed_transition_is_reserved_until_released() -> None:
+    """Astra R2-1 and R2-2: no second order while one is unresolved; an
+    immediate reduction once reconciliation releases it."""
+    governor = Governor(CONFIG)
+    state = ActualState("BTCUSDT", Decimal(2), Decimal(800), Decimal(100), MIDNIGHT)
+    buy = governor.decide(Proposal("BTCUSDT", 0.5, MIDNIGHT), state, MIDNIGHT)
+    assert isinstance(buy, Authorization)
+    assert governor.redeem(buy, state, MIDNIGHT + MINUTE) is None
+
+    # Expired but redeemed, with the order unresolved: still reserved (R2-2).
+    unresolved = dataclasses.replace(state, as_of=MIDNIGHT + 3 * MINUTE)
+    second = governor.decide(
+        Proposal("BTCUSDT", 0.5, MIDNIGHT), unresolved, MIDNIGHT + 3 * MINUTE
+    )
+    assert _code(second) is RefusalCode.OUTSTANDING_AUTHORIZATION
+
+    # Reconciliation shows the buy filled; releasing it allows an immediate
+    # reduction from the reconciled holdings (R2-1).
+    assert governor.release(buy, MIDNIGHT + 3 * MINUTE) is None
+    filled = ActualState(
+        "BTCUSDT",
+        Decimal(5),
+        Decimal(500),
+        Decimal(100),
+        MIDNIGHT + 3 * MINUTE,
+        MIDNIGHT,
+    )
+    reduce = governor.decide(
+        Proposal("BTCUSDT", 0.2, MIDNIGHT), filled, MIDNIGHT + 3 * MINUTE
+    )
+    assert isinstance(reduce, Authorization) and reduce.side is Side.SELL
+    assert reduce.max_base_quantity == 3
+    assert _code(governor.release(buy, MIDNIGHT + 3 * MINUTE)) is (
+        RefusalCode.NOT_RESERVED
+    )
+
+
+def test_time_never_moves_backwards() -> None:
+    """Astra R2-3: an expired authorization cannot be revived."""
+    governor = Governor(CONFIG)
+    state = ActualState("BTCUSDT", Decimal(2), Decimal(800), Decimal(100), MIDNIGHT)
+    first = governor.decide(Proposal("BTCUSDT", 0.5, MIDNIGHT), state, MIDNIGHT)
+    assert isinstance(first, Authorization)
+    at = first.expires_at
+    later = dataclasses.replace(state, as_of=at)
+    second = governor.decide(Proposal("BTCUSDT", 0.5, MIDNIGHT), later, at)
+    assert isinstance(second, Authorization)
+    back = governor.redeem(first, state, at - MINUTE)
+    assert _code(back) is RefusalCode.CLOCK_WENT_BACKWARDS
+    assert _code(governor.redeem(first, later, at)) is RefusalCode.EXPIRED
+    assert governor.redeem(second, later, at) is None
+    stale = governor.decide(Proposal("BTCUSDT", 0.5, MIDNIGHT), state, MIDNIGHT)
+    assert _code(stale) is RefusalCode.CLOCK_WENT_BACKWARDS
+
+
+def test_the_decision_window_cannot_exceed_its_limit() -> None:
+    """Astra R2-4: a one-hour window would allow a 00:59 increase."""
+    with pytest.raises(ValueError, match="decision_window"):
+        dataclasses.replace(CONFIG, decision_window=HOUR)
+    assert dataclasses.replace(CONFIG, decision_window=MAX_DECISION_WINDOW)
+
+
+@pytest.mark.parametrize(
+    ("base", "quote", "price"),
+    [
+        ("0", "1", "1e-1000001"),
+        ("1e-1000033", "0", "1e1000033"),
+        ("0", "1e21", "100"),
+        ("1.00000000000000000000000000000000001", "0", "100"),
+    ],
+)
+def test_extreme_magnitudes_are_refused_at_once(
+    base: str, quote: str, price: str
+) -> None:
+    """Astra R2-5: unbounded Decimals made exact arithmetic hang."""
+    with pytest.raises(ValueError, match="supported range"):
+        ActualState("BTCUSDT", Decimal(base), Decimal(quote), Decimal(price), MIDNIGHT)
+
+
+def test_an_abandoned_authorization_can_never_be_redeemed() -> None:
+    governor = Governor(CONFIG)
+    state = _state("0.2")
+    authorization = governor.decide(Proposal("BTCUSDT", 0.8, MIDNIGHT), state, MIDNIGHT)
+    assert isinstance(authorization, Authorization)
+    assert governor.release(authorization, MIDNIGHT) is None
+    refused = governor.redeem(authorization, state, MIDNIGHT)
+    assert _code(refused) is RefusalCode.EXPIRED

@@ -13,8 +13,17 @@ backtester cannot disagree about what is allowed:
   never clipped.
 
 Every decision is computed from the `ActualState` passed in (section 20,
-"re-evaluate from actual fills"). The governor keeps no exposure of its own;
-it remembers only the nonces it issued and used.
+"re-evaluate from actual fills"). The governor keeps no exposure of its own.
+
+Reservations (Astra R-2, R2-1, R2-2): one transition per symbol at a time.
+An issued authorization reserves its symbol. If it is not redeemed before it
+expires, the reservation lapses and the authorization is dead for good. If
+it is redeemed, the reservation holds until `release` is called, which the
+executor does only after reconciliation shows the order finished or
+cancelled; the next decision then starts from the reconciled state.
+
+Time only moves forward (Astra R2-3): a call whose `now` is earlier than one
+already seen is refused.
 """
 
 from __future__ import annotations
@@ -75,12 +84,31 @@ class Governor:
         self._nonce_source = nonce_source
         self._issued: dict[str, Authorization] = {}
         self._used: set[str] = set()
-        self._outstanding: dict[str, Authorization] = {}
+        self._reserved: dict[str, Authorization] = {}
+        self._dead: set[str] = set()
+        self._latest: datetime | None = None
+
+    def _clock(self, now: datetime) -> Refusal | None:
+        if self._latest is not None and now < self._latest:
+            return Refusal(
+                RefusalCode.CLOCK_WENT_BACKWARDS,
+                f"{now.isoformat()} is before {self._latest.isoformat()}",
+            )
+        self._latest = now
+        return None
+
+    def _expire(self, authorization: Authorization) -> None:
+        self._dead.add(authorization.nonce)
+        if self._reserved.get(authorization.symbol) is authorization:
+            del self._reserved[authorization.symbol]
 
     def decide(
         self, proposal: Proposal, state: ActualState, now: datetime
     ) -> Authorization | Refusal:
         """Authorize `proposal` against the actual `state`, or refuse it."""
+        backwards = self._clock(now)
+        if backwards is not None:
+            return backwards
         if proposal.symbol not in PROTOCOL_SYMBOLS:
             return Refusal(RefusalCode.UNKNOWN_SYMBOL, proposal.symbol)
         if state.symbol != proposal.symbol:
@@ -106,14 +134,21 @@ class Governor:
                 f"decision at {proposal.decision_time.isoformat()} closed at "
                 f"{window_end.isoformat()}; it is now {now.isoformat()}",
             )
-        pending = self._outstanding.get(proposal.symbol)
-        if pending is not None and now < pending.expires_at:
+        pending = self._reserved.get(proposal.symbol)
+        if (
+            pending is not None
+            and pending.nonce not in self._used
+            and now >= pending.expires_at
+        ):
+            self._expire(pending)
+            pending = None
+        if pending is not None:
             # One executable transition at a time (Astra R-2): two
             # authorizations against the same state could together overshoot.
             return Refusal(
                 RefusalCode.OUTSTANDING_AUTHORIZATION,
-                f"{pending.nonce} is outstanding until "
-                f"{pending.expires_at.isoformat()}",
+                f"{pending.nonce} is outstanding until it expires unredeemed "
+                "or is released after reconciliation",
             )
         if state.as_of > now:
             return Refusal(RefusalCode.STATE_FROM_FUTURE, state.as_of.isoformat())
@@ -145,6 +180,8 @@ class Governor:
             / price
         )
         quantity = _at_most(abs(target_base - base))
+        if quantity == 0:
+            return Refusal(RefusalCode.ZERO_QUANTITY, "the transition needs no trade")
         nonce = self._nonce_source()
         if nonce in self._issued:
             raise RuntimeError("nonce source repeated a nonce; refusing to reuse it")
@@ -162,7 +199,7 @@ class Governor:
             nonce=nonce,
         )
         self._issued[nonce] = authorization
-        self._outstanding[proposal.symbol] = authorization
+        self._reserved[proposal.symbol] = authorization
         return authorization
 
     def redeem(
@@ -174,16 +211,38 @@ class Governor:
         when it has expired, or when the actual state is no longer the state it
         was issued against.
         """
+        backwards = self._clock(now)
+        if backwards is not None:
+            return backwards
         issued = self._issued.get(authorization.nonce)
         if issued != authorization:
             return Refusal(RefusalCode.NOT_ISSUED_HERE, authorization.nonce)
         if authorization.nonce in self._used:
             return Refusal(RefusalCode.ALREADY_USED, authorization.nonce)
-        if now >= authorization.expires_at:
+        if authorization.nonce in self._dead or now >= authorization.expires_at:
+            self._expire(issued)
             return Refusal(RefusalCode.EXPIRED, authorization.expires_at.isoformat())
         if state.state_reference() != authorization.state_reference:
             return Refusal(RefusalCode.STATE_CHANGED, "actual state differs from issue")
         self._used.add(authorization.nonce)
+        return None
+
+    def release(self, authorization: Authorization, now: datetime) -> Refusal | None:
+        """End the reservation of `authorization`. `None` means released.
+
+        For a redeemed authorization, call this only after reconciliation
+        shows its order finished or cancelled. An unredeemed one may be
+        released to abandon it; it can then never be redeemed.
+        """
+        backwards = self._clock(now)
+        if backwards is not None:
+            return backwards
+        issued = self._issued.get(authorization.nonce)
+        if issued != authorization:
+            return Refusal(RefusalCode.NOT_ISSUED_HERE, authorization.nonce)
+        if self._reserved.get(authorization.symbol) is not issued:
+            return Refusal(RefusalCode.NOT_RESERVED, authorization.nonce)
+        self._expire(issued)
         return None
 
     @staticmethod

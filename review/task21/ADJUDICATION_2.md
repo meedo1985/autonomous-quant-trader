@@ -42,3 +42,39 @@ Reproduced on `94f0b9b` before any change:
   prices whose decimal exponent is outside [-20, 20], so arithmetic stays
   small. A computed quantity of zero is refused (`ZERO_QUANTITY`) rather than
   authorized.
+
+## Repair
+
+As planned above:
+
+- `Governor.release(authorization, now)` ends a reservation. A redeemed
+  authorization stays reserved until released; an unredeemed one lapses at
+  expiry, or on release, and is then dead for good.
+- `now` may never move backwards (`CLOCK_WENT_BACKWARDS`), in `decide`,
+  `redeem` and `release`.
+- `MAX_DECISION_WINDOW` is 5 minutes (AI proposal, question T21-Q1 to the
+  owner). `GovernorConfig` refuses a longer window.
+- `ActualState` refuses values with a decimal exponent outside +/-20 or more
+  than 34 significant digits. A computed quantity of zero is refused.
+
+Tests: `test_a_redeemed_transition_is_reserved_until_released` (R2-1, R2-2),
+`test_time_never_moves_backwards` (R2-3),
+`test_an_abandoned_authorization_can_never_be_redeemed`,
+`test_the_decision_window_cannot_exceed_its_limit` (R2-4) and
+`test_extreme_magnitudes_are_refused_at_once` (R2-5, 4 cases). Three earlier
+tests reused one governor across out-of-order times; the new clock rule
+refused them, so each scenario now gets its own governor. `ZERO_QUANTITY` is a
+guard with no test: with bounded values, a change that reaches the 0.10 band
+always needs a nonzero quantity.
+
+Mutation checks, each failing at least one test: a redeemed reservation lapsing
+at expiry; the clock allowed to go back; dead authorizations not remembered
+(first survived, and caught after adding the abandon test); a one-hour window
+limit; unbounded exponents.
+
+Validation after repair, `.venv` Python 3.14.7: `pytest -q` 1399 passed, 4
+skipped in 187.23s; `ruff check .` and `ruff format --check .` pass; `mypy src
+scripts` no issues in 43 files; `lint-imports` 5 kept, 0 broken; no frozen
+path changed.
+
+These repairs have not been re-reviewed.

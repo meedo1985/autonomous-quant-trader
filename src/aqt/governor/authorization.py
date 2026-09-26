@@ -21,10 +21,12 @@ from decimal import Context, Decimal
 from enum import StrEnum
 from typing import Final
 
-from aqt.data.bars import BAR_INTERVAL, require_utc
+from aqt.data.bars import require_utc
 
 __all__ = [
     "DECIMAL_CONTEXT",
+    "MAX_DECIMAL_EXPONENT",
+    "MAX_DECISION_WINDOW",
     "PROTOCOL_SYMBOLS",
     "ActualState",
     "Authorization",
@@ -40,6 +42,20 @@ PROTOCOL_SYMBOLS: Final[tuple[str, ...]] = ("BTCUSDT", "ETHUSDT")
 
 DECIMAL_CONTEXT: Final[Context] = Context(prec=34)
 """Fixed precision, so no result depends on the caller's decimal context."""
+
+MAX_DECISION_WINDOW: Final[timedelta] = timedelta(minutes=5)
+"""Upper limit on `GovernorConfig.decision_window` (Astra R2-4).
+
+The frozen rule says risk increases happen "only at 00:00 UTC". A window
+as long as a bar would let a 00:00 increase be issued at 00:59. Five
+minutes is the coding AI's **proposal**, pending the owner (question
+T21-Q1); the owner may confirm it or lower it. It can only tighten the rule.
+"""
+
+MAX_DECIMAL_EXPONENT: Final[int] = 20
+"""Quantities, balances and prices must have a decimal exponent within
++/-20 and at most 34 significant digits (Astra R2-5): exact arithmetic on
+unbounded Decimals can take unbounded time."""
 
 
 def _digest(mapping: dict[str, str | None]) -> str:
@@ -63,6 +79,9 @@ class RefusalCode(StrEnum):
     NO_EQUITY = "NO_EQUITY"
     DECISION_IN_FUTURE = "DECISION_IN_FUTURE"
     INVALID_DECISION_TIME = "INVALID_DECISION_TIME"
+    CLOCK_WENT_BACKWARDS = "CLOCK_WENT_BACKWARDS"
+    ZERO_QUANTITY = "ZERO_QUANTITY"
+    NOT_RESERVED = "NOT_RESERVED"
     OUTSTANDING_AUTHORIZATION = "OUTSTANDING_AUTHORIZATION"
     STALE_DECISION = "STALE_DECISION"
     INVALID_STATE = "INVALID_STATE"
@@ -102,7 +121,7 @@ class GovernorConfig:
             raise ValueError(f"invalid max_slippage_bps {self.max_slippage_bps}")
         if self.authorization_ttl <= timedelta(0):
             raise ValueError(f"invalid authorization_ttl {self.authorization_ttl}")
-        if not timedelta(0) < self.decision_window <= BAR_INTERVAL:
+        if not timedelta(0) < self.decision_window <= MAX_DECISION_WINDOW:
             raise ValueError(f"invalid decision_window {self.decision_window}")
 
 
@@ -156,6 +175,11 @@ class ActualState:
             value = getattr(self, name)
             if not isinstance(value, Decimal) or not value.is_finite() or value < 0:
                 raise ValueError(f"{name} must be a finite Decimal >= 0, got {value!r}")
+            if value != 0 and (
+                abs(value.adjusted()) > MAX_DECIMAL_EXPONENT
+                or len(value.as_tuple().digits) > 34
+            ):
+                raise ValueError(f"{name} {value!r} is outside the supported range")
         if self.mark_price == 0:
             raise ValueError("mark_price must be positive")
 

@@ -72,8 +72,10 @@ modules.
   within one bar of its `decision_time`.
 - **T21-03. `max_slippage_bps`, `authorization_ttl` and `decision_window` have
   no defaults.** All are `[OPEN]` values for the owner (the window was added by
-  Astra R-1), so `GovernorConfig` requires them. The tests use 15 bps, 5 minutes
-  and 10 minutes only as fixtures.
+  Astra R-1), so `GovernorConfig` requires them. The window may not exceed
+  `MAX_DECISION_WINDOW`, 5 minutes, which is the AI's proposal (Astra R2-4,
+  question T21-Q1). The tests use 15 bps, 2 minutes and 5 minutes only as
+  fixtures.
 - **T21-04. Nonces live in memory.** After a restart, an earlier authorization
   is refused as `NOT_ISSUED_HERE`, which fails safe. Persistence belongs to the
   executor and paper loop (Tasks 22-24).
@@ -130,5 +132,15 @@ files and this report.
 - GPT-6 Astra review (section 16, Q2): FIX, blockers R-1 (late issue or
   redemption), R-2 (overlapping authorizations) and R-3 (quantity rounding).
   All three were reproduced and repaired; see `REVIEW.md` and
-  `ADJUDICATION.md`. The repairs are not re-reviewed.
+  `ADJUDICATION.md`.
+- Second Astra review: FIX. R-3 repaired; R-1 and R-2 not fully. New findings
+  R2-1 to R2-5 were reproduced and repaired (reservations until release,
+  forward-only clock, window limit, bounded magnitudes); see `REVIEW_2.md` and
+  `ADJUDICATION_2.md`. Not re-reviewed.
+- **Contract for Task 22:** after redeeming an authorization, the executor
+  must call `Governor.release` only once reconciliation shows the order
+  finished or cancelled. Until then, the symbol takes no new authorization.
+- **QUESTION T21-Q1 (owner):** the upper limit on how long after a decision an
+  order may still be authorized. The AI proposes 5 minutes; the owner may
+  confirm it or choose less.
 - The owner's own PR review is required before merge (section 16).
