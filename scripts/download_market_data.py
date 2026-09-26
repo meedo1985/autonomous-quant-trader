@@ -17,6 +17,7 @@ completed so far and the failure.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,10 +38,25 @@ from aqt.data.manifest import UNAVAILABLE, canonical_json_bytes
 def _say(text: str, stream: TextIO | None = None) -> None:
     """Console output is diagnostic only: the run summary is the record, so a
     failing console (for example a closed pipe) must not change the run."""
+    target = stream or sys.stdout
     try:
-        print(text, file=stream or sys.stdout, flush=True)
+        print(text, file=target, flush=True)
     except OSError:
-        pass
+        _silence(target)
+
+
+def _silence(stream: TextIO) -> None:
+    """Point a dead console stream at the null device, as the Python docs
+    advise for broken pipes, so the interpreter's final flush at exit cannot
+    fail and replace the intended exit code with 120."""
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, stream.fileno())
+        finally:
+            os.close(devnull)
+    except (OSError, ValueError):
+        pass  # not a real file descriptor; nothing is left to flush at exit
 
 
 def main(argv: list[str] | None = None) -> int:

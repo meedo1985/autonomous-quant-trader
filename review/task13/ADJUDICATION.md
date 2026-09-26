@@ -168,4 +168,27 @@ stop the run) and withdrew its earlier suggestion to stop requests.
 |---|---|---|
 | R3-1, R2-1 / R-5 | PARTIAL | Agreed; the remainder is R4-1. |
 | R-4 | OPEN | Agreed; owner decision. |
-| R4-1 | NON-BLOCKING | **Accepted, reproduced.** A child Python 3.14.7 process on Windows that prints through a `_say`-style `try/except OSError` into a closed pipe and calls `sys.exit(2)` exits with **120**, logging `Exception ignored while flushing sys.stdout: OSError: [Errno 22] Invalid argument`. The summary survives; the exit code does not. The in-process tests replace `sys.stdout` with a stream that fails before buffering, so they cannot see this. Not yet repaired. |
+| R4-1 | NON-BLOCKING | **Accepted, reproduced.** A child Python 3.14.7 process on Windows that prints through a `_say`-style `try/except OSError` into a closed pipe and calls `sys.exit(2)` exits with **120**, logging `Exception ignored while flushing sys.stdout: OSError: [Errno 22] Invalid argument`. The summary survives; the exit code does not. The in-process tests replace `sys.stdout` with a stream that fails before buffering, so they cannot see this. Repaired below. |
+
+### R4-1 repair (Claude Opus 5.5, 2026-09-26)
+
+When a console write fails, `_say` now calls `_silence`, which points the dead
+stream's file descriptor at the null device with `os.dup2`, as the Python
+documentation advises for broken pipes. The interpreter's final flush then
+succeeds and the intended exit code stands. A stream without a real file
+descriptor is left alone, since it has nothing to flush at exit.
+
+Test: `test_cli_exit_code_survives_a_closed_stdout_pipe` runs the real CLI in a
+child process whose stdout is a pipe with its read end closed before the child
+starts, so the first write fails deterministically. The child uses a fake
+transport and opens no socket. It asserts exit code 1 (every month
+unavailable in the fake) and a complete summary. With the CLI from `12cbd56`
+restored, it fails with exit code 120 and `Exception ignored while flushing
+sys.stdout: OSError: [Errno 22] Invalid argument`, the reported defect.
+
+Validation after repair, `.venv` Python 3.14.7: `pytest -q` 1206 passed, 4
+skipped; `ruff check .` pass; `ruff format --check .` 65 files formatted; `mypy
+src scripts/download_market_data.py` no issues in 32 files; `lint-imports` 5
+kept, 0 broken; `git diff --check` clean; no change under the frozen paths.
+
+This repair has not been re-reviewed by a different model.

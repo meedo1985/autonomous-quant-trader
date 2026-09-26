@@ -9,8 +9,11 @@ import http.client
 import importlib.util
 import io
 import json
+import os
 import re
 import socket
+import subprocess
+import sys
 import urllib.request
 import urllib.response
 from datetime import UTC, datetime
@@ -583,3 +586,42 @@ def test_cli_summary_write_failure_propagates(
 
     with pytest.raises(OSError):
         cli.main(["--root", str(tmp_path), "--symbol", "BTCUSDT"])  # type: ignore[attr-defined]
+
+
+# --- Fourth-review repair (review/task13/REVIEW_4.md, R4-1) -------------------
+
+_CHILD = """
+import importlib.util, sys
+from aqt.data.binance_public import FetchResponse
+spec = importlib.util.spec_from_file_location("dl", sys.argv[1])
+cli = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cli)
+cli.urllib_transport = lambda request: FetchResponse(404, b"")
+sys.exit(cli.main(["--root", sys.argv[2], "--symbol", "BTCUSDT"]))
+"""
+
+
+def test_cli_exit_code_survives_a_closed_stdout_pipe(tmp_path: Path) -> None:
+    """R4-1: in a real process, a stdout pipe closed before the first write
+    must not turn the intended exit code into 120 at interpreter shutdown.
+    The child uses a fake transport and opens no socket."""
+    read_end, write_end = os.pipe()
+    os.close(read_end)  # the reader is gone before the child writes anything
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("BINANCE")}
+    cli_path = Path(__file__).parents[2] / "scripts" / "download_market_data.py"
+    try:
+        child = subprocess.run(
+            [sys.executable, "-c", _CHILD, str(cli_path), str(tmp_path)],
+            stdout=write_end,
+            stderr=subprocess.PIPE,
+            env=env,
+            timeout=120,
+            check=False,
+        )
+    finally:
+        os.close(write_end)
+
+    assert child.returncode == 1, child.stderr.decode(errors="replace")
+    summary = _only_summary(tmp_path)
+    assert summary["failure"] is None
+    assert len(summary["records"]) == 1 + 53  # type: ignore[arg-type]
