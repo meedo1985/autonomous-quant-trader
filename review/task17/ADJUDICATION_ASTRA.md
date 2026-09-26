@@ -14,3 +14,25 @@ sections 3, 4, 16 and 26. Verdict: **FIX**.
 | A-2 | BLOCKER | Accepted | Reproduced: with 249 jobs, a job whose loader raises becomes job 250, and the exception carried no review status (`'RuntimeError' object has no attribute '__notes__'`). Repair: `run_logged` attaches the review status as a note on the original exception and re-raises it unchanged. |
 | A-3 | NON-BLOCKING | Accepted | Reproduced: job 250 appended and cleared between the count and the clearance read raised `JobLogError ... beyond the 249 jobs`. Repair: read the clearance first, then count. Jobs only grow, so a clearance read earlier can never exceed a count taken later unless it really is beyond the log. |
 | A-4 | NON-BLOCKING | Accepted | Correct: `Pool(2)` may run both batches in one worker. Repair: two explicit `spawn` processes that start writing together through a shared barrier, each with a distinct PID. |
+
+## Repair
+
+- A-1: `run_exploration(..., *, log_job)` is required and called first. Test:
+  `test_logging_is_required_and_happens_before_any_check` (omitting it is a
+  `TypeError`; a refused confirmation manifest is still logged). The Task 16
+  tests pass an explicit no-op logger.
+- A-2: `run_logged` adds `exploration job log: ReviewStatus(...)` as a note on
+  the original exception. Test: `test_a_failed_job_still_reports_a_due_review`.
+- A-3: `review_status` reads the clearance before counting. Test:
+  `test_a_clearance_committed_during_a_status_check_is_not_rejected`.
+- A-4: the concurrency test uses two `spawn` processes released together by a
+  `Barrier`, and asserts two distinct PIDs and exit code 0.
+
+Mutation checks: removing the `log_job` call fails 3 tests; removing the note
+fails 1; restoring the old count-then-clearance order fails 1.
+
+Validation after repair, `.venv` Python 3.14.7: `pytest -q` 1385 passed, 4
+skipped in 225.40s; `ruff check .` and `ruff format --check .` pass; `mypy src
+scripts` no issues in 42 files; `lint-imports` 5 kept, 0 broken; no frozen
+path changed.
+

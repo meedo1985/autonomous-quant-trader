@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import ast
 import multiprocessing
+import os
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -208,16 +210,28 @@ def test_unsafe_cycle_ids_are_refused(cycle: str) -> None:
         clearance_path(cycle)
 
 
-def _worker(arguments: tuple[str, int]) -> None:
-    path, count = arguments
+def _worker(path: str, count: int, barrier: Any, pids: Any) -> None:
+    pids.put(os.getpid())
+    barrier.wait(timeout=60)  # both processes start writing together
     _log_jobs(Path(path), count)
 
 
 def test_concurrent_writers_produce_one_valid_chain(tmp_path: Path, repo: Path) -> None:
+    """Astra A-4: two distinct processes, released together, write one chain."""
     log = tmp_path / "jobs.jsonl"
     context = multiprocessing.get_context("spawn")
-    with context.Pool(2) as pool:
-        pool.map(_worker, [(str(log), 15), (str(log), 15)])
+    barrier = context.Barrier(2)
+    pids = context.Queue()
+    writers = [
+        context.Process(target=_worker, args=(str(log), 15, barrier, pids))
+        for _ in range(2)
+    ]
+    for writer in writers:
+        writer.start()
+    for writer in writers:
+        writer.join(timeout=120)
+    assert [writer.exitcode for writer in writers] == [0, 0]
+    assert len({pids.get(timeout=5), pids.get(timeout=5)}) == 2
     report = verify_ledger(log)
     assert (report.intact, report.entry_count) == (True, 30)
     assert review_status(log, "cycle-1", repo).job_count == 30
@@ -254,3 +268,38 @@ def test_an_unreadable_clearance_is_refused_before_the_job_runs(
         run_logged(log, "cycle-1", repo, MANIFEST, load, CONFIG)
     assert ran == []
     assert not log.exists()
+
+
+def test_a_failed_job_still_reports_a_due_review(
+    tmp_path: Path, repo: Path, full_log: bytes
+) -> None:
+    """Astra A-2: job 250 fails, and the failure still carries the flag."""
+    log = tmp_path / "jobs.jsonl"
+    log.write_bytes(b"".join(full_log.splitlines(keepends=True)[:249]))
+
+    def fail(_: PartitionManifest) -> BarSeries:
+        raise RuntimeError("load failed")
+
+    with pytest.raises(RuntimeError, match="load failed") as caught:
+        run_logged(log, "cycle-1", repo, MANIFEST, fail, CONFIG)
+    assert any("review_required=True" in note for note in caught.value.__notes__)
+    assert review_status(log, "cycle-1", repo).job_count == 250
+
+
+def test_a_clearance_committed_during_a_status_check_is_not_rejected(
+    tmp_path: Path, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Astra A-3: another process appends job 250 and it is cleared mid-check."""
+    log = tmp_path / "jobs.jsonl"
+    _log_jobs(log, 249)
+
+    def cleared_after_job_250(root: Path, cycle: str) -> int:
+        if review_status_calls == []:
+            review_status_calls.append(1)
+            _log_jobs(log, 1)
+        return 250
+
+    review_status_calls: list[int] = []
+    monkeypatch.setattr(joblog, "_cleared_through", cleared_after_job_250)
+    status = review_status(log, "cycle-1", repo)
+    assert (status.job_count, status.review_required) == (250, False)

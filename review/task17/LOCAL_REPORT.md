@@ -53,10 +53,12 @@ Source: `protocols/protocol_v1.yaml` `partitions.sandbox_exploration_policy`,
   wrote the clearance file. That it is committed in `HEAD` is checked; that a
   human wrote it rests on Constitution section 4 and `AGENTS.md` (the AI may
   not write it) and on review of the commit.
-- **T17-04. `run_exploration` can still be called without logging.** The Task 16
-  harness does not import the ledger (its tests forbid `aqt.core` imports), so
-  logging happens only through `run_logged`. A caller that uses the harness
-  directly is not logged. Scripts should use `run_logged`.
+- **T17-04. Logging is required, but can still be defeated on purpose.**
+  After Astra A-1, `run_exploration` takes a required `log_job` callback and
+  calls it before any check, so no call can skip the log by omission.
+  `run_logged` supplies the ledger writer; the harness still does not import
+  the ledger. A caller can still pass a callback that does nothing; that is
+  procedural, like T17-03. This changes the merged Task 16 signature.
 - **T17-05. The cycle id and the log path are caller-supplied** (the id is
   letters, digits, `.`, `_`, `-`), because no cycle registry exists yet. So a
   caller that uses a fresh log file or a fresh cycle id for each batch resets
@@ -99,7 +101,10 @@ Frozen verification: `git diff --name-only main` lists only the two new files.
 
 - Claude Fable review: FIX, no blockers. R-1 and R-3 repaired; R-2 and R-4
   are owner questions T17-Q2 and T17-Q3. See `REVIEW.md` and
-  `ADJUDICATION.md`. The repairs are not yet re-reviewed.
+  `ADJUDICATION.md`.
+- GPT-6 Astra review: FIX, blockers A-1 and A-2, plus A-3 and A-4; all four
+  repaired. See `REVIEW_ASTRA.md` and `ADJUDICATION_ASTRA.md`. These repairs
+  are not re-reviewed.
 - **QUESTION T17-Q2 (owner, from R-2):** fix the log to one repository path
   (for example `data/exploration_jobs.jsonl`) so a caller cannot start a
   fresh count, or leave it caller-chosen and disclosed.

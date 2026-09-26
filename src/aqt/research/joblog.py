@@ -121,8 +121,11 @@ def review_status(log_path: Path, cycle_id: str, repo_root: Path) -> ReviewStatu
     or the cycle continuing in a different log file).
     """
     _require_cycle_id(cycle_id)
-    count = _job_count(log_path, cycle_id)
+    # The clearance is read before the count: jobs only grow, so a clearance
+    # read first can exceed a count taken after it only if it is really
+    # beyond the log, never because a job was appended in between.
     cleared = _cleared_through(repo_root, cycle_id)
+    count = _job_count(log_path, cycle_id)
     if cleared > count:
         raise JobLogError(
             f"clearance for {cycle_id!r} covers job {cleared}, beyond the "
@@ -165,20 +168,39 @@ def run_logged(
 ) -> tuple[HarnessResult, ReviewStatus]:
     """Log the job, run it, log its result digest, and report review status.
 
+    On failure the original exception is re-raised with the review status
+    added as a note, so a failed job that makes review due still reports it.
+
     The status is checked first, so an unreadable or invalid clearance stops
     the job before anything is logged or run. The job is then logged before it
     runs. A due review is reported, not enforced: the policy says review is
     triggered, not that exploration stops.
     """
     review_status(log_path, cycle_id, repo_root)
-    sequence = record_job(log_path, cycle_id, manifest, config)
-    result = run_exploration(manifest, load, config)
+    sequences: list[int] = []
+
+    def log_job(logged: PartitionManifest, logged_config: HarnessConfig) -> None:
+        sequences.append(record_job(log_path, cycle_id, logged, logged_config))
+
+    try:
+        result = run_exploration(manifest, load, config, log_job=log_job)
+    except BaseException as error:
+        # The job was logged, and may be the one that makes review due; say
+        # so on the original failure rather than losing it.
+        try:
+            note = (
+                f"exploration job log: {review_status(log_path, cycle_id, repo_root)!r}"
+            )
+        except Exception as status_error:  # noqa: BLE001 - keep the original error
+            note = f"exploration job log: review status unavailable: {status_error}"
+        error.add_note(note)
+        raise
     append_entry(
         log_path,
         record_type=RESULT_RECORD_TYPE,
         payload={
             "cycle_id": cycle_id,
-            "job_sequence": sequence,
+            "job_sequence": sequences[0],
             "result_digest": result.digest(),
         },
     )

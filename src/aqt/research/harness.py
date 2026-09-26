@@ -175,12 +175,19 @@ def run_exploration(
     manifest: PartitionManifest,
     load: Callable[[PartitionManifest], BarSeries],
     config: HarnessConfig,
+    *,
+    log_job: Callable[[PartitionManifest, HarnessConfig], object],
 ) -> HarnessResult:
     """Run `config` on the bars `load` returns for an exploration `manifest`.
 
-    The partition is checked before `load` is called. The loaded bars must
-    reproduce the manifest's parsed hash, or the run is refused.
+    `log_job` is required and is called first, before any check, so every
+    job, including a refused one, is logged (`sandbox_exploration_policy`:
+    "all jobs logged"). `aqt.research.joblog.run_logged` supplies the ledger
+    writer; this module does not import the ledger itself. The partition is
+    checked before `load` is called. The loaded bars must reproduce the
+    manifest's parsed hash, or the run is refused.
     """
+    log_job(manifest, config)
     if manifest.partition != EXPLORATION_PARTITION:
         raise HarnessError(
             f"the research harness runs on the {EXPLORATION_PARTITION!r} "
