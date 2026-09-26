@@ -37,3 +37,20 @@ kept, 0 broken; `git diff --check main...HEAD` clean (after commit); no change
 under the frozen paths.
 
 These repairs have not been re-reviewed by a different model.
+
+## Second review: repairs (`REVIEW_2.md`)
+
+Reviewer: GPT-6 Astra (`gpt-6-astra`, reasoning effort high), Codex CLI 0.154.0,
+session `01a0ddb7-7ba0-7df0-9e5a-8d5f4eec120d`, read-only sandbox, no tools.
+Input: the first review, this file, implementer-run check output at `a87ee9c`,
+the code diff `ba482c1..a87ee9c`, and the full current module, CLI and test
+file. The updated `LOCAL_REPORT.md` was not included. The reviewer did not
+rerun the checks. Verdict: **ACCEPT**. Saved unedited.
+
+| ID | Reviewer status | Adjudication |
+|---|---|---|
+| R-1 | RESOLVED | Agreed. |
+| R-2 | RESOLVED | Agreed. The reviewer notes missing-archive and outside-window counts have no direct regression assertion; they come from the same rebuild as the outage rows, so they cannot be supplied by a caller. Not repaired. |
+| R-3 | RESOLVED | Agreed. The reviewer notes the determinism test detects a reintroduced timestamp only when builds straddle a ZIP time boundary. Not repaired: the fix is the fixed timestamp itself. |
+| R-4 | PARTIAL | Agreed in part. The `LOCAL_REPORT.md` correction exists (commit `a87ee9c`) but was not in the packet, an omission by the implementer. The remaining gap is R2-1. |
+| R2-1 | NON-BLOCKING | **Accepted, reproduced.** `_misplaced_decimals` treats the first row of each table as a header and never inspects it, so appending `\| Skewness \| 1.234 % \|` followed by `\|---\|---\|` passed both content checks. Not yet repaired. |
