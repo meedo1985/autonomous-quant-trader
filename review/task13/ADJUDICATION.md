@@ -210,3 +210,15 @@ Verdict: **ACCEPT**. Saved unedited.
 
 No new findings. Every code finding from the five reviews is repaired; R-4 is
 the only open item.
+
+## R-4 closed by owner approval
+
+On 2026-09-26 the owner instructed "approve the roadmap and merge PR 13". The
+approval is recorded verbatim in `review/roadmap/OWNER_APPROVAL.md` (commit
+`e953186`), and PR #13 was merged to `main` as `1f852df`. Under the roadmap's
+approval clause this authorizes Task 13. **R-4 is closed.**
+
+Q3 and Q4 were not answered with the approval. This task implements the
+conservative reading of both (exploration months only, enforced in the client;
+the owner runs the network calls). A different answer would require a change
+to this task.
