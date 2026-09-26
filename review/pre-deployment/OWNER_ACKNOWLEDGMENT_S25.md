@@ -144,9 +144,9 @@ clauses `C-1` through `C-9` above.
 
 | Field | Value |
 | --- | --- |
-| Owner name | |
-| Signature | |
-| Date | |
+| Owner name | Mahmoud Al sharawi |
+| Signature |Mahmoud al sharawi |
+| Date | 2026/09/26|
 | Constitution content hash acknowledged | `4cb6c7d3…4fb8d7` |
 
 ## 3. What this does not resolve
