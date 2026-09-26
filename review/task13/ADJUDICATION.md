@@ -152,3 +152,20 @@ src scripts/download_market_data.py` no issues in 32 files; `lint-imports` 5
 kept, 0 broken; `git diff --check` clean; no change under the frozen paths.
 
 This repair has not been re-reviewed by a different model.
+
+## Fourth review: R3-1 repair (`REVIEW_4.md`)
+
+Reviewer: GPT-6 Astra (`gpt-6-astra`, reasoning effort high), Codex CLI 0.154.0,
+session `01a0dd4f-f69f-7df2-a925-7df80f8dad14`, read-only sandbox, no tools.
+Input: the third review, this file, implementer-run check output at `1e02d2b`,
+the code diff `27b6f0f..1e02d2b`, and the full current CLI and test file. The
+reviewer did not rerun the checks. Verdict: **FIX**. Saved unedited.
+
+The reviewer accepted the deliberate design choice (a broken console does not
+stop the run) and withdrew its earlier suggestion to stop requests.
+
+| ID | Reviewer status | Adjudication |
+|---|---|---|
+| R3-1, R2-1 / R-5 | PARTIAL | Agreed; the remainder is R4-1. |
+| R-4 | OPEN | Agreed; owner decision. |
+| R4-1 | NON-BLOCKING | **Accepted, reproduced.** A child Python 3.14.7 process on Windows that prints through a `_say`-style `try/except OSError` into a closed pipe and calls `sys.exit(2)` exits with **120**, logging `Exception ignored while flushing sys.stdout: OSError: [Errno 22] Invalid argument`. The summary survives; the exit code does not. The in-process tests replace `sys.stdout` with a stream that fails before buffering, so they cannot see this. Not yet repaired. |
