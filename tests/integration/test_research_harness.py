@@ -86,8 +86,12 @@ MANIFEST = _manifest(SERIES)
 VOL = HarnessConfig(BenchmarkId.VOL_TARGET_BUY_AND_HOLD)
 
 
+def _no_log(manifest: PartitionManifest, config: HarnessConfig) -> None:
+    """These tests exercise the harness alone; Task 17 tests the job log."""
+
+
 def _run(config: HarnessConfig = VOL) -> HarnessResult:
-    return run_exploration(MANIFEST, lambda _: SERIES, config)
+    return run_exploration(MANIFEST, lambda _: SERIES, config, log_job=_no_log)
 
 
 @functools.cache
@@ -138,7 +142,7 @@ def test_other_partitions_are_refused_before_data_is_read(partition: str) -> Non
         return SERIES
 
     with pytest.raises(HarnessError, match="refused before any data is read"):
-        run_exploration(manifest, load, VOL)
+        run_exploration(manifest, load, VOL, log_job=_no_log)
     assert calls == []
 
 
@@ -188,7 +192,9 @@ def test_a_window_outside_the_exploration_partition_is_refused(
         return series
 
     with pytest.raises(HarnessError, match="exploration window"):
-        run_exploration(manifest, load, HarnessConfig(BenchmarkId.BUY_AND_HOLD))
+        run_exploration(
+            manifest, load, HarnessConfig(BenchmarkId.BUY_AND_HOLD), log_job=_no_log
+        )
     assert calls == []
 
 
@@ -197,7 +203,7 @@ def test_bars_that_do_not_match_the_manifest_are_refused() -> None:
     bars[10] = dataclasses.replace(bars[10], volume=2.0)
     altered = BarSeries(symbol="BTCUSDT", bars=tuple(bars))
     with pytest.raises(ManifestError, match="parsed"):
-        run_exploration(MANIFEST, lambda _: altered, VOL)
+        run_exploration(MANIFEST, lambda _: altered, VOL, log_job=_no_log)
 
 
 def test_no_attempt_or_ledger_entry_is_written(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -267,3 +273,19 @@ def test_the_result_exposes_descriptive_metrics_only() -> None:
         "skipped_runs",
         "trial_status",
     }
+
+
+def test_logging_is_required_and_happens_before_any_check() -> None:
+    """Task 17 Astra A-1: no call can skip the job log by omission."""
+    with pytest.raises(TypeError, match="log_job"):
+        run_exploration(MANIFEST, lambda _: SERIES, VOL)  # type: ignore[call-arg]
+    logged: list[str] = []
+    refused = dataclasses.replace(MANIFEST, partition="confirmation")
+    with pytest.raises(HarnessError):
+        run_exploration(
+            refused,
+            lambda _: SERIES,
+            VOL,
+            log_job=lambda manifest, config: logged.append(manifest.partition),
+        )
+    assert logged == ["confirmation"]
