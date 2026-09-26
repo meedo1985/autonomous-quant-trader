@@ -196,10 +196,10 @@ this and has not.
 
 | Row | Proposed default | Owner decision | Date |
 | --- | --- | --- | --- |
-| `L-01` | `0` until the owner sets a figure; fixed absolute USD recommended | | |
-| `L-02` | ≥ 240 effective decisions forward, no real capital deployed | | |
-| `L-03` | 20% drawdown from peak live equity → HALT + §14 incident process | | |
-| `L-04` | Written record + no increase below peak + frozen 72h floors | | |
+| `L-01` | `0` until the owner sets a figure; fixed absolute USD recommended |0 for now, revisit before canary | 2026-09-26 |
+| `L-02` | ≥ 240 effective decisions forward, no real capital deployed |Adopted |2026-09-26 |
+| `L-03` | 20% drawdown from peak live equity → HALT + §14 incident process |Adopted |2026-09-26 |
+| `L-04` | Written record + no increase below peak + frozen 72h floors |Adopted |2026-09-26 |
 
 Adoption of these rows is **not** the §25 acknowledgment, which is a separate,
 still-unsigned requirement with its own nine clauses and must be signed before
