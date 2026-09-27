@@ -23,8 +23,8 @@ min_notional = "5"
 tick_size = "0.01"
 
 [governor]
-max_slippage_bps = "15"          # [OPEN] price cap per order (T22-Q3 mechanism)
-authorization_ttl_s = 120        # [OPEN]
+max_slippage_bps = "5"           # OWNER-SET S-1: 0.05% price cap per order
+authorization_ttl_s = 120        # OWNER-SET S-2: 2 minutes
 decision_window_s = 300          # OWNER-SET T21-Q1: 5 minutes
 
 [executor]

@@ -32,7 +32,7 @@ document restates but cannot relax.
   (record `review/pre-deployment/LOSS_BOUNDS_ADOPTION_RECORD.md`). It is the
   owner's self-imposed bound, not frozen text, and this draft is still not
   adopted as a whole.
-- **[OWNER-SET T22-Q1]**, **[OWNER-SET T23-Q1]**, **[OWNER-SET T23-Q2]**: an operating value the owner chose in answer to a
+- **[OWNER-SET T22-Q1]**, **[OWNER-SET T23-Q1]**, **[OWNER-SET T23-Q2]**, **[OWNER-SET S-n]** (`review/deployment/OWNER_SETTINGS_2026-09-27.md`): an operating value the owner chose in answer to a
   task question, with a committed record. Like `[ADOPTED L-nn]`, it does not
   adopt this draft as a whole.
 - **[OPEN]**: a value or choice no frozen text or proposal supplies. The owner
@@ -152,7 +152,8 @@ The loop must not start if any of these holds. Each is logged.
    repo/artifacts/logs/reports/screenshots/LLM context/CI"].
 8. The operational log fails hash-chain verification (Task 19 ledger).
 9. A health check (Task 19) is in breach at startup: stale data, clock skew,
-   or loop lag, at thresholds [OPEN: each threshold and its severity].
+   or loop lag, at thresholds stale data > 2 h, clock skew > 5 s, loop lag
+   > 5 min, each CRITICAL [OWNER-SET S-5].
 
 ## 5. Alerting
 
@@ -180,8 +181,8 @@ reconciliation."
 
 | State | Entered on | Allowed | Exit |
 |---|---|---|---|
-| **HALT** | Any incident (**proposed**; §0 defines an incident but does not say it causes HALT); `L-03` breach [ADOPTED L-03]; owner command | No new risk [FROZEN §22] | The HALT exit procedure below [FROZEN §14] |
-| **FLATTEN** | Owner command, or [OPEN: automatic triggers] | Bounded de-risking [FROZEN §22], within at most **50%** of the held base per step, each sell capped **1%** (100 bps) below the mark [OWNER-SET T23-Q1] | Zero exposure, then HALT (**proposed**) |
+| **HALT** | Any incident (**proposed**; §0 defines an incident but does not say it causes HALT); the end of FLATTEN, including after an `L-03` breach [ADOPTED L-03; OWNER-SET S-4]; owner command | No new risk [FROZEN §22] | The HALT exit procedure below [FROZEN §14] |
+| **FLATTEN** | Owner command, or an `L-03` breach [OWNER-SET S-4] | Bounded de-risking [FROZEN §22], within at most **50%** of the held base per step, each sell capped **1%** (100 bps) below the mark [OWNER-SET T23-Q1] | Zero exposure, then HALT (**proposed**) |
 | **FREEZE** | An ambiguous order reaching `UNKNOWN` [FROZEN §21]; a reconciliation failure while running (**proposed**) | No autonomous risk change [FROZEN §22] | Successful reconciliation [FROZEN §22] |
 
 Risk reductions are immediate and never gated [FROZEN §14: "Risk reductions
@@ -202,7 +203,7 @@ All five are required, and each is recorded in the incident record
 Trading resumes only after incident closure plus successful reconciliation
 [FROZEN §14]. Safety-clause amendments cannot be proposed or activated during
 an open incident or post-HALT cooling-off [FROZEN §4]; the length of that
-cooling-off is [OPEN].
+cooling-off is **72 hours**, the frozen minimum [OWNER-SET S-3].
 
 ## 7. Ambiguous orders
 
@@ -283,8 +284,7 @@ anomaly: an incident [FROZEN §0].
 | §2.2 | External alert channel |
 | §2.3 | Shadow duration or decision count before canary; fee headroom |
 | §3 | Reconciliation tolerance on a real venue (the simulator value is set) |
-| §4, §5 | Channel test interval; health-check thresholds and severities |
-| §6 | Automatic FLATTEN triggers; post-HALT cooling-off length |
+| §4, §5 | Channel test interval |
 | §10 | Hold or FLATTEN the remaining live position when leaving canary |
 | §8 | Executor IP address(es); key storage mechanism |
 
