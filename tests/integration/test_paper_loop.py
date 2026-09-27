@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import random
 import shutil
@@ -120,6 +121,7 @@ def test_a_multi_month_run_is_deterministic(tmp_path: Path) -> None:
     second = _run(tmp_path / "b", config, series)
     assert first.refused == ()
     assert first.orders_sent > 0 and first.final_mode == "RUNNING"
+    assert Decimal(first.final_balances["BTC"]) > 0  # orders actually filled
     assert first.digest() == second.digest()
     log_a = (tmp_path / "a" / "operations.jsonl").read_bytes()
     assert log_a == (tmp_path / "b" / "operations.jsonl").read_bytes()
@@ -267,17 +269,31 @@ def test_a_mid_run_fault_ends_in_freeze_not_in_an_order(tmp_path: Path) -> None:
     series = _series(24 * 20)
     config = _config(10)
     clean = _run(tmp_path / "clean", config, series)
-    assert clean.authorizations >= 3
-    # The second authorization's order times out and its query cannot be read.
+    assert clean.authorizations >= 1 and clean.final_mode == "RUNNING"
+    # The first authorization's order times out and its query cannot be read;
+    # the run goes on for the remaining days of the window.
     faulty_id = client_order_id_for(
-        replace(_probe_authorization(), nonce=nonce_for(config.run_id, 1))
+        replace(_probe_authorization(), nonce=nonce_for(config.run_id, 0))
     )
     scenario = Scenario({faulty_id: Fault(timeout=True, unknown_queries=5)})
     report = _run(tmp_path / "fault", config, series, scenario=scenario)
     assert report.final_mode == "FREEZE"
-    assert report.authorizations == 2 and report.orders_sent == 2
+    assert report.authorizations == 1 and report.orders_sent == 1
     incidents = IncidentLog(tmp_path / "fault" / "incidents.jsonl")
     assert len(incidents.open_incidents()) == 1
+    # The freeze came from the section 21 path itself: the order's outcome
+    # was unknown to the executor, not merely caught later.
+    events = [
+        json.loads(line)["payload"]
+        for line in (tmp_path / "fault" / "operations.jsonl").read_text().splitlines()
+    ]
+    states = [e["fields"]["state"] for e in events if e["kind"] == "ORDER"]
+    assert states == ["FREEZE"]
+    assert report.hours == clean.hours  # it ran to the end, placing nothing more
+    triggers = [
+        e["fields"].get("trigger") for e in events if e["kind"] == "STATE_TRANSITION"
+    ]
+    assert triggers == ["AMBIGUOUS_ORDER"]
 
 
 def _probe_authorization() -> Authorization:
