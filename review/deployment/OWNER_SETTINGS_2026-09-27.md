@@ -22,3 +22,17 @@ Notes:
   in HALT. Implementing the automatic trigger is follow-up work on Task 24.
 - These are the owner's operating values. They adopt no document as a whole
   and amend nothing frozen.
+
+## Update after the senior advisor check (`SENIOR_ADVISOR_CHECK_2026-09-27.md`)
+
+The owner was asked: "The advisor suggests keeping your 0.05% price limit for
+simulator runs, but switching to 0.15% before the app ever uses real market
+prices (so about 1 in 30 trades is skipped instead of about 1 in 4). What do
+you want?" He selected **"0.05% now, 0.15% before real prices
+(Recommended)"**.
+
+- **S-1 now reads:** `max_slippage_bps = 5` for simulator runs, and `15` at
+  any stage that uses real market prices (shadow or later).
+- Asked whether to build the missing L-03 → FLATTEN trigger and the health
+  checks into the paper loop, he selected **"Yes, build both
+  (Recommended)"**.
