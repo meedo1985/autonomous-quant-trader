@@ -273,3 +273,36 @@ def test_a_venue_rejection_ends_rejected() -> None:
     assert rejected.state is State.REJECTED
     assert rejected.reconciliation_required and not rejected.released
     assert _fills(exchange) == []
+
+
+def test_a_full_exposure_buy_is_sized_to_what_the_cash_can_pay() -> None:
+    """Found by the Task 24 loop: a 100% target was sized as all the cash at
+    the mark, so costs made every such buy INSUFFICIENT_BALANCE. The buy is
+    now capped at what the quote balance pays for at the cap, costs included."""
+    exchange = SimulatedExchange(
+        {"BTCUSDT": _series()},
+        {"BTCUSDT": FILTERS},
+        {"USDT": Decimal(1000), "BTC": Decimal(0)},
+    )
+    clock = Clock()
+    governor = Governor(GOVERNOR, nonce_source=lambda: NONCE)
+    state = ActualState(
+        symbol="BTCUSDT",
+        base_quantity=Decimal(0),
+        quote_balance=Decimal(1000),
+        mark_price=Decimal(100),
+        as_of=MIDNIGHT,
+    )
+    proposal = Proposal("BTCUSDT", 1.0, MIDNIGHT)
+    authorization = governor.decide(proposal, state, MIDNIGHT)
+    assert isinstance(authorization, Authorization)
+    assert authorization.max_base_quantity == Decimal(10)
+    executor = Executor(
+        governor, exchange, FILTERS, CONFIG, clock=clock, sleep=clock.sleep
+    )
+    result = executor.execute(authorization, proposal, state)
+    assert result.state is State.FILLED
+    assert result.order is not None
+    # 1000 / (100.15 * 1.0027) = 9.9581..., rounded down to the 0.001 step.
+    assert result.order.executed_qty == Decimal("9.958")
+    assert exchange.balances()["USDT"] >= 0
