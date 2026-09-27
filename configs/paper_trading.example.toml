@@ -1,0 +1,40 @@
+# Paper-trading configuration (roadmap Task 24). Every value is required.
+# Values marked OWNER-SET come from recorded owner answers; values marked
+# [OPEN] are examples only and still need the owner's decision.
+
+[run]
+adapter = "simulator"            # anything else is refused at load time
+run_id = "paper-example-1"
+symbol = "BTCUSDT"
+# Exploration partition only, inside one unbroken run of bars (the longest
+# BTC run is 2020-06-28 to 2020-11-30); the first week is baseline warm-up.
+start = 2020-07-06T00:00:00Z
+end = 2020-11-29T00:00:00Z
+
+[starting_balances]              # paper money; L-01 keeps real money at 0
+USDT = "10000"
+BTC = "0"
+
+[filters]                        # [OPEN] example Binance-like BTCUSDT filters
+step_size = "0.00001"
+min_qty = "0.00001"
+max_qty = "9000"
+min_notional = "5"
+tick_size = "0.01"
+
+[governor]
+max_slippage_bps = "15"          # [OPEN] price cap per order (T22-Q3 mechanism)
+authorization_ttl_s = 120        # [OPEN]
+decision_window_s = 300          # OWNER-SET T21-Q1: 5 minutes
+
+[executor]
+not_found_delay_s = 10           # OWNER-SET T22-Q1
+absence_queries = 2              # OWNER-SET T22-Q1
+
+[flatten]
+max_step_fraction = "0.5"        # OWNER-SET T23-Q1
+max_slippage_bps = "100"         # OWNER-SET T23-Q1
+
+[tolerance]                      # OWNER-SET T23-Q2: exact on the simulator
+USDT = "0"
+BTC = "0"
