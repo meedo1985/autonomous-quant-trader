@@ -143,3 +143,32 @@ daily.
 
 This is one paper run of a benchmark on exploration data. It is not
 evidence of anything about returns.
+
+## Update: L-03 stop and health checks wired in (owner settings S-4, S-5)
+
+Built on the owner's instruction ("Yes, build both"), after the senior
+advisor check (`review/deployment/SENIOR_ADVISOR_CHECK_2026-09-27.md`) found
+both missing. This supersedes T24-02 and T24-04.
+
+- **L-03 loss stop.** Each hour the loop marks equity from the reconciled
+  balances at the decision bar's close and tracks its peak. At 20% below the
+  peak (`loss_stop_fraction`, ADOPTED L-03), while still holding a sellable
+  amount in RUNNING or HALT, it fires `LOSS_STOP`. On the Task 23 branch
+  that now enters FLATTEN (`safety.py`, S-4), which sells and ends in HALT.
+  An incident is opened.
+- **Health checks** (`aqt.monitoring.health`, S-5 thresholds: 2 h / 5 s /
+  5 min, each CRITICAL). A breach at start is a REFUSE_START. A breach during
+  the run blocks every order that hour, FLATTEN steps included, and is
+  counted in `health_breach_hours`. On a simulated run the readings come from
+  the bar clock and never breach. Tests inject readings through `observe`.
+- New tests: `test_the_loss_stop_sells_everything_then_halts`,
+  `test_no_loss_stop_without_a_drawdown`,
+  `test_refuse_start_when_a_health_check_fails`,
+  `test_a_health_breach_blocks_orders_for_that_hour`, and
+  `test_the_loss_stop_sells_then_halts_and_opens_an_incident` (Task 23).
+  Mutations caught: no L-03 trigger, health breaches ignored, peak not kept.
+- The 60-day determinism path falls more than 20% from its peak, so it now
+  ends in HALT through the L-03 stop. Both runs still agree byte for byte.
+- Validation: `pytest -q` 1539 passed plus the corrected determinism test
+  (see the commit); ruff, format, mypy (52 files), lint-imports (6 kept)
+  clean; frozen files unchanged.

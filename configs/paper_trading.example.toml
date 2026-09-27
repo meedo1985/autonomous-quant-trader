@@ -38,3 +38,11 @@ max_slippage_bps = "100"         # OWNER-SET T23-Q1
 [tolerance]                      # OWNER-SET T23-Q2: exact on the simulator
 USDT = "0"
 BTC = "0"
+
+[loss_stop]                      # ADOPTED L-03: 20% below peak; S-4: sell all, then HALT
+fraction = "0.20"
+
+[health]                         # OWNER-SET S-5
+max_data_age_s = 7200
+max_clock_skew_s = 5
+max_loop_lag_s = 300

@@ -31,7 +31,7 @@ from __future__ import annotations
 import hashlib
 import json
 import tomllib
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -59,9 +59,12 @@ from aqt.governor.authorization import ActualState, GovernorConfig, Refusal, Sid
 from aqt.governor.machine import Governor
 from aqt.monitoring.alerts import AlertConfigError, AlertRouter, Sink
 from aqt.monitoring.events import Event, EventKind, Severity
+from aqt.monitoring.health import check_clock_skew, check_loop_lag, check_stale_data
 
 __all__ = [
     "ConfigError",
+    "HealthLimits",
+    "Observation",
     "PaperConfig",
     "RunReport",
     "contiguous_window",
@@ -81,6 +84,61 @@ class ConfigError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class HealthLimits:
+    """Owner setting S-5 (deployment draft section 4 item 9)."""
+
+    max_data_age: timedelta
+    max_clock_skew: timedelta
+    max_loop_lag: timedelta
+
+    def __post_init__(self) -> None:
+        for name in ("max_data_age", "max_clock_skew", "max_loop_lag"):
+            if getattr(self, name) <= timedelta(0):
+                raise ConfigError(f"{name} must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class Observation:
+    """What the health checks look at for one hour. On a simulated run all
+    of it is the bar clock; a live adapter would supply real readings."""
+
+    latest_bar_close: datetime
+    local_now: datetime
+    reference_now: datetime
+    started: datetime
+
+
+def bar_clock_observation(decision_time: datetime) -> Observation:
+    return Observation(decision_time, decision_time, decision_time, decision_time)
+
+
+def health_breaches(
+    limits: HealthLimits, scheduled: datetime, seen: Observation
+) -> list[Event]:
+    checks = (
+        check_stale_data(
+            latest_bar_close=seen.latest_bar_close,
+            now=seen.local_now,
+            max_age=limits.max_data_age,
+            severity=Severity.CRITICAL,
+        ),
+        check_clock_skew(
+            local_now=seen.local_now,
+            reference_now=seen.reference_now,
+            max_skew=limits.max_clock_skew,
+            severity=Severity.CRITICAL,
+        ),
+        check_loop_lag(
+            scheduled=scheduled,
+            started=seen.started,
+            max_lag=limits.max_loop_lag,
+            severity=Severity.CRITICAL,
+        ),
+    )
+    return [event for event in checks if event is not None]
+
+
+@dataclass(frozen=True, slots=True)
 class PaperConfig:
     """Every value is required; the `[OPEN]` ones come from the owner."""
 
@@ -95,8 +153,12 @@ class PaperConfig:
     executor: ExecutorConfig
     flatten: FlattenBounds
     tolerance: Mapping[str, Decimal]
+    loss_stop_fraction: Decimal
+    health: HealthLimits
 
     def __post_init__(self) -> None:
+        if not 0 < self.loss_stop_fraction < 1:
+            raise ConfigError(f"invalid loss_stop_fraction {self.loss_stop_fraction}")
         if self.adapter != _SIMULATOR:
             # Deployment draft section 4 item 6: paper runs on the simulator only.
             raise ConfigError(f"adapter must be {_SIMULATOR!r}, got {self.adapter!r}")
@@ -163,6 +225,14 @@ def load_config(path: Path) -> PaperConfig:
                 max_slippage_bps=_decimal(fla["max_slippage_bps"], "flatten slippage"),
             ),
             tolerance={k: _decimal(v, k) for k, v in raw["tolerance"].items()},
+            loss_stop_fraction=_decimal(raw["loss_stop"]["fraction"], "loss_stop"),
+            health=HealthLimits(
+                max_data_age=timedelta(seconds=int(raw["health"]["max_data_age_s"])),
+                max_clock_skew=timedelta(
+                    seconds=int(raw["health"]["max_clock_skew_s"])
+                ),
+                max_loop_lag=timedelta(seconds=int(raw["health"]["max_loop_lag_s"])),
+            ),
         )
     except KeyError as missing:
         raise ConfigError(f"missing configuration value {missing}") from None
@@ -254,6 +324,7 @@ class RunReport:
     authorizations: int
     orders_sent: int
     governor_refusals: Mapping[str, int]
+    health_breach_hours: int
     final_mode: str
     final_balances: Mapping[str, str]
     events: int
@@ -271,6 +342,7 @@ class RunReport:
             "final_balances": dict(self.final_balances),
             "final_mode": self.final_mode,
             "governor_refusals": dict(self.governor_refusals),
+            "health_breach_hours": self.health_breach_hours,
             "hours": self.hours,
             "note": self.note,
             "orders_sent": self.orders_sent,
@@ -304,6 +376,7 @@ class _Counts:
     scheduled: int = 0
     authorizations: int = 0
     orders: int = 0
+    health: int = 0
     refusals: dict[str, int] = field(default_factory=dict)
 
 
@@ -332,13 +405,17 @@ def run_paper(
     scenario: Scenario | None = None,
     local_record: LocalRecord | None = None,
     commands: Mapping[datetime, Trigger] | None = None,
+    observe: Callable[[datetime], Observation] = bar_clock_observation,
 ) -> RunReport:
     """Run the loop over every hourly decision in `[start, end)`.
 
     `local_record` is what the system recorded before this start (default: the
     starting balances, nothing outstanding); startup reconciliation checks it
     against the venue. `commands` are owner commands (HALT or FLATTEN) applied
-    at the start of the given hour, for drills (Task 25).
+    at the start of the given hour, for drills (Task 25). `observe` gives the
+    health-check readings for an hour (default: the bar clock, which never
+    breaches); a breach blocks every order that hour, and at start it is a
+    REFUSE_START.
     """
     owner = dict(commands or {})
     if any(
@@ -363,6 +440,7 @@ def run_paper(
             authorizations=counts.authorizations,
             orders_sent=counts.orders,
             governor_refusals=dict(sorted(counts.refusals.items())),
+            health_breach_hours=counts.health,
             final_mode=mode,
             final_balances={k: str(v) for k, v in sorted(balances.items())},
             events=counter.count,
@@ -411,6 +489,8 @@ def run_paper(
         scenario=scenario,
     )
     local = local_record or LocalRecord(config.starting_balances)
+    for breach in health_breaches(config.health, config.start, observe(config.start)):
+        refuse(f"health check at start: {breach.kind} {dict(breach.fields)}")
     if not refused:
         decision = startup_check(
             exchange, local, config.tolerance, incidents, config.start
@@ -435,6 +515,7 @@ def run_paper(
     )
     last_increase: datetime | None = None
     base = config.symbol.removesuffix(_QUOTE)
+    peak = Decimal(0)
 
     moment = config.start
     while moment < config.end:
@@ -451,10 +532,31 @@ def run_paper(
                         {"command": str(owner[decision_time]), "refused": str(error)},
                     )
                 )
+        breaches = health_breaches(config.health, decision_time, observe(decision_time))
+        if breaches:
+            # Something looks broken: nothing is placed this hour, not even a
+            # FLATTEN step, because prices or clocks cannot be trusted.
+            counts.health += 1
+            for breach in breaches:
+                router.emit(breach)
+            continue
         try:
             mark = Decimal(repr(series.bar_at(decision_time - HOUR).close))
         except Exception:  # noqa: BLE001 - no bar for this hour: nothing to decide
             continue
+        # L-03 (adopted): 20% below peak equity sells everything (setting S-4).
+        held = local.balances.get(base, Decimal(0))
+        equity = held * mark + local.balances.get(_QUOTE, Decimal(0))
+        peak = max(peak, equity)
+        breached = equity < peak * (1 - config.loss_stop_fraction)
+        if (
+            breached
+            and held >= config.filters.min_qty
+            and controller.mode in (Mode.RUNNING, Mode.HALT)
+        ):
+            keep = 1 - config.loss_stop_fraction
+            detail = f"equity {equity:.2f} below {keep} x peak {peak:.2f}"
+            controller.trigger(Trigger.LOSS_STOP, decision_time, detail)
         if controller.mode is Mode.FLATTEN:
             flat = controller.tick(
                 exchange,

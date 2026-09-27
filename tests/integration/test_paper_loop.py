@@ -17,6 +17,8 @@ import pytest
 import aqt.app.paper_loop as loop
 from aqt.app.paper_loop import (
     ConfigError,
+    HealthLimits,
+    Observation,
     PaperConfig,
     load_config,
     nonce_for,
@@ -91,6 +93,12 @@ def _config(days: int, **changes: object) -> PaperConfig:
             max_step_fraction=Decimal("0.5"), max_slippage_bps=Decimal("100")
         ),
         tolerance={"USDT": Decimal(0), "BTC": Decimal(0)},
+        loss_stop_fraction=Decimal("0.20"),
+        health=HealthLimits(
+            max_data_age=timedelta(hours=2),
+            max_clock_skew=timedelta(seconds=5),
+            max_loop_lag=timedelta(minutes=5),
+        ),
     )
     return replace(base, **changes)
 
@@ -120,10 +128,13 @@ def test_a_multi_month_run_is_deterministic(tmp_path: Path) -> None:
     first = _run(tmp_path / "a", config, series)
     second = _run(tmp_path / "b", config, series)
     assert first.refused == ()
-    assert first.orders_sent > 0 and first.final_mode == "RUNNING"
-    assert Decimal(first.final_balances["BTC"]) > 0  # orders actually filled
+    assert first.orders_sent > 0
+    # This random path falls more than 20% from its peak, so the L-03 stop
+    # sells everything and HALTs; the point here is that both runs agree.
+    assert first.final_mode == "HALT"
     assert first.digest() == second.digest()
     log_a = (tmp_path / "a" / "operations.jsonl").read_bytes()
+    assert b'"state":"FILLED"' in log_a  # orders actually filled
     assert log_a == (tmp_path / "b" / "operations.jsonl").read_bytes()
 
 
@@ -330,3 +341,72 @@ def test_an_owner_halt_stops_all_orders(tmp_path: Path) -> None:
     )
     assert report.final_mode == "HALT"
     assert report.orders_sent == 0
+
+
+def _crash_series(hours: int, crash_at: int) -> BarSeries:
+    """Quiet random walk, then a steady 1%-an-hour fall for 40 hours."""
+    rng = random.Random(3)
+    price, bars = 10_000.0, []
+    for i in range(hours):
+        step = -0.01 if crash_at <= i < crash_at + 40 else rng.gauss(0.0, 0.003)
+        close = round(price * math.exp(step), 2)
+        high, low = max(price, close) * 1.0005, min(price, close) * 0.9995
+        bars.append(
+            Bar(T0 + i * HOUR, price, round(high, 2), round(low, 2), close, 5.0)
+        )
+        price = close
+    return BarSeries("BTCUSDT", tuple(bars))
+
+
+def test_the_loss_stop_sells_everything_then_halts(tmp_path: Path) -> None:
+    """Adopted L-03 with owner setting S-4: 20% below peak equity enters
+    FLATTEN, which sells the holding and ends in HALT."""
+    config = _config(12)
+    series = _crash_series(24 * 22, crash_at=24 * 12)
+    report = _run(tmp_path, config, series)
+    events = [
+        json.loads(line)["payload"]
+        for line in (tmp_path / "operations.jsonl").read_text().splitlines()
+    ]
+    triggers = [
+        e["fields"].get("trigger") for e in events if e["kind"] == "STATE_TRANSITION"
+    ]
+    assert "LOSS_STOP" in triggers
+    assert triggers[-1] == "FLATTEN_DONE"
+    assert report.final_mode == "HALT"
+    assert Decimal(report.final_balances["BTC"]) * 10_000 < FILTERS.min_notional
+
+
+def test_no_loss_stop_without_a_drawdown(tmp_path: Path) -> None:
+    report = _run(tmp_path, _config(10), _series(24 * 20))
+    assert report.final_mode == "RUNNING"
+
+
+def test_refuse_start_when_a_health_check_fails(tmp_path: Path) -> None:
+    def stale(at: datetime) -> Observation:
+        return Observation(at - 3 * HOUR, at, at, at)
+
+    report = _run(tmp_path, _config(2), _series(24 * 12), observe=stale)
+    assert any(
+        "health check at start" in r and "STALE_DATA" in r for r in report.refused
+    )
+
+
+def test_a_health_breach_blocks_orders_for_that_hour(tmp_path: Path) -> None:
+    config = _config(3)
+    bad = {config.start + h * HOUR for h in range(1, 30)}  # includes day 2's 00:00
+
+    def skewed(at: datetime) -> Observation:
+        off = timedelta(seconds=9) if at in bad else timedelta(0)
+        return Observation(at, at + off, at, at)
+
+    clean = _run(tmp_path / "clean", config, _series(24 * 14))
+    report = _run(tmp_path / "skew", config, _series(24 * 14), observe=skewed)
+    assert report.health_breach_hours == len(bad)
+    events = [
+        json.loads(line)["payload"]
+        for line in (tmp_path / "skew" / "operations.jsonl").read_text().splitlines()
+    ]
+    skews = [e for e in events if e["kind"] == "CLOCK_SKEW"]
+    assert len(skews) == len(bad) and all(e["severity"] == "CRITICAL" for e in skews)
+    assert report.scheduled_decisions == clean.scheduled_decisions - 1
