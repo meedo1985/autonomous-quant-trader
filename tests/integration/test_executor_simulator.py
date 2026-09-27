@@ -79,20 +79,24 @@ class Clock:
         self.now += duration
 
 
-def _series() -> BarSeries:
-    """Flat bars at 100 up to the 00:00 decision; the fill bar opens at 101."""
+def _series(fill_open: float = 100.1) -> BarSeries:
+    """Flat bars at 100 up to the 00:00 decision; the fill bar opens at
+    `fill_open` (10 bps above the mark by default, inside the 15 bps bound)."""
     start = MIDNIGHT - 6 * HOUR
     bars = [Bar(start + i * HOUR, 100.0, 100.0, 100.0, 100.0, 5.0) for i in range(6)]
-    bars.append(Bar(MIDNIGHT, 101.0, 101.0, 101.0, 101.0, 5.0))
+    bars.append(Bar(MIDNIGHT, fill_open, fill_open, fill_open, fill_open, 5.0))
     return BarSeries("BTCUSDT", tuple(bars))
 
 
 def _run(
-    fault: Fault | None = None, *, sleep_extra: timedelta = timedelta(0)
+    fault: Fault | None = None,
+    *,
+    sleep_extra: timedelta = timedelta(0),
+    fill_open: float = 100.1,
 ) -> tuple[ExecutionResult, SimulatedExchange, Governor, ActualState, Clock]:
     faults = {} if fault is None else {ORDER_ID: fault}
     exchange = SimulatedExchange(
-        {"BTCUSDT": _series()},
+        {"BTCUSDT": _series(fill_open)},
         {"BTCUSDT": FILTERS},
         {"USDT": Decimal(1000), "BTC": Decimal(0)},
         scenario=Scenario(faults),
@@ -134,14 +138,41 @@ def _fills(exchange: SimulatedExchange) -> list[dict[str, str]]:
 
 
 def test_a_clean_order_fills_once_at_the_next_open() -> None:
-    result, exchange, _, _, _ = _run()
+    result, exchange, governor, state, clock = _run()
     assert result.state is State.FILLED
-    assert result.order is not None and result.order.fill_price == Decimal("101.0")
+    assert result.order is not None and result.order.fill_price == Decimal("100.1")
     assert exchange.balances()["BTC"] == Decimal("5.000")
     assert len(_fills(exchange)) == 1
-    # The open gapped 1% above the mark: reported as a breach, not hidden.
+    assert result.adverse_move_bps == Decimal("10")
+    assert not result.slippage_breach
+    # Held for reconciliation (Astra R-2).
+    assert (result.released, result.reconciliation_required) == (False, True)
+    blocked = governor.decide(Proposal("BTCUSDT", 0.4, MIDNIGHT), state, clock.now)
+    assert blocked.code is RefusalCode.OUTSTANDING_AUTHORIZATION  # type: ignore[union-attr]
+
+
+def test_a_gap_beyond_the_slippage_bound_freezes() -> None:
+    result, exchange, _, _, _ = _run(fill_open=101.0)
+    assert result.state is State.FREEZE
     assert result.adverse_move_bps == Decimal("100")
-    assert result.slippage_breach
+    assert result.slippage_breach and not result.released
+    assert len(_fills(exchange)) == 1
+
+
+def test_a_fill_hidden_behind_not_found_is_never_released() -> None:
+    """Astra R-2: the fill exists, both queries lag, the authorization
+    expires. The run asks for a new authorization but keeps the reservation,
+    so nothing new can trade before reconciliation sees the fill."""
+    result, exchange, governor, state, clock = _run(
+        Fault(timeout=True, not_found_queries=2),
+        sleep_extra=GOVERNOR.authorization_ttl,
+    )
+    assert result.state is State.NEW_AUTHORIZATION_REQUIRED
+    assert result.order is None
+    assert len(_fills(exchange)) == 1
+    assert (result.released, result.reconciliation_required) == (False, True)
+    blocked = governor.decide(Proposal("BTCUSDT", 0.5, MIDNIGHT), state, clock.now)
+    assert blocked.code is RefusalCode.OUTSTANDING_AUTHORIZATION  # type: ignore[union-attr]
 
 
 def test_timeout_is_resolved_by_query_without_a_second_order() -> None:
@@ -176,10 +207,13 @@ def test_a_lost_order_after_expiry_needs_a_new_authorization() -> None:
     assert result.state is State.NEW_AUTHORIZATION_REQUIRED
     assert _fills(exchange) == []
     assert exchange.balances() == {"USDT": Decimal(1000), "BTC": Decimal(0)}
-    assert result.released
-    # The old authorization is spent; a new one, with a new id, is needed.
-    old = governor.redeem(result_authorization(governor), state, clock.now)
-    assert old is not None and old.code is RefusalCode.ALREADY_USED
+    assert not result.released
+    # The old authorization is spent; after reconciliation releases it, a
+    # new one with a new id is needed.
+    old = result_authorization(governor)
+    spent = governor.redeem(old, state, clock.now)
+    assert spent is not None and spent.code is RefusalCode.ALREADY_USED
+    assert governor.release(old, clock.now) is None  # stands in for Task 23
     fresh = governor.decide(Proposal("BTCUSDT", 0.5, MIDNIGHT), state, clock.now)
     assert isinstance(fresh, Authorization)
     assert client_order_id_for(fresh) != ORDER_ID
@@ -197,12 +231,12 @@ def test_an_unknown_query_freezes_and_keeps_the_reservation() -> None:
     assert blocked.code is RefusalCode.OUTSTANDING_AUTHORIZATION  # type: ignore[union-attr]
 
 
-def test_a_partial_fill_is_recorded_and_released() -> None:
+def test_a_partial_fill_is_recorded_and_held_for_reconciliation() -> None:
     result, exchange, _, _, _ = _run(Fault(fill_fraction=Decimal("0.5")))
     assert result.state is State.PARTIALLY_FILLED
     assert result.order is not None
     assert result.order.executed_qty == Decimal("2.500")
-    assert result.released
+    assert not result.released
 
 
 def test_a_venue_rejection_ends_rejected() -> None:
@@ -229,5 +263,5 @@ def test_a_venue_rejection_ends_rejected() -> None:
     )
     rejected = executor.execute(authorization, proposal, state)
     assert rejected.state is State.REJECTED
-    assert rejected.released
+    assert rejected.reconciliation_required and not rejected.released
     assert _fills(exchange) == []

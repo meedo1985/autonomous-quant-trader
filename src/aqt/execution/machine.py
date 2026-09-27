@@ -16,19 +16,24 @@ How that reads here:
   `absence_queries` NOT_FOUND answers in a row are confirmed absence.
 * After confirmed absence the same order is resent only while the
   authorization is unexpired; otherwise the run ends asking for a new one.
-* UNKNOWN (a query whose answer is not known, a found order that does not
-  match what was sent, or a clock that did not advance) ends in FREEZE. The
-  executor never places anything after that, and never releases the
-  governor's reservation: that waits for reconciliation (Task 23).
+* Expiry is checked again at the submission boundary, immediately before
+  every placement, including the first (Astra R-3).
+* UNKNOWN ends in FREEZE: a query whose answer is not known, a found order
+  that does not match what was sent, a clock that did not advance across a
+  sleep or went backwards at any point (Astra R-4), more placements than the
+  authorization's lifetime allows, or a fill beyond the authorized slippage
+  (Astra R-5). The executor never places anything after FREEZE.
 
 Every transition is looked up in `TRANSITIONS`. A (state, event) pair that is
 not listed raises `IllegalTransition`; there is no fallthrough.
 
-The reservation is released (`Governor.release`) only once the order's end
-is confirmed by the venue's own answer: filled, expired after a partial
-fill, rejected, or confirmed absent with no resend allowed. Account-level
-reconciliation is Task 23; the next decision must start from a freshly read
-`ActualState`.
+Release (Astra R-1, R-2). The governor's reservation is released here only
+when this run redeemed the authorization, or found it abandoned, and sent
+nothing to the venue. Once anything has been sent, even an answer that looks
+final (a fill, a rejection, confirmed absence) is not proof of the account's
+state: a lagging venue can hide a fill behind NOT_FOUND. Those runs end with
+`reconciliation_required`, the reservation stays, and only reconciliation
+(Task 23) may release it, after reading the actual account.
 """
 
 from __future__ import annotations
@@ -101,7 +106,9 @@ class Event(StrEnum):
     ABSENCE_CONFIRMED = "ABSENCE_CONFIRMED"
     QUERY_UNKNOWN = "QUERY_UNKNOWN"
     ORDER_MISMATCH = "ORDER_MISMATCH"
+    SLIPPAGE_BREACH = "SLIPPAGE_BREACH"
     CLOCK_FAULT = "CLOCK_FAULT"
+    ATTEMPT_LIMIT = "ATTEMPT_LIMIT"
     AUTHORIZATION_VALID = "AUTHORIZATION_VALID"
     AUTHORIZATION_EXPIRED = "AUTHORIZATION_EXPIRED"
 
@@ -111,7 +118,15 @@ _FOUND: Final = {
     _E.FILL_CONFIRMED: _S.FILLED,
     _E.PARTIAL_FILL_CONFIRMED: _S.PARTIALLY_FILLED,
     _E.ORDER_MISMATCH: _S.FREEZE,
+    _E.SLIPPAGE_BREACH: _S.FREEZE,
 }
+_LIVE: Final = (
+    _S.READY,
+    _S.SUBMITTING,
+    _S.QUERYING,
+    _S.AWAITING_RECHECK,
+    _S.CONFIRMED_ABSENT,
+)
 
 TRANSITIONS: Final[dict[tuple[State, Event], State]] = {
     (_S.READY, _E.REDEEMED): _S.SUBMITTING,
@@ -120,6 +135,8 @@ TRANSITIONS: Final[dict[tuple[State, Event], State]] = {
     **{(_S.SUBMITTING, event): state for event, state in _FOUND.items()},
     (_S.SUBMITTING, _E.OUTCOME_UNKNOWN): _S.QUERYING,
     (_S.SUBMITTING, _E.PLACE_REJECTED): _S.REJECTED,
+    (_S.SUBMITTING, _E.AUTHORIZATION_EXPIRED): _S.NEW_AUTHORIZATION_REQUIRED,
+    (_S.SUBMITTING, _E.ATTEMPT_LIMIT): _S.FREEZE,
     **{(_S.QUERYING, event): state for event, state in _FOUND.items()},
     (_S.QUERYING, _E.NOT_FOUND): _S.AWAITING_RECHECK,
     (_S.QUERYING, _E.QUERY_UNKNOWN): _S.FREEZE,
@@ -127,9 +144,9 @@ TRANSITIONS: Final[dict[tuple[State, Event], State]] = {
     (_S.AWAITING_RECHECK, _E.NOT_FOUND): _S.AWAITING_RECHECK,
     (_S.AWAITING_RECHECK, _E.ABSENCE_CONFIRMED): _S.CONFIRMED_ABSENT,
     (_S.AWAITING_RECHECK, _E.QUERY_UNKNOWN): _S.FREEZE,
-    (_S.AWAITING_RECHECK, _E.CLOCK_FAULT): _S.FREEZE,
     (_S.CONFIRMED_ABSENT, _E.AUTHORIZATION_VALID): _S.SUBMITTING,
     (_S.CONFIRMED_ABSENT, _E.AUTHORIZATION_EXPIRED): _S.NEW_AUTHORIZATION_REQUIRED,
+    **{(state, _E.CLOCK_FAULT): _S.FREEZE for state in _LIVE},
 }
 """Every allowed transition. Anything else is `IllegalTransition`."""
 
@@ -150,14 +167,13 @@ _NOT_A_REJECTION: Final[frozenset[str]] = frozenset(
 """Placement errors that do not say the order is absent: the id may already
 name an order, so the outcome is unknown and is queried."""
 
-_RELEASE_AFTER: Final[frozenset[State]] = frozenset(
-    {_S.FILLED, _S.PARTIALLY_FILLED, _S.REJECTED, _S.NEW_AUTHORIZATION_REQUIRED}
-)
-"""Ends confirmed by the venue's own answer. FREEZE is deliberately absent."""
-
 
 class IllegalTransition(RuntimeError):
     """A (state, event) pair `TRANSITIONS` does not define."""
+
+
+class _ClockFault(Exception):
+    """The clock went backwards during a run."""
 
 
 def step(state: State, event: Event) -> State:
@@ -207,8 +223,12 @@ class ExecutionResult:
     `adverse_move_bps` is how far the fill price moved against the order
     from `ActualState.mark_price`, in basis points (fees and the frozen cost
     model's charge are separate, in `order.cost_bps`). `slippage_breach` is
-    whether it exceeds the authorization's `max_slippage_bps`. A market order
-    cannot be stopped from moving; the breach is reported, not prevented.
+    whether it exceeds the authorization's `max_slippage_bps`; a breach ends
+    in FREEZE. A market order cannot be stopped from moving, so the bound is
+    contained after the fact, not enforced before it (T22-06).
+
+    `reconciliation_required` is true whenever anything was sent to the
+    venue; the reservation then stays until reconciliation releases it.
     """
 
     state: State
@@ -216,6 +236,7 @@ class ExecutionResult:
     order: Order | None
     refusal: Refusal | None
     released: bool
+    reconciliation_required: bool
     adverse_move_bps: Decimal | None
     slippage_breach: bool
     transitions: tuple[Transition, ...]
@@ -224,8 +245,9 @@ class ExecutionResult:
 class Executor:
     """Runs one authorization to a terminal state against one venue.
 
-    `clock` returns the current UTC time; `sleep` waits a duration and must
-    advance `clock` by at least that much, or the run FREEZEs.
+    `clock` returns the current UTC time and must never go backwards; `sleep`
+    waits a duration and must advance `clock` by at least that much. Either
+    fault FREEZEs the run.
     """
 
     def __init__(
@@ -245,17 +267,12 @@ class Executor:
         self._clock = clock
         self._sleep = sleep
 
-    def _now(self) -> datetime:
-        return require_utc(self._clock(), field_name="clock")
-
     def execute(
         self, authorization: Authorization, proposal: Proposal, state: ActualState
     ) -> ExecutionResult:
         if proposal.proposal_hash() != authorization.proposal_hash:
             raise ValueError("proposal does not match the authorization")
-        client_order_id = client_order_id_for(authorization)
-        run = _Run(self, authorization, proposal, state, client_order_id)
-        return run.go()
+        return _Run(self, authorization, proposal, state).go()
 
 
 class _Run:
@@ -267,68 +284,103 @@ class _Run:
         authorization: Authorization,
         proposal: Proposal,
         state: ActualState,
-        client_order_id: str,
     ) -> None:
         self.x = executor
         self.auth = authorization
         self.proposal = proposal
         self.actual = state
-        self.client_order_id = client_order_id
+        self.client_order_id = client_order_id_for(authorization)
         self.state = State.READY
         self.transitions: list[Transition] = []
         self.order: Order | None = None
         self.refusal: Refusal | None = None
         self.quantity = Decimal(0)
-        self.release_unredeemed = False
+        self.releasable = False
+        self.placements = 0
+        self.latest: datetime | None = None
+        # Each resend needs one full protocol delay, so an authorization's
+        # lifetime allows at most this many placements (Astra R-4).
+        lifetime = authorization.expires_at - authorization.issued_at
+        self.max_placements = lifetime // executor._config.not_found_delay + 1
 
-    def fire(self, event: Event, detail: str = "") -> None:
+    def now(self) -> datetime:
+        """The clock, which may only move forward during a run (Astra R-4)."""
+        reading = require_utc(self.x._clock(), field_name="clock")
+        if self.latest is not None and reading < self.latest:
+            raise _ClockFault(
+                f"clock read {reading.isoformat()} after {self.latest.isoformat()}"
+            )
+        self.latest = reading
+        return reading
+
+    def fire(self, event: Event, detail: str = "", at: datetime | None = None) -> None:
         target = step(self.state, event)
-        self.transitions.append(
-            Transition(self.x._now(), self.state, event, target, detail)
-        )
+        moment = self.now() if at is None else at
+        self.transitions.append(Transition(moment, self.state, event, target, detail))
         self.state = target
 
     def go(self) -> ExecutionResult:
-        self.quantity = order_quantity(self.auth, self.x._filters)
-        if self.quantity == 0:
-            self.release_unredeemed = True
-            self.fire(Event.NO_QUANTITY, f"bound {self.auth.max_base_quantity}")
-        else:
-            refusal = self.x._governor.redeem(self.auth, self.actual, self.x._now())
-            if refusal is None:
-                self.fire(Event.REDEEMED)
-            else:
-                self.refusal = refusal
-                # An unredeemed authorization whose state moved can never be
-                # used; abandon it so the next decision is not blocked.
-                self.release_unredeemed = refusal.code is RefusalCode.STATE_CHANGED
-                self.fire(Event.REDEEM_REFUSED, f"{refusal.code}: {refusal.detail}")
         while self.state not in TERMINAL:
-            self._advance()
+            try:
+                self._advance()
+            except _ClockFault as fault:
+                assert self.latest is not None
+                self.fire(Event.CLOCK_FAULT, str(fault), at=self.latest)
         return self._finish()
 
     def _advance(self) -> None:
-        if self.state is State.SUBMITTING:
+        if self.state is State.READY:
+            self._begin()
+        elif self.state is State.SUBMITTING:
             self._place()
         elif self.state is State.QUERYING:
             self._query()
         elif self.state is State.AWAITING_RECHECK:
-            before = self.x._now()
+            before = self.now()
             self.x._sleep(self.x._config.not_found_delay)
-            if self.x._now() - before < self.x._config.not_found_delay:
+            if self.now() - before < self.x._config.not_found_delay:
                 self.fire(Event.CLOCK_FAULT, "sleep did not advance the clock")
             else:
                 self._query()
         elif self.state is State.CONFIRMED_ABSENT:
-            now = self.x._now()
-            if now < self.auth.expires_at:
+            if self.now() < self.auth.expires_at:
                 self.fire(Event.AUTHORIZATION_VALID, "resend, same clientOrderId")
             else:
                 self.fire(Event.AUTHORIZATION_EXPIRED, self.auth.expires_at.isoformat())
         else:  # pragma: no cover - the loop only calls this for non-terminal states
             raise IllegalTransition(f"no action for {self.state}")
 
+    def _begin(self) -> None:
+        # Redeem first, so this run owns the authorization before it may
+        # release anything (Astra R-1).
+        refusal = self.x._governor.redeem(self.auth, self.actual, self.now())
+        if refusal is not None:
+            self.refusal = refusal
+            # STATE_CHANGED is returned only for an authorization never
+            # redeemed: it can never be used, so abandon it rather than
+            # block the next decision.
+            self.releasable = refusal.code is RefusalCode.STATE_CHANGED
+            self.fire(Event.REDEEM_REFUSED, f"{refusal.code}: {refusal.detail}")
+            return
+        self.quantity = order_quantity(self.auth, self.x._filters)
+        if self.quantity == 0:
+            self.releasable = True  # redeemed by this run, and nothing sent
+            self.fire(Event.NO_QUANTITY, f"bound {self.auth.max_base_quantity}")
+        else:
+            self.fire(Event.REDEEMED)
+
     def _place(self) -> None:
+        # The submission boundary (Astra R-3): the last reading before the
+        # request decides whether the authorization is still valid.
+        now = self.now()
+        if now >= self.auth.expires_at:
+            expiry = self.auth.expires_at.isoformat()
+            self.fire(Event.AUTHORIZATION_EXPIRED, expiry, at=now)
+            return
+        if self.placements >= self.max_placements:
+            self.fire(Event.ATTEMPT_LIMIT, f"{self.placements} placements", at=now)
+            return
+        self.placements += 1
         try:
             order = self.x._venue.place_order(
                 self.client_order_id,
@@ -390,12 +442,16 @@ class _Run:
             order.orig_qty,
             order.decision_time,
         )
+        self.order = order
         if actual != expected or order.executed_qty > self.quantity:
-            self.order = order
             self.fire(Event.ORDER_MISMATCH, f"sent {expected}, venue has {actual}")
             return
-        self.order = order
-        if order.status is OrderStatus.FILLED and order.executed_qty == self.quantity:
+        move = self._adverse_move_bps()
+        if move is not None and move > self.auth.max_slippage_bps:
+            self.fire(
+                Event.SLIPPAGE_BREACH, f"{move} bps > {self.auth.max_slippage_bps} bps"
+            )
+        elif order.status is OrderStatus.FILLED and order.executed_qty == self.quantity:
             self.fire(
                 Event.FILL_CONFIRMED, f"{order.executed_qty} @ {order.fill_price}"
             )
@@ -409,10 +465,14 @@ class _Run:
 
     def _finish(self) -> ExecutionResult:
         released = False
-        if self.state in _RELEASE_AFTER or (
-            self.state is State.REFUSED and self.release_unredeemed
-        ):
-            released = self.x._governor.release(self.auth, self.x._now()) is None
+        sent = self.placements > 0
+        if self.releasable and not sent and self.state is State.REFUSED:
+            try:
+                now = self.now()
+            except _ClockFault:
+                pass  # keep the reservation; reconciliation clears it
+            else:
+                released = self.x._governor.release(self.auth, now) is None
         move = self._adverse_move_bps()
         return ExecutionResult(
             state=self.state,
@@ -420,6 +480,7 @@ class _Run:
             order=self.order,
             refusal=self.refusal,
             released=released,
+            reconciliation_required=sent,
             adverse_move_bps=move,
             slippage_breach=move is not None and move > self.auth.max_slippage_bps,
             transitions=tuple(self.transitions),

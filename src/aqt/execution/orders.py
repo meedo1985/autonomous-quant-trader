@@ -3,7 +3,11 @@
 One authorization maps to exactly one `clientOrderId`, derived from its
 nonce, so every placement and every resend under that authorization is the
 same order to the venue (Constitution section 21: "resend only with same
-clientOrderId"). Quantities are rounded down to the step size, so an order
+clientOrderId"). That holds only on a venue that never accepts a second
+order under an id it has already filled, as the Task 18 simulator does.
+Binance allows reusing a `clientOrderId` once the earlier order is filled
+(Astra R-6), so a real adapter needs its own guard before a resend.
+Quantities are rounded down to the step size, so an order
 never exceeds the authorized bound (section 20).
 """
 

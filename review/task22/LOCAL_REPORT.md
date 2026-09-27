@@ -136,3 +136,25 @@ and is byte-identical after. `git diff main` touches none of those paths.
 - GPT-6 Astra review (section 16, Q2).
 - Owner behavioural review (section 16), in plain language with yes/no
   questions, as for Tasks 17 and 21.
+
+## Update after Astra review 1 (see `REVIEW.md`, `ADJUDICATION.md`)
+
+This supersedes the "Release" bullet, T22-04, T22-05 and T22-06 above:
+
+- **Release:** the executor releases the governor's reservation only when it
+  sent nothing to the venue. Any run that placed an order, even one that ends
+  filled, rejected or confirmed absent, ends with `reconciliation_required`,
+  and only reconciliation (Task 23) releases it.
+- **Clock:** every clock reading must move forward, or the run FREEZEs.
+  Placements are also capped at the authorization's lifetime divided by the
+  protocol delay, plus one.
+- **Expiry** is checked immediately before every placement.
+- **Slippage:** a fill beyond `max_slippage_bps` ends in FREEZE. It cannot be
+  prevented with a market order.
+- **New question T22-Q3:** enforcing the slippage bound before the fill needs
+  a price-capped order type in a live adapter. That is an execution-contract
+  decision for the owner, not an AI edit.
+- **T22-Q2 now reads:** breaches FREEZE by default. Should that be relaxed?
+
+Validation after repair: `pytest -q` 1467 passed, 4 skipped; ruff, format,
+mypy and lint-imports clean; frozen files unchanged.

@@ -154,18 +154,18 @@ def _events(result: object) -> list[Event]:
     return [t.event for t in result.transitions]  # type: ignore[attr-defined]
 
 
-def test_a_confirmed_fill_ends_filled_and_releases_the_reservation() -> None:
+def test_a_confirmed_fill_keeps_the_reservation_for_reconciliation() -> None:
     venue = ScriptedVenue(places=["fill"])
     governor, executor, _, auth, proposal, state = _setup(venue)
     result = executor.execute(auth, proposal, state)
     assert result.state is State.FILLED
-    assert result.released
+    assert (result.released, result.reconciliation_required) == (False, True)
     assert venue.placed == [
         (client_order_id_for(auth), TradeSide.BUY, Decimal("5.000"), MIDNIGHT)
     ]
-    # Released: the next decision is no longer blocked by this reservation.
+    # Astra R-2: only reconciliation (Task 23) may release it.
     later = governor.decide(Proposal("BTCUSDT", 0.1, MIDNIGHT), state, MIDNIGHT)
-    assert getattr(later, "code", None) is not RefusalCode.OUTSTANDING_AUTHORIZATION
+    assert later.code is RefusalCode.OUTSTANDING_AUTHORIZATION  # type: ignore[union-attr]
 
 
 def test_timeout_queries_the_client_order_id() -> None:
@@ -247,7 +247,7 @@ def test_a_resend_after_expiry_is_refused_and_asks_for_a_new_authorization() -> 
     assert result.state is State.NEW_AUTHORIZATION_REQUIRED
     assert _events(result)[-1] is Event.AUTHORIZATION_EXPIRED
     assert len(venue.placed) == 1  # no resend
-    assert result.released
+    assert (result.released, result.reconciliation_required) == (False, True)
     # The old authorization is dead; only a new one can trade.
     assert governor.redeem(auth, state, clock.now).code is RefusalCode.ALREADY_USED
 
@@ -355,11 +355,12 @@ def test_a_duplicate_id_error_is_queried_not_taken_as_a_rejection() -> None:
     assert _events(result)[1:] == [Event.OUTCOME_UNKNOWN, Event.FILL_CONFIRMED]
 
 
-def test_a_definite_rejection_ends_rejected_and_releases() -> None:
+def test_a_definite_rejection_ends_rejected_and_awaits_reconciliation() -> None:
     venue = ScriptedVenue(places=[ExchangeError("INSUFFICIENT_BALANCE", "USDT")])
     _, executor, _, auth, proposal, state = _setup(venue)
     result = executor.execute(auth, proposal, state)
-    assert (result.state, result.released, result.order) == (State.REJECTED, True, None)
+    assert (result.state, result.order) == (State.REJECTED, None)
+    assert (result.released, result.reconciliation_required) == (False, True)
 
 
 def test_a_partial_fill_ends_partially_filled() -> None:
@@ -367,7 +368,7 @@ def test_a_partial_fill_ends_partially_filled() -> None:
     _, executor, _, auth, proposal, state = _setup(venue)
     result = executor.execute(auth, proposal, state)
     assert result.state is State.PARTIALLY_FILLED
-    assert result.released
+    assert not result.released
 
 
 def test_a_sleep_that_does_not_advance_the_clock_freezes() -> None:
@@ -414,10 +415,11 @@ def test_a_bound_below_the_minimum_places_nothing_and_releases() -> None:
     )
     result = executor.execute(auth, proposal, state)
     assert (result.state, result.released) == (State.REFUSED, True)
+    assert result.reconciliation_required is False
     assert _events(result) == [Event.NO_QUANTITY]
     assert venue.placed == []
-    # Abandoned unredeemed: it can never be used afterwards.
-    assert governor.redeem(auth, state, clock.now).code is RefusalCode.EXPIRED
+    # Redeemed by this run before release: it can never be used afterwards.
+    assert governor.redeem(auth, state, clock.now).code is RefusalCode.ALREADY_USED
 
 
 def test_a_proposal_that_does_not_match_the_authorization_is_refused() -> None:
@@ -479,10 +481,115 @@ def test_freeze_is_reachable_only_from_ambiguity_and_never_leads_to_placing() ->
     into_freeze = {
         event for (_, event), target in TRANSITIONS.items() if target is State.FREEZE
     }
-    assert into_freeze == {Event.QUERY_UNKNOWN, Event.ORDER_MISMATCH, Event.CLOCK_FAULT}
+    assert into_freeze == {
+        Event.QUERY_UNKNOWN,
+        Event.ORDER_MISMATCH,
+        Event.SLIPPAGE_BREACH,
+        Event.CLOCK_FAULT,
+        Event.ATTEMPT_LIMIT,
+    }
     into_submitting = {
         source
         for (source, _), target in TRANSITIONS.items()
         if target is State.SUBMITTING
     }
     assert into_submitting == {State.READY, State.CONFIRMED_ABSENT}
+
+
+def test_a_replay_cannot_release_a_frozen_reservation() -> None:
+    """Astra R-1: a second run of an already-redeemed authorization, even one
+    whose quantity rounds to zero, must not release the reservation."""
+    venue = ScriptedVenue(
+        places=[SimulatedTimeout("lost")], queries=[SimulatedTimeout("?")]
+    )
+    governor, executor, clock, auth, proposal, state = _setup(venue)
+    assert executor.execute(auth, proposal, state).state is State.FREEZE
+    replay = Executor(
+        governor,
+        venue,
+        replace(FILTERS, min_qty=Decimal("10")),
+        CONFIG,
+        clock=clock,
+        sleep=clock.sleep,
+    )
+    result = replay.execute(auth, proposal, state)
+    assert result.state is State.REFUSED
+    assert (
+        result.refusal is not None and result.refusal.code is RefusalCode.ALREADY_USED
+    )
+    assert not result.released
+    blocked = governor.decide(Proposal("BTCUSDT", 0.1, MIDNIGHT), state, clock.now)
+    assert blocked.code is RefusalCode.OUTSTANDING_AUTHORIZATION  # type: ignore[union-attr]
+
+
+class SteppingClock(Clock):
+    """Returns `readings` in order, then keeps the last one."""
+
+    def __init__(self, readings: list[datetime]) -> None:
+        super().__init__()
+        self.readings = readings
+
+    def __call__(self) -> datetime:
+        if len(self.readings) > 1:
+            self.now = self.readings.pop(0)
+        else:
+            self.now = self.readings[0]
+        return self.now
+
+
+def test_expiry_is_checked_at_the_submission_boundary() -> None:
+    """Astra R-3: valid when redeemed, expired by the time of placement."""
+    venue = ScriptedVenue(places=["fill"])
+    governor, _, _, auth, proposal, state = _setup(venue)
+    just_before = auth.expires_at - timedelta(microseconds=1)
+    clock = SteppingClock([just_before, auth.expires_at])
+    executor = Executor(
+        governor, venue, FILTERS, CONFIG, clock=clock, sleep=clock.sleep
+    )
+    result = executor.execute(auth, proposal, state)
+    assert result.state is State.NEW_AUTHORIZATION_REQUIRED
+    assert _events(result) == [Event.REDEEMED, Event.AUTHORIZATION_EXPIRED]
+    assert venue.placed == []
+
+
+def test_a_clock_that_goes_backwards_freezes_instead_of_retrying() -> None:
+    """Astra R-4: each placement rolls the clock back to issuance and times
+    out; without the forward-only check this retried forever."""
+    venue = ScriptedVenue(places=[], queries=[])
+    governor, _, clock, auth, proposal, state = _setup(venue)
+    clock.now = MIDNIGHT + SECOND
+
+    def place(*args: object) -> Order:
+        venue.placed.append(
+            args[0],
+        )  # type: ignore[arg-type]
+        clock.now = MIDNIGHT
+        raise SimulatedTimeout("lost")
+
+    venue.place_order = place  # type: ignore[assignment]
+    venue.queries.extend([NOT_FOUND] * 50)
+    executor = Executor(
+        governor, venue, FILTERS, CONFIG, clock=clock, sleep=clock.sleep
+    )
+    result = executor.execute(auth, proposal, state)
+    assert result.state is State.FREEZE
+    assert _events(result)[-1] is Event.CLOCK_FAULT
+    assert len(venue.placed) == 1
+    assert not result.released
+
+
+def test_a_fill_beyond_the_slippage_bound_freezes() -> None:
+    """Astra R-5: contained after the fact; a market order cannot be capped."""
+    venue = ScriptedVenue(places=[])
+    _, executor, _, auth, proposal, state = _setup(venue)
+    base = venue._answer  # noqa: SLF001
+
+    def place(*args: object) -> Order:
+        venue.last = (args[0], args[1], args[2], args[3], args[4])  # type: ignore[assignment]
+        return replace(base("fill"), fill_price=Decimal("100.2"))
+
+    venue.place_order = place  # type: ignore[assignment]
+    result = executor.execute(auth, proposal, state)
+    assert result.state is State.FREEZE
+    assert _events(result)[-1] is Event.SLIPPAGE_BREACH
+    assert result.slippage_breach and not result.released
