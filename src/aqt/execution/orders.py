@@ -27,6 +27,7 @@ from aqt.governor.authorization import Authorization, Side
 
 __all__ = [
     "ExecutorConfig",
+    "capped_price",
     "client_order_id_for",
     "limit_price_for",
     "order_quantity",
@@ -88,15 +89,25 @@ def limit_price_for(
     authorization: Authorization, mark_price: Decimal, filters: SymbolFilters
 ) -> Decimal | None:
     """The worst price the authorization accepts (owner answer T22-Q3), or
-    `None` when no positive price on the tick lies within the bound.
+    `None` when no positive price on the tick lies within the bound."""
+    return capped_price(
+        authorization.side, mark_price, authorization.max_slippage_bps, filters
+    )
 
-    `max_slippage_bps` from the mark price: above it for a buy, below it for
-    a sell. The bound is computed exactly, and every rounding (to the tick,
-    then to a Decimal) goes toward the mark, so the cap is never looser than
-    the bound (Astra R3-1).
+
+def capped_price(
+    side: Side, mark_price: Decimal, max_slippage_bps: Decimal, filters: SymbolFilters
+) -> Decimal | None:
+    """The worst acceptable price: `max_slippage_bps` from the mark, above it
+    for a buy and below it for a sell, or `None` when no positive price on the
+    tick lies within that bound.
+
+    The bound is computed exactly, and every rounding (to the tick, then to a
+    Decimal) goes toward the mark, so the cap is never looser than the bound
+    (Astra R3-1).
     """
-    buy = authorization.side is Side.BUY
-    ratio = Fraction(authorization.max_slippage_bps) / 10_000
+    buy = side is Side.BUY
+    ratio = Fraction(max_slippage_bps) / 10_000
     bound = Fraction(mark_price) * (1 + ratio if buy else 1 - ratio)
     tick = filters.tick_size
     if tick is not None:

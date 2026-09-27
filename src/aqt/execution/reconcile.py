@@ -1,0 +1,219 @@
+"""Reconciliation: the account as the venue reports it, explained or not
+(roadmap Task 23; Constitution sections 19, 21, 22).
+
+`reconcile` compares the venue with the local record:
+
+1. every order sent since the last successful reconciliation is queried by
+   its `clientOrderId`, and must resolve to a terminal order equal to the
+   local copy (or be absent, when the local record never saw it);
+2. every open order on the venue must be one of those orders, and none may
+   still be open;
+3. every balance must equal the last reconciled balance plus the exact
+   effect of the resolved orders, within a per-asset tolerance.
+
+Any difference fails the whole reconciliation; nothing is corrected or
+guessed. A failed result opens an incident at the caller (`safety.py`).
+Only a passed result may release governor reservations (`settle`), which is
+the release contract of Tasks 21 and 22.
+
+The tolerance is `[OPEN]` in the deployment protocol draft section 3. An
+asset missing from it has tolerance zero, the strict reading.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
+from datetime import datetime
+from decimal import Context, Decimal
+from types import MappingProxyType
+from typing import Final, Protocol
+
+from aqt.backtest.costs import Side as TradeSide
+from aqt.data.bars import require_utc
+from aqt.execution.orders import client_order_id_for
+from aqt.execution.simulator import ExchangeError, Order, OrderStatus
+from aqt.governor.authorization import Authorization
+from aqt.governor.machine import Governor
+
+__all__ = [
+    "LocalRecord",
+    "ReconciliationReport",
+    "ReconcilingVenue",
+    "reconcile",
+    "settle",
+]
+
+_DEC: Final = Context(prec=34)
+_QUOTE: Final[str] = "USDT"
+_TERMINAL: Final = frozenset({OrderStatus.FILLED, OrderStatus.EXPIRED})
+
+
+class ReconcilingVenue(Protocol):
+    def balances(self) -> dict[str, Decimal]: ...
+
+    def query_order(self, client_order_id: str) -> Order: ...
+
+    def open_orders(self) -> tuple[Order, ...]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class LocalRecord:
+    """What the system believes, from its own records only.
+
+    `balances` are those of the last successful reconciliation. `orders` maps
+    every `clientOrderId` sent since then to the order as last seen, or to
+    `None` when its outcome was never learned (an executor FREEZE).
+    """
+
+    balances: Mapping[str, Decimal]
+    orders: Mapping[str, Order | None] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "balances", MappingProxyType(dict(self.balances)))
+        object.__setattr__(self, "orders", MappingProxyType(dict(self.orders)))
+
+
+@dataclass(frozen=True, slots=True)
+class ReconciliationReport:
+    at: datetime
+    passed: bool
+    differences: tuple[str, ...]
+    resolved: Mapping[str, Order | None]
+    expected_balances: Mapping[str, Decimal]
+    actual_balances: Mapping[str, Decimal]
+
+    def next_record(self) -> LocalRecord:
+        """The local record to carry forward. Only a passed report has one."""
+        if not self.passed:
+            raise ValueError("a failed reconciliation establishes no record")
+        return LocalRecord(self.actual_balances)
+
+    def digest(self) -> str:
+        text = json.dumps(
+            {
+                "actual": {k: str(v) for k, v in self.actual_balances.items()},
+                "at": self.at.isoformat(),
+                "differences": list(self.differences),
+                "expected": {k: str(v) for k, v in self.expected_balances.items()},
+                "passed": self.passed,
+                "resolved": {
+                    k: None if v is None else v.as_mapping()
+                    for k, v in self.resolved.items()
+                },
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _apply(balances: dict[str, Decimal], order: Order) -> None:
+    """Add the exact balance effect of `order`, as the venue books it."""
+    base = order.symbol.removesuffix(_QUOTE)
+    if order.side is TradeSide.BUY:
+        changes = {
+            base: order.executed_qty,
+            _QUOTE: _DEC.minus(_DEC.add(order.quote_amount, order.cost_quote)),
+        }
+    else:
+        changes = {
+            base: _DEC.minus(order.executed_qty),
+            _QUOTE: _DEC.subtract(order.quote_amount, order.cost_quote),
+        }
+    for asset, change in changes.items():
+        balances[asset] = _DEC.add(balances.get(asset, Decimal(0)), change)
+
+
+def reconcile(
+    venue: ReconcilingVenue,
+    local: LocalRecord,
+    tolerance: Mapping[str, Decimal],
+    at: datetime,
+) -> ReconciliationReport:
+    at = require_utc(at, field_name="at")
+    if any(not value.is_finite() or value < 0 for value in tolerance.values()):
+        raise ValueError("tolerances must be finite and non-negative")
+    differences: list[str] = []
+    resolved: dict[str, Order | None] = {}
+    for client_order_id, known in sorted(local.orders.items()):
+        try:
+            found: Order | None = venue.query_order(client_order_id)
+        except ExchangeError as error:
+            if error.code != "NOT_FOUND":
+                differences.append(f"{client_order_id}: unresolved ({error})")
+                continue
+            found = None
+        except Exception as error:  # noqa: BLE001 - any failure is unresolved
+            differences.append(
+                f"{client_order_id}: unresolved ({type(error).__name__}: {error})"
+            )
+            continue
+        if known is not None and found != known:
+            differences.append(f"{client_order_id}: venue differs from local copy")
+        if found is not None and found.status not in _TERMINAL:
+            differences.append(f"{client_order_id}: not terminal ({found.status})")
+        resolved[client_order_id] = found
+
+    readable = True
+    try:
+        open_orders = venue.open_orders()
+        actual = venue.balances()
+    except Exception as error:  # noqa: BLE001 - the account cannot be read
+        differences.append(f"venue unreadable ({type(error).__name__}: {error})")
+        open_orders, actual, readable = (), {}, False
+    for resting in open_orders:
+        tracked = resting.client_order_id in local.orders
+        differences.append(
+            f"{resting.client_order_id}: open on the venue"
+            + ("" if tracked else " with no local record")
+        )
+
+    expected = dict(local.balances)
+    for order in resolved.values():
+        if order is not None:
+            _apply(expected, order)
+    if readable:
+        for asset in sorted(set(expected) | set(actual)):
+            gap = abs(
+                _DEC.subtract(
+                    actual.get(asset, Decimal(0)), expected.get(asset, Decimal(0))
+                )
+            )
+            if gap > tolerance.get(asset, Decimal(0)):
+                differences.append(
+                    f"{asset}: venue {actual.get(asset, Decimal(0))}, "
+                    f"expected {expected.get(asset, Decimal(0))}"
+                )
+    return ReconciliationReport(
+        at=at,
+        passed=not differences,
+        differences=tuple(differences),
+        resolved=MappingProxyType(resolved),
+        expected_balances=MappingProxyType(expected),
+        actual_balances=MappingProxyType(dict(actual)),
+    )
+
+
+def settle(
+    report: ReconciliationReport,
+    governor: Governor,
+    authorizations: Iterable[Authorization],
+) -> tuple[str, ...]:
+    """Release the reservation of every authorization whose order the passed
+    `report` resolved. Returns the released nonces.
+
+    This is the only place a reservation held after sending is released
+    (Task 22, Astra R-2).
+    """
+    if not report.passed:
+        raise ValueError("only a passed reconciliation may release reservations")
+    released = []
+    for authorization in authorizations:
+        if client_order_id_for(authorization) not in report.resolved:
+            continue
+        if governor.release(authorization, report.at) is None:
+            released.append(authorization.nonce)
+    return tuple(released)

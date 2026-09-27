@@ -396,6 +396,13 @@ class SimulatedExchange:
         self._log("query", client_order_id)
         return order
 
+    def open_orders(self) -> tuple[Order, ...]:
+        """Orders resting on the book: always none here, because market and
+        immediate-or-cancel orders are terminal as soon as they exist
+        (Task 23 reconciliation reads this)."""
+        self._log("open_orders", "")
+        return ()
+
     def cancel_order(self, client_order_id: str) -> None:
         """Market orders are terminal as soon as they exist, so a cancel is
         always refused: unknown ids with `NOT_FOUND`, others with
