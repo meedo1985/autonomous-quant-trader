@@ -24,7 +24,12 @@ from aqt.execution.machine import (
     State,
     step,
 )
-from aqt.execution.orders import ExecutorConfig, client_order_id_for, order_quantity
+from aqt.execution.orders import (
+    ExecutorConfig,
+    client_order_id_for,
+    limit_price_for,
+    order_quantity,
+)
 from aqt.execution.simulator import (
     ExchangeError,
     Order,
@@ -38,6 +43,7 @@ from aqt.governor.authorization import (
     GovernorConfig,
     Proposal,
     RefusalCode,
+    Side,
 )
 from aqt.governor.machine import Governor
 
@@ -83,6 +89,7 @@ class ScriptedVenue:
     placed: list[tuple[str, TradeSide, Decimal, datetime]] = field(default_factory=list)
     queried: list[str] = field(default_factory=list)
     last: tuple[str, str, TradeSide, Decimal, datetime] | None = None
+    limit: Decimal | None = None
 
     def _answer(self, item: object) -> Order:
         if isinstance(item, Exception):
@@ -105,6 +112,7 @@ class ScriptedVenue:
             quote_amount=executed * PRICE,
             cost_quote=Decimal(0),
             cost_bps=Decimal(0),
+            limit_price=self.limit,
         )
 
     def place_order(
@@ -114,7 +122,10 @@ class ScriptedVenue:
         side: TradeSide,
         quantity: Decimal,
         decision_time: datetime,
+        *,
+        limit_price: Decimal | None = None,
     ) -> Order:
+        self.limit = limit_price
         self.placed.append((client_order_id, side, quantity, decision_time))
         self.last = (client_order_id, symbol, side, quantity, decision_time)
         return self._answer(self.places.pop(0))
@@ -436,7 +447,8 @@ def test_the_adverse_move_is_reported_against_the_mark_price() -> None:
     venue.places.append("fill")
     base = venue._answer  # noqa: SLF001
 
-    def place(*args: object) -> Order:
+    def place(*args: object, limit_price: Decimal | None = None) -> Order:
+        venue.limit = limit_price
         venue.last = (args[0], args[1], args[2], args[3], args[4])  # type: ignore[assignment]
         return replace(base("fill"), fill_price=Decimal("100.2"))
 
@@ -565,10 +577,8 @@ def test_a_clock_that_goes_backwards_freezes_instead_of_retrying() -> None:
     governor, _, clock, auth, proposal, state = _setup(venue)
     clock.now = MIDNIGHT + SECOND
 
-    def place(*args: object) -> Order:
-        venue.placed.append(
-            args[0],
-        )  # type: ignore[arg-type]
+    def place(*args: object, **_: object) -> Order:
+        venue.placed.append(args[0])  # type: ignore[arg-type]
         clock.now = MIDNIGHT
         raise SimulatedTimeout("lost")
 
@@ -590,7 +600,8 @@ def test_a_fill_beyond_the_slippage_bound_freezes() -> None:
     _, executor, _, auth, proposal, state = _setup(venue)
     base = venue._answer  # noqa: SLF001
 
-    def place(*args: object) -> Order:
+    def place(*args: object, limit_price: Decimal | None = None) -> Order:
+        venue.limit = limit_price
         venue.last = (args[0], args[1], args[2], args[3], args[4])  # type: ignore[assignment]
         return replace(base("fill"), fill_price=Decimal("100.2"))
 
@@ -619,3 +630,40 @@ def test_a_clock_fault_at_the_end_is_not_hidden() -> None:
     assert result.state is State.REFUSED
     assert _events(result) == [Event.NO_QUANTITY]
     assert result.released
+
+
+def test_every_order_carries_the_price_cap_of_its_authorization() -> None:
+    venue = ScriptedVenue(places=["fill"])
+    _, executor, _, auth, proposal, state = _setup(venue)
+    result = executor.execute(auth, proposal, state)
+    assert venue.limit == Decimal("100.1500")  # 100 * (1 + 15 bps)
+    assert result.order is not None and result.order.limit_price == venue.limit
+
+
+def test_the_price_cap_rounds_toward_the_mark_on_the_tick() -> None:
+    venue = ScriptedVenue(places=[])
+    _, _, _, auth, _, _ = _setup(venue)
+    ticked = replace(FILTERS, tick_size=Decimal("0.1"))
+    assert limit_price_for(auth, PRICE, ticked) == Decimal("100.1")  # buy: down
+    sell = replace(auth, side=Side.SELL)
+    assert limit_price_for(sell, PRICE, ticked) == Decimal("99.9")  # sell: up
+    assert limit_price_for(sell, PRICE, FILTERS) == Decimal("99.8500")
+
+
+def test_an_unfilled_capped_order_ends_not_filled() -> None:
+    venue = ScriptedVenue(places=[])
+    _, executor, _, auth, proposal, state = _setup(venue)
+    base = venue._answer  # noqa: SLF001
+
+    def place(*args: object, limit_price: Decimal | None = None) -> Order:
+        venue.limit = limit_price
+        venue.last = (args[0], args[1], args[2], args[3], args[4])  # type: ignore[assignment]
+        return replace(
+            base("fill"), executed_qty=Decimal(0), status=OrderStatus.EXPIRED
+        )
+
+    venue.place_order = place  # type: ignore[assignment]
+    result = executor.execute(auth, proposal, state)
+    assert result.state is State.NOT_FILLED
+    assert _events(result)[-1] is Event.NO_FILL_CONFIRMED
+    assert result.reconciliation_required and not result.released

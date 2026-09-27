@@ -17,3 +17,34 @@ ruff check and format clean; `mypy src scripts` clean (46 files); lint-imports
 
 These repairs have not been re-reviewed. The third Astra review waits for the
 owner's T22-Q3 answer, so that one review covers both.
+
+## R-5 after the owner's answer (`OWNER_ANSWER_Q3.md`, "Cap the price")
+
+**Repaired.** Every order is now immediate-or-cancel, capped at
+`max_slippage_bps` from the mark price (`orders.limit_price_for`, rounded to
+the tick toward the mark). The simulator fills a capped order at the next open
+only if that open is within the cap. Otherwise the order expires with nothing
+filled (`NOT_FILLED`, reconciliation required). The fill price and the frozen
+cost model are unchanged. No future price is consulted: the cap comes from
+the mark, and the venue alone decides at the fill. The slippage FREEZE stays
+as a backstop in case a venue breaks the cap.
+
+Simulator additions: an optional `limit_price` on `place_order` (part of the
+duplicate-id identity), `Order.limit_price`, and `SymbolFilters.tick_size`,
+read from `PRICE_FILTER` (a tick of 0 means no tick rule). `PERCENT_PRICE` is
+not modelled (disclosed).
+
+Tests: `test_a_gap_beyond_the_price_cap_trades_nothing` (integration: open 100
+bps up, cap 15 bps, balances unchanged),
+`test_every_order_carries_the_price_cap_of_its_authorization`,
+`test_the_price_cap_rounds_toward_the_mark_on_the_tick`,
+`test_an_unfilled_capped_order_ends_not_filled`, and four simulator tests.
+Mutations caught: executor sends no cap, venue ignores the cap, cap rounded
+away from the mark, no-fill treated as partial, R2-1 release removed.
+
+Validation: `pytest -q` 1475 passed, 4 skipped in 81.31s; ruff, format, mypy
+(46 files) and lint-imports clean; frozen files unchanged.
+
+Disclosed divergence: the backtest assumes every order fills. With the cap,
+paper trading skips a trade when the next open gaps beyond the bound, so
+paper and backtest results can differ.

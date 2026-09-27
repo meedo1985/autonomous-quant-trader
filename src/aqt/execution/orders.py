@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from datetime import timedelta
-from decimal import Context, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Context, Decimal
 from typing import Final
 
 from aqt.backtest.costs import Side as TradeSide
@@ -26,12 +26,14 @@ from aqt.governor.authorization import Authorization, Side
 __all__ = [
     "ExecutorConfig",
     "client_order_id_for",
+    "limit_price_for",
     "order_quantity",
     "trade_side",
 ]
 
 _DEC: Final = Context(prec=34)
 _ID_PREFIX: Final[str] = "aqt-"
+_BPS: Final = Decimal(10_000)
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +81,32 @@ def order_quantity(authorization: Authorization, filters: SymbolFilters) -> Deci
     if quantity <= 0 or quantity < filters.min_qty:
         return Decimal(0)
     return quantity
+
+
+def limit_price_for(
+    authorization: Authorization, mark_price: Decimal, filters: SymbolFilters
+) -> Decimal:
+    """The worst price the authorization accepts (owner answer T22-Q3).
+
+    `max_slippage_bps` from the mark price: above it for a buy, below it for
+    a sell, rounded to the tick size toward the mark, so the cap is never
+    looser than the bound.
+    """
+    ratio = _DEC.divide(authorization.max_slippage_bps, _BPS)
+    if authorization.side is Side.BUY:
+        cap, rounding = _DEC.multiply(mark_price, _DEC.add(1, ratio)), ROUND_FLOOR
+    else:
+        cap, rounding = (
+            _DEC.multiply(mark_price, _DEC.subtract(1, ratio)),
+            ROUND_CEILING,
+        )
+    tick = filters.tick_size
+    if tick is not None:
+        steps = _DEC.divide(cap, tick).to_integral_value(rounding=rounding)
+        cap = _DEC.multiply(steps, tick)
+    if cap <= 0:
+        raise ValueError(f"no positive price within the bound: {cap}")
+    return cap
 
 
 def trade_side(side: Side) -> TradeSide:

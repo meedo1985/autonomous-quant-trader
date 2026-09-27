@@ -16,6 +16,10 @@ How that reads here:
   `absence_queries` NOT_FOUND answers in a row are confirmed absence.
 * After confirmed absence the same order is resent only while the
   authorization is unexpired; otherwise the run ends asking for a new one.
+* Every order is immediate-or-cancel, capped at the authorization's
+  `max_slippage_bps` from the mark price (owner answer T22-Q3, Astra R-5):
+  nothing trades beyond the bound. A fill beyond it anyway (a venue fault)
+  still ends in FREEZE.
 * Expiry is checked again at the submission boundary, immediately before
   every placement, including the first (Astra R-3).
 * UNKNOWN ends in FREEZE: a query whose answer is not known, a found order
@@ -50,6 +54,7 @@ from aqt.data.bars import require_utc
 from aqt.execution.orders import (
     ExecutorConfig,
     client_order_id_for,
+    limit_price_for,
     order_quantity,
     trade_side,
 )
@@ -88,6 +93,7 @@ class State(StrEnum):
     CONFIRMED_ABSENT = "CONFIRMED_ABSENT"
     FILLED = "FILLED"
     PARTIALLY_FILLED = "PARTIALLY_FILLED"
+    NOT_FILLED = "NOT_FILLED"
     REJECTED = "REJECTED"
     NEW_AUTHORIZATION_REQUIRED = "NEW_AUTHORIZATION_REQUIRED"
     REFUSED = "REFUSED"
@@ -100,6 +106,7 @@ class Event(StrEnum):
     NO_QUANTITY = "NO_QUANTITY"
     FILL_CONFIRMED = "FILL_CONFIRMED"
     PARTIAL_FILL_CONFIRMED = "PARTIAL_FILL_CONFIRMED"
+    NO_FILL_CONFIRMED = "NO_FILL_CONFIRMED"
     OUTCOME_UNKNOWN = "OUTCOME_UNKNOWN"
     PLACE_REJECTED = "PLACE_REJECTED"
     NOT_FOUND = "NOT_FOUND"
@@ -117,6 +124,7 @@ _S, _E = State, Event
 _FOUND: Final = {
     _E.FILL_CONFIRMED: _S.FILLED,
     _E.PARTIAL_FILL_CONFIRMED: _S.PARTIALLY_FILLED,
+    _E.NO_FILL_CONFIRMED: _S.NOT_FILLED,
     _E.ORDER_MISMATCH: _S.FREEZE,
     _E.SLIPPAGE_BREACH: _S.FREEZE,
 }
@@ -154,6 +162,7 @@ TERMINAL: Final[frozenset[State]] = frozenset(
     {
         _S.FILLED,
         _S.PARTIALLY_FILLED,
+        _S.NOT_FILLED,
         _S.REJECTED,
         _S.NEW_AUTHORIZATION_REQUIRED,
         _S.REFUSED,
@@ -199,6 +208,8 @@ class OrderVenue(Protocol):
         side: TradeSide,
         quantity: Decimal,
         decision_time: datetime,
+        *,
+        limit_price: Decimal | None = None,
     ) -> Order: ...
 
     def query_order(self, client_order_id: str) -> Order: ...
@@ -229,9 +240,9 @@ class ExecutionResult:
     `adverse_move_bps` is how far the fill price moved against the order
     from `ActualState.mark_price`, in basis points (fees and the frozen cost
     model's charge are separate, in `order.cost_bps`). `slippage_breach` is
-    whether it exceeds the authorization's `max_slippage_bps`; a breach ends
-    in FREEZE. A market order cannot be stopped from moving, so the bound is
-    contained after the fact, not enforced before it (T22-06).
+    whether it exceeds the authorization's `max_slippage_bps`. Orders are
+    capped at that bound, so a breach means the venue broke the cap; it ends
+    in FREEZE.
 
     `reconciliation_required` is true whenever anything was sent to the
     venue; the reservation then stays until reconciliation releases it.
@@ -301,6 +312,7 @@ class _Run:
         self.order: Order | None = None
         self.refusal: Refusal | None = None
         self.quantity = Decimal(0)
+        self.limit_price = Decimal(0)
         self.releasable = False
         self.placements = 0
         self.latest: datetime | None = None
@@ -369,6 +381,9 @@ class _Run:
             self.fire(Event.REDEEM_REFUSED, f"{refusal.code}: {refusal.detail}")
             return
         self.releasable = True  # redeemed by this run; nothing sent yet
+        self.limit_price = limit_price_for(
+            self.auth, self.actual.mark_price, self.x._filters
+        )
         self.quantity = order_quantity(self.auth, self.x._filters)
         if self.quantity == 0:
             self.fire(Event.NO_QUANTITY, f"bound {self.auth.max_base_quantity}")
@@ -394,6 +409,7 @@ class _Run:
                 trade_side(self.auth.side),
                 self.quantity,
                 self.proposal.decision_time,
+                limit_price=self.limit_price,
             )
         except ExchangeError as error:
             if error.code in _NOT_A_REJECTION:
@@ -440,6 +456,7 @@ class _Run:
             trade_side(self.auth.side),
             self.quantity,
             self.proposal.decision_time,
+            self.limit_price,
         )
         actual = (
             order.client_order_id,
@@ -447,6 +464,7 @@ class _Run:
             order.side,
             order.orig_qty,
             order.decision_time,
+            order.limit_price,
         )
         self.order = order
         if actual != expected or order.executed_qty > self.quantity:
@@ -460,6 +478,11 @@ class _Run:
         elif order.status is OrderStatus.FILLED and order.executed_qty == self.quantity:
             self.fire(
                 Event.FILL_CONFIRMED, f"{order.executed_qty} @ {order.fill_price}"
+            )
+        elif order.status is OrderStatus.EXPIRED and order.executed_qty == 0:
+            self.fire(
+                Event.NO_FILL_CONFIRMED,
+                f"nothing filled within the cap {self.limit_price}",
             )
         elif order.status is OrderStatus.EXPIRED:
             self.fire(

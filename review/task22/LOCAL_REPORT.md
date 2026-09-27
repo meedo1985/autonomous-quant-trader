@@ -158,3 +158,13 @@ This supersedes the "Release" bullet, T22-04, T22-05 and T22-06 above:
 
 Validation after repair: `pytest -q` 1467 passed, 4 skipped; ruff, format,
 mypy and lint-imports clean; frozen files unchanged.
+
+## Update after Astra review 2 and owner answer T22-Q3
+
+- R2-1, R2-2 repaired (`ADJUDICATION_2.md`).
+- T22-Q3 answered by the owner, "Cap the price" (`OWNER_ANSWER_Q3.md`). Every
+  order is immediate-or-cancel at the slippage cap, and a gap beyond it
+  trades nothing (`NOT_FILLED`). This supersedes T22-06 and T22-Q2. Paper
+  results can now differ from the always-fill backtest; disclosed.
+- Still open for the owner: T22-Q1 (protocol delay and absence count) and the
+  `max_slippage_bps` value itself.

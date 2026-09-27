@@ -151,12 +151,20 @@ def test_a_clean_order_fills_once_at_the_next_open() -> None:
     assert blocked.code is RefusalCode.OUTSTANDING_AUTHORIZATION  # type: ignore[union-attr]
 
 
-def test_a_gap_beyond_the_slippage_bound_freezes() -> None:
-    result, exchange, _, _, _ = _run(fill_open=101.0)
-    assert result.state is State.FREEZE
-    assert result.adverse_move_bps == Decimal("100")
-    assert result.slippage_breach and not result.released
-    assert len(_fills(exchange)) == 1
+def test_a_gap_beyond_the_price_cap_trades_nothing() -> None:
+    """Owner answer T22-Q3 (Astra R-5): the open is 100 bps above the mark,
+    the cap is 15 bps, so the order expires unfilled and nothing moves."""
+    result, exchange, governor, state, clock = _run(fill_open=101.0)
+    assert result.state is State.NOT_FILLED
+    assert result.order is not None
+    assert result.order.limit_price == Decimal("100.1500")
+    assert result.order.executed_qty == 0
+    assert exchange.balances() == {"USDT": Decimal(1000), "BTC": Decimal(0)}
+    assert not result.slippage_breach
+    # Something was sent, so reconciliation still decides the release.
+    assert (result.released, result.reconciliation_required) == (False, True)
+    blocked = governor.decide(Proposal("BTCUSDT", 0.4, MIDNIGHT), state, clock.now)
+    assert blocked.code is RefusalCode.OUTSTANDING_AUTHORIZATION  # type: ignore[union-attr]
 
 
 def test_a_fill_hidden_behind_not_found_is_never_released() -> None:

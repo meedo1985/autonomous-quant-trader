@@ -14,11 +14,16 @@ Semantics
 - Spot only (section 2): balances can never go negative, so there is no
   shorting, margin, or leverage. A sell larger than the free base balance, or
   a buy costing more than the free quote balance, is rejected.
-- Market orders only: Cycle 1 allows taker-like orders and no passive limits,
-  so `PRICE_FILTER` and `PERCENT_PRICE`, which govern limit prices, do not
-  apply. `LOT_SIZE`, and the minimum and maximum notional limits flagged as
-  applying to market orders, are enforced. The notional check uses
-  the decision bar's close, the last price known when the order is placed.
+- Taker-like orders only: Cycle 1 allows no passive limits. An order is a
+  market order, or, with `limit_price`, an immediate-or-cancel order capped
+  at that price (Task 22, owner answer T22-Q3): it fills at the next open
+  only if that open is no worse than the cap, and otherwise fills nothing
+  and expires. It never rests on a book. For a capped order the price must
+  be a multiple of `PRICE_FILTER`'s tick size when one is given;
+  `PERCENT_PRICE` is not modelled. `LOT_SIZE`, and the minimum and maximum
+  notional limits flagged as applying to market orders, are enforced. The
+  notional check uses the decision bar's close, the last price known when
+  the order is placed.
 - Quantities and balances are exact decimals, so step-size checks cannot be
   broken by binary rounding.
 - Faults are declared up front in a `Scenario`, keyed by `clientOrderId`.
@@ -81,8 +86,11 @@ class SymbolFilters:
     max_qty: Decimal
     min_notional: Decimal
     max_notional: Decimal | None = None  # None: no maximum applies to market orders
+    tick_size: Decimal | None = None  # PRICE_FILTER; None: no tick applies
 
     def __post_init__(self) -> None:
+        if self.tick_size is not None and self.tick_size <= 0:
+            raise ValueError("tick_size must be positive when given")
         if self.step_size <= 0 or self.min_qty < 0 or self.max_qty < self.min_qty:
             raise ValueError(f"inconsistent LOT_SIZE filter: {self}")
         if self.min_notional < 0:
@@ -120,7 +128,13 @@ def filters_from_exchange_info(
         min_notional = max(
             min_notional, Decimal(by_type["MIN_NOTIONAL"]["minNotional"])
         )
+    tick = (
+        Decimal(by_type["PRICE_FILTER"]["tickSize"])
+        if "PRICE_FILTER" in by_type
+        else None
+    )
     return SymbolFilters(
+        tick_size=tick if tick else None,  # a tickSize of 0 disables the rule
         step_size=Decimal(lot["stepSize"]),
         min_qty=Decimal(lot["minQty"]),
         max_qty=Decimal(lot["maxQty"]),
@@ -179,9 +193,11 @@ class Order:
     quote_amount: Decimal  # executed_qty * fill_price
     cost_quote: Decimal  # frozen per-side cost, charged in USDT
     cost_bps: Decimal
+    limit_price: Decimal | None = None  # the cap of an immediate-or-cancel order
 
     def as_mapping(self) -> dict[str, str]:
         return {
+            "limit_price": "" if self.limit_price is None else str(self.limit_price),
             "client_order_id": self.client_order_id,
             "cost_bps": str(self.cost_bps),
             "cost_quote": str(self.cost_quote),
@@ -233,8 +249,13 @@ class SimulatedExchange:
         side: Side,
         quantity: Decimal,
         decision_time: datetime,
+        *,
+        limit_price: Decimal | None = None,
     ) -> Order:
-        """Place a market order decided at a bar close; it fills at the next open.
+        """Place an order decided at a bar close; it fills at the next open.
+
+        With `limit_price` it is immediate-or-cancel: it fills only if the
+        next open is no worse than the cap, and otherwise expires unfilled.
 
         Re-placing an existing `clientOrderId` with identical parameters
         returns the existing order and never fills twice; with different
@@ -252,7 +273,10 @@ class SimulatedExchange:
                 symbol,
                 side,
                 quantity,
-            ) and existing.decision_time == decision_time
+            ) and (existing.decision_time, existing.limit_price) == (
+                decision_time,
+                limit_price,
+            )
             if not same:
                 self._reject(client_order_id, "DUPLICATE_CLIENT_ORDER_ID", "differs")
             self._log("duplicate", client_order_id)
@@ -274,6 +298,12 @@ class SimulatedExchange:
             decision_bar = series.bar_at(decision_time - series.interval)
         except BarSemanticsError as error:
             self._reject(client_order_id, "INVALID_DECISION_TIME", str(error))
+        if limit_price is not None:
+            if not limit_price.is_finite() or limit_price <= 0:
+                self._reject(client_order_id, "INVALID_PRICE", str(limit_price))
+            tick = filters.tick_size
+            if tick is not None and _DEC.remainder(limit_price, tick) != 0:
+                self._reject(client_order_id, "FILTER_PRICE", f"tick {tick}")
         known_price = Decimal(repr(decision_bar.close))
         known_notional = _DEC.multiply(quantity, known_price)
         if known_notional < filters.min_notional:
@@ -293,6 +323,11 @@ class SimulatedExchange:
             self._reject(client_order_id, "NO_FILL_BAR", str(error))
         price = Decimal(repr(cost.execution_price))
         cost_bps = Decimal(repr(cost.breakdown.total_bps))
+        beyond_cap = limit_price is not None and (
+            price > limit_price if side is Side.BUY else price < limit_price
+        )
+        if beyond_cap:
+            executed = Decimal(0)
         base = symbol.removesuffix(_QUOTE)
         # The whole requested order must be affordable before any partial-fill
         # fault applies, as on the venue: a sell above the free base balance,
@@ -321,6 +356,7 @@ class SimulatedExchange:
             quote_amount=notional,
             cost_quote=cost_quote,
             cost_bps=cost_bps,
+            limit_price=limit_price,
         )
         self._orders[client_order_id] = order
         self.events.append({"event": "fill", **order.as_mapping()})
