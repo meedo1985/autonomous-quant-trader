@@ -167,6 +167,12 @@ _NOT_A_REJECTION: Final[frozenset[str]] = frozenset(
 """Placement errors that do not say the order is absent: the id may already
 name an order, so the outcome is unknown and is queried."""
 
+_RELEASABLE_ENDS: Final[frozenset[State]] = frozenset(
+    {_S.REFUSED, _S.NEW_AUTHORIZATION_REQUIRED}
+)
+"""Ends at which a run that sent nothing gives its reservation back,
+including expiry before the first placement (Astra R2-1). FREEZE keeps it."""
+
 
 class IllegalTransition(RuntimeError):
     """A (state, event) pair `TRANSITIONS` does not define."""
@@ -362,9 +368,9 @@ class _Run:
             self.releasable = refusal.code is RefusalCode.STATE_CHANGED
             self.fire(Event.REDEEM_REFUSED, f"{refusal.code}: {refusal.detail}")
             return
+        self.releasable = True  # redeemed by this run; nothing sent yet
         self.quantity = order_quantity(self.auth, self.x._filters)
         if self.quantity == 0:
-            self.releasable = True  # redeemed by this run, and nothing sent
             self.fire(Event.NO_QUANTITY, f"bound {self.auth.max_base_quantity}")
         else:
             self.fire(Event.REDEEMED)
@@ -466,13 +472,11 @@ class _Run:
     def _finish(self) -> ExecutionResult:
         released = False
         sent = self.placements > 0
-        if self.releasable and not sent and self.state is State.REFUSED:
-            try:
-                now = self.now()
-            except _ClockFault:
-                pass  # keep the reservation; reconciliation clears it
-            else:
-                released = self.x._governor.release(self.auth, now) is None
+        if self.releasable and not sent and self.state in _RELEASABLE_ENDS:
+            # Released at the last accepted reading, with no new one (Astra
+            # R2-2): a fault found only here would go unlogged.
+            assert self.latest is not None
+            released = self.x._governor.release(self.auth, self.latest) is None
         move = self._adverse_move_bps()
         return ExecutionResult(
             state=self.state,

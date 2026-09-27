@@ -550,6 +550,12 @@ def test_expiry_is_checked_at_the_submission_boundary() -> None:
     assert result.state is State.NEW_AUTHORIZATION_REQUIRED
     assert _events(result) == [Event.REDEEMED, Event.AUTHORIZATION_EXPIRED]
     assert venue.placed == []
+    # Astra R2-1: nothing was sent, so the reservation is given back and a
+    # fresh decision is not blocked; the spent authorization stays spent.
+    assert (result.released, result.reconciliation_required) == (True, False)
+    assert governor.redeem(auth, state, clock.now).code is RefusalCode.ALREADY_USED
+    fresh = governor.decide(Proposal("BTCUSDT", 0.5, MIDNIGHT), state, clock.now)
+    assert isinstance(fresh, Authorization)
 
 
 def test_a_clock_that_goes_backwards_freezes_instead_of_retrying() -> None:
@@ -593,3 +599,23 @@ def test_a_fill_beyond_the_slippage_bound_freezes() -> None:
     assert result.state is State.FREEZE
     assert _events(result)[-1] is Event.SLIPPAGE_BREACH
     assert result.slippage_breach and not result.released
+
+
+def test_a_clock_fault_at_the_end_is_not_hidden() -> None:
+    """Astra R2-2: release reuses the last accepted reading instead of taking
+    a new one that could fault silently after the terminal state."""
+    venue = ScriptedVenue(places=["fill"])
+    governor, _, _, auth, proposal, state = _setup(venue)
+    clock = SteppingClock([MIDNIGHT, MIDNIGHT, MIDNIGHT - SECOND])
+    executor = Executor(
+        governor,
+        venue,
+        replace(FILTERS, min_qty=Decimal("10")),
+        CONFIG,
+        clock=clock,
+        sleep=clock.sleep,
+    )
+    result = executor.execute(auth, proposal, state)
+    assert result.state is State.REFUSED
+    assert _events(result) == [Event.NO_QUANTITY]
+    assert result.released
