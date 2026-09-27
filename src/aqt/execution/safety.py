@@ -13,8 +13,11 @@ How that reads here:
 
 * Only RUNNING lets the governor and executor trade (`may_trade`).
 * HALT places no order at all, not even a reduction: stopping is the whole
-  of HALT. FLATTEN is the reducing path, and the owner may start it from
-  RUNNING or HALT at any time, whatever reservation the governor holds.
+  of HALT. The `L-03` loss stop is the exception by owner setting S-4
+  (`review/deployment/OWNER_SETTINGS_2026-09-27.md`): it enters FLATTEN from
+  RUNNING or HALT, which sells and then ends in HALT. FLATTEN is the
+  reducing path, and the owner may start it from RUNNING or HALT at any
+  time, whatever reservation the governor holds.
 * FLATTEN sells only, at most the free base balance the venue reports, in
   steps of at most `max_step_fraction` of it, each an immediate-or-cancel
   order capped at `max_slippage_bps` below the mark. It can never cross
@@ -103,14 +106,17 @@ class Trigger(StrEnum):
 
 
 _M, _T = Mode, Trigger
-_TO_HALT: Final = (_T.OWNER_HALT, _T.INCIDENT, _T.LOSS_STOP)
+_TO_HALT: Final = (_T.OWNER_HALT, _T.INCIDENT)
 _TO_FREEZE: Final = (_T.AMBIGUOUS_ORDER, _T.RECONCILIATION_FAILED)
 
 MODE_TRANSITIONS: Final[dict[tuple[Mode, Trigger], Mode]] = {
     **{(_M.RUNNING, t): _M.HALT for t in _TO_HALT},
+    # The L-03 stop sells everything, then HALTs (owner setting S-4).
+    (_M.RUNNING, _T.LOSS_STOP): _M.FLATTEN,
     (_M.RUNNING, _T.OWNER_FLATTEN): _M.FLATTEN,
     **{(_M.RUNNING, t): _M.FREEZE for t in _TO_FREEZE},
     **{(_M.HALT, t): _M.HALT for t in _TO_HALT},
+    (_M.HALT, _T.LOSS_STOP): _M.FLATTEN,
     (_M.HALT, _T.OWNER_FLATTEN): _M.FLATTEN,
     **{(_M.HALT, t): _M.FREEZE for t in _TO_FREEZE},
     (_M.HALT, _T.HALT_OVERRIDE): _M.RUNNING,
@@ -124,13 +130,13 @@ MODE_TRANSITIONS: Final[dict[tuple[Mode, Trigger], Mode]] = {
     (_M.FLATTEN, _T.FLATTEN_FAULT): _M.FREEZE,
     **{(_M.FLATTEN, t): _M.FREEZE for t in _TO_FREEZE},
     # FREEZE absorbs every alarm and leaves only through reconciliation.
-    **{(_M.FREEZE, t): _M.FREEZE for t in (*_TO_HALT, *_TO_FREEZE)},
+    **{(_M.FREEZE, t): _M.FREEZE for t in (*_TO_HALT, _T.LOSS_STOP, *_TO_FREEZE)},
     (_M.FREEZE, _T.FREEZE_EXIT): _M.HALT,
 }
 """Every allowed mode change. Anything else is refused."""
 
 _INCIDENT_TRIGGERS: Final = frozenset(
-    {*_TO_HALT, *_TO_FREEZE, _T.FLATTEN_DONE, _T.FLATTEN_FAULT}
+    {*_TO_HALT, _T.LOSS_STOP, *_TO_FREEZE, _T.FLATTEN_DONE, _T.FLATTEN_FAULT}
 )
 """Triggers that open an incident: every entry into HALT or FREEZE, and
 every alarm raised while in a protective mode."""
