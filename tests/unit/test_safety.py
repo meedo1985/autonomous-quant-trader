@@ -361,3 +361,19 @@ def test_flatten_bounds_are_required_values() -> None:
             )
     with pytest.raises(ValueError):
         FlattenBounds(max_step_fraction=Decimal("0.5"), max_slippage_bps=Decimal(-1))
+
+
+def test_the_loss_stop_sells_then_halts_and_opens_an_incident(tmp_path: Path) -> None:
+    """Owner setting S-4: the L-03 stop enters FLATTEN, never plain HALT."""
+    for start in (Mode.RUNNING, Mode.HALT):
+        controller, _, incidents = _controller(tmp_path / str(start), start)
+        (tmp_path / str(start)).mkdir()
+        assert (
+            controller.trigger(Trigger.LOSS_STOP, T0, "20% below peak") is Mode.FLATTEN
+        )
+        assert len(incidents.open_incidents()) == 1
+    frozen, _, _ = _controller(tmp_path / "frozen", Mode.FREEZE)
+    (tmp_path / "frozen").mkdir()
+    assert (
+        frozen.trigger(Trigger.LOSS_STOP, T0) is Mode.FREEZE
+    )  # no exit before reconciliation
