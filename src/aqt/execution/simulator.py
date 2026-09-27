@@ -332,7 +332,12 @@ class SimulatedExchange:
         # The whole requested order must be affordable before any partial-fill
         # fault applies, as on the venue: a sell above the free base balance,
         # or a buy the quote balance cannot cover, is rejected outright.
-        for asset, delta in self._deltas(side, base, quantity, price, cost_bps).items():
+        # A capped buy is priced at its cap, as the venue locks quote at the
+        # limit price; it never prices a fill the cap forbids (Astra R3-3).
+        checked = price if limit_price is None or side is Side.SELL else limit_price
+        for asset, delta in self._deltas(
+            side, base, quantity, checked, cost_bps
+        ).items():
             if _DEC.add(self._balances.get(asset, Decimal(0)), delta) < 0:
                 self._reject(client_order_id, "INSUFFICIENT_BALANCE", asset)
         deltas = self._deltas(side, base, executed, price, cost_bps)

@@ -104,6 +104,7 @@ class Event(StrEnum):
     REDEEMED = "REDEEMED"
     REDEEM_REFUSED = "REDEEM_REFUSED"
     NO_QUANTITY = "NO_QUANTITY"
+    NO_VALID_PRICE = "NO_VALID_PRICE"
     FILL_CONFIRMED = "FILL_CONFIRMED"
     PARTIAL_FILL_CONFIRMED = "PARTIAL_FILL_CONFIRMED"
     NO_FILL_CONFIRMED = "NO_FILL_CONFIRMED"
@@ -140,6 +141,7 @@ TRANSITIONS: Final[dict[tuple[State, Event], State]] = {
     (_S.READY, _E.REDEEMED): _S.SUBMITTING,
     (_S.READY, _E.REDEEM_REFUSED): _S.REFUSED,
     (_S.READY, _E.NO_QUANTITY): _S.REFUSED,
+    (_S.READY, _E.NO_VALID_PRICE): _S.REFUSED,
     **{(_S.SUBMITTING, event): state for event, state in _FOUND.items()},
     (_S.SUBMITTING, _E.OUTCOME_UNKNOWN): _S.QUERYING,
     (_S.SUBMITTING, _E.PLACE_REJECTED): _S.REJECTED,
@@ -381,9 +383,15 @@ class _Run:
             self.fire(Event.REDEEM_REFUSED, f"{refusal.code}: {refusal.detail}")
             return
         self.releasable = True  # redeemed by this run; nothing sent yet
-        self.limit_price = limit_price_for(
+        limit_price = limit_price_for(
             self.auth, self.actual.mark_price, self.x._filters
         )
+        if limit_price is None:
+            # Astra R3-2: a terminal refusal, not an exception that would
+            # leave the redeemed reservation stranded.
+            self.fire(Event.NO_VALID_PRICE, f"tick {self.x._filters.tick_size}")
+            return
+        self.limit_price = limit_price
         self.quantity = order_quantity(self.auth, self.x._filters)
         if self.quantity == 0:
             self.fire(Event.NO_QUANTITY, f"bound {self.auth.max_base_quantity}")

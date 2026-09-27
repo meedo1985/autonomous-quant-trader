@@ -14,9 +14,11 @@ never exceeds the authorized bound (section 20).
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import ROUND_CEILING, ROUND_FLOOR, Context, Decimal
+from fractions import Fraction
 from typing import Final
 
 from aqt.backtest.costs import Side as TradeSide
@@ -33,7 +35,6 @@ __all__ = [
 
 _DEC: Final = Context(prec=34)
 _ID_PREFIX: Final[str] = "aqt-"
-_BPS: Final = Decimal(10_000)
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,28 +86,25 @@ def order_quantity(authorization: Authorization, filters: SymbolFilters) -> Deci
 
 def limit_price_for(
     authorization: Authorization, mark_price: Decimal, filters: SymbolFilters
-) -> Decimal:
-    """The worst price the authorization accepts (owner answer T22-Q3).
+) -> Decimal | None:
+    """The worst price the authorization accepts (owner answer T22-Q3), or
+    `None` when no positive price on the tick lies within the bound.
 
     `max_slippage_bps` from the mark price: above it for a buy, below it for
-    a sell, rounded to the tick size toward the mark, so the cap is never
-    looser than the bound.
+    a sell. The bound is computed exactly, and every rounding (to the tick,
+    then to a Decimal) goes toward the mark, so the cap is never looser than
+    the bound (Astra R3-1).
     """
-    ratio = _DEC.divide(authorization.max_slippage_bps, _BPS)
-    if authorization.side is Side.BUY:
-        cap, rounding = _DEC.multiply(mark_price, _DEC.add(1, ratio)), ROUND_FLOOR
-    else:
-        cap, rounding = (
-            _DEC.multiply(mark_price, _DEC.subtract(1, ratio)),
-            ROUND_CEILING,
-        )
+    buy = authorization.side is Side.BUY
+    ratio = Fraction(authorization.max_slippage_bps) / 10_000
+    bound = Fraction(mark_price) * (1 + ratio if buy else 1 - ratio)
     tick = filters.tick_size
     if tick is not None:
-        steps = _DEC.divide(cap, tick).to_integral_value(rounding=rounding)
-        cap = _DEC.multiply(steps, tick)
-    if cap <= 0:
-        raise ValueError(f"no positive price within the bound: {cap}")
-    return cap
+        steps = bound / Fraction(tick)
+        bound = (math.floor(steps) if buy else math.ceil(steps)) * Fraction(tick)
+    toward_mark = Context(prec=34, rounding=ROUND_FLOOR if buy else ROUND_CEILING)
+    cap = toward_mark.divide(Decimal(bound.numerator), Decimal(bound.denominator))
+    return cap if cap > 0 else None
 
 
 def trade_side(side: Side) -> TradeSide:

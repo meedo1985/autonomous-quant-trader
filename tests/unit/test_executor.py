@@ -667,3 +667,55 @@ def test_an_unfilled_capped_order_ends_not_filled() -> None:
     assert result.state is State.NOT_FILLED
     assert _events(result)[-1] is Event.NO_FILL_CONFIRMED
     assert result.reconciliation_required and not result.released
+
+
+def test_the_price_cap_is_never_looser_than_the_exact_bound() -> None:
+    """Astra R3-1: 34-digit rounding once lifted 100.14 to 100.15."""
+    from fractions import Fraction
+
+    venue = ScriptedVenue(places=[])
+    _, _, _, auth, _, _ = _setup(venue)
+    sell = replace(auth, side=Side.SELL)
+    ticked = replace(FILTERS, tick_size=Decimal("0.01"))
+    near = Decimal("99." + "9" * 32)  # 100 - 1e-32, exactly
+    assert limit_price_for(auth, near, ticked) == Decimal("100.14")
+    above = Decimal("100." + "0" * 31 + "1")  # 100 + 1e-32
+    assert limit_price_for(sell, above, ticked) == Decimal("99.86")
+    rng = random.Random(31)
+    for _ in range(500):
+        mark = Decimal(rng.randrange(1, 10**34)).scaleb(-rng.randrange(0, 34))
+        bps = Decimal(rng.randrange(0, 2000))
+        for side_auth in (
+            replace(auth, max_slippage_bps=bps),
+            replace(sell, max_slippage_bps=bps),
+        ):
+            buy = side_auth.side is Side.BUY
+            ratio = Fraction(bps) / 10_000
+            bound = Fraction(mark) * (1 + ratio if buy else 1 - ratio)
+            for filters in (FILTERS, ticked):
+                cap = limit_price_for(side_auth, mark, filters)
+                if cap is None:
+                    continue
+                assert (Fraction(cap) <= bound) if buy else (Fraction(cap) >= bound)
+
+
+def test_no_valid_price_refuses_and_releases_instead_of_raising() -> None:
+    """Astra R3-2: a tick coarser than the whole price used to raise and
+    strand the redeemed reservation."""
+    venue = ScriptedVenue(places=["fill"])
+    governor, _, clock, auth, proposal, state = _setup(venue)
+    executor = Executor(
+        governor,
+        venue,
+        replace(FILTERS, tick_size=Decimal("200")),
+        CONFIG,
+        clock=clock,
+        sleep=clock.sleep,
+    )
+    result = executor.execute(auth, proposal, state)
+    assert result.state is State.REFUSED
+    assert _events(result) == [Event.NO_VALID_PRICE]
+    assert (result.released, result.reconciliation_required) == (True, False)
+    assert venue.placed == []
+    fresh = governor.decide(Proposal("BTCUSDT", 0.5, MIDNIGHT), state, clock.now)
+    assert isinstance(fresh, Authorization)

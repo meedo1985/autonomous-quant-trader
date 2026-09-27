@@ -486,3 +486,14 @@ def test_a_cap_off_the_tick_or_a_changed_cap_is_rejected() -> None:
 def test_the_tick_size_is_read_from_price_filter() -> None:
     filters = filters_from_exchange_info(_payload(), "BTCUSDT")
     assert filters.tick_size == Decimal("0.01")
+
+
+def test_a_capped_buy_is_checked_for_funds_at_its_cap() -> None:
+    """Astra R3-3: 9.9 BTC is affordable at the 100 cap but not at the 101
+    open; the order expires unfilled instead of being rejected."""
+    exchange = _exchange()
+    order = exchange.place_order(
+        "a1", "BTCUSDT", Side.BUY, Decimal("9.9"), DECISION, limit_price=Decimal("100")
+    )
+    assert (order.status, order.executed_qty) == (OrderStatus.EXPIRED, 0)
+    assert exchange.balances() == {"USDT": Decimal("1000"), "BTC": Decimal("0")}
