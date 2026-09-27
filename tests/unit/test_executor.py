@@ -719,3 +719,20 @@ def test_no_valid_price_refuses_and_releases_instead_of_raising() -> None:
     assert venue.placed == []
     fresh = governor.decide(Proposal("BTCUSDT", 0.5, MIDNIGHT), state, clock.now)
     assert isinstance(fresh, Authorization)
+
+
+def test_affordable_quantity_never_exceeds_the_cash_at_the_worst_cost() -> None:
+    from fractions import Fraction
+
+    from aqt.execution.orders import WORST_CASE_COST_BPS, affordable_quantity
+
+    assert WORST_CASE_COST_BPS == Decimal("27.0")
+    rng = random.Random(24)
+    for _ in range(500):
+        cash = Decimal(rng.randrange(0, 10**9)).scaleb(-rng.randrange(0, 6))
+        cap = Decimal(rng.randrange(1, 10**8)).scaleb(-rng.randrange(0, 4))
+        q = affordable_quantity(cash, cap, FILTERS)
+        cost = Fraction(q) * Fraction(cap) * (1 + Fraction(27, 10_000))
+        assert 0 <= Fraction(q) and cost <= Fraction(cash)
+        one_more = (Fraction(q) + Fraction(FILTERS.step_size)) * Fraction(cap)
+        assert one_more * (1 + Fraction(27, 10_000)) > Fraction(cash)

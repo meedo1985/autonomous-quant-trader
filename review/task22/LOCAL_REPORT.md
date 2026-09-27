@@ -168,3 +168,19 @@ mypy and lint-imports clean; frozen files unchanged.
   results can now differ from the always-fill backtest; disclosed.
 - Still open for the owner: T22-Q1 (protocol delay and absence count) and the
   `max_slippage_bps` value itself.
+
+## Update: defect found by the Task 24 loop (T22-07)
+
+- **T22-07. Full-exposure buys were always rejected.** The quantity was the
+  governor's bound: all the cash at the mark. At a 100% target the frozen
+  costs made every such buy `INSUFFICIENT_BALANCE`. It surfaced when the
+  Task 24 loop ran on synthetic data at a 100% baseline target. A buy is now
+  also capped by `affordable_quantity`: the largest step multiple whose cost
+  at the price cap, plus the cost model's worst-case 27 bps per side (fee 10
+  + spread 2 + slippage cap 15), fits in the quote balance. This places less
+  than authorized, which section 20 allows. A fee schedule above the
+  fallback could still be rejected, which ends the run safely as REJECTED.
+- Tests: `test_a_full_exposure_buy_is_sized_to_what_the_cash_can_pay` (fails
+  without the fix), `test_affordable_quantity_never_exceeds_the_cash_at_the_worst_cost`.
+- This change is not covered by Astra reviews 1 to 3. It goes into the fourth
+  review.

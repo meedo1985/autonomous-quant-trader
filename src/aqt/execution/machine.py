@@ -53,6 +53,7 @@ from aqt.backtest.costs import Side as TradeSide
 from aqt.data.bars import require_utc
 from aqt.execution.orders import (
     ExecutorConfig,
+    affordable_quantity,
     client_order_id_for,
     limit_price_for,
     order_quantity,
@@ -392,7 +393,18 @@ class _Run:
             self.fire(Event.NO_VALID_PRICE, f"tick {self.x._filters.tick_size}")
             return
         self.limit_price = limit_price
-        self.quantity = order_quantity(self.auth, self.x._filters)
+        quantity = order_quantity(self.auth, self.x._filters)
+        if self.auth.side is Side.BUY:
+            # A buy is also capped by what the quote balance can pay for at the
+            # cap price, costs included; otherwise a full-exposure buy is
+            # always rejected. Placing less than authorized is allowed.
+            affordable = affordable_quantity(
+                self.actual.quote_balance, limit_price, self.x._filters
+            )
+            quantity = min(quantity, affordable)
+        if quantity < self.x._filters.min_qty:
+            quantity = Decimal(0)
+        self.quantity = quantity
         if self.quantity == 0:
             self.fire(Event.NO_QUANTITY, f"bound {self.auth.max_base_quantity}")
         else:

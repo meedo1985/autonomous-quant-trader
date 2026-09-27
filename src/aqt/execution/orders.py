@@ -21,12 +21,19 @@ from decimal import ROUND_CEILING, ROUND_FLOOR, Context, Decimal
 from fractions import Fraction
 from typing import Final
 
+from aqt.backtest.costs import (
+    FALLBACK_TAKER_FEE_BPS,
+    SLIPPAGE_CAP_BPS,
+    SPREAD_ALLOWANCE_BPS,
+)
 from aqt.backtest.costs import Side as TradeSide
 from aqt.execution.simulator import SymbolFilters
 from aqt.governor.authorization import Authorization, Side
 
 __all__ = [
+    "WORST_CASE_COST_BPS",
     "ExecutorConfig",
+    "affordable_quantity",
     "capped_price",
     "client_order_id_for",
     "limit_price_for",
@@ -36,6 +43,14 @@ __all__ = [
 
 _DEC: Final = Context(prec=34)
 _ID_PREFIX: Final[str] = "aqt-"
+
+WORST_CASE_COST_BPS: Final[Decimal] = Decimal(
+    repr(FALLBACK_TAKER_FEE_BPS + SPREAD_ALLOWANCE_BPS + SLIPPAGE_CAP_BPS)
+)
+"""The frozen cost model's largest per-side charge at the fallback fee:
+10 bps fee + 2 bps spread + 15 bps slippage cap = 27 bps. A fee schedule
+above the fallback could still leave a buy unaffordable; the venue then
+rejects it, which ends the run safely as REJECTED."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +131,16 @@ def capped_price(
     toward_mark = Context(prec=34, rounding=ROUND_FLOOR if buy else ROUND_CEILING)
     cap = toward_mark.divide(Decimal(bound.numerator), Decimal(bound.denominator))
     return cap if cap > 0 else None
+
+
+def affordable_quantity(
+    quote_balance: Decimal, limit_price: Decimal, filters: SymbolFilters
+) -> Decimal:
+    """The largest step-multiple quantity whose cost at the cap, plus the
+    worst-case charge, fits in `quote_balance` (exact, rounded down)."""
+    unit = Fraction(limit_price) * (1 + Fraction(WORST_CASE_COST_BPS) / 10_000)
+    steps = math.floor(Fraction(quote_balance) / unit / Fraction(filters.step_size))
+    return _DEC.multiply(Decimal(max(steps, 0)), filters.step_size)
 
 
 def trade_side(side: Side) -> TradeSide:
