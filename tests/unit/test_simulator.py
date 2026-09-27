@@ -378,3 +378,34 @@ def test_an_applicable_maximum_notional_is_enforced() -> None:
     assert caught.value.code == "FILTER_MAX_NOTIONAL"
     order = exchange.place_order("m2", "BTCUSDT", Side.BUY, Decimal("0.4"), DECISION)
     assert order.status is OrderStatus.FILLED  # 0.4 * close 100 = 40, at the cap
+
+
+def test_a_lost_placement_leaves_no_order_and_a_later_one_fills_once() -> None:
+    exchange = _exchange(Scenario({"l1": Fault(lost_placements=1)}))
+    with pytest.raises(SimulatedTimeout):
+        exchange.place_order("l1", "BTCUSDT", Side.BUY, Decimal("0.5"), DECISION)
+    with pytest.raises(ExchangeError) as missing:
+        exchange.query_order("l1")
+    assert missing.value.code == "NOT_FOUND"
+    assert exchange.balances()["BTC"] == Decimal("0")
+    order = exchange.place_order("l1", "BTCUSDT", Side.BUY, Decimal("0.5"), DECISION)
+    assert order.status is OrderStatus.FILLED
+    assert exchange.balances()["BTC"] == Decimal("0.5")
+
+
+def test_unknown_queries_time_out_before_not_found_answers_begin() -> None:
+    fault = Fault(unknown_queries=1, not_found_queries=1)
+    exchange = _exchange(Scenario({"u1": fault}))
+    exchange.place_order("u1", "BTCUSDT", Side.BUY, Decimal("0.5"), DECISION)
+    with pytest.raises(SimulatedTimeout):
+        exchange.query_order("u1")
+    with pytest.raises(ExchangeError) as missing:
+        exchange.query_order("u1")
+    assert missing.value.code == "NOT_FOUND"
+    assert exchange.query_order("u1").client_order_id == "u1"
+
+
+@pytest.mark.parametrize("fault", [{"lost_placements": -1}, {"unknown_queries": -1}])
+def test_negative_fault_counts_are_rejected(fault: dict[str, int]) -> None:
+    with pytest.raises(ValueError):
+        Fault(**fault)  # type: ignore[arg-type]

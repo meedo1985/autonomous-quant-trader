@@ -139,14 +139,24 @@ class Fault:
       order exists, as a lagging order book can.
     - `fill_fraction`: only this share of the quantity fills (rounded down to
       the step size); the rest expires.
+    - `lost_placements`: the first N placements never reach the exchange:
+      `place_order` raises `SimulatedTimeout` and no order exists (Task 22).
+    - `unknown_queries`: the first N queries raise `SimulatedTimeout`, so the
+      caller cannot learn the order's status; the `not_found_queries` count
+      starts after them (Task 22).
     """
 
     timeout: bool = False
     not_found_queries: int = 0
     fill_fraction: Decimal = Decimal(1)
+    lost_placements: int = 0
+    unknown_queries: int = 0
 
     def __post_init__(self) -> None:
-        if self.not_found_queries < 0 or not 0 < self.fill_fraction <= 1:
+        if (
+            min(self.not_found_queries, self.lost_placements, self.unknown_queries) < 0
+            or not 0 < self.fill_fraction <= 1
+        ):
             raise ValueError(f"invalid fault: {self}")
 
 
@@ -210,6 +220,7 @@ class SimulatedExchange:
         self._fees = fees
         self._orders: dict[str, Order] = {}
         self._queries: dict[str, int] = {}
+        self._placements: dict[str, int] = {}
         self.events: list[dict[str, str]] = []
 
     def balances(self) -> dict[str, Decimal]:
@@ -229,6 +240,12 @@ class SimulatedExchange:
         returns the existing order and never fills twice; with different
         parameters it is rejected.
         """
+        fault = self._scenario.faults.get(client_order_id, Fault())
+        attempt = self._placements.get(client_order_id, 0)
+        self._placements[client_order_id] = attempt + 1
+        if attempt < fault.lost_placements:
+            self._log("lost", client_order_id)
+            raise SimulatedTimeout(f"no response for {client_order_id}")
         existing = self._orders.get(client_order_id)
         if existing is not None:
             same = (existing.symbol, existing.side, existing.orig_qty) == (
@@ -264,7 +281,6 @@ class SimulatedExchange:
         if filters.max_notional is not None and known_notional > filters.max_notional:
             self._reject(client_order_id, "FILTER_MAX_NOTIONAL", f"quantity {quantity}")
 
-        fault = self._scenario.faults.get(client_order_id, Fault())
         # A whole number of steps, rounded down: quantize() would round to the
         # step's exponent, which is not the same as a multiple of the step.
         steps = _DEC.divide_int(
@@ -329,8 +345,11 @@ class SimulatedExchange:
         seen = self._queries.get(client_order_id, 0)
         self._queries[client_order_id] = seen + 1
         fault = self._scenario.faults.get(client_order_id, Fault())
+        if seen < fault.unknown_queries:
+            self._log("query_timeout", client_order_id)
+            raise SimulatedTimeout(f"no response for query {client_order_id}")
         order = self._orders.get(client_order_id)
-        if order is None or seen < fault.not_found_queries:
+        if order is None or seen < fault.unknown_queries + fault.not_found_queries:
             self._log("query_not_found", client_order_id)
             raise ExchangeError("NOT_FOUND", client_order_id)
         self._log("query", client_order_id)
