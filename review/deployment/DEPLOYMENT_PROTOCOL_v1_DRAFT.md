@@ -32,6 +32,9 @@ document restates but cannot relax.
   (record `review/pre-deployment/LOSS_BOUNDS_ADOPTION_RECORD.md`). It is the
   owner's self-imposed bound, not frozen text, and this draft is still not
   adopted as a whole.
+- **[OWNER-SET T22-Q1]**: an operating value the owner chose in answer to a
+  task question, with a committed record. Like `[ADOPTED L-nn]`, it does not
+  adopt this draft as a whole.
 - **[OPEN]**: a value or choice no frozen text or proposal supplies. The owner
   must decide it before activation. The AI has deliberately not proposed a
   number where none exists in the sources, so an invented default cannot pass
@@ -207,8 +210,10 @@ cooling-off is [OPEN].
 unexpired authorization; otherwise get new authorization. UNKNOWN →
 reconcile/FREEZE."
 
-- **The "protocol delay" is not set anywhere in the frozen protocol.** It is
-  [OPEN: delay, and how many NOT_FOUND answers count as confirmed absence].
+- **The "protocol delay" is not set anywhere in the frozen protocol.** The
+  owner set it on 2026-09-27: wait **10 seconds** between queries, and **2**
+  NOT_FOUND answers count as confirmed absence [OWNER-SET T22-Q1]
+  (`review/task22/OWNER_ANSWER_Q1.md`).
 - Before relying on the venue to reject a repeated `clientOrderId`, verify
   Binance's current behavior against its official documentation (Task 18
   finding T18-04). The simulator never fills a repeated id twice; the real
@@ -280,7 +285,6 @@ anomaly: an incident [FROZEN §0].
 | §4, §5 | Channel test interval; health-check thresholds and severities |
 | §6 | Automatic FLATTEN triggers and bounds; post-HALT cooling-off length |
 | §10 | Hold or FLATTEN the remaining live position when leaving canary |
-| §7 | NOT_FOUND delay and confirmed-absence rule |
 | §8 | Executor IP address(es); key storage mechanism |
 
 The §1 inputs `L-01`–`L-04`, the §25 signature and the §16 AI reviewer were
