@@ -81,7 +81,7 @@ Environment: Windows 11, `.venv` Python 3.14.
 
 | Command | Result |
 | --- | --- |
-| `pytest -q` | 1460 passed, 4 skipped (before the last test addition); executor and simulator files after it: 66 passed |
+| `pytest -q` | 1461 passed, 4 skipped in 81.70s |
 | `ruff check .` | All checks passed |
 | `ruff format --check .` | 90 files already formatted |
 | `mypy src scripts` | Success: no issues found in 46 source files |
