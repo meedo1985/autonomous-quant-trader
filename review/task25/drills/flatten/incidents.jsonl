@@ -1,0 +1,1 @@
+{"entry_hash":"4907cfe286666da7c1b7890a3d871ebe5a09e959bf2a4da4cee319e72b4eb337","payload":{"detail":"no sellable step within the bound; BTC left: 0.00108","kind":"FLATTEN_DONE"},"previous_hash":"0000000000000000000000000000000000000000000000000000000000000000","record_type":"aqt.execution.incident.open.v1","recorded_at_utc":"2020-07-16T10:00:00Z","sequence":0}

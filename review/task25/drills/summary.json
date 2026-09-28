@@ -1,0 +1,41 @@
+{
+  "data_manifest_sha256": "5f92ec5041c9560d5f31bdb99b9686d7522697e65a8e61d514a0b0dda6d0b65b",
+  "drills": [
+    {
+      "name": "clean",
+      "expected": "full window runs to the end without refusal; no FREEZE",
+      "observed": "hours 3504, scheduled 146, authorizations 2, orders 2, final RUNNING",
+      "passed": true
+    },
+    {
+      "name": "halt",
+      "expected": "owner HALT at 2020-07-16T00:00:00+00:00: no order after it; ends in HALT",
+      "observed": "orders after HALT 0, final HALT",
+      "passed": true
+    },
+    {
+      "name": "flatten",
+      "expected": "owner FLATTEN at 2020-07-16T00:00:00+00:00: sells in bounded steps, then HALT with at most an unsellable remainder",
+      "observed": "transitions [('RUNNING', 'FLATTEN', 'OWNER_FLATTEN'), ('FLATTEN', 'HALT', 'FLATTEN_DONE')], final HALT, BTC left 0.00108",
+      "passed": true
+    },
+    {
+      "name": "ambiguous",
+      "expected": "first order times out and its status cannot be read: section 21 ends in FREEZE with one incident; no further order for the rest of the run",
+      "observed": "orders 1, transitions [('RUNNING', 'FREEZE', 'AMBIGUOUS_ORDER')], open incidents 1, final FREEZE",
+      "passed": true
+    },
+    {
+      "name": "refuse_start",
+      "expected": "a start with the ambiguous drill's incident still open, and a start with a Binance key variable set, are both refused with no order; the variable's value is never logged",
+      "observed": "open incident: ('open incidents: e557431089162db5c08239ed2ab2920ebb5b811e9d40928bf900c1ab925f2249',); credential: ('credential present: refusing to start: credential variables are set (BINANCE_API_KEY); this client uses public endpoints only and must never see a key',)",
+      "passed": true
+    },
+    {
+      "name": "freeze_reconcile",
+      "expected": "a FLATTEN sell whose reply is lost enters FREEZE; a check that did not look the order up is refused; a check that did passes and leaves FREEZE for HALT (never straight to trading)",
+      "observed": "after the timed-out sell: FREEZE (SimulatedTimeout: no response for aqt-flat-770c921e6dc5bd21578cb39ff39); blind check refused: reconciliation failed: BTC: venue 0.50000, expected 1; USDT: venue 4592.708432204618745971120, expected 0; full check passed=True, resolved=['aqt-flat-770c921e6dc5bd21578cb39ff39']; after the full check: HALT; BTC 0.50000",
+      "passed": true
+    }
+  ]
+}

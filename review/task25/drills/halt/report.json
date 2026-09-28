@@ -1,0 +1,23 @@
+{
+  "authorizations": 1,
+  "cost_model_hash": "3f5e62ab2df26f360f3ca13d2db379e95a1e52b25dc3d2c8f2683878b49327ae",
+  "data_manifest_hash": "5f92ec5041c9560d5f31bdb99b9686d7522697e65a8e61d514a0b0dda6d0b65b",
+  "events": 4,
+  "final_balances": {
+    "BTC": "1.09908",
+    "USDT": "18.69888890466902787861401632"
+  },
+  "final_mode": "HALT",
+  "governor_refusals": {
+    "INSIDE_REBALANCE_BAND": 239
+  },
+  "health_breach_hours": 0,
+  "hours": 720,
+  "note": "Bar count is not sample size. Paper run on the exploration partition against the simulator; no edge, Sharpe, or promotion claim is made.",
+  "orders_sent": 1,
+  "predictor": "VOL_TARGET_BUY_AND_HOLD",
+  "protocol_hash": "d22efb8989cb31a1d673000bba1e69baf5e0965bb400a8798aa966a3035d8b26",
+  "refused": [],
+  "run_id": "drill-halt",
+  "scheduled_decisions": 10
+}

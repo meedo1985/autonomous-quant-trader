@@ -1,11 +1,14 @@
 # autonomous-quant-trader
 
 Scientifically defensible, reproducible, cost-aware crypto spot research.
-Current status: **Milestone 0.1 / Task 12 — inactive deterministic statistical primitives implemented**.
+Current status: **Roadmap Task 25 — simulator paper-trading app complete; drills and evidence in
+[review/task25/PAPER_TRADING_EVIDENCE.md](review/task25/PAPER_TRADING_EVIDENCE.md)**.
+It trades only a simulator on exploration data. No edge is shown, Cycle `C1` has not started,
+and no live gate is open.
 **NO EDGE FOUND (`NO_EDGE_FOUND`) is a valid result.**
 
 V1 is Binance Spot BTC/ETH research: no leverage, margin, futures, or
-withdrawals. This task does not trade or connect to an exchange.
+withdrawals. Nothing here trades real money or connects to an exchange account.
 The v1.0 architecture and governance artifacts are frozen; see
 [docs/README.md](docs/README.md) and [SECURITY.md](SECURITY.md).
 
