@@ -171,7 +171,7 @@ def test_halt_while_holding_exposure_places_no_order(tmp_path: Path) -> None:
     assert spy.calls == []
 
 
-@pytest.mark.parametrize("alarm", [Trigger.INCIDENT, Trigger.LOSS_STOP])
+@pytest.mark.parametrize("alarm", [Trigger.INCIDENT, Trigger.OWNER_HALT])
 def test_an_alarm_during_flatten_halts_before_another_order(
     tmp_path: Path, alarm: Trigger
 ) -> None:
@@ -596,7 +596,7 @@ def test_time_cannot_go_backwards(tmp_path: Path) -> None:
     [
         (Trigger.OWNER_HALT, Mode.HALT),
         (Trigger.INCIDENT, Mode.HALT),
-        (Trigger.LOSS_STOP, Mode.HALT),
+        (Trigger.LOSS_STOP, Mode.FLATTEN),
         (Trigger.AMBIGUOUS_ORDER, Mode.FREEZE),
         (Trigger.RECONCILIATION_FAILED, Mode.FREEZE),
     ],
@@ -618,12 +618,12 @@ def test_a_late_alarm_is_never_refused_while_running(
     assert len(incidents.open_incidents()) == 1
 
 
-def test_a_late_loss_stop_during_flatten_halts_it(tmp_path: Path) -> None:
+def test_a_late_alarm_during_flatten_halts_it(tmp_path: Path) -> None:
     exchange = _exchange()
     controller, _, _ = _controller(tmp_path, Mode.RUNNING)
     controller.trigger(Trigger.OWNER_FLATTEN, T0)
     assert _tick(controller, exchange, 1) is not None
-    assert controller.trigger(Trigger.LOSS_STOP, T0, "late") is Mode.HALT
+    assert controller.trigger(Trigger.INCIDENT, T0, "late") is Mode.HALT
     spy = Spy()
     assert _tick(controller, spy, 2) is None
     assert spy.calls == []
@@ -675,12 +675,14 @@ def test_flatten_bounds_are_required_values() -> None:
         FlattenBounds(max_step_fraction=Decimal("0.5"), max_slippage_bps=Decimal(-1))
 
 
-def test_the_loss_stop_halts_and_opens_an_incident(tmp_path: Path) -> None:
-    """The adopted L-03 bound is an automatic HALT at 20% below peak."""
-    for start in (Mode.RUNNING, Mode.HALT):
+def test_the_loss_stop_flattens_and_opens_an_incident(tmp_path: Path) -> None:
+    """Owner setting S-4: the L-03 stop sells in FLATTEN steps, then HALTs,
+    but never out of HALT: the owner's HALT wins (F24-1)."""
+    for start, target in ((Mode.RUNNING, Mode.FLATTEN), (Mode.HALT, Mode.HALT)):
         controller, _, incidents = _controller(tmp_path / str(start), start)
         (tmp_path / str(start)).mkdir()
-        assert controller.trigger(Trigger.LOSS_STOP, T0, "20% below peak") is Mode.HALT
+        assert controller.trigger(Trigger.LOSS_STOP, T0, "20% below peak") is target
+        assert not controller.may_trade()
         assert len(incidents.open_incidents()) == 1
     frozen, _, _ = _controller(tmp_path / "frozen", Mode.FREEZE)
     (tmp_path / "frozen").mkdir()
@@ -805,3 +807,44 @@ def test_a_future_decision_time_is_a_flatten_fault(tmp_path: Path) -> None:
     assert spy.calls == []
     assert controller.mode is Mode.FREEZE
     assert len(incidents.open_incidents()) == 1
+
+
+def test_the_loss_stop_sells_everything_then_halts(tmp_path: Path) -> None:
+    """S-4 end to end: bounded steps, a repeat stop keeps selling, then HALT."""
+    exchange = _exchange(btc="1")
+    controller, _, incidents = _controller(tmp_path, Mode.RUNNING)
+    controller.trigger(Trigger.LOSS_STOP, T0, "20% below peak")
+    held = [exchange.balances()["BTC"]]
+    for hour in range(1, 12):
+        if controller.mode is not Mode.FLATTEN:
+            break
+        _tick(controller, exchange, hour)
+        held.append(exchange.balances()["BTC"])
+        if hour == 1:
+            late = controller.trigger(Trigger.LOSS_STOP, T0 + 4 * HOUR, "again")
+            assert late is Mode.FLATTEN
+    assert held[1] == Decimal("0.5")
+    assert all(b >= 0 for b in held)
+    assert all(
+        a - b <= a * BOUNDS.max_step_fraction for a, b in itertools.pairwise(held)
+    )
+    assert controller.mode is Mode.HALT
+    assert held[-1] < Decimal("0.2")
+    assert len(incidents.open_incidents()) == 3  # two stops and the HALT
+
+
+def test_only_a_passed_reconciliation_settles_flatten_orders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F23R-1: settling removes exactly the resolved ids, never on failure."""
+    controller, _, exchange, cid = _frozen_with_unknown_flatten_order(
+        tmp_path, monkeypatch
+    )
+    wrong = LocalRecord({"BTC": Decimal(5)}, controller.sent)
+    failed = reconcile(exchange, wrong, TOLERANCE, T0 + 5 * HOUR)
+    with pytest.raises(SafetyError, match="settles nothing"):
+        controller.settle_flatten(failed)
+    assert cid in controller.sent
+    record = LocalRecord(exchange.balances(), controller.sent)
+    controller.settle_flatten(reconcile(exchange, record, TOLERANCE, T0 + 5 * HOUR))
+    assert controller.sent == {}

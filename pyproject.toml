@@ -79,6 +79,13 @@ forbidden_modules = ["aqt.research"]
 allow_indirect_imports = false
 
 [[tool.importlinter.contracts]]
+name = "The paper app cannot reach research, model training, or lockbox code"
+type = "forbidden"
+source_modules = ["aqt.app"]
+forbidden_modules = ["aqt.research", "aqt.models", "aqt.lockbox_eval"]
+allow_indirect_imports = false
+
+[[tool.importlinter.contracts]]
 name = "Inactive paired evaluation cannot reach governed or external workflows"
 type = "forbidden"
 source_modules = ["aqt.metrics.assembly"]
