@@ -587,7 +587,46 @@ def test_time_cannot_go_backwards(tmp_path: Path) -> None:
     controller, _, _ = _controller(tmp_path, Mode.RUNNING)
     controller.trigger(Trigger.OWNER_HALT, T0 + HOUR)
     with pytest.raises(SafetyError, match="backwards"):
-        controller.trigger(Trigger.INCIDENT, T0)
+        controller.trigger(Trigger.OWNER_FLATTEN, T0)
+    assert controller.mode is Mode.HALT
+
+
+@pytest.mark.parametrize(
+    ("alarm", "target"),
+    [
+        (Trigger.OWNER_HALT, Mode.HALT),
+        (Trigger.INCIDENT, Mode.HALT),
+        (Trigger.LOSS_STOP, Mode.HALT),
+        (Trigger.AMBIGUOUS_ORDER, Mode.FREEZE),
+        (Trigger.RECONCILIATION_FAILED, Mode.FREEZE),
+    ],
+)
+def test_a_late_alarm_is_never_refused_while_running(
+    tmp_path: Path, alarm: Trigger, target: Mode
+) -> None:
+    """F23-1: a stale timestamp must not leave the controller RUNNING."""
+    controller, _, incidents = _controller(tmp_path, Mode.RUNNING)
+    controller.trigger(Trigger.OWNER_HALT, T0 + 2 * HOUR, "drill")
+    controller.override_halt(
+        _override(controller, incidents, T0 + 3 * HOUR), T0 + 3 * HOUR
+    )
+    assert controller.mode is Mode.RUNNING
+
+    assert controller.trigger(alarm, T0 + 2 * HOUR, "late") is target
+    assert not controller.may_trade()
+    assert controller.entered_at == T0 + 3 * HOUR
+    assert len(incidents.open_incidents()) == 1
+
+
+def test_a_late_loss_stop_during_flatten_halts_it(tmp_path: Path) -> None:
+    exchange = _exchange()
+    controller, _, _ = _controller(tmp_path, Mode.RUNNING)
+    controller.trigger(Trigger.OWNER_FLATTEN, T0)
+    assert _tick(controller, exchange, 1) is not None
+    assert controller.trigger(Trigger.LOSS_STOP, T0, "late") is Mode.HALT
+    spy = Spy()
+    assert _tick(controller, spy, 2) is None
+    assert spy.calls == []
 
 
 def test_procedures_cannot_be_triggered_directly(tmp_path: Path) -> None:
@@ -648,3 +687,101 @@ def test_the_loss_stop_halts_and_opens_an_incident(tmp_path: Path) -> None:
     assert (
         frozen.trigger(Trigger.LOSS_STOP, T0) is Mode.FREEZE
     )  # no exit before reconciliation
+
+
+def test_flatten_takes_one_step_per_decision_bar(tmp_path: Path) -> None:
+    """F23-3: repeated ticks for one bar must not compound the 50% bound."""
+    exchange = _exchange()
+    controller, _, _ = _controller(tmp_path, Mode.RUNNING)
+    controller.trigger(Trigger.OWNER_FLATTEN, T0)
+    assert _tick(controller, exchange, 1) is not None
+    for _ in range(3):
+        assert _tick(controller, exchange, 1) is None
+    assert exchange.balances()["BTC"] == Decimal("0.5")
+    assert _tick(controller, exchange, 2) is not None
+    assert exchange.balances()["BTC"] == Decimal("0.25")
+
+
+@pytest.mark.parametrize("mark", [Decimal("NaN"), Decimal("0"), Decimal("-5")])
+def test_an_invalid_mark_price_is_a_flatten_fault(
+    tmp_path: Path, mark: Decimal
+) -> None:
+    """F23-4: validated even without a maximum notional; never FLATTEN_DONE."""
+    controller, _, incidents = _controller(tmp_path, Mode.RUNNING)
+    controller.trigger(Trigger.OWNER_FLATTEN, T0)
+    spy = Spy()
+    order = controller.tick(
+        spy,  # type: ignore[arg-type]
+        "BTCUSDT",
+        FILTERS,
+        BOUNDS,
+        mark,
+        T0 + 4 * HOUR,
+        T0 + 4 * HOUR,
+    )
+    assert order is None
+    assert spy.calls == []
+    assert controller.mode is Mode.FREEZE
+    assert len(incidents.open_incidents()) == 1
+
+
+def _frozen_with_unknown_flatten_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[SafetyController, IncidentLog, SimulatedExchange, str]:
+    exchange = _exchange()
+    controller, _, incidents = _controller(tmp_path, Mode.RUNNING)
+    controller.trigger(Trigger.OWNER_FLATTEN, T0)
+
+    def timeout(*args: object, **kwargs: object) -> Order:
+        raise TimeoutError("no response")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(exchange, "place_order", timeout)
+        assert _tick(controller, exchange, 1) is None
+    assert controller.mode is Mode.FREEZE
+    [cid] = controller.sent
+    assert controller.sent[cid] is None
+    return controller, incidents, exchange, cid
+
+
+def test_recovery_needs_a_report_that_resolved_every_flatten_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F23-2: a passed report that never queried the order is refused."""
+    controller, incidents, exchange, cid = _frozen_with_unknown_flatten_order(
+        tmp_path, monkeypatch
+    )
+    at = T0 + 5 * HOUR
+    blind = reconcile(exchange, LocalRecord(exchange.balances()), TOLERANCE, at)
+    assert blind.passed
+    with pytest.raises(SafetyError, match="did not resolve"):
+        controller.exit_freeze(blind, at)
+    assert controller.mode is Mode.FREEZE
+
+    record = LocalRecord(exchange.balances(), controller.sent)
+    full = reconcile(exchange, record, TOLERANCE, at)
+    assert full.passed and cid in full.resolved
+    assert controller.exit_freeze(full, at) is Mode.HALT
+    assert controller.sent == {}
+
+
+def test_the_override_needs_a_report_that_resolved_every_flatten_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller, incidents, exchange, cid = _frozen_with_unknown_flatten_order(
+        tmp_path, monkeypatch
+    )
+    # OWNER_HALT is absorbed by FREEZE; reach HALT without resolving `cid`.
+    controller.mode = Mode.HALT
+    at = T0 + 5 * HOUR
+    with pytest.raises(SafetyError, match="HALT override refused: .*did not resolve"):
+        controller.override_halt(_override(controller, incidents, at), at)
+    assert controller.mode is Mode.HALT
+
+    record = LocalRecord(exchange.balances(), controller.sent)
+    full = replace(
+        _override(controller, incidents, at),
+        reconciliation=reconcile(exchange, record, TOLERANCE, at),
+    )
+    assert controller.override_halt(full, at) is Mode.RUNNING
+    assert controller.sent == {}

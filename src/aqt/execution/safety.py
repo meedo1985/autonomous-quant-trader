@@ -139,6 +139,10 @@ _INCIDENT_TRIGGERS: Final = frozenset(
 """Triggers that open an incident: every entry into HALT or FREEZE, and
 every alarm raised while in a protective mode."""
 
+_ALARMS: Final = frozenset({*_TO_HALT, _T.LOSS_STOP, *_TO_FREEZE})
+"""Alarms are never refused for a late timestamp: a risk reduction is
+immediate (section 14), so a stale stamp is moved up to the latest time."""
+
 
 class IncidentLog:
     """Incidents in an append-only, hash-chained ledger (section 26).
@@ -249,7 +253,10 @@ class SafetyController:
         self.entered_at = require_utc(at, field_name="at")
         self._latest = self.entered_at
         self.sent: dict[str, Order | None] = {}
+        """FLATTEN orders since the last passed reconciliation. Recovery
+        requires a report that resolved every one of them."""
         self._flatten_steps = 0
+        self._last_flatten_decision: datetime | None = None
 
     def may_trade(self) -> bool:
         """Whether the governor and executor may act at all."""
@@ -263,6 +270,10 @@ class SafetyController:
 
     def trigger(self, trigger: Trigger, at: datetime, detail: str = "") -> Mode:
         """Apply `trigger`; refused (and nothing changes) when not allowed."""
+        at = require_utc(at, field_name="at")
+        if trigger in _ALARMS and at < self._latest:
+            detail = f"{detail} (stamped {at.isoformat()})".lstrip()
+            at = self._latest
         at = self._time(at)
         if trigger in (Trigger.FREEZE_EXIT, Trigger.HALT_OVERRIDE):
             raise SafetyError(f"{trigger} needs its own procedure")
@@ -314,7 +325,15 @@ class SafetyController:
             raise SafetyError("reconciliation failed: " + "; ".join(report.differences))
         if report.at <= self.entered_at or report.at > at:
             raise SafetyError("the reconciliation does not follow the FREEZE")
-        return self._move(Trigger.FREEZE_EXIT, at, f"reconciliation {report.digest()}")
+        self._require_covers(report)
+        mode = self._move(Trigger.FREEZE_EXIT, at, f"reconciliation {report.digest()}")
+        self.sent.clear()
+        return mode
+
+    def _require_covers(self, report: ReconciliationReport) -> None:
+        missing = sorted(set(self.sent) - set(report.resolved))
+        if missing:
+            raise SafetyError(f"the reconciliation did not resolve {missing}")
 
     def override_halt(self, override: HaltOverride, at: datetime) -> Mode:
         """HALT to RUNNING with all five section 14 artifacts, closing every
@@ -335,6 +354,10 @@ class SafetyController:
             )
         if report.at <= self.entered_at or report.at > at:
             raise SafetyError("HALT override refused: reconciliation predates the HALT")
+        try:
+            self._require_covers(report)
+        except SafetyError as error:
+            raise SafetyError(f"HALT override refused: {error}") from None
         action = override.owner_action
         if action is None or not action.actor.strip() or not action.statement.strip():
             raise SafetyError("HALT override refused: missing explicit owner action")
@@ -362,7 +385,9 @@ class SafetyController:
         for incident_id in sorted(named):
             self._incidents.close(incident_id, resolution, at)
         try:
-            return self._move(Trigger.HALT_OVERRIDE, at, f"owner {action.actor}")
+            mode = self._move(Trigger.HALT_OVERRIDE, at, f"owner {action.actor}")
+            self.sent.clear()
+            return mode
         except Exception:
             # The closed incidents cannot be reopened. Keep HALT recoverable by
             # recording the failed transition as a new incident for the retry.
@@ -393,6 +418,15 @@ class SafetyController:
         at = self._time(at)
         if self.mode is not Mode.FLATTEN:
             return None
+        decision_time = require_utc(decision_time, field_name="decision_time")
+        last = self._last_flatten_decision
+        if last is not None and decision_time <= last:
+            # At most one step per decision bar, so "50% per step" cannot
+            # compound within one bar on a repeated or duplicated tick.
+            return None
+        if not mark_price.is_finite() or mark_price <= 0:
+            self._move(Trigger.FLATTEN_FAULT, at, f"invalid mark price: {mark_price}")
+            return None
         base = symbol.removesuffix(_QUOTE)
         try:
             free = venue.balances().get(base, Decimal(0))
@@ -403,11 +437,6 @@ class SafetyController:
             _DEC.multiply(free, bounds.max_step_fraction), filters.max_qty
         )
         if filters.max_notional is not None:
-            if not mark_price.is_finite() or mark_price <= 0:
-                self._move(
-                    Trigger.FLATTEN_FAULT, at, f"invalid mark price: {mark_price}"
-                )
-                return None
             quantity_bound = min(
                 quantity_bound, _DEC.divide(filters.max_notional, mark_price)
             )
@@ -428,6 +457,7 @@ class SafetyController:
         seed = f"{symbol}|{at.isoformat()}|{self._flatten_steps}"
         client_order_id = "aqt-flat-" + hashlib.sha256(seed.encode()).hexdigest()[:27]
         self.sent[client_order_id] = None
+        self._last_flatten_decision = decision_time
         try:
             order = venue.place_order(
                 client_order_id,

@@ -137,6 +137,12 @@ passed against the accepted baseline.
   override path.
 - **T23-08. Zero-fill retries are bounded by the loop, not this controller.**
   Task 24 must alert after a bounded number of consecutive IOC zero fills.
+- **T23-09. What the loop must feed the controller** (Fable F23-2, I02 caveat).
+  The reconciliation record after a recovery is `report.next_record()` plus
+  every order sent since; recovery refuses a report that did not resolve every
+  FLATTEN order. `mark_price` must be the decision bar's close, the price the
+  simulator checks notional against. FLATTEN takes at most one step per
+  decision bar.
 
 ## Owner questions
 

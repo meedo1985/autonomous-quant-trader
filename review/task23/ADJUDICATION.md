@@ -45,6 +45,27 @@ GPT-6 family, so its identity-gate finding remains open.
 | T23-I04 | AGREE | The review record is now committed, but exact model identity was not exposed. A review with verifiable exact-Astra metadata and the separate human PR review remain mandatory. | Process gate remains open. |
 | T23-N01 | AGREE | The deployment draft now states that FLATTEN ends at zero exposure or when no valid bounded step exists, with any remainder recorded. | Documentation inspection. |
 
+## Claude Fable 5.1 review of `752f158`
+
+The owner chose Fable 5.1 as a substitute for the exact GPT-6 Astra review
+while Codex was at its usage limit (2026-09-28). The record is committed in
+`FABLE_REVIEW_752F158.md` before these repairs. Repairs by Claude Opus 5.5.
+
+| ID | Decision | Evidence and disposition | Validation |
+| --- | --- | --- | --- |
+| F23-1 | AGREE — BLOCKER | Reproduced by reading `trigger`/`_time`. Alarms (OWNER_HALT, INCIDENT, LOSS_STOP, AMBIGUOUS_ORDER, RECONCILIATION_FAILED) are no longer refused for a timestamp before the latest; the time is moved up to the latest and the original stamp is kept in the incident detail. OWNER_FLATTEN, FLATTEN ticks and both recovery procedures keep the strict time check. | `test_a_late_alarm_is_never_refused_while_running` (5 alarms) and `test_a_late_loss_stop_during_flatten_halts_it`; both fail on `752f158`. |
+| F23-2 | AGREE | `exit_freeze` and `override_halt` now refuse a report that did not resolve every FLATTEN order in `sent`. `sent` is cleared after a successful recovery, so the next `LocalRecord` is `report.next_record()` plus orders sent after it. Task 24 must build the record that way. | `test_recovery_needs_a_report_that_resolved_every_flatten_order` and the override counterpart; both fail on `752f158`. |
+| F23-3 | AGREE — SAFE DEFAULT | "At most 50% per step" is read as one step per decision bar. A tick whose `decision_time` does not advance past the last FLATTEN order's returns without placing an order. This only slows selling, so no owner authority is needed; the owner may change it. | `test_flatten_takes_one_step_per_decision_bar`; fails on `752f158`. |
+| F23-4 | AGREE | The mark price is checked (finite, > 0) before any sizing, with or without a maximum notional; an invalid mark is FLATTEN_FAULT (FREEZE with an incident), never FLATTEN_DONE. | `test_an_invalid_mark_price_is_a_flatten_fault` (NaN, 0, -5); fails on `752f158`. |
+| F23-I02 caveat | AGREE — Task 24 obligation | The simulator checks notional against the decision bar's close, so Task 24 must pass that close as `mark_price`. | Recorded here and in `LOCAL_REPORT.md`. |
+
+Post-repair gate: 1,544 passed, 4 skipped; Ruff check and format, mypy over
+48 source files, 5 import contracts and `git diff --check` all pass. No file
+under `docs/`, `protocols/`, `schemas/`, `specs/` or `FROZEN_HASHES.json`
+differs from `edc3b39`; `verify_frozen.ps1` needs PowerShell 7, which is not
+installed on this machine, so it was not run in this session. The repairs have
+not been re-reviewed.
+
 ## Current blockers and review status
 
 - Post-repair local validation passed: 1,532 tests passed and 4 skipped; Ruff,
