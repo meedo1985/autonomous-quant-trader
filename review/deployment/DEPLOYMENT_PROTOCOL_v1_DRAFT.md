@@ -32,7 +32,7 @@ document restates but cannot relax.
   (record `review/pre-deployment/LOSS_BOUNDS_ADOPTION_RECORD.md`). It is the
   owner's self-imposed bound, not frozen text, and this draft is still not
   adopted as a whole.
-- **[OWNER-SET T22-Q1]**: an operating value the owner chose in answer to a
+- **[OWNER-SET T22-Q1]**, **[OWNER-SET T23-Q1]**, **[OWNER-SET T23-Q2]**: an operating value the owner chose in answer to a
   task question, with a committed record. Like `[ADOPTED L-nn]`, it does not
   adopt this draft as a whole.
 - **[OPEN]**: a value or choice no frozen text or proposal supplies. The owner
@@ -121,7 +121,8 @@ Required at every start [FROZEN §19 "Startup reconciliation required"]:
    and a `REFUSE_START`, whatever the balances show: it can fill later outside
    the executor's tracked state (review finding R-1).
 5. Free **and locked** balances must match the local record within
-   [OPEN: tolerance, in base and quote units]; every locked amount must be
+   **0** in every asset, exact, on the simulator
+   [OWNER-SET T23-Q2; revisit before shadow]; every locked amount must be
    explained by a matched open order. Any difference is an incident
    [FROZEN §0: "reconciliation mismatch ... unexplained exposure"].
 6. The result, pass or fail with every difference, is written to the
@@ -180,7 +181,7 @@ reconciliation."
 | State | Entered on | Allowed | Exit |
 |---|---|---|---|
 | **HALT** | Any incident (**proposed**; §0 defines an incident but does not say it causes HALT); `L-03` breach [ADOPTED L-03]; owner command | No new risk [FROZEN §22] | The HALT exit procedure below [FROZEN §14] |
-| **FLATTEN** | Owner command, or [OPEN: automatic triggers] | Bounded de-risking [FROZEN §22], within [OPEN: bounds] | Zero exposure, then HALT (**proposed**) |
+| **FLATTEN** | Owner command, or [OPEN: automatic triggers] | Bounded de-risking [FROZEN §22], within at most **50%** of the held base per step, each sell capped **1%** (100 bps) below the mark [OWNER-SET T23-Q1] | Zero exposure or no valid step within the bounds, with any remainder recorded; then HALT (**proposed**) |
 | **FREEZE** | An ambiguous order reaching `UNKNOWN` [FROZEN §21]; a reconciliation failure while running (**proposed**) | No autonomous risk change [FROZEN §22] | Successful reconciliation [FROZEN §22] |
 
 Risk reductions are immediate and never gated [FROZEN §14: "Risk reductions
@@ -281,9 +282,9 @@ anomaly: an incident [FROZEN §0].
 |---|---|
 | §2.2 | External alert channel |
 | §2.3 | Shadow duration or decision count before canary; fee headroom |
-| §3 | Reconciliation tolerance |
+| §3 | Reconciliation tolerance on a real venue (the simulator value is set) |
 | §4, §5 | Channel test interval; health-check thresholds and severities |
-| §6 | Automatic FLATTEN triggers and bounds; post-HALT cooling-off length |
+| §6 | Automatic FLATTEN triggers; post-HALT cooling-off length |
 | §10 | Hold or FLATTEN the remaining live position when leaving canary |
 | §8 | Executor IP address(es); key storage mechanism |
 
