@@ -378,3 +378,122 @@ def test_an_applicable_maximum_notional_is_enforced() -> None:
     assert caught.value.code == "FILTER_MAX_NOTIONAL"
     order = exchange.place_order("m2", "BTCUSDT", Side.BUY, Decimal("0.4"), DECISION)
     assert order.status is OrderStatus.FILLED  # 0.4 * close 100 = 40, at the cap
+
+
+def test_a_lost_placement_leaves_no_order_and_a_later_one_fills_once() -> None:
+    exchange = _exchange(Scenario({"l1": Fault(lost_placements=1)}))
+    with pytest.raises(SimulatedTimeout):
+        exchange.place_order("l1", "BTCUSDT", Side.BUY, Decimal("0.5"), DECISION)
+    with pytest.raises(ExchangeError) as missing:
+        exchange.query_order("l1")
+    assert missing.value.code == "NOT_FOUND"
+    assert exchange.balances()["BTC"] == Decimal("0")
+    order = exchange.place_order("l1", "BTCUSDT", Side.BUY, Decimal("0.5"), DECISION)
+    assert order.status is OrderStatus.FILLED
+    assert exchange.balances()["BTC"] == Decimal("0.5")
+
+
+def test_unknown_queries_time_out_before_not_found_answers_begin() -> None:
+    fault = Fault(unknown_queries=1, not_found_queries=1)
+    exchange = _exchange(Scenario({"u1": fault}))
+    exchange.place_order("u1", "BTCUSDT", Side.BUY, Decimal("0.5"), DECISION)
+    with pytest.raises(SimulatedTimeout):
+        exchange.query_order("u1")
+    with pytest.raises(ExchangeError) as missing:
+        exchange.query_order("u1")
+    assert missing.value.code == "NOT_FOUND"
+    assert exchange.query_order("u1").client_order_id == "u1"
+
+
+@pytest.mark.parametrize("fault", [{"lost_placements": -1}, {"unknown_queries": -1}])
+def test_negative_fault_counts_are_rejected(fault: dict[str, int]) -> None:
+    with pytest.raises(ValueError):
+        Fault(**fault)  # type: ignore[arg-type]
+
+
+def test_a_capped_buy_fills_only_at_or_below_its_cap() -> None:
+    within = _exchange().place_order(
+        "c1", "BTCUSDT", Side.BUY, Decimal("0.5"), DECISION, limit_price=Decimal("101")
+    )
+    assert (within.status, within.executed_qty) == (OrderStatus.FILLED, Decimal("0.5"))
+    exchange = _exchange()
+    beyond = exchange.place_order(
+        "c2",
+        "BTCUSDT",
+        Side.BUY,
+        Decimal("0.5"),
+        DECISION,
+        limit_price=Decimal("100.9"),
+    )
+    assert (beyond.status, beyond.executed_qty) == (OrderStatus.EXPIRED, 0)
+    assert beyond.limit_price == Decimal("100.9")
+    assert exchange.balances() == {"USDT": Decimal("1000"), "BTC": Decimal("0")}
+
+
+def test_a_capped_sell_fills_only_at_or_above_its_cap() -> None:
+    exchange = _exchange(usdt="0", btc="1")
+    beyond = exchange.place_order(
+        "c3", "BTCUSDT", Side.SELL, Decimal("1"), DECISION, limit_price=Decimal("101.1")
+    )
+    assert beyond.executed_qty == 0
+    within = exchange.place_order(
+        "c4", "BTCUSDT", Side.SELL, Decimal("1"), DECISION, limit_price=Decimal("101")
+    )
+    assert within.status is OrderStatus.FILLED
+
+
+def test_a_cap_off_the_tick_or_a_changed_cap_is_rejected() -> None:
+    ticked = SymbolFilters(
+        step_size=Decimal("0.001"),
+        min_qty=Decimal("0.001"),
+        max_qty=Decimal("100"),
+        min_notional=Decimal("10"),
+        tick_size=Decimal("0.1"),
+    )
+    exchange = SimulatedExchange(
+        {"BTCUSDT": _series()}, {"BTCUSDT": ticked}, {"USDT": Decimal("1000")}
+    )
+    with pytest.raises(ExchangeError) as off_tick:
+        exchange.place_order(
+            "t1",
+            "BTCUSDT",
+            Side.BUY,
+            Decimal("0.5"),
+            DECISION,
+            limit_price=Decimal("101.05"),
+        )
+    assert off_tick.value.code == "FILTER_PRICE"
+    exchange.place_order(
+        "t2",
+        "BTCUSDT",
+        Side.BUY,
+        Decimal("0.5"),
+        DECISION,
+        limit_price=Decimal("101.1"),
+    )
+    with pytest.raises(ExchangeError) as changed:
+        exchange.place_order(
+            "t2",
+            "BTCUSDT",
+            Side.BUY,
+            Decimal("0.5"),
+            DECISION,
+            limit_price=Decimal("101.2"),
+        )
+    assert changed.value.code == "DUPLICATE_CLIENT_ORDER_ID"
+
+
+def test_the_tick_size_is_read_from_price_filter() -> None:
+    filters = filters_from_exchange_info(_payload(), "BTCUSDT")
+    assert filters.tick_size == Decimal("0.01")
+
+
+def test_a_capped_buy_is_checked_for_funds_at_its_cap() -> None:
+    """Astra R3-3: 9.9 BTC is affordable at the 100 cap but not at the 101
+    open; the order expires unfilled instead of being rejected."""
+    exchange = _exchange()
+    order = exchange.place_order(
+        "a1", "BTCUSDT", Side.BUY, Decimal("9.9"), DECISION, limit_price=Decimal("100")
+    )
+    assert (order.status, order.executed_qty) == (OrderStatus.EXPIRED, 0)
+    assert exchange.balances() == {"USDT": Decimal("1000"), "BTC": Decimal("0")}
