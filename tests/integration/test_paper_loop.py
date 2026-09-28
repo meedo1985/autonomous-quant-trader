@@ -541,6 +541,13 @@ def test_the_loss_stop_never_overrides_an_owner_halt(tmp_path: Path) -> None:
     ]
     assert ("FLATTEN", "HALT") in moves
     assert ("HALT", "FLATTEN") not in moves
+    # F24S-2: the breach during the owner's FLATTEN alerts, FLATTEN goes on.
+    stops = [
+        (e["fields"]["from"], e["fields"]["to"], e["severity"])
+        for e in events
+        if e["kind"] == "STATE_TRANSITION" and e["fields"].get("trigger") == "LOSS_STOP"
+    ]
+    assert stops == [("FLATTEN", "FLATTEN", "CRITICAL")]
     assert report.final_mode == "HALT"
 
 

@@ -15,8 +15,9 @@ How that reads here:
 * HALT places no order at all, not even a reduction: stopping is the whole
   of HALT. FLATTEN is the reducing path, and the owner may start it from
   RUNNING or HALT at any time, whatever reservation the governor holds.
-* The `L-03` loss stop enters FLATTEN from RUNNING, and keeps FLATTEN going
-  if it fires again there; FLATTEN then ends in HALT (owner setting S-4,
+* The `L-03` loss stop enters FLATTEN from RUNNING; during any FLATTEN
+  (its own or the owner's) it alerts and FLATTEN goes on; FLATTEN then ends
+  in HALT (owner setting S-4,
   `review/deployment/OWNER_SETTINGS_2026-09-27.md`, reconfirmed 2026-09-28 in
   `review/task24/OWNER_ANSWER_S4.md`). In HALT it stays HALT: the owner's
   HALT always wins (`review/task24/OWNER_ANSWERS_2026-09-28.md`). Any other

@@ -27,3 +27,16 @@ disclosure; F24-4 consistent with the owner's answer. Verdict FIX.
 | F24R-3 | AGREE — corrected | The unreachable sentence in the F24-1 row is corrected. The override and latch rules for a continuing account are added to T24-08 as an open decision. | Documentation. |
 
 The F24R repairs have not been re-reviewed.
+
+## Claude Fable 5.1 re-review of `20dcd42`
+
+Record: `FABLE_REREVIEW_20DCD42.md` (committed `85144b8`). Verdict ACCEPT;
+F24R-1..3 repairs judged correct.
+
+| ID | Decision | Disposition | Validation |
+| --- | --- | --- | --- |
+| F24S-1 | AGREE — disclosed | Deployment draft section 5 now states the FREEZE exception. | Documentation. |
+| F24S-2 | AGREE — repaired | `test_the_loss_stop_never_overrides_an_owner_halt` asserts exactly one `FLATTEN -> FLATTEN` LOSS_STOP at CRITICAL. | Targeted test. |
+| Docstring | AGREE | `safety.py` module docstring covers a first firing during an owner FLATTEN. | Inspection. |
+
+These are a test assertion and text only; not re-reviewed.

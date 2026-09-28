@@ -169,7 +169,8 @@ The loop must not start if any of these holds. Each is logged.
   falls under §8.
 - **Must alert CRITICAL:** any entry to HALT, FLATTEN, or FREEZE; any
   `REFUSE_START`; any reconciliation mismatch; any ambiguous order reaching
-  `UNKNOWN`; any credential anomaly; any `L-03` breach [ADOPTED L-03].
+  `UNKNOWN`; any credential anomaly; any `L-03` breach [ADOPTED L-03], except during FREEZE, which has already
+  alerted CRITICAL and stays until reconciliation (F24S-1).
 - **Channel test:** before shadow and then every [OPEN: interval], a test
   alert must be received and acknowledged by the owner, and the test recorded.
 
