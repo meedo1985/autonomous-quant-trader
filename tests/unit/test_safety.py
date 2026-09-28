@@ -59,6 +59,18 @@ class ListSink:
         self.events.append(event)
 
 
+class FailingSink:
+    min_severity = Severity.INFO
+
+    def write(self, event: Event) -> None:
+        raise OSError("alert sink failed")
+
+
+class FailingIncidentLog(IncidentLog):
+    def open(self, kind: str, detail: str, at: datetime) -> str:
+        raise OSError("incident ledger failed")
+
+
 def _series(prices: list[float]) -> BarSeries:
     return BarSeries(
         "BTCUSDT",
@@ -122,6 +134,37 @@ def test_halt_while_holding_exposure_places_no_order(tmp_path: Path) -> None:
     for hour in range(1, 6):
         assert _tick(controller, spy, hour) is None
     assert spy.calls == []
+
+
+def test_a_failed_alert_cannot_leave_the_controller_running(tmp_path: Path) -> None:
+    incidents = IncidentLog(tmp_path / "incidents.jsonl")
+    controller = SafetyController(
+        AlertRouter([FailingSink()]), incidents, T0, mode=Mode.RUNNING
+    )
+
+    with pytest.raises(OSError, match="alert sink failed"):
+        controller.trigger(Trigger.OWNER_HALT, T0, "owner pressed HALT")
+
+    assert controller.mode is Mode.FREEZE
+    assert not controller.may_trade()
+    assert incidents.open_incidents()
+
+
+def test_a_failed_incident_write_cannot_leave_the_controller_running(
+    tmp_path: Path,
+) -> None:
+    controller = SafetyController(
+        AlertRouter([ListSink()]),
+        FailingIncidentLog(tmp_path / "incidents.jsonl"),
+        T0,
+        mode=Mode.RUNNING,
+    )
+
+    with pytest.raises(OSError, match="incident ledger failed"):
+        controller.trigger(Trigger.OWNER_HALT, T0, "owner pressed HALT")
+
+    assert controller.mode is Mode.FREEZE
+    assert not controller.may_trade()
 
 
 def test_flatten_reduces_monotonically_and_never_crosses_zero(tmp_path: Path) -> None:
@@ -289,6 +332,23 @@ def test_a_complete_override_closes_every_incident_and_resumes(tmp_path: Path) -
         ("HALT", "RUNNING", Severity.WARNING),
     ]
     assert all(e.kind is EventKind.STATE_TRANSITION for e in sink.events)
+
+
+def test_a_failed_override_alert_keeps_halt_recoverable(tmp_path: Path) -> None:
+    incidents = IncidentLog(tmp_path / "incidents.jsonl")
+    original = incidents.open(str(Trigger.OWNER_HALT), "drill", T0)
+    controller = SafetyController(
+        AlertRouter([FailingSink()]), incidents, T0, mode=Mode.HALT
+    )
+    override = _override(controller, incidents, T0 + HOUR)
+
+    with pytest.raises(OSError, match="alert sink failed"):
+        controller.override_halt(override, T0 + HOUR)
+
+    assert controller.mode is Mode.HALT
+    open_incidents = incidents.open_incidents()
+    assert original not in open_incidents
+    assert len(open_incidents) == 1
 
 
 def test_every_protective_entry_opens_an_incident_and_is_critical(

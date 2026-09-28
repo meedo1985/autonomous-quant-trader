@@ -274,10 +274,17 @@ class SafetyController:
         target = MODE_TRANSITIONS.get((self.mode, trigger))
         if target is None:
             raise SafetyError(f"{trigger} is not allowed in {self.mode}")
+        source = self.mode
+        previous_entered_at = self.entered_at
+        if target is not Mode.RUNNING:
+            # Fail closed before either required audit write. If the incident
+            # ledger or alert sink fails, no caller can keep trading.
+            self.mode = Mode.FREEZE
+            self.entered_at = at
+            self._latest = at
         incident = ""
         if trigger in _INCIDENT_TRIGGERS:
             incident = self._incidents.open(str(trigger), detail, at)
-        source = self.mode
         severity = Severity.CRITICAL if target is not Mode.RUNNING else Severity.WARNING
         self._router.emit(
             Event(
@@ -295,6 +302,8 @@ class SafetyController:
         )
         if target is not source:
             self.entered_at = at
+        else:
+            self.entered_at = previous_entered_at
         self.mode = target
         self._latest = at
         return target
@@ -356,7 +365,17 @@ class SafetyController:
         }
         for incident_id in sorted(named):
             self._incidents.close(incident_id, resolution, at)
-        return self._move(Trigger.HALT_OVERRIDE, at, f"owner {action.actor}")
+        try:
+            return self._move(Trigger.HALT_OVERRIDE, at, f"owner {action.actor}")
+        except Exception:
+            # The closed incidents cannot be reopened. Keep HALT recoverable by
+            # recording the failed transition as a new incident for the retry.
+            self._incidents.open(
+                "HALT_OVERRIDE_FAILED",
+                f"owner {action.actor}: transition audit failed",
+                at,
+            )
+            raise
 
     def tick(
         self,

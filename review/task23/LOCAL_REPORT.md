@@ -1,12 +1,13 @@
 # Task 23 local report: HALT, FLATTEN, FREEZE and reconciliation
 
-Date: 2026-09-27. Coding AI: Claude Opus 5.5 (`claude-opus-5-5`).
-Branch: `task23-safety`, from `task22-executor` at `ee3f4ca`. Task 22 is not
-merged yet (its fourth Astra review is pending), so this branch contains it.
+Date: 2026-09-27; final gate updated 2026-09-28. Coding AI: Claude Opus 5.5
+(`claude-opus-5-5`). Branch: `task23-safety`, rebased onto Task 22's merge at
+`edc3b39dd890f5c92c1c7542b7853ae62055b4d2`.
 
-Section 16 covers protocol-enforcement logic, which includes this code.
-Merging needs a GPT-6 Astra review and the owner's behavioural review.
-Neither has happened yet.
+Section 16 covers protocol-enforcement logic, which includes this code. The
+independent OpenAI GPT-6-family review is recorded in `review/task23/REVIEW.md`;
+the service did not expose a more specific deployment suffix. The owner's
+behavioural review is still required before merge.
 
 ## What changed
 
@@ -92,14 +93,16 @@ Environment: Windows 11, `.venv` Python 3.14.
 
 | Command | Result |
 | --- | --- |
-| `pytest -q` | 1516 passed, 4 skipped in 107.81s |
+| `python -m pytest -q` | 1522 passed, 4 skipped in 82.15s |
 | `ruff check .` | All checks passed |
 | `ruff format --check .` | 94 files already formatted |
 | `mypy src scripts` | Success: no issues found in 48 source files |
 | `lint-imports` | Contracts: 5 kept, 0 broken |
 | `git diff --check` | clean |
 
-Frozen files: SHA-256 identical to the Task 22 pre-task snapshot.
+Frozen verifier: 28/28 trusted bytes and exact inventory, 14/14 sidecars,
+Constitution self-hash, 7/7 manifest/protocol bindings, and all nested bindings
+passed against the accepted baseline.
 
 ## Disclosed choices and limits
 
@@ -117,8 +120,13 @@ Frozen files: SHA-256 identical to the Task 22 pre-task snapshot.
   incident refuses the start. There is no separate stored mode.
 - **T23-05. The simulator never has open orders**, so the untracked-open-order
   case is tested with a subclass that reports one.
-- **T23-06. Loss-stop detection (`L-03`) is not here.** The trigger exists;
-  computing drawdown from peak equity is the loop's job (Task 24).
+- **T23-06. Loss-stop detection (`L-03`) is not here.** The owner selected
+  FLATTEN as the trigger's action; computing drawdown from peak equity remains
+  the loop's job (Task 24).
+- **T23-07. Audit-write failures fail closed.** A failed incident-ledger or
+  alert write during a protective transition leaves the controller in FREEZE.
+  If the alert for a complete HALT override fails after its incidents close,
+  the controller stays in HALT and opens a recovery incident for a retry.
 
 ## Owner questions
 
@@ -130,8 +138,11 @@ Frozen files: SHA-256 identical to the Task 22 pre-task snapshot.
   Proposal: **0**, exact, on the simulator. A real venue's rounding may need
   more, to be decided before shadow.
 
-## Outstanding before merge
+## Final review status and outstanding work
 
-- Task 22 must merge first (its fourth Astra review is pending).
-- GPT-6 Astra review of Task 23 (section 16).
-- The owner's behavioural review.
+- Local gate: PASS. The review found and repaired two audit-failure blockers;
+  see `review/task23/REVIEW.md`.
+- Task 22 is merged and its post-merge CI passed.
+- T23-Q1 and T23-Q2 are answered in `OWNER_ANSWERS_Q1_Q2.md`.
+- Still required before merge: the owner's behavioural review, the prepared
+  Claude adversarial handoff, pull-request CI, and a recorded final approval.
