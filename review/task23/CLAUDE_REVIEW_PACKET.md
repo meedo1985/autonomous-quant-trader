@@ -76,8 +76,8 @@ on self-transitions and behavior if the recovery incident write itself fails.
 
 All commands exited 0 on Windows 11 with repository Python 3.14.7:
 
-- `.venv\Scripts\python.exe -m pytest -q`: 1,528 passed, 4 skipped in 84.12s
-  on the adjudicated post-repair snapshot.
+- `.venv\Scripts\python.exe -m pytest -q`: 1,532 passed, 4 skipped in 112.17s
+  on the final post-review repair snapshot.
 - `.venv\Scripts\python.exe -m ruff check .`: all checks passed.
 - `.venv\Scripts\python.exe -m ruff format --check .`: 94 files formatted.
 - `.venv\Scripts\python.exe -m mypy src scripts`: no issues in 48 files.

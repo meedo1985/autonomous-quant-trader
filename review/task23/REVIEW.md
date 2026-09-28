@@ -121,9 +121,10 @@ override-recovery write failure is exercised after the affected sinks return.
 All six Task 23 acceptance criteria still pass. The audit-write restart marker
 and bounded consecutive-zero-fill alert remain explicit Task 24 obligations
 because persistence and repeated loop steps are outside this controller's
-scope. T23-QB/T23-01 remains an owner question: an INCIDENT or LOSS_STOP while
-already in FLATTEN currently records the incident and continues bounded
-reduction until owner HALT or completion.
+scope. A later GPT-6 review found that T23-QB could not remain executable
+without owner authority, so INCIDENT and LOSS_STOP now enter HALT from FLATTEN.
+It also found and repaired recovery-incident freshness and maximum-notional
+sizing defects; see `GPT6_REVIEW_AF227E7.md` and `ADJUDICATION.md`.
 
 ## Validation
 
@@ -131,10 +132,10 @@ Environment: Windows 11; repository `.venv`; Python 3.14.7.
 
 | Command | Exit | Result |
 | --- | ---: | --- |
-| `.venv\Scripts\python.exe -m pytest -q` | 0 | 1528 passed, 4 skipped in 84.12s |
+| `.venv\Scripts\python.exe -m pytest -q` | 0 | 1532 passed, 4 skipped in 112.17s |
 | `.venv\Scripts\python.exe -m ruff check .` | 0 | All checks passed |
 | `.venv\Scripts\python.exe -m ruff format --check .` | 0 | 94 files already formatted |
-| `.venv\Scripts\python.exe -m mypy src scripts` | 0 | No issues in 48 source files |
+| `.venv\Scripts\python.exe -m mypy src scripts` | 0 | mypy 1.20.2; no issues in 48 source files |
 | `.venv\Scripts\lint-imports.exe` | 0 | 5 contracts kept, 0 broken |
 | `git diff --check` | 0 | Clean |
 | `review/task6/verify_frozen.ps1` under PowerShell 7 | 0 | All checks passed |
@@ -155,7 +156,7 @@ this simulator-only task and remains required when a live adapter is proposed.
 Binance safety review: `PASS WITH CONDITIONS`, where the condition is T23-R3's
 future live-adapter validation. This does not authorize trading or deployment.
 
-Outstanding before merge: the exact GPT-6 Astra review must complete on the
-post-repair snapshot; the owner must decide T23-QB/T23-01; pull-request CI must
-pass; and the final Section 16 human approval must be committed. Claude Opus
-5.5 feedback has been adjudicated but does not replace either required review.
+Outstanding before merge: a review with verifiable exact GPT-6 Astra metadata
+must complete on the post-repair snapshot; pull-request CI must pass; and the
+final Section 16 human approval must be committed. Claude Opus 5.5 and GPT-6
+feedback have been adjudicated but do not replace those gates.

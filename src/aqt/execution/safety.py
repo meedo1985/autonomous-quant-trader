@@ -118,11 +118,11 @@ MODE_TRANSITIONS: Final[dict[tuple[Mode, Trigger], Mode]] = {
     (_M.HALT, _T.OWNER_FLATTEN): _M.FLATTEN,
     **{(_M.HALT, t): _M.FREEZE for t in _TO_FREEZE},
     (_M.HALT, _T.HALT_OVERRIDE): _M.RUNNING,
-    # While flattening, only the owner stops the de-risking; other alarms
-    # are recorded and the reduction continues.
+    # No committed authority allows an alarm to keep selling. Stop in HALT;
+    # the owner can explicitly start FLATTEN again after assessing it.
     (_M.FLATTEN, _T.OWNER_HALT): _M.HALT,
-    (_M.FLATTEN, _T.INCIDENT): _M.FLATTEN,
-    (_M.FLATTEN, _T.LOSS_STOP): _M.FLATTEN,
+    (_M.FLATTEN, _T.INCIDENT): _M.HALT,
+    (_M.FLATTEN, _T.LOSS_STOP): _M.HALT,
     (_M.FLATTEN, _T.OWNER_FLATTEN): _M.FLATTEN,
     (_M.FLATTEN, _T.FLATTEN_DONE): _M.HALT,
     (_M.FLATTEN, _T.FLATTEN_FAULT): _M.FREEZE,
@@ -366,6 +366,11 @@ class SafetyController:
         except Exception:
             # The closed incidents cannot be reopened. Keep HALT recoverable by
             # recording the failed transition as a new incident for the retry.
+            # Advance the cutoff first, so even a failed recovery write cannot
+            # leave earlier reconciliation eligible.
+            self.mode = Mode.HALT
+            self.entered_at = at
+            self._latest = at
             self._incidents.open(
                 "HALT_OVERRIDE_FAILED",
                 f"owner {action.actor}: transition audit failed",
@@ -394,13 +399,19 @@ class SafetyController:
         except Exception as error:  # noqa: BLE001 - the holding is unknown
             self._move(Trigger.FLATTEN_FAULT, at, f"balance unreadable: {error}")
             return None
-        quantity = _floor_to_step(
-            min(
-                _DEC.multiply(free, bounds.max_step_fraction),
-                filters.max_qty,
-            ),
-            filters.step_size,
+        quantity_bound = min(
+            _DEC.multiply(free, bounds.max_step_fraction), filters.max_qty
         )
+        if filters.max_notional is not None:
+            if not mark_price.is_finite() or mark_price <= 0:
+                self._move(
+                    Trigger.FLATTEN_FAULT, at, f"invalid mark price: {mark_price}"
+                )
+                return None
+            quantity_bound = min(
+                quantity_bound, _DEC.divide(filters.max_notional, mark_price)
+            )
+        quantity = _floor_to_step(quantity_bound, filters.step_size)
         small = _DEC.multiply(quantity, mark_price) < filters.min_notional
         if quantity <= 0 or quantity < filters.min_qty or small:
             self._move(

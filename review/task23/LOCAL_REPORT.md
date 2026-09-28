@@ -5,9 +5,10 @@ Date: 2026-09-27; final gate updated 2026-09-28. Coding AI: Claude Opus 5.5
 `edc3b39dd890f5c92c1c7542b7853ae62055b4d2`.
 
 Section 16 covers protocol-enforcement logic, which includes this code. Claude
-Opus 5.5 completed an adversarial review. The required exact GPT-6 Astra run
-reached its usage limit before a verdict and must be rerun. The owner's
-behavioural review is still required before merge.
+Opus 5.5 completed an adversarial review. A later CLI run explicitly selected
+`gpt-6-astra` and returned a complete GPT-6 review, but the runtime did not
+expose the exact deployment identifier, so exact-model verification remains
+open. The owner's behavioural review is still required before merge.
 
 ## What changed
 
@@ -17,7 +18,7 @@ behavioural review is still required before merge.
 | `src/aqt/execution/safety.py` (new) | `Mode`, `Trigger`, `MODE_TRANSITIONS`, `IncidentLog`, `HaltOverride`, `OwnerAction`, `FlattenBounds`, `SafetyController`, `startup_check` |
 | `src/aqt/execution/orders.py` | The exact cap arithmetic moved into `capped_price`, so FLATTEN sells share it. `limit_price_for` calls it; behaviour unchanged. |
 | `src/aqt/execution/simulator.py` | `open_orders()`, always empty: market and immediate-or-cancel orders never rest |
-| `tests/unit/test_safety.py` (new) | 37 tests (with parametrized cases) |
+| `tests/unit/test_safety.py` (new) | 41 tests (with parametrized cases) |
 | `tests/integration/test_reconciliation.py` (new) | 11 tests against the simulator, including the Task 22 hand-over |
 
 ## How sections 14, 19, 22 and 26 are read
@@ -34,7 +35,8 @@ behavioural review is still required before merge.
   never sells more than the venue says is held. The step also respects the
   venue maximum quantity. If no step fits both the owner bound and the venue
   minimums, it leaves the remainder and ends in HALT. Any unclear FLATTEN
-  outcome or unexpected venue filter rejection is FREEZE.
+  outcome or unexpected venue filter rejection is FREEZE. A supplied maximum
+  notional also caps the step before lot-size rounding.
 - **FREEZE does nothing.** It does not even read the venue. It is left only
   through a passed reconciliation taken after it began, and it goes to HALT,
   not RUNNING, because the ambiguous order that caused it is an incident that
@@ -95,10 +97,10 @@ Environment: Windows 11, `.venv` Python 3.14.
 
 | Command | Result |
 | --- | --- |
-| `python -m pytest -q` | 1528 passed, 4 skipped in 84.12s |
+| `python -m pytest -q` | 1532 passed, 4 skipped in 112.17s |
 | `ruff check .` | All checks passed |
 | `ruff format --check .` | 94 files already formatted |
-| `mypy src scripts` | Success: no issues found in 48 source files |
+| `mypy src scripts` | mypy 1.20.2; no issues found in 48 source files |
 | `lint-imports` | Contracts: 5 kept, 0 broken |
 | `git diff --check` | clean |
 
@@ -108,10 +110,10 @@ passed against the accepted baseline.
 
 ## Disclosed choices and limits
 
-- **T23-01. Alarms during FLATTEN keep flattening.** An incident or loss-stop
-  alarm during FLATTEN is recorded as an incident but does not stop the
-  reduction. Only the owner's HALT stops it. This is a proposal: the frozen
-  text does not say.
+- **T23-01. Alarms during FLATTEN enter HALT.** No committed authority permits
+  continued selling through an incident or the adopted L-03 HALT trigger. The
+  alarm is recorded, later ticks place no order, and the owner may explicitly
+  start FLATTEN again after assessing it.
 - **T23-02. Every HALT is an incident** (section 0). That includes the HALT
   at the end of a completed FLATTEN, so resuming after any FLATTEN needs the
   five-artifact override.
@@ -148,13 +150,12 @@ passed against the accepted baseline.
 
 ## Final review status and outstanding work
 
-- Local gate is being rerun after the Claude/Astra repairs. The original local
-  review found and repaired two audit-failure blockers; see
+- Local gate: PASS after the Claude and GPT-6 repairs. The final writable gate
+  passed 1,532 tests with 4 skipped using declared mypy 1.20.2; see
   `review/task23/REVIEW.md`.
 - Task 22 is merged and its post-merge CI passed.
 - T23-Q1 and T23-Q2 are answered in `OWNER_ANSWERS_Q1_Q2.md`.
 - Claude Opus 5.5 review is recorded in `CLAUDE_OPUS_5_5_REVIEW.md`; its
   adjudication is in `ADJUDICATION.md`.
-- Still required before merge: a completed exact GPT-6 Astra review, owner
-  acceptance or correction of T23-01, fresh pull-request CI, and a recorded
-  final human approval.
+- Still required before merge: a completed review with verifiable exact GPT-6
+  Astra metadata, fresh pull-request CI, and a recorded final human approval.

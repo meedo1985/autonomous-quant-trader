@@ -143,11 +143,16 @@ class Spy:
         return record
 
 
-def _tick(controller: SafetyController, venue: object, hour: int) -> object:
+def _tick(
+    controller: SafetyController,
+    venue: object,
+    hour: int,
+    filters: SymbolFilters = FILTERS,
+) -> object:
     return controller.tick(
         venue,  # type: ignore[arg-type]
         "BTCUSDT",
-        FILTERS,
+        filters,
         BOUNDS,
         Decimal("100"),
         T0 + (hour + 3) * HOUR,  # the cost model needs 3 bars of history
@@ -163,6 +168,20 @@ def test_halt_while_holding_exposure_places_no_order(tmp_path: Path) -> None:
     spy = Spy()
     for hour in range(1, 6):
         assert _tick(controller, spy, hour) is None
+    assert spy.calls == []
+
+
+@pytest.mark.parametrize("alarm", [Trigger.INCIDENT, Trigger.LOSS_STOP])
+def test_an_alarm_during_flatten_halts_before_another_order(
+    tmp_path: Path, alarm: Trigger
+) -> None:
+    controller, _, incidents = _controller(tmp_path, Mode.RUNNING)
+    controller.trigger(Trigger.OWNER_FLATTEN, T0, "owner pressed FLATTEN")
+
+    assert controller.trigger(alarm, T0 + HOUR, "alarm") is Mode.HALT
+    assert len(incidents.open_incidents()) == 1
+    spy = Spy()
+    assert _tick(controller, spy, 1) is None
     assert spy.calls == []
 
 
@@ -240,6 +259,25 @@ def test_flatten_caps_each_step_at_the_venue_maximum(tmp_path: Path) -> None:
 
     assert order is not None and order.orig_qty == FILTERS.max_qty
     assert exchange.balances()["BTC"] == Decimal("200")
+    assert controller.mode is Mode.FLATTEN
+
+
+def test_flatten_caps_each_step_at_the_venue_maximum_notional(
+    tmp_path: Path,
+) -> None:
+    filters = replace(FILTERS, max_notional=Decimal("20"))
+    exchange = SimulatedExchange(
+        {"BTCUSDT": _series([100.0] * 16)},
+        {"BTCUSDT": filters},
+        {"USDT": Decimal(0), "BTC": Decimal(1)},
+    )
+    controller, _, _ = _controller(tmp_path, Mode.RUNNING)
+    controller.trigger(Trigger.OWNER_FLATTEN, T0)
+
+    order = _tick(controller, exchange, 1, filters)
+
+    assert order is not None and order.orig_qty == Decimal("0.2")
+    assert exchange.balances()["BTC"] == Decimal("0.8")
     assert controller.mode is Mode.FLATTEN
 
 
@@ -413,6 +451,35 @@ def test_a_failed_override_alert_keeps_halt_recoverable(tmp_path: Path) -> None:
     assert len(open_incidents) == 1
 
 
+def test_a_failed_override_invalidates_its_earlier_reconciliation(
+    tmp_path: Path,
+) -> None:
+    incidents = IncidentLog(tmp_path / "incidents.jsonl")
+    incidents.open(str(Trigger.OWNER_HALT), "drill", T0)
+    sink = ToggleSink()
+    sink.fail = False
+    controller = SafetyController(AlertRouter([sink]), incidents, T0, mode=Mode.HALT)
+    exchange = _exchange()
+    old = reconcile(exchange, LocalRecord(exchange.balances()), TOLERANCE, T0 + HOUR)
+    first = replace(_override(controller, incidents, T0 + 2 * HOUR), reconciliation=old)
+
+    sink.fail = True
+    with pytest.raises(OSError, match="alert sink failed"):
+        controller.override_halt(first, T0 + 2 * HOUR)
+    assert controller.entered_at == T0 + 2 * HOUR
+
+    sink.fail = False
+    stale = replace(_override(controller, incidents, T0 + 3 * HOUR), reconciliation=old)
+    with pytest.raises(SafetyError, match="predates"):
+        controller.override_halt(stale, T0 + 3 * HOUR)
+    assert (
+        controller.override_halt(
+            _override(controller, incidents, T0 + 3 * HOUR), T0 + 3 * HOUR
+        )
+        is Mode.RUNNING
+    )
+
+
 def test_a_later_halt_incident_invalidates_an_older_reconciliation(
     tmp_path: Path,
 ) -> None:
@@ -484,6 +551,7 @@ def test_a_failed_override_recovery_write_can_be_recorded_then_retried(
     with pytest.raises(OSError, match="recovery incident failed"):
         controller.override_halt(_override(controller, incidents, T0 + HOUR), T0 + HOUR)
     assert controller.mode is Mode.HALT
+    assert controller.entered_at == T0 + HOUR
     assert incidents.open_incidents() == ()
 
     sink.fail = False
