@@ -66,6 +66,23 @@ differs from `edc3b39`; `verify_frozen.ps1` needs PowerShell 7, which is not
 installed on this machine, so it was not run in this session. The repairs have
 not been re-reviewed.
 
+## Claude Fable 5.1 re-review of `3b9237e`
+
+Verdict ACCEPT; record `FABLE_REREVIEW_3B9237E.md`, committed before these
+changes. All four repairs judged correct.
+
+| ID | Decision | Evidence and disposition | Validation |
+| --- | --- | --- | --- |
+| F23R-1 | AGREE — documented | `sent` is cleared only by a successful recovery. The `sent` docstring and T23-09 now say so, and that the loop's baseline must not advance past those orders until then. No code change: Task 24 owns the baseline. | Documentation. |
+| F23R-2 | AGREE — Task 24 obligation | The controller has no executor order ids and `sent` is in memory. T23-09 now requires the loop's `LocalRecord` to carry every ambiguous executor order and `sent` to persist across restarts. Recovery still requires the owner's explicit HALT override to reach RUNNING. | Documentation. |
+| F23R-3 | AGREE — repaired | A `decision_time` later than `at` is now FLATTEN_FAULT (FREEZE with incident) before any order or step record. | `test_a_future_decision_time_is_a_flatten_fault`. |
+| Test note | ACCEPTED AS IS | The override coverage test sets `mode = HALT` directly; the reviewer found it hides no bug. The reachable case depends on the F23R-1 baseline rule. | — |
+
+Post-change gate: 1,545 passed, 4 skipped; Ruff check and format, mypy (48
+files), 5 import contracts, `git diff --check` pass; no frozen file differs
+from `edc3b39` (PowerShell 7 verifier not available on this machine). The
+F23R-3 guard and the documentation have not been re-reviewed.
+
 ## Current blockers and review status
 
 - Post-repair local validation passed: 1,532 tests passed and 4 skipped; Ruff,

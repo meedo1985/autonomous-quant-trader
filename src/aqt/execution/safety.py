@@ -253,8 +253,10 @@ class SafetyController:
         self.entered_at = require_utc(at, field_name="at")
         self._latest = self.entered_at
         self.sent: dict[str, Order | None] = {}
-        """FLATTEN orders since the last passed reconciliation. Recovery
-        requires a report that resolved every one of them."""
+        """FLATTEN orders since the last successful recovery (FREEZE exit or
+        HALT override), which alone clears it. Recovery requires a report that
+        resolved every one of them, so the caller's baseline balances must not
+        advance past these orders until then."""
         self._flatten_steps = 0
         self._last_flatten_decision: datetime | None = None
 
@@ -419,6 +421,11 @@ class SafetyController:
         if self.mode is not Mode.FLATTEN:
             return None
         decision_time = require_utc(decision_time, field_name="decision_time")
+        if decision_time > at:
+            self._move(
+                Trigger.FLATTEN_FAULT, at, f"decision time {decision_time} > {at}"
+            )
+            return None
         last = self._last_flatten_decision
         if last is not None and decision_time <= last:
             # At most one step per decision bar, so "50% per step" cannot

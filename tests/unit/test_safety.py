@@ -785,3 +785,23 @@ def test_the_override_needs_a_report_that_resolved_every_flatten_order(
     )
     assert controller.override_halt(full, at) is Mode.RUNNING
     assert controller.sent == {}
+
+
+def test_a_future_decision_time_is_a_flatten_fault(tmp_path: Path) -> None:
+    """F23R-3: a future decision bar must not silently stall FLATTEN."""
+    controller, _, incidents = _controller(tmp_path, Mode.RUNNING)
+    controller.trigger(Trigger.OWNER_FLATTEN, T0)
+    spy = Spy()
+    order = controller.tick(
+        spy,  # type: ignore[arg-type]
+        "BTCUSDT",
+        FILTERS,
+        BOUNDS,
+        Decimal("100"),
+        T0 + 10 * HOUR,
+        T0 + 4 * HOUR,
+    )
+    assert order is None
+    assert spy.calls == []
+    assert controller.mode is Mode.FREEZE
+    assert len(incidents.open_incidents()) == 1

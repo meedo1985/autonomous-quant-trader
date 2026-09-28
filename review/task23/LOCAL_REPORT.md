@@ -137,12 +137,18 @@ passed against the accepted baseline.
   override path.
 - **T23-08. Zero-fill retries are bounded by the loop, not this controller.**
   Task 24 must alert after a bounded number of consecutive IOC zero fills.
-- **T23-09. What the loop must feed the controller** (Fable F23-2, I02 caveat).
-  The reconciliation record after a recovery is `report.next_record()` plus
-  every order sent since; recovery refuses a report that did not resolve every
-  FLATTEN order. `mark_price` must be the decision bar's close, the price the
-  simulator checks notional against. FLATTEN takes at most one step per
-  decision bar.
+- **T23-09. What the loop must feed the controller** (Fable F23-2, F23R-1,
+  F23R-2, I02 caveat). Recovery refuses a report that did not resolve every
+  FLATTEN order in `SafetyController.sent`, and only a successful recovery
+  clears `sent`. So while `sent` is non-empty the loop must keep the baseline
+  balances from before those orders (a routine reconciliation must not advance
+  it); after a recovery the record is `report.next_record()` plus orders sent
+  since. The controller does not know executor order ids: the loop's
+  `LocalRecord` must carry every ambiguous executor order, and `sent` must be
+  persisted across restarts, or a blind report could clear FREEZE.
+  `mark_price` must be the decision bar's close, the price the simulator checks
+  notional against. FLATTEN takes at most one step per decision bar, and a
+  `decision_time` later than `at` is a FLATTEN_FAULT.
 
 ## Owner questions
 
