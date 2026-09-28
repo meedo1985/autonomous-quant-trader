@@ -13,8 +13,9 @@ Date: 2026-09-28
   disabled subscription access, and browser automation failed to start after
   its required retry and reset.
 - Base: `edc3b39dd890f5c92c1c7542b7853ae62055b4d2` (`origin/main`, Task 22 merge).
-- Reviewed state: the complete Task 23 branch plus the repairs in the commit
-  containing this record. Before that commit, the branch tip was `d0a1597`.
+- Initial locally reviewed state: the complete Task 23 branch plus the repairs
+  in the commit containing this record. Before that commit, the branch tip was
+  `d0a1597`. The post-external-review state is described below.
 - Worktree inspection covered staged, unstaged, and untracked files. Before
   this record was added, only the reviewed repairs in `safety.py` and its unit
   tests differed from the rebased Task 23 commits; `orders.py` had only a
@@ -37,7 +38,7 @@ The review covered HALT, FLATTEN, FREEZE, incident logging, HALT override,
 startup checks, and reconciliation, including the Task 22 order handoff. It
 also applied the owner's recorded choices: FLATTEN sells at most 50% per step
 with a 100 bps cap; simulator reconciliation tolerance is zero; L-03 enters
-FLATTEN. No live Binance adapter, credentials, model, strategy, or frozen
+HALT. No live Binance adapter, credentials, model, strategy, or frozen
 governance artifact is in scope.
 
 All six roadmap acceptance criteria pass:
@@ -102,7 +103,27 @@ free/locked balances and per-fill commission assets, and must verify current
 exchange behavior against official Binance documentation before activation.
 This limitation does not weaken any current simulator acceptance criterion.
 
-No other blocker, non-blocking finding, or unanswered review question remains.
+Claude Opus 5.5 subsequently reported T23-C1 through T23-C6 and T23-QA/QB.
+The incomplete exact-Astra attempt preserved T23-A0-01 through T23-A0-05.
+Their complete text and dispositions are retained in
+`CLAUDE_OPUS_5_5_REVIEW.md`, `ASTRA_REVIEW_ATTEMPT.md`, and
+`ADJUDICATION.md`; this initial review does not supersede them.
+
+## Post-external-review gate
+
+The repaired controller now maps the adopted L-03 trigger to HALT, advances
+the recovery timestamp on every protective self-transition, requires recovery
+evidence strictly after the latest transition, never exceeds either the owner
+fraction or venue maximum quantity during FLATTEN, and treats an unexpected
+venue filter rejection as FREEZE. Recovery after incident-ledger or
+override-recovery write failure is exercised after the affected sinks return.
+
+All six Task 23 acceptance criteria still pass. The audit-write restart marker
+and bounded consecutive-zero-fill alert remain explicit Task 24 obligations
+because persistence and repeated loop steps are outside this controller's
+scope. T23-QB/T23-01 remains an owner question: an INCIDENT or LOSS_STOP while
+already in FLATTEN currently records the incident and continues bounded
+reduction until owner HALT or completion.
 
 ## Validation
 
@@ -110,7 +131,7 @@ Environment: Windows 11; repository `.venv`; Python 3.14.7.
 
 | Command | Exit | Result |
 | --- | ---: | --- |
-| `.venv\Scripts\python.exe -m pytest -q` | 0 | 1522 passed, 4 skipped in 82.15s |
+| `.venv\Scripts\python.exe -m pytest -q` | 0 | 1528 passed, 4 skipped in 84.12s |
 | `.venv\Scripts\python.exe -m ruff check .` | 0 | All checks passed |
 | `.venv\Scripts\python.exe -m ruff format --check .` | 0 | 94 files already formatted |
 | `.venv\Scripts\python.exe -m mypy src scripts` | 0 | No issues in 48 source files |
@@ -134,8 +155,7 @@ this simulator-only task and remains required when a live adapter is proposed.
 Binance safety review: `PASS WITH CONDITIONS`, where the condition is T23-R3's
 future live-adapter validation. This does not authorize trading or deployment.
 
-Outstanding before merge: the owner's protected behavioural review, a Claude
-adversarial handoff marked with its truthful status, pull-request CI, and a
-committed record of final owner approval. The exact GPT-6 deployment suffix was
-not exposed and must be accepted or replaced by a review whose metadata can be
-verified.
+Outstanding before merge: the exact GPT-6 Astra review must complete on the
+post-repair snapshot; the owner must decide T23-QB/T23-01; pull-request CI must
+pass; and the final Section 16 human approval must be committed. Claude Opus
+5.5 feedback has been adjudicated but does not replace either required review.

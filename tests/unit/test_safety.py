@@ -25,7 +25,12 @@ from aqt.execution.safety import (
     SafetyError,
     Trigger,
 )
-from aqt.execution.simulator import SimulatedExchange, SymbolFilters
+from aqt.execution.simulator import (
+    ExchangeError,
+    Order,
+    SimulatedExchange,
+    SymbolFilters,
+)
 from aqt.monitoring.alerts import AlertRouter
 from aqt.monitoring.events import Event, EventKind, Severity
 
@@ -69,6 +74,31 @@ class FailingSink:
 class FailingIncidentLog(IncidentLog):
     def open(self, kind: str, detail: str, at: datetime) -> str:
         raise OSError("incident ledger failed")
+
+
+class ToggleIncidentLog(IncidentLog):
+    fail = True
+
+    def open(self, kind: str, detail: str, at: datetime) -> str:
+        if self.fail:
+            raise OSError("incident ledger failed")
+        return super().open(kind, detail, at)
+
+
+class RecoveryFailIncidentLog(IncidentLog):
+    def open(self, kind: str, detail: str, at: datetime) -> str:
+        if kind == "HALT_OVERRIDE_FAILED":
+            raise OSError("recovery incident failed")
+        return super().open(kind, detail, at)
+
+
+class ToggleSink:
+    min_severity = Severity.INFO
+    fail = True
+
+    def write(self, event: Event) -> None:
+        if self.fail:
+            raise OSError("alert sink failed")
 
 
 def _series(prices: list[float]) -> BarSeries:
@@ -179,16 +209,19 @@ def test_flatten_reduces_monotonically_and_never_crosses_zero(tmp_path: Path) ->
         held.append(exchange.balances()["BTC"])
     assert all(b <= a for a, b in itertools.pairwise(held))
     assert all(b >= 0 for b in held)
-    # Only an unsellable remainder may be left: none here, since 1.234 BTC
-    # halves to 0.155 and then sells whole.
-    assert held[-1] == 0
+    # The final 50% step is below the minimum notional, so the bound wins and
+    # the controller HALTs with the unsellable-within-bound remainder.
+    assert held[-1] == Decimal("0.155")
     assert controller.mode is Mode.HALT
-    # Halves: 1.234 -> 0.617 -> ... every step is a sell.
+    # Every submitted step is at most half of the balance before it.
     assert held[1] == Decimal("0.617")
+    assert all(
+        a - b <= a * BOUNDS.max_step_fraction for a, b in itertools.pairwise(held)
+    )
 
 
 def test_flatten_never_sells_more_than_is_held(tmp_path: Path) -> None:
-    exchange = _exchange(btc="0.0015")  # below twice the minimum: sells all
+    exchange = _exchange(btc="0.0015")
     controller, _, _ = _controller(tmp_path, Mode.RUNNING)
     controller.trigger(Trigger.OWNER_FLATTEN, T0)
     order = _tick(controller, exchange, 1)
@@ -196,6 +229,35 @@ def test_flatten_never_sells_more_than_is_held(tmp_path: Path) -> None:
     assert order is None
     assert exchange.balances()["BTC"] == Decimal("0.0015")
     assert controller.mode is Mode.HALT
+
+
+def test_flatten_caps_each_step_at_the_venue_maximum(tmp_path: Path) -> None:
+    exchange = _exchange(btc="300")
+    controller, _, _ = _controller(tmp_path, Mode.RUNNING)
+    controller.trigger(Trigger.OWNER_FLATTEN, T0)
+
+    order = _tick(controller, exchange, 1)
+
+    assert order is not None and order.orig_qty == FILTERS.max_qty
+    assert exchange.balances()["BTC"] == Decimal("200")
+    assert controller.mode is Mode.FLATTEN
+
+
+def test_an_unexpected_flatten_filter_reject_freezes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    exchange = _exchange()
+
+    def reject(*args: object, **kwargs: object) -> Order:
+        raise ExchangeError("FILTER_LOT_SIZE", "venue filters changed")
+
+    monkeypatch.setattr(exchange, "place_order", reject)
+    controller, _, _ = _controller(tmp_path, Mode.RUNNING)
+    controller.trigger(Trigger.OWNER_FLATTEN, T0)
+
+    assert _tick(controller, exchange, 1) is None
+    assert controller.mode is Mode.FREEZE
+    assert exchange.balances()["BTC"] == Decimal("1")
 
 
 def test_flatten_with_the_price_beyond_its_cap_sells_nothing(tmp_path: Path) -> None:
@@ -351,6 +413,89 @@ def test_a_failed_override_alert_keeps_halt_recoverable(tmp_path: Path) -> None:
     assert len(open_incidents) == 1
 
 
+def test_a_later_halt_incident_invalidates_an_older_reconciliation(
+    tmp_path: Path,
+) -> None:
+    controller, _, incidents = _controller(tmp_path, Mode.RUNNING)
+    exchange = _exchange()
+    controller.trigger(Trigger.OWNER_HALT, T0, "drill")
+    old = reconcile(exchange, LocalRecord(exchange.balances()), TOLERANCE, T0 + HOUR)
+    controller.trigger(Trigger.INCIDENT, T0 + 2 * HOUR, "later incident")
+    override = replace(
+        _override(controller, incidents, T0 + 3 * HOUR), reconciliation=old
+    )
+
+    with pytest.raises(SafetyError, match="predates"):
+        controller.override_halt(override, T0 + 3 * HOUR)
+
+    assert controller.mode is Mode.HALT
+
+
+def test_a_later_freeze_incident_invalidates_an_older_reconciliation(
+    tmp_path: Path,
+) -> None:
+    controller, _, _ = _controller(tmp_path, Mode.RUNNING)
+    exchange = _exchange()
+    controller.trigger(Trigger.AMBIGUOUS_ORDER, T0, "unknown order")
+    old = reconcile(exchange, LocalRecord(exchange.balances()), TOLERANCE, T0 + HOUR)
+    controller.trigger(Trigger.RECONCILIATION_FAILED, T0 + 2 * HOUR, "later mismatch")
+
+    with pytest.raises(SafetyError, match="does not follow"):
+        controller.exit_freeze(old, T0 + 3 * HOUR)
+
+    assert controller.mode is Mode.FREEZE
+
+
+def test_a_failed_incident_write_can_be_recorded_then_recovered(
+    tmp_path: Path,
+) -> None:
+    incidents = ToggleIncidentLog(tmp_path / "incidents.jsonl")
+    controller = SafetyController(
+        AlertRouter([ListSink()]), incidents, T0, mode=Mode.RUNNING
+    )
+    with pytest.raises(OSError, match="incident ledger failed"):
+        controller.trigger(Trigger.OWNER_HALT, T0, "owner pressed HALT")
+    assert controller.mode is Mode.FREEZE
+
+    incidents.fail = False
+    controller.trigger(Trigger.OWNER_HALT, T0 + HOUR, "record failed HALT")
+    exchange = _exchange()
+    report = reconcile(
+        exchange, LocalRecord(exchange.balances()), TOLERANCE, T0 + 2 * HOUR
+    )
+    assert controller.exit_freeze(report, T0 + 2 * HOUR) is Mode.HALT
+    assert incidents.open_incidents()
+    assert (
+        controller.override_halt(
+            _override(controller, incidents, T0 + 3 * HOUR), T0 + 3 * HOUR
+        )
+        is Mode.RUNNING
+    )
+
+
+def test_a_failed_override_recovery_write_can_be_recorded_then_retried(
+    tmp_path: Path,
+) -> None:
+    incidents = RecoveryFailIncidentLog(tmp_path / "incidents.jsonl")
+    incidents.open(str(Trigger.OWNER_HALT), "drill", T0)
+    sink = ToggleSink()
+    controller = SafetyController(AlertRouter([sink]), incidents, T0, mode=Mode.HALT)
+
+    with pytest.raises(OSError, match="recovery incident failed"):
+        controller.override_halt(_override(controller, incidents, T0 + HOUR), T0 + HOUR)
+    assert controller.mode is Mode.HALT
+    assert incidents.open_incidents() == ()
+
+    sink.fail = False
+    controller.trigger(Trigger.OWNER_HALT, T0 + 2 * HOUR, "record failed override")
+    assert (
+        controller.override_halt(
+            _override(controller, incidents, T0 + 3 * HOUR), T0 + 3 * HOUR
+        )
+        is Mode.RUNNING
+    )
+
+
 def test_every_protective_entry_opens_an_incident_and_is_critical(
     tmp_path: Path,
 ) -> None:
@@ -423,14 +568,12 @@ def test_flatten_bounds_are_required_values() -> None:
         FlattenBounds(max_step_fraction=Decimal("0.5"), max_slippage_bps=Decimal(-1))
 
 
-def test_the_loss_stop_sells_then_halts_and_opens_an_incident(tmp_path: Path) -> None:
-    """Owner setting S-4: the L-03 stop enters FLATTEN, never plain HALT."""
+def test_the_loss_stop_halts_and_opens_an_incident(tmp_path: Path) -> None:
+    """The adopted L-03 bound is an automatic HALT at 20% below peak."""
     for start in (Mode.RUNNING, Mode.HALT):
         controller, _, incidents = _controller(tmp_path / str(start), start)
         (tmp_path / str(start)).mkdir()
-        assert (
-            controller.trigger(Trigger.LOSS_STOP, T0, "20% below peak") is Mode.FLATTEN
-        )
+        assert controller.trigger(Trigger.LOSS_STOP, T0, "20% below peak") is Mode.HALT
         assert len(incidents.open_incidents()) == 1
     frozen, _, _ = _controller(tmp_path / "frozen", Mode.FREEZE)
     (tmp_path / "frozen").mkdir()

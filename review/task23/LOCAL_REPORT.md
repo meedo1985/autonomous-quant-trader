@@ -4,9 +4,9 @@ Date: 2026-09-27; final gate updated 2026-09-28. Coding AI: Claude Opus 5.5
 (`claude-opus-5-5`). Branch: `task23-safety`, rebased onto Task 22's merge at
 `edc3b39dd890f5c92c1c7542b7853ae62055b4d2`.
 
-Section 16 covers protocol-enforcement logic, which includes this code. The
-independent OpenAI GPT-6-family review is recorded in `review/task23/REVIEW.md`;
-the service did not expose a more specific deployment suffix. The owner's
+Section 16 covers protocol-enforcement logic, which includes this code. Claude
+Opus 5.5 completed an adversarial review. The required exact GPT-6 Astra run
+reached its usage limit before a verdict and must be rerun. The owner's
 behavioural review is still required before merge.
 
 ## What changed
@@ -17,7 +17,7 @@ behavioural review is still required before merge.
 | `src/aqt/execution/safety.py` (new) | `Mode`, `Trigger`, `MODE_TRANSITIONS`, `IncidentLog`, `HaltOverride`, `OwnerAction`, `FlattenBounds`, `SafetyController`, `startup_check` |
 | `src/aqt/execution/orders.py` | The exact cap arithmetic moved into `capped_price`, so FLATTEN sells share it. `limit_price_for` calls it; behaviour unchanged. |
 | `src/aqt/execution/simulator.py` | `open_orders()`, always empty: market and immediate-or-cancel orders never rest |
-| `tests/unit/test_safety.py` (new) | 27 tests (with parametrized cases) |
+| `tests/unit/test_safety.py` (new) | 37 tests (with parametrized cases) |
 | `tests/integration/test_reconciliation.py` (new) | 11 tests against the simulator, including the Task 22 hand-over |
 
 ## How sections 14, 19, 22 and 26 are read
@@ -31,9 +31,10 @@ behavioural review is still required before merge.
 - **FLATTEN** sells only. Each step sells at most `max_step_fraction` of the
   free base balance the venue reports, as an immediate-or-cancel sell capped
   `max_slippage_bps` below the mark. It can never go below zero, because it
-  never sells more than the venue says is held. A step too small for the lot
-  or notional minimum sells the whole remainder instead. When nothing
-  sellable is left, it ends in HALT. Any unclear FLATTEN outcome is FREEZE.
+  never sells more than the venue says is held. The step also respects the
+  venue maximum quantity. If no step fits both the owner bound and the venue
+  minimums, it leaves the remainder and ends in HALT. Any unclear FLATTEN
+  outcome or unexpected venue filter rejection is FREEZE.
 - **FREEZE does nothing.** It does not even read the venue. It is left only
   through a passed reconciliation taken after it began, and it goes to HALT,
   not RUNNING, because the ambiguous order that caused it is an incident that
@@ -83,9 +84,10 @@ ignoring the local copy, settling on a failed report, and treating a server
 error as absence. The last one survived at first;
 `test_a_server_error_on_the_query_is_unresolved_not_absent` was added.
 
-The tests also found an implementation error: FLATTEN stopped with 0.155 BTC
-(about 15 USDT) still sellable, because half of it was under the 10 USDT
-notional minimum. A step below the minimum now sells the whole remainder.
+The initial implementation sold a whole 0.155 BTC remainder when a 50% step
+fell below the notional minimum. That violated the owner's per-step maximum.
+The bound now wins: no order is sent and FLATTEN ends in HALT with that
+remainder disclosed. Each step is also capped by the venue maximum quantity.
 
 ## Validation
 
@@ -93,7 +95,7 @@ Environment: Windows 11, `.venv` Python 3.14.
 
 | Command | Result |
 | --- | --- |
-| `python -m pytest -q` | 1522 passed, 4 skipped in 82.15s |
+| `python -m pytest -q` | 1528 passed, 4 skipped in 84.12s |
 | `ruff check .` | All checks passed |
 | `ruff format --check .` | 94 files already formatted |
 | `mypy src scripts` | Success: no issues found in 48 source files |
@@ -117,16 +119,22 @@ passed against the accepted baseline.
   `REFUSE_START` conditions in deployment draft section 4 (hashes, alert
   channel, health checks, adapter) belong to the loop (Task 24).
 - **T23-04. Mode survives a restart only through the incident log.** An open
-  incident refuses the start. There is no separate stored mode.
+  incident refuses the start. There is no separate stored mode. If an audit
+  write itself fails, the current process fails closed, but Task 24 must add a
+  durable `REFUSE_START` marker before restart can be considered safe.
 - **T23-05. The simulator never has open orders**, so the untracked-open-order
   case is tested with a subclass that reports one.
-- **T23-06. Loss-stop detection (`L-03`) is not here.** The owner selected
-  FLATTEN as the trigger's action; computing drawdown from peak equity remains
-  the loop's job (Task 24).
+- **T23-06. Loss-stop detection (`L-03`) is not here.** The adopted bound enters
+  HALT; computing drawdown from peak equity remains the loop's job (Task 24).
 - **T23-07. Audit-write failures fail closed.** A failed incident-ledger or
   alert write during a protective transition leaves the controller in FREEZE.
   If the alert for a complete HALT override fails after its incidents close,
-  the controller stays in HALT and opens a recovery incident for a retry.
+  the controller stays in HALT and opens a recovery incident for a retry. If
+  that recovery write also fails, the owner records a fresh `OWNER_HALT` after
+  the ledger and alert sink recover, then uses the normal reconciliation and
+  override path.
+- **T23-08. Zero-fill retries are bounded by the loop, not this controller.**
+  Task 24 must alert after a bounded number of consecutive IOC zero fills.
 
 ## Owner questions
 
@@ -140,9 +148,13 @@ passed against the accepted baseline.
 
 ## Final review status and outstanding work
 
-- Local gate: PASS. The review found and repaired two audit-failure blockers;
-  see `review/task23/REVIEW.md`.
+- Local gate is being rerun after the Claude/Astra repairs. The original local
+  review found and repaired two audit-failure blockers; see
+  `review/task23/REVIEW.md`.
 - Task 22 is merged and its post-merge CI passed.
 - T23-Q1 and T23-Q2 are answered in `OWNER_ANSWERS_Q1_Q2.md`.
-- Still required before merge: the owner's behavioural review, the prepared
-  Claude adversarial handoff, pull-request CI, and a recorded final approval.
+- Claude Opus 5.5 review is recorded in `CLAUDE_OPUS_5_5_REVIEW.md`; its
+  adjudication is in `ADJUDICATION.md`.
+- Still required before merge: a completed exact GPT-6 Astra review, owner
+  acceptance or correction of T23-01, fresh pull-request CI, and a recorded
+  final human approval.

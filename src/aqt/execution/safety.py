@@ -13,11 +13,9 @@ How that reads here:
 
 * Only RUNNING lets the governor and executor trade (`may_trade`).
 * HALT places no order at all, not even a reduction: stopping is the whole
-  of HALT. The `L-03` loss stop is the exception by owner setting S-4
-  (`review/deployment/OWNER_SETTINGS_2026-09-27.md`): it enters FLATTEN from
-  RUNNING or HALT, which sells and then ends in HALT. FLATTEN is the
-  reducing path, and the owner may start it from RUNNING or HALT at any
-  time, whatever reservation the governor holds.
+  of HALT. The adopted `L-03` loss stop enters HALT. FLATTEN is the reducing
+  path, and the owner may start it from RUNNING or HALT at any time, whatever
+  reservation the governor holds.
 * FLATTEN sells only, at most the free base balance the venue reports, in
   steps of at most `max_step_fraction` of it, each an immediate-or-cancel
   order capped at `max_slippage_bps` below the mark. It can never cross
@@ -82,7 +80,7 @@ _QUOTE: Final[str] = "USDT"
 
 
 class SafetyError(RuntimeError):
-    """A refused safety action. The controller is left as it was."""
+    """A refused safety action; protective failures may leave FREEZE or HALT."""
 
 
 class Mode(StrEnum):
@@ -111,12 +109,12 @@ _TO_FREEZE: Final = (_T.AMBIGUOUS_ORDER, _T.RECONCILIATION_FAILED)
 
 MODE_TRANSITIONS: Final[dict[tuple[Mode, Trigger], Mode]] = {
     **{(_M.RUNNING, t): _M.HALT for t in _TO_HALT},
-    # The L-03 stop sells everything, then HALTs (owner setting S-4).
-    (_M.RUNNING, _T.LOSS_STOP): _M.FLATTEN,
+    # The adopted L-03 bound is an automatic HALT at 20% below peak equity.
+    (_M.RUNNING, _T.LOSS_STOP): _M.HALT,
     (_M.RUNNING, _T.OWNER_FLATTEN): _M.FLATTEN,
     **{(_M.RUNNING, t): _M.FREEZE for t in _TO_FREEZE},
     **{(_M.HALT, t): _M.HALT for t in _TO_HALT},
-    (_M.HALT, _T.LOSS_STOP): _M.FLATTEN,
+    (_M.HALT, _T.LOSS_STOP): _M.HALT,
     (_M.HALT, _T.OWNER_FLATTEN): _M.FLATTEN,
     **{(_M.HALT, t): _M.FREEZE for t in _TO_FREEZE},
     (_M.HALT, _T.HALT_OVERRIDE): _M.RUNNING,
@@ -275,7 +273,6 @@ class SafetyController:
         if target is None:
             raise SafetyError(f"{trigger} is not allowed in {self.mode}")
         source = self.mode
-        previous_entered_at = self.entered_at
         if target is not Mode.RUNNING:
             # Fail closed before either required audit write. If the incident
             # ledger or alert sink fails, no caller can keep trading.
@@ -300,10 +297,9 @@ class SafetyController:
                 },
             )
         )
-        if target is not source:
-            self.entered_at = at
-        else:
-            self.entered_at = previous_entered_at
+        # A later alarm makes any earlier reconciliation stale, including on
+        # protective self-transitions.
+        self.entered_at = at
         self.mode = target
         self._latest = at
         return target
@@ -316,7 +312,7 @@ class SafetyController:
             raise SafetyError(f"not in FREEZE ({self.mode})")
         if not report.passed:
             raise SafetyError("reconciliation failed: " + "; ".join(report.differences))
-        if report.at < self.entered_at or report.at > at:
+        if report.at <= self.entered_at or report.at > at:
             raise SafetyError("the reconciliation does not follow the FREEZE")
         return self._move(Trigger.FREEZE_EXIT, at, f"reconciliation {report.digest()}")
 
@@ -337,7 +333,7 @@ class SafetyController:
             raise SafetyError(
                 "HALT override refused: missing successful reconciliation"
             )
-        if report.at < self.entered_at or report.at > at:
+        if report.at <= self.entered_at or report.at > at:
             raise SafetyError("HALT override refused: reconciliation predates the HALT")
         action = override.owner_action
         if action is None or not action.actor.strip() or not action.statement.strip():
@@ -398,18 +394,21 @@ class SafetyController:
         except Exception as error:  # noqa: BLE001 - the holding is unknown
             self._move(Trigger.FLATTEN_FAULT, at, f"balance unreadable: {error}")
             return None
-        everything = _floor_to_step(free, filters.step_size)
-        if everything <= 0 or everything < filters.min_qty:
-            self._move(Trigger.FLATTEN_DONE, at, f"{base} left: {free}")
-            return None
         quantity = _floor_to_step(
-            _DEC.multiply(free, bounds.max_step_fraction), filters.step_size
+            min(
+                _DEC.multiply(free, bounds.max_step_fraction),
+                filters.max_qty,
+            ),
+            filters.step_size,
         )
         small = _DEC.multiply(quantity, mark_price) < filters.min_notional
-        if quantity < filters.min_qty or small:
-            # A step too small to be accepted sells the whole remainder, so a
-            # sellable holding is never left behind.
-            quantity = everything
+        if quantity <= 0 or quantity < filters.min_qty or small:
+            self._move(
+                Trigger.FLATTEN_DONE,
+                at,
+                f"no sellable step within the bound; {base} left: {free}",
+            )
+            return None
         cap = capped_price(Side.SELL, mark_price, bounds.max_slippage_bps, filters)
         if cap is None:
             self._move(Trigger.FLATTEN_FAULT, at, "no valid sell price")
@@ -428,11 +427,9 @@ class SafetyController:
                 limit_price=cap,
             )
         except ExchangeError as error:
-            if error.code in {"FILTER_MIN_NOTIONAL", "FILTER_LOT_SIZE"}:
-                # What is left is too small to sell: nothing was created.
-                self._move(Trigger.FLATTEN_DONE, at, f"unsellable remainder: {error}")
-            else:
-                self._move(Trigger.FLATTEN_FAULT, at, str(error))
+            # Local filter checks already passed. A venue rejection means the
+            # account or filters differ from what this controller used.
+            self._move(Trigger.FLATTEN_FAULT, at, str(error))
             return None
         except Exception as error:  # noqa: BLE001 - the outcome is unknown
             self._move(Trigger.FLATTEN_FAULT, at, f"{type(error).__name__}: {error}")

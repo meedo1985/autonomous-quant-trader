@@ -1,15 +1,12 @@
 # Task 23 Claude adversarial review packet
 
-Status: **FEEDBACK RECEIVED — ADJUDICATION PENDING**
+Status: **FEEDBACK RECEIVED — ADJUDICATED**
 
 Prepared: 2026-09-28
 
-Please use and record exact Claude Opus 5.5 model metadata. The owner selected
-Opus 5.5 for this review on 2026-09-28; do not silently substitute a model.
-Claude Code in this environment could not run it because the organization has
-disabled Claude subscription access for Claude Code. The browser automation
-helper also failed to start after its required retry and reset. No Claude model
-ran and no Claude review has occurred here.
+Claude Code later obtained exact Claude Opus 5.5 access. Its review is recorded
+in `CLAUDE_OPUS_5_5_REVIEW.md`, and every finding is adjudicated in
+`ADJUDICATION.md`. This packet preserves the snapshot that Claude reviewed.
 
 ## Snapshot
 
@@ -46,7 +43,7 @@ Task 23 implements HALT, FLATTEN, FREEZE, append-only incident records,
 five-artifact HALT override, exact simulator reconciliation, startup refusal,
 and the Task 22 order handoff. Owner choices are 50% maximum per FLATTEN step,
 a 100 bps FLATTEN cap, zero simulator reconciliation tolerance, and L-03
-entering FLATTEN.
+entering HALT.
 
 Excluded: a live Binance adapter, credentials, live orders, network exchange
 calls, Task 24's loop, ML/model logic, strategy changes, deployment, promotion,
@@ -79,7 +76,8 @@ on self-transitions and behavior if the recovery incident write itself fails.
 
 All commands exited 0 on Windows 11 with repository Python 3.14.7:
 
-- `.venv\Scripts\python.exe -m pytest -q`: 1,522 passed, 4 skipped in 82.15s.
+- `.venv\Scripts\python.exe -m pytest -q`: 1,528 passed, 4 skipped in 84.12s
+  on the adjudicated post-repair snapshot.
 - `.venv\Scripts\python.exe -m ruff check .`: all checks passed.
 - `.venv\Scripts\python.exe -m ruff format --check .`: 94 files formatted.
 - `.venv\Scripts\python.exe -m mypy src scripts`: no issues in 48 files.
