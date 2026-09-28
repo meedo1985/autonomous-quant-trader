@@ -8,14 +8,14 @@ Recorded verbatim below. Adjudication is in `ADJUDICATION.md`.
 
 Model: GPT-6 Astra
 
-**R-1 — BLOCKER — A zero-quantity replay releases a frozen reservation.**  
+**R-1 — BLOCKER — A zero-quantity replay releases a frozen reservation.**
 [src/aqt/execution/machine.py:291](D:/PMP-programs-for-sharawi/autonomous-quant-trader/src/aqt/execution/machine.py:291), lines 412–415.
 
 Scenario: execute an authorization with `Fault(timeout=True, unknown_queries=1)`. The order fills, but the executor returns `FREEZE` and retains its reservation. Construct another executor using the same governor and authorization, with `min_qty=10` against the authorized quantity of 5. The zero-quantity branch skips `redeem()`, sets `release_unredeemed=True`, and successfully releases the **already-redeemed** authorization. New decisions become possible without reconciliation.
 
 Suggested repair: establish single-use ownership before permitting abandonment. A zero-quantity invocation must never release an authorization previously redeemed by another invocation. Add the two-execution regression above.
 
-**R-2 — BLOCKER — Automatic release bypasses the Task 21 reconciliation contract.**  
+**R-2 — BLOCKER — Automatic release bypasses the Task 21 reconciliation contract.**
 [src/aqt/execution/machine.py:410](D:/PMP-programs-for-sharawi/autonomous-quant-trader/src/aqt/execution/machine.py:410).
 
 `_finish()` releases redeemed authorizations without reconciliation or a refreshed account state. The existing unit test at `tests/unit/test_executor.py:167` even requests another authorization using the original, pre-fill state.
@@ -24,14 +24,14 @@ A stronger simulator-only scenario is `Fault(timeout=True, not_found_queries=2)`
 
 Suggested repair: retain redeemed reservations until the required reconciliation confirms the outcome and establishes the actual state for subsequent decisions. Task 22 can return a pending-reconciliation result without implementing all of Task 23.
 
-**R-3 — BLOCKER — Authorization can expire between validation and placement.**  
+**R-3 — BLOCKER — Authorization can expire between validation and placement.**
 [src/aqt/execution/machine.py:322](D:/PMP-programs-for-sharawi/autonomous-quant-trader/src/aqt/execution/machine.py:322), lines 331–339.
 
 Scenario: the confirmed-absence check reads `expires_at − 1 microsecond`. `fire(AUTHORIZATION_VALID)` then reads a time at or after expiry. The next loop iteration calls `_place()` unconditionally. The resend occurs after expiry, even though the transition log itself can show that expiry has passed. Initial placement has the corresponding gap after `redeem()`.
 
 Suggested repair: check validity immediately at the submission boundary for every attempt, with explicit expired transitions. Test clock advancement between redemption/authorization validation and submission; the current expiry tests advance time only during sleep.
 
-**R-4 — BLOCKER — Backward clock jumps bypass the termination argument.**  
+**R-4 — BLOCKER — Backward clock jumps bypass the termination argument.**
 [src/aqt/execution/machine.py:248](D:/PMP-programs-for-sharawi/autonomous-quant-trader/src/aqt/execution/machine.py:248), lines 315–325.
 
 Only the interval surrounding `sleep()` is checked. A backward jump during placement or querying is accepted.
@@ -40,14 +40,14 @@ Concrete scripted scenario: each placement resets the injected clock to the issu
 
 Suggested repair: reject backward observations throughout the run, transition to `FREEZE`, and retain the reservation. Add a regression with rollback outside sleep and a bounded test timeout.
 
-**R-5 — BLOCKER — Maximum slippage is observational rather than an authorization bound.**  
+**R-5 — BLOCKER — Maximum slippage is observational rather than an authorization bound.**
 [src/aqt/execution/machine.py:331](D:/PMP-programs-for-sharawi/autonomous-quant-trader/src/aqt/execution/machine.py:331), lines 410–424.
 
 The venue receives neither the reference price nor the authorized slippage limit. The integration test already demonstrates the failure: a 15-bps authorization fills at a 100-bps adverse move, ends `FILLED`, and releases its reservation. The breach is calculated only after release.
 
 Suggested repair: establish an execution contract that can honor the authorized bound, or refuse execution when it cannot. Preserve the frozen backtest semantics; any incompatible governance interpretation requires the applicable approval process. Freezing after an excessive fill can contain subsequent activity, but cannot retroactively enforce the original bound.
 
-**R-6 — NON-BLOCKING — One client ID does not prove one exchange order.**  
+**R-6 — NON-BLOCKING — One client ID does not prove one exchange order.**
 [tests/unit/test_executor.py:308](D:/PMP-programs-for-sharawi/autonomous-quant-trader/tests/unit/test_executor.py:308); `src/aqt/execution/orders.py:3`.
 
 The fuzz assertion proves identical request tuples and per-request quantity bounds. It does not count distinct accepted orders or cumulative fills. The simulator supplies permanent deduplication independently of the executor.
