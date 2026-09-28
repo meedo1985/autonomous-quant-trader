@@ -184,3 +184,31 @@ mypy and lint-imports clean; frozen files unchanged.
   without the fix), `test_affordable_quantity_never_exceeds_the_cash_at_the_worst_cost`.
 - This change is not covered by Astra reviews 1 to 3. It goes into the fourth
   review.
+
+## Update after independent review 4 and the exact-head local gate
+
+Review 4 is recorded in `REVIEW_4.md` against clean commit `5d08c6f`. Its code
+verdict is ACCEPT, with no blocker and two simulator-scope non-blocking
+findings: future live sizing must distinguish free from locked quote balance,
+and must use the verified account fee rather than assuming the frozen 10 bps
+fallback. No code repair was warranted inside Task 22's simulator-only scope.
+
+Exact-head validation:
+
+| Command | Result |
+| --- | --- |
+| `.venv\Scripts\python.exe -m pytest -q` | 1480 passed, 4 skipped in 80.29s |
+| `.venv\Scripts\python.exe -m ruff check .` | All checks passed |
+| `.venv\Scripts\python.exe -m ruff format --check .` | 90 files already formatted |
+| `.venv\Scripts\python.exe -m mypy src scripts` | Success: 46 source files |
+| `.venv\Scripts\lint-imports.exe` | Contracts: 5 kept, 0 broken |
+| `git diff --check origin/main...HEAD` | clean at reviewed commit |
+| `review/task6/verify_frozen.ps1` (PowerShell 7) | 28/28 trusted bytes and 14/14 sidecars; all bindings pass |
+
+The first `pytest.exe -q` attempt exposed a stale launcher that selected an
+obsolete Python 3.12 path against the Python 3.14 environment. The required
+documented `python -m pytest` command ran with Python 3.14.7 and passed; no
+dependency or source file was changed to obtain the result.
+
+Still required before merge: the owner's section 16 review of T22-07 and the
+reviewer-metadata choice stated in `REVIEW_4.md`.
