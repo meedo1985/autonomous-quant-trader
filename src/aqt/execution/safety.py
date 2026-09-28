@@ -15,11 +15,12 @@ How that reads here:
 * HALT places no order at all, not even a reduction: stopping is the whole
   of HALT. FLATTEN is the reducing path, and the owner may start it from
   RUNNING or HALT at any time, whatever reservation the governor holds.
-* The `L-03` loss stop enters FLATTEN from RUNNING or HALT, and keeps
-  FLATTEN going if it fires again there; FLATTEN then ends in HALT (owner
-  setting S-4, `review/deployment/OWNER_SETTINGS_2026-09-27.md`, reconfirmed
-  2026-09-28 in `review/task24/OWNER_ANSWER_S4.md`). Any other alarm during
-  FLATTEN stops the selling in HALT.
+* The `L-03` loss stop enters FLATTEN from RUNNING, and keeps FLATTEN going
+  if it fires again there; FLATTEN then ends in HALT (owner setting S-4,
+  `review/deployment/OWNER_SETTINGS_2026-09-27.md`, reconfirmed 2026-09-28 in
+  `review/task24/OWNER_ANSWER_S4.md`). In HALT it stays HALT: the owner's
+  HALT always wins (`review/task24/OWNER_ANSWERS_2026-09-28.md`). Any other
+  alarm during FLATTEN stops the selling in HALT.
 * FLATTEN sells only, at most the free base balance the venue reports, in
   steps of at most `max_step_fraction` of it, each an immediate-or-cancel
   order capped at `max_slippage_bps` below the mark. It can never cross
@@ -118,7 +119,7 @@ MODE_TRANSITIONS: Final[dict[tuple[Mode, Trigger], Mode]] = {
     (_M.RUNNING, _T.OWNER_FLATTEN): _M.FLATTEN,
     **{(_M.RUNNING, t): _M.FREEZE for t in _TO_FREEZE},
     **{(_M.HALT, t): _M.HALT for t in _TO_HALT},
-    (_M.HALT, _T.LOSS_STOP): _M.FLATTEN,
+    (_M.HALT, _T.LOSS_STOP): _M.HALT,  # the owner's HALT wins (F24-1)
     (_M.HALT, _T.OWNER_FLATTEN): _M.FLATTEN,
     **{(_M.HALT, t): _M.FREEZE for t in _TO_FREEZE},
     (_M.HALT, _T.HALT_OVERRIDE): _M.RUNNING,

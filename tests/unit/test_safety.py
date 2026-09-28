@@ -676,13 +676,12 @@ def test_flatten_bounds_are_required_values() -> None:
 
 
 def test_the_loss_stop_flattens_and_opens_an_incident(tmp_path: Path) -> None:
-    """Owner setting S-4: the L-03 stop sells in FLATTEN steps, then HALTs."""
-    for start in (Mode.RUNNING, Mode.HALT):
+    """Owner setting S-4: the L-03 stop sells in FLATTEN steps, then HALTs,
+    but never out of HALT: the owner's HALT wins (F24-1)."""
+    for start, target in ((Mode.RUNNING, Mode.FLATTEN), (Mode.HALT, Mode.HALT)):
         controller, _, incidents = _controller(tmp_path / str(start), start)
         (tmp_path / str(start)).mkdir()
-        assert (
-            controller.trigger(Trigger.LOSS_STOP, T0, "20% below peak") is Mode.FLATTEN
-        )
+        assert controller.trigger(Trigger.LOSS_STOP, T0, "20% below peak") is target
         assert not controller.may_trade()
         assert len(incidents.open_incidents()) == 1
     frozen, _, _ = _controller(tmp_path / "frozen", Mode.FREEZE)

@@ -280,12 +280,23 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+FROZEN_MANIFEST_SHA256: Final = (
+    "962bdb5096ae191556933cdde940d34f1548261f2ee9a7be65b523208b26912d"
+)
+"""`FROZEN_HASHES.json` as frozen, pinned here so that editing a frozen file
+and rewriting its hashes to match still needs a reviewed code change (F24-2)."""
+
+
 def frozen_hash_problems(root: Path) -> list[str]:
     """Compare the frozen files the loop depends on with `FROZEN_HASHES.json`
-    and their sidecars (deployment draft section 4 item 1)."""
+    and their sidecars (deployment draft section 4 item 1). The manifest
+    itself must match `FROZEN_MANIFEST_SHA256`."""
     problems: list[str] = []
     try:
-        frozen = json.loads((root / "FROZEN_HASHES.json").read_text("utf-8"))
+        manifest = root / "FROZEN_HASHES.json"
+        if _sha256(manifest) != FROZEN_MANIFEST_SHA256:
+            problems.append("FROZEN_HASHES.json: does not match the pinned hash")
+        frozen = json.loads(manifest.read_text("utf-8"))
         checks = {
             "protocol_file_sha256": root / "protocols" / "protocol_v1.yaml",
             "cost_model_sha256": root / "specs" / "COST_MODEL_v1.md",
@@ -564,11 +575,13 @@ def run_paper(
             breached = equity < peak * (1 - config.loss_stop_fraction)
             if not breached:
                 stop_armed = True
+            # Only while trading normally: the owner's HALT always wins
+            # (OWNER_ANSWERS_2026-09-28.md, F24-1).
             if (
                 breached
                 and stop_armed
                 and held >= config.filters.min_qty
-                and controller.mode in (Mode.RUNNING, Mode.HALT)
+                and controller.mode is Mode.RUNNING
             ):
                 keep = 1 - config.loss_stop_fraction
                 detail = f"equity {equity:.2f} below {keep} x peak {peak:.2f}"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import random
@@ -494,3 +495,50 @@ def test_consecutive_zero_fills_raise_a_critical_alert() -> None:
     assert [e.fields["zero_fill_streak"] for e in sink.events] == [3]
     assert sink.events[0].severity is Severity.CRITICAL
     assert loop._zero_fill_alert(router, streak, _filled_order(), T0) == 0
+
+
+def test_rewriting_a_frozen_file_and_its_hashes_is_still_refused(
+    tmp_path: Path,
+) -> None:
+    """F24-2: the manifest is pinned in code, so rewritten hashes do not hide
+    an edit."""
+    root = _copy_frozen(tmp_path / "repo")
+    protocol = root / "protocols" / "protocol_v1.yaml"
+    with protocol.open("ab") as handle:
+        handle.write(b"\n")
+    digest = hashlib.sha256(protocol.read_bytes()).hexdigest()
+    (root / "protocols" / "protocol_v1.yaml.sha256").write_text(
+        f"{digest}  protocol_v1.yaml\n", "utf-8"
+    )
+    manifest = root / "FROZEN_HASHES.json"
+    frozen = json.loads(manifest.read_text("utf-8"))
+    frozen["protocol_file_sha256"] = digest
+    manifest.write_text(json.dumps(frozen), "utf-8")
+    assert loop.frozen_hash_problems(root) == [
+        "FROZEN_HASHES.json: does not match the pinned hash"
+    ]
+
+
+def test_the_loss_stop_never_overrides_an_owner_halt(tmp_path: Path) -> None:
+    """F24-1: the owner pressed FLATTEN, then HALT, during the fall. The L-03
+    stop must not restart selling."""
+    config = _config(12)
+    series = _crash_series(24 * 22, crash_at=24 * 12)
+    flatten_at = datetime(2020, 1, 13, 21, tzinfo=UTC)
+    commands = {
+        flatten_at: Trigger.OWNER_FLATTEN,
+        flatten_at + HOUR: Trigger.OWNER_HALT,
+    }
+    report = _run(tmp_path, config, series, commands=commands)
+    events = [
+        json.loads(line)["payload"]
+        for line in (tmp_path / "operations.jsonl").read_text().splitlines()
+    ]
+    moves = [
+        (e["fields"].get("from"), e["fields"].get("to"))
+        for e in events
+        if e["kind"] == "STATE_TRANSITION" and "to" in e["fields"]
+    ]
+    assert ("FLATTEN", "HALT") in moves
+    assert ("HALT", "FLATTEN") not in moves
+    assert report.final_mode == "HALT"

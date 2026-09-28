@@ -244,3 +244,15 @@ shows no file under `docs/`, `protocols/`, `schemas/`, `specs/` or
   chooses).
 - The owner's behavioural review (section 16).
 - Owner question T24-Q1: `ZERO_FILL_ALERT_AFTER = 3`, alert only.
+
+## Update 2026-09-28: Fable review repairs
+
+See `FABLE_REVIEW_646D514.md`, `ADJUDICATION.md`, `OWNER_ANSWERS_2026-09-28.md`.
+
+- F24-1: the owner's HALT wins; S-4 applies from RUNNING only.
+- F24-2: `FROZEN_HASHES.json` pinned in code (`FROZEN_MANIFEST_SHA256`).
+- T24-Q1 answered: alert only after 3 consecutive zero fills.
+- Health-breach hours: pause only (owner, F24-4).
+- **T24-08. Paper-only scope of run state** (F24-3). Incident log, refuse
+  marker, loss-stop peak and unsettled FLATTEN orders live per run. Any stage
+  that continues an account must scope and persist them per account.
