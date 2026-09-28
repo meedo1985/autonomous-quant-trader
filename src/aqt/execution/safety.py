@@ -13,9 +13,13 @@ How that reads here:
 
 * Only RUNNING lets the governor and executor trade (`may_trade`).
 * HALT places no order at all, not even a reduction: stopping is the whole
-  of HALT. The adopted `L-03` loss stop enters HALT. FLATTEN is the reducing
-  path, and the owner may start it from RUNNING or HALT at any time, whatever
-  reservation the governor holds.
+  of HALT. FLATTEN is the reducing path, and the owner may start it from
+  RUNNING or HALT at any time, whatever reservation the governor holds.
+* The `L-03` loss stop enters FLATTEN from RUNNING or HALT, and keeps
+  FLATTEN going if it fires again there; FLATTEN then ends in HALT (owner
+  setting S-4, `review/deployment/OWNER_SETTINGS_2026-09-27.md`, reconfirmed
+  2026-09-28 in `review/task24/OWNER_ANSWER_S4.md`). Any other alarm during
+  FLATTEN stops the selling in HALT.
 * FLATTEN sells only, at most the free base balance the venue reports, in
   steps of at most `max_step_fraction` of it, each an immediate-or-cancel
   order capped at `max_slippage_bps` below the mark. It can never cross
@@ -109,20 +113,20 @@ _TO_FREEZE: Final = (_T.AMBIGUOUS_ORDER, _T.RECONCILIATION_FAILED)
 
 MODE_TRANSITIONS: Final[dict[tuple[Mode, Trigger], Mode]] = {
     **{(_M.RUNNING, t): _M.HALT for t in _TO_HALT},
-    # The adopted L-03 bound is an automatic HALT at 20% below peak equity.
-    (_M.RUNNING, _T.LOSS_STOP): _M.HALT,
+    # The L-03 stop sells everything in FLATTEN steps, then HALTs (S-4).
+    (_M.RUNNING, _T.LOSS_STOP): _M.FLATTEN,
     (_M.RUNNING, _T.OWNER_FLATTEN): _M.FLATTEN,
     **{(_M.RUNNING, t): _M.FREEZE for t in _TO_FREEZE},
     **{(_M.HALT, t): _M.HALT for t in _TO_HALT},
-    (_M.HALT, _T.LOSS_STOP): _M.HALT,
+    (_M.HALT, _T.LOSS_STOP): _M.FLATTEN,
     (_M.HALT, _T.OWNER_FLATTEN): _M.FLATTEN,
     **{(_M.HALT, t): _M.FREEZE for t in _TO_FREEZE},
     (_M.HALT, _T.HALT_OVERRIDE): _M.RUNNING,
-    # No committed authority allows an alarm to keep selling. Stop in HALT;
-    # the owner can explicitly start FLATTEN again after assessing it.
+    # Only S-4 authorizes an alarm to keep selling: the L-03 stop. Any other
+    # alarm stops in HALT; the owner can start FLATTEN again after assessing.
     (_M.FLATTEN, _T.OWNER_HALT): _M.HALT,
     (_M.FLATTEN, _T.INCIDENT): _M.HALT,
-    (_M.FLATTEN, _T.LOSS_STOP): _M.HALT,
+    (_M.FLATTEN, _T.LOSS_STOP): _M.FLATTEN,
     (_M.FLATTEN, _T.OWNER_FLATTEN): _M.FLATTEN,
     (_M.FLATTEN, _T.FLATTEN_DONE): _M.HALT,
     (_M.FLATTEN, _T.FLATTEN_FAULT): _M.FREEZE,
@@ -253,10 +257,11 @@ class SafetyController:
         self.entered_at = require_utc(at, field_name="at")
         self._latest = self.entered_at
         self.sent: dict[str, Order | None] = {}
-        """FLATTEN orders since the last successful recovery (FREEZE exit or
-        HALT override), which alone clears it. Recovery requires a report that
-        resolved every one of them, so the caller's baseline balances must not
-        advance past these orders until then."""
+        """FLATTEN orders not yet settled by a passed reconciliation. Recovery
+        requires a report that resolved every one of them. Only
+        `settle_flatten` or a successful recovery removes them, so a caller
+        advances its baseline balances past an order exactly when it settles
+        it."""
         self._flatten_steps = 0
         self._last_flatten_decision: datetime | None = None
 
@@ -331,6 +336,15 @@ class SafetyController:
         mode = self._move(Trigger.FREEZE_EXIT, at, f"reconciliation {report.digest()}")
         self.sent.clear()
         return mode
+
+    def settle_flatten(self, report: ReconciliationReport) -> None:
+        """Forget the FLATTEN orders a passed reconciliation resolved; the
+        caller carries `report.next_record()` forward. A failed report
+        settles nothing."""
+        if not report.passed:
+            raise SafetyError("a failed reconciliation settles nothing")
+        for client_order_id in report.resolved:
+            self.sent.pop(client_order_id, None)
 
     def _require_covers(self, report: ReconciliationReport) -> None:
         missing = sorted(set(self.sent) - set(report.resolved))
