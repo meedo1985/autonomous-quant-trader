@@ -212,3 +212,10 @@ dependency or source file was changed to obtain the result.
 
 Still required before merge: the owner's section 16 review of T22-07 and the
 reviewer-metadata choice stated in `REVIEW_4.md`.
+
+## Owner approval and merge readiness
+
+On 2026-09-28 the owner approved both remaining items: T22-07's affordable-buy
+behavior and the GPT-6 family review metadata. The verbatim response and exact
+questions are preserved in `OWNER_REVIEW_T22_07.md`. With CI required on this
+evidence commit, Task 22 has no remaining section 16 review blocker.
