@@ -4,12 +4,12 @@ Status: **NOT SENT — READY FOR HUMAN RELAY**
 
 Prepared: 2026-09-28
 
-Please record the actual Claude model metadata shown by the reviewing product.
-The project preference is Claude Fable 5.1 for a demanding adversarial review
-when that exact model is available. Do not silently substitute a model. Claude
-Code in this environment could not run exact Opus 5.1: it reported
-`unrecognized_model` and `oauth_not_allowed_for_organization`, with zero tokens
-and cost, so no Claude review has occurred here.
+Please use and record exact Claude Opus 5.5 model metadata. The owner selected
+Opus 5.5 for this review on 2026-09-28; do not silently substitute a model.
+Claude Code in this environment could not run it because the organization has
+disabled Claude subscription access for Claude Code. The browser automation
+helper also failed to start after its required retry and reset. No Claude model
+ran and no Claude review has occurred here.
 
 ## Snapshot
 

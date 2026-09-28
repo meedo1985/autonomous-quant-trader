@@ -8,9 +8,10 @@ Date: 2026-09-28
   deployment suffix, so this record does not claim GPT-6 Astra specifically.
 - Implementation model recorded by the implementer: Claude Opus 5.5
   (`claude-opus-5-5`). The reviewer is a different model family/provider.
-- Preferred Claude Opus 5.1 availability check: no model ran. Claude Code
-  returned `unrecognized_model` and the organization returned
-  `oauth_not_allowed_for_organization`; token/cost counters were zero.
+- The owner changed the requested Claude adversarial model to exact Opus 5.5
+  on 2026-09-28. No model ran: Claude Code reported that the organization has
+  disabled subscription access, and browser automation failed to start after
+  its required retry and reset.
 - Base: `edc3b39dd890f5c92c1c7542b7853ae62055b4d2` (`origin/main`, Task 22 merge).
 - Reviewed state: the complete Task 23 branch plus the repairs in the commit
   containing this record. Before that commit, the branch tip was `d0a1597`.
