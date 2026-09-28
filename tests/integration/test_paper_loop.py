@@ -542,3 +542,33 @@ def test_the_loss_stop_never_overrides_an_owner_halt(tmp_path: Path) -> None:
     assert ("FLATTEN", "HALT") in moves
     assert ("HALT", "FLATTEN") not in moves
     assert report.final_mode == "HALT"
+
+
+def test_a_loss_stop_breach_after_an_owner_halt_alerts_but_sells_nothing(
+    tmp_path: Path,
+) -> None:
+    """F24R-1: the owner's HALT wins, but the breach is still an incident and
+    a CRITICAL alert."""
+    config = _config(12)
+    series = _crash_series(24 * 22, crash_at=24 * 12)
+    halt_at = datetime(2020, 1, 10, 5, tzinfo=UTC)
+    report = _run(tmp_path, config, series, commands={halt_at: Trigger.OWNER_HALT})
+    events = [
+        json.loads(line)["payload"]
+        for line in (tmp_path / "operations.jsonl").read_text().splitlines()
+    ]
+    stops = [
+        e
+        for e in events
+        if e["kind"] == "STATE_TRANSITION" and e["fields"].get("trigger") == "LOSS_STOP"
+    ]
+    assert len(stops) == 1
+    assert (stops[0]["fields"]["from"], stops[0]["fields"]["to"]) == ("HALT", "HALT")
+    assert stops[0]["severity"] == "CRITICAL"
+    incidents = IncidentLog(tmp_path / "incidents.jsonl")
+    assert len(incidents.open_incidents()) == 2  # the owner HALT and the stop
+    orders_after = [
+        e for e in events if e["kind"] == "ORDER" and e["at"] > halt_at.isoformat()
+    ]
+    assert orders_after == []
+    assert report.final_mode == "HALT"

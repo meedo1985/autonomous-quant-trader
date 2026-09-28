@@ -182,7 +182,7 @@ reconciliation."
 | State | Entered on | Allowed | Exit |
 |---|---|---|---|
 | **HALT** | Any incident (**proposed**; §0 defines an incident but does not say it causes HALT); the end of FLATTEN, including after an `L-03` breach [ADOPTED L-03; OWNER-SET S-4]; owner command | No new risk [FROZEN §22] | The HALT exit procedure below [FROZEN §14] |
-| **FLATTEN** | Owner command, or an `L-03` breach [OWNER-SET S-4] | Bounded de-risking [FROZEN §22], within at most **50%** of the held base per step, each sell capped **1%** (100 bps) below the mark [OWNER-SET T23-Q1] | Zero exposure or no valid step within the bounds, with any remainder recorded; then HALT (**proposed**) |
+| **FLATTEN** | Owner command, or an `L-03` breach while RUNNING [OWNER-SET S-4; owner answer 2026-09-28: an owner HALT is never overridden, the breach still alerts] | Bounded de-risking [FROZEN §22], within at most **50%** of the held base per step, each sell capped **1%** (100 bps) below the mark [OWNER-SET T23-Q1] | Zero exposure or no valid step within the bounds, with any remainder recorded; then HALT (**proposed**) |
 | **FREEZE** | An ambiguous order reaching `UNKNOWN` [FROZEN §21]; a reconciliation failure while running (**proposed**) | No autonomous risk change [FROZEN §22] | Successful reconciliation [FROZEN §22] |
 
 Risk reductions are immediate and never gated [FROZEN §14: "Risk reductions

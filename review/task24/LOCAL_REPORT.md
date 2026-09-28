@@ -255,4 +255,11 @@ See `FABLE_REVIEW_646D514.md`, `ADJUDICATION.md`, `OWNER_ANSWERS_2026-09-28.md`.
 - Health-breach hours: pause only (owner, F24-4).
 - **T24-08. Paper-only scope of run state** (F24-3). Incident log, refuse
   marker, loss-stop peak and unsettled FLATTEN orders live per run. Any stage
-  that continues an account must scope and persist them per account.
+  that continues an account must scope and persist them per account, and the
+  owner must decide (F24R-3): whether a HALT override while still below the
+  L-03 line sells at once (the latch is still armed if an owner HALT
+  pre-empted the stop), and how the stop re-arms after it has fired, since an
+  all-USDT account may never regain 80% of the old peak and would then run
+  with no L-03 stop.
+- F24R-1 (re-review): every L-03 breach outside FREEZE now opens an incident
+  and a CRITICAL alert; it sells only from RUNNING.

@@ -575,13 +575,15 @@ def run_paper(
             breached = equity < peak * (1 - config.loss_stop_fraction)
             if not breached:
                 stop_armed = True
-            # Only while trading normally: the owner's HALT always wins
-            # (OWNER_ANSWERS_2026-09-28.md, F24-1).
+            # Every breach alerts and opens an incident (deployment draft
+            # section 5). It sells only from RUNNING: in HALT the owner's HALT
+            # wins (OWNER_ANSWERS_2026-09-28.md, F24-1, F24R-1), and an owner
+            # FLATTEN simply goes on. FREEZE is left alone until reconciled.
             if (
                 breached
                 and stop_armed
                 and held >= config.filters.min_qty
-                and controller.mode is Mode.RUNNING
+                and controller.mode is not Mode.FREEZE
             ):
                 keep = 1 - config.loss_stop_fraction
                 detail = f"equity {equity:.2f} below {keep} x peak {peak:.2f}"
@@ -710,7 +712,7 @@ def run_paper(
 
 ZERO_FILL_ALERT_AFTER: Final = 3
 """Consecutive IOC orders with nothing filled before a CRITICAL alert
-(T23-08). A proposal, not an owner-set value."""
+(T23-08). Owner-set, alert only (T24-Q1, OWNER_ANSWERS_2026-09-28.md)."""
 
 
 def _zero_fill_alert(
