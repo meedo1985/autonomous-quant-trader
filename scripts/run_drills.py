@@ -107,7 +107,7 @@ class _Runner:
             **kwargs,  # type: ignore[arg-type]
         )
         text = json.dumps(report.as_mapping(), indent=2, sort_keys=True)
-        (out / "report.json").write_text(text + "\n", encoding="utf-8")
+        (out / "report.json").write_text(text + "\n", encoding="utf-8", newline="\n")
         return report, out
 
 
@@ -185,7 +185,9 @@ def drill_flatten(runner: _Runner, config: PaperConfig) -> DrillResult:
         and ("FLATTEN", "HALT", "FLATTEN_DONE") in moves
     )
     trace = [[t, str(h), str(q), str(x)] for t, h, q, x in steps]
-    (out / "steps.json").write_text(json.dumps(trace, indent=2) + "\n", "utf-8")
+    (out / "steps.json").write_text(
+        json.dumps(trace, indent=2) + "\n", "utf-8", newline="\n"
+    )
     return DrillResult(
         "flatten",
         f"owner FLATTEN at {at.isoformat()}: each logged sell is at most "
@@ -310,7 +312,9 @@ def drill_freeze_reconcile(
         and mode is Mode.HALT
         and exchange.balances()["BTC"] < held["BTC"]  # the lost-reply sell filled
     )
-    (out / "steps.json").write_text(json.dumps(steps, indent=2) + "\n", "utf-8")
+    (out / "steps.json").write_text(
+        json.dumps(steps, indent=2) + "\n", "utf-8", newline="\n"
+    )
     return DrillResult(
         "freeze_reconcile",
         "a FLATTEN sell whose reply is lost enters FREEZE; a check that did not "
@@ -362,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
         "drills": [asdict(r) for r in results],
     }
     text = json.dumps(summary, indent=2)
-    (args.out / "summary.json").write_text(text + "\n", encoding="utf-8")
+    (args.out / "summary.json").write_text(text + "\n", encoding="utf-8", newline="\n")
     print(text)
     return 0 if all(r.passed for r in results) else 1
 
