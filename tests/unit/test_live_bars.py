@@ -217,3 +217,117 @@ def test_the_cli_refuses_while_a_key_variable_is_set(
         == 2
     )
     assert not (tmp_path / "b.jsonl").exists()
+
+
+FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "live"
+
+
+class FixtureExchange:
+    """Replays the committed klines fixture (synthetic, in Binance's
+    documented row format; no real reply is recorded: the AI makes no call)."""
+
+    def __init__(self, server: datetime) -> None:
+        self.body = (FIXTURE / "klines_btcusdt_1h.json").read_bytes()
+        self.server = server
+
+    def __call__(self, request: PublicRequest) -> FetchResponse:
+        if request.url == TIME_URL:
+            body = {"serverTime": _ms(self.server)}
+            return FetchResponse(200, json.dumps(body).encode())
+        return FetchResponse(200, self.body)
+
+
+def test_the_committed_fixture_replays_byte_identically(tmp_path: Path) -> None:
+    """F26-5: the roadmap's acceptance, as worded."""
+    now = T0 + 5 * HOUR + timedelta(minutes=2)
+    stores = []
+    for name in ("a", "b"):
+        store = LiveBarStore(tmp_path / f"{name}.jsonl")
+        fetch_new_bars(FixtureExchange(now), store, "BTCUSDT", now, SKEW, start=T0)
+        stores.append(store.path.read_bytes())
+    expected = (FIXTURE / "expected_store.jsonl").read_bytes()
+    assert stores[0] == stores[1] == expected
+
+
+def test_a_local_clock_ahead_never_stores_the_forming_bar(tmp_path: Path) -> None:
+    """F26-1 (the reviewer's scenario): Binance is at 04:59:57 and the local
+    clock 4 s ahead, within S-5. The 04:00 hour is still forming on Binance,
+    so it is not stored."""
+    server = T0 + 5 * HOUR - timedelta(seconds=3)
+    now = server + timedelta(seconds=4)
+    exchange = Exchange(_hours(4, forming=False) + [_row(T0 + 4 * HOUR, 123.0)], server)
+    store = LiveBarStore(tmp_path / "bars.jsonl")
+    result = fetch_new_bars(exchange, store, "BTCUSDT", now, SKEW, start=T0)
+    assert result.appended == 4
+    assert result.last_open_time == T0 + 3 * HOUR
+    assert 123.0 not in [b.close for b in store.bars()]
+
+
+def test_a_torn_store_line_is_a_named_refusal(tmp_path: Path) -> None:
+    """F26-2: a crash mid-append leaves a torn line; the store refuses,
+    naming the file and line, instead of raising a raw parse error."""
+    store = LiveBarStore(tmp_path / "bars.jsonl")
+    store.append(parse_klines(json.dumps(_hours(1, forming=False)).encode(), T0 + HOUR))
+    with store.path.open("a", encoding="utf-8") as handle:
+        handle.write('{"close": 100.0, "hi')
+    with pytest.raises(LiveBarError, match="bars.jsonl line 2"):
+        store.bars()
+
+
+@pytest.mark.parametrize(
+    "start",
+    [
+        datetime(2025, 6, 1, tzinfo=UTC),  # lockbox
+        datetime(2024, 1, 1, tzinfo=UTC),  # confirmation
+        datetime(2026, 8, 31, 23, tzinfo=UTC),  # last lockbox hour
+    ],
+)
+def test_the_store_never_starts_in_restricted_data(
+    tmp_path: Path, start: datetime
+) -> None:
+    """F26-3: no start before 2026-09-01; refused before any request."""
+    exchange = Exchange(_hours(3), T0)
+    store = LiveBarStore(tmp_path / "bars.jsonl")
+    with pytest.raises(LiveBarError, match="lockbox"):
+        fetch_new_bars(exchange, store, "BTCUSDT", T0, SKEW, start=start)
+    assert exchange.requests == [] and store.bars() == ()
+
+
+def test_a_bad_start_is_refused_before_any_request(tmp_path: Path) -> None:
+    """F26-4: input checks come first, so a bad start never reaches the
+    network."""
+    exchange = Exchange(_hours(3), T0)
+    store = LiveBarStore(tmp_path / "bars.jsonl")
+    with pytest.raises(LiveBarError, match="UTC"):
+        fetch_new_bars(
+            exchange, store, "BTCUSDT", T0, SKEW, start=datetime(2026, 9, 29)
+        )
+    assert exchange.requests == []
+
+
+def test_the_cli_turns_network_errors_into_a_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F26-4: a failed request is exit 2, not a traceback."""
+    import importlib.util
+    import urllib.error
+
+    path = Path(__file__).resolve().parents[2] / "scripts" / "fetch_live_bars.py"
+    spec = importlib.util.spec_from_file_location("fetch_live_bars_net", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["fetch_live_bars_net"] = module
+    spec.loader.exec_module(module)
+
+    def down(_: PublicRequest) -> FetchResponse:
+        raise urllib.error.URLError("no route")
+
+    monkeypatch.setattr(module, "urllib_transport", down)
+    monkeypatch.delenv("BINANCE_API_KEY", raising=False)
+    args = [
+        "--store",
+        str(tmp_path / "b.jsonl"),
+        "--start",
+        "2026-09-29T00:00:00+00:00",
+    ]
+    assert module.main(args) == 2

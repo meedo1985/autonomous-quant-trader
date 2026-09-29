@@ -70,3 +70,36 @@ Windows 11, `.venv` Python 3.14:
 | `mypy src scripts` | no issues in 55 source files |
 | `lint-imports` | 6 kept, 0 broken |
 | `git diff --check` | clean; no frozen file differs from `main` |
+
+
+## Fable review of `ea14844` and repairs
+
+Record: `FABLE_REVIEW_EA14844.md` (committed `2c19fa7` before these repairs;
+verdict FIX). The reviewer disclosed one real, key-free request to
+`/api/v3/time` it made against instructions (F26-4 below); reported to the
+owner.
+
+| ID | Decision | Disposition | Validation |
+| --- | --- | --- | --- |
+| F26-1 | AGREE — BLOCKER, repaired | A bar counts as closed only when it has ended on both clocks: the cutoff is `min(local now, Binance server time)`. A local clock ahead by up to 5 s can no longer store the forming hour. | `test_a_local_clock_ahead_never_stores_the_forming_bar` (reviewer's scenario) |
+| F26-2 | AGREE — repaired | A torn or edited store line raises `LiveBarError` naming file and line; the CLI exits 2. | `test_a_torn_store_line_is_a_named_refusal` |
+| F26-3 | AGREE — repaired | `LIVE_START_FLOOR` = 2026-09-01T00:00Z, the first hour after the protocol's lockbox partition: a start inside confirmation or lockbox data is refused before any request. This applies the frozen partition rule; it is not a new owner choice. | `test_the_store_never_starts_in_restricted_data` (lockbox, confirmation, last lockbox hour) |
+| F26-4 | AGREE — repaired | Symbol, start (UTC, floor) and the empty-store rule are checked before any request; the CLI maps network errors (`OSError`, incl. `URLError`, timeouts) to exit 2. | `test_a_bad_start_is_refused_before_any_request`, `test_the_cli_turns_network_errors_into_a_refusal` |
+| F26-5 | AGREE — repaired | A committed fixture (`tests/fixtures/live/klines_btcusdt_1h.json`, synthetic, in Binance's documented row format; no real reply is recorded because the AI makes no call) replays into a store byte-identical to `expected_store.jsonl`. Fixture files are byte-exact across checkouts (`.gitattributes`). | `test_the_committed_fixture_replays_byte_identically` |
+| F26-6 | AGREE — disclosed (T26-04) | See below. | — |
+| F26-7 | AGREE — disclosed (T26-05) | See below. | — |
+
+Each F26-1..F26-4 test fails on `ea14844` (7 failures) and passes after.
+
+- **T26-04. A real Binance gap stops the store for good** (F26-6). Refusing
+  is correct under §6, but there is no recovery yet. Task 27 (persistent
+  state) should add an owner-acknowledged gap record; until then the owner
+  would start a new store after the gap.
+- **T26-05. The library does not refuse key variables itself** (F26-7); the
+  CLI does, and `PublicRequest` blocks any key, signature or auth header from
+  being sent. Future app code calling `fetch_new_bars` directly must call
+  `refuse_credentials` first (Task 28/30).
+
+Validation after the F26 repairs: `pytest -q` 1599 passed, 4 skipped;
+ruff, format (104 files), mypy (55 files), 6 import contracts and `git diff
+--check` clean; no frozen file changed. Not yet re-reviewed.

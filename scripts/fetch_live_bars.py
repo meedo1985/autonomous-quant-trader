@@ -42,7 +42,8 @@ def main(argv: list[str] | None = None) -> int:
             MAX_SKEW,
             args.start,
         )
-    except (DownloadError, LiveBarError) as error:
+    except (DownloadError, LiveBarError, OSError) as error:
+        # OSError covers network failures and timeouts (F26-4).
         print(f"refused: {error}", file=sys.stderr)
         return 2
     last = result.last_open_time.isoformat() if result.last_open_time else "none"

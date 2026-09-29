@@ -42,6 +42,11 @@ __all__ = [
     "parse_klines",
 ]
 
+LIVE_START_FLOOR: Final[datetime] = datetime(2026, 9, 1, tzinfo=UTC)
+"""The first hour after the protocol's lockbox partition
+(`protocols/protocol_v1.yaml:67`, ends 2026-08-31T23:59:59Z). A live store
+never starts inside confirmation or lockbox data (F26-3)."""
+
 KLINES_URL: Final[str] = "https://data-api.binance.vision/api/v3/klines"
 TIME_URL: Final[str] = "https://data-api.binance.vision/api/v3/time"
 MAX_LIMIT: Final[int] = 1000
@@ -110,18 +115,23 @@ class LiveBarStore:
         if not self.path.exists():
             return ()
         bars = []
-        for line in self.path.read_text("utf-8").splitlines():
-            row = json.loads(line)
-            bars.append(
-                Bar(
-                    datetime.fromisoformat(row["open_time"]),
-                    row["open"],
-                    row["high"],
-                    row["low"],
-                    row["close"],
-                    row["volume"],
+        lines = self.path.read_text("utf-8").splitlines()
+        for number, line in enumerate(lines, start=1):
+            try:
+                row = json.loads(line)
+                bars.append(
+                    Bar(
+                        datetime.fromisoformat(row["open_time"]),
+                        row["open"],
+                        row["high"],
+                        row["low"],
+                        row["close"],
+                        row["volume"],
+                    )
                 )
-            )
+            except (ValueError, KeyError, TypeError, BarSemanticsError) as error:
+                # A torn or edited line: refuse, naming it (F26-2).
+                raise LiveBarError(f"{self.path} line {number}: {error}") from None
         return tuple(bars)
 
     def series(self, symbol: str) -> BarSeries:
@@ -196,24 +206,37 @@ def fetch_new_bars(
     start: datetime | None = None,
 ) -> FetchResult:
     """Fetch every closed bar after the store's last one (or from `start`
-    when the store is empty) and append them. Refuses a skewed clock."""
+    when the store is empty) and append them. Refuses a skewed clock.
+    Every input is checked before any request (F26-4)."""
     now = require_utc(now, field_name="now")
     if symbol not in ALLOWED_SYMBOLS:
         raise LiveBarError(f"symbol {symbol!r} is not allowed")
+    last = store.last_open_time()
+    if last is not None:
+        begin = last + BAR_INTERVAL
+    elif start is None:
+        raise LiveBarError("an empty store needs an explicit start")
+    else:
+        try:
+            begin = require_utc(start, field_name="start")
+        except BarSemanticsError as error:
+            raise LiveBarError(str(error)) from None
+    if begin < LIVE_START_FLOOR:
+        raise LiveBarError(
+            f"start {begin.isoformat()} is before {LIVE_START_FLOOR.isoformat()}: "
+            "confirmation and lockbox data never enter the live store"
+        )
     try:
         server = json.loads(_get(transport, TIME_URL))["serverTime"]
     except (ValueError, KeyError, TypeError) as error:
         raise LiveBarError(f"server time unreadable: {error}") from None
-    skew = now - _time(int(server))
+    server_now = _time(int(server))
+    skew = now - server_now
     if abs(skew) > max_skew:
         raise LiveBarError(f"clock skew {skew} exceeds {max_skew}; nothing fetched")
-    last = store.last_open_time()
-    if last is not None:
-        begin = last + BAR_INTERVAL
-    elif start is not None:
-        begin = require_utc(start, field_name="start")
-    else:
-        raise LiveBarError("an empty store needs an explicit start")
+    # A bar is closed only when it has ended on both clocks, so a local clock
+    # ahead of Binance's cannot store a forming bar (F26-1).
+    cutoff = min(now, server_now)
     appended = 0
     while True:
         query = urlencode(
@@ -224,7 +247,7 @@ def fetch_new_bars(
                 "limit": MAX_LIMIT,
             }
         )
-        bars = parse_klines(_get(transport, f"{KLINES_URL}?{query}"), now)
+        bars = parse_klines(_get(transport, f"{KLINES_URL}?{query}"), cutoff)
         bars = tuple(b for b in bars if b.open_time >= begin)
         store.append(bars, first=begin)
         appended += len(bars)
