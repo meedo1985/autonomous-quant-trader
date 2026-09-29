@@ -32,7 +32,7 @@ document restates but cannot relax.
   (record `review/pre-deployment/LOSS_BOUNDS_ADOPTION_RECORD.md`). It is the
   owner's self-imposed bound, not frozen text, and this draft is still not
   adopted as a whole.
-- **[OWNER-SET T22-Q1]**, **[OWNER-SET T23-Q1]**, **[OWNER-SET T23-Q2]**, **[OWNER-SET S-n]** (`review/deployment/OWNER_SETTINGS_2026-09-27.md`): an operating value the owner chose in answer to a
+- **[OWNER-SET T22-Q1]**, **[OWNER-SET T23-Q1]**, **[OWNER-SET T23-Q2]**, **[OWNER-SET S-n]** (`review/deployment/OWNER_SETTINGS_2026-09-27.md`; D-n: `review/deployment/OWNER_SETTINGS_2026-09-29.md`): an operating value the owner chose in answer to a
   task question, with a committed record. Like `[ADOPTED L-nn]`, it does not
   adopt this draft as a whole.
 - **[OPEN]**: a value or choice no frozen text or proposal supplies. The owner
@@ -91,20 +91,19 @@ canary amount is a risk increase under §6.
 2. **Forward paper** (not replay) has run for the `L-02` period
    [ADOPTED L-02] and ended with no open incident.
 3. An alert channel that reaches the owner outside the machine running the
-   loop exists and has been tested end to end (§5) [OPEN: which channel].
+   loop exists and has been tested end to end (§5) a private Telegram bot [OWNER-SET D-1].
 4. This protocol has been activated by the owner under §4.
 
 ### 2.3 Entry to canary
 
-1. Everything in 2.2, plus shadow has run for [OPEN: duration or decision
-   count] with no open incident.
+1. Everything in 2.2, plus shadow has run for 90 days [OWNER-SET D-3] with no open incident.
 2. The key lifecycle rehearsal of §8 is complete [FROZEN §28:
    "Rotation/revocation rehearsal and permission/IP checks required before
    canary; withdrawals disabled"].
 3. `L-01` is adopted and non-zero, and the owner has signed §25 clause C-8
    ("only fully-loss-acceptable capital may be deployed").
 4. The Binance account holds no more than the `L-01` amount of quote asset
-   plus fees [OPEN: fee headroom].
+   plus fees, at most 2% of `L-01` [OWNER-SET D-4].
 
 ## 3. Startup reconciliation
 
@@ -122,7 +121,8 @@ Required at every start [FROZEN §19 "Startup reconciliation required"]:
    the executor's tracked state (review finding R-1).
 5. Free **and locked** balances must match the local record within
    **0** in every asset, exact, on the simulator
-   [OWNER-SET T23-Q2; revisit before shadow]; every locked amount must be
+   [OWNER-SET T23-Q2]; on a real venue, at most one lot step of the base
+   asset and 0.01 USDT [OWNER-SET D-5]; every locked amount must be
    explained by a matched open order. Any difference is an incident
    [FROZEN §0: "reconciliation mismatch ... unexplained exposure"].
 6. The result, pass or fail with every difference, is written to the
@@ -139,7 +139,7 @@ The loop must not start if any of these holds. Each is logged.
    [FROZEN §19: "Config/hash mismatch → REFUSE_START"].
 2. Startup reconciliation fails (§3).
 3. No alert sink is configured, or the external channel of §5 has not passed
-   its test within [OPEN: interval] [FROZEN §19].
+   its test within 7 days [OWNER-SET D-2] [FROZEN §19].
 4. An incident is open [FROZEN §14: "Trading resumes only after incident
    closure plus successful reconciliation"].
 5. The system is in FREEZE, or in HALT without a completed HALT exit (§6).
@@ -162,7 +162,7 @@ The loop must not start if any of these holds. Each is logged.
 - **Local sinks** (built, Task 19): the standard output stream and the
   hash-chained operational log. Every CRITICAL event reaches every sink; a
   router with no sink refuses to start.
-- **External channel** [OPEN]: at least one channel that reaches the owner
+- **External channel**: a private Telegram bot [OWNER-SET D-1]; at least one channel that reaches the owner
   when the machine running the loop is down or unattended (for example email,
   phone, or a messaging service). None is built: each needs a credential and
   an outbound network path, both forbidden in Milestone 0.1. Its credential
@@ -171,7 +171,7 @@ The loop must not start if any of these holds. Each is logged.
   `REFUSE_START`; any reconciliation mismatch; any ambiguous order reaching
   `UNKNOWN`; any credential anomaly; any `L-03` breach [ADOPTED L-03], except during FREEZE, which has already
   alerted CRITICAL and stays until reconciliation (F24S-1).
-- **Channel test:** before shadow and then every [OPEN: interval], a test
+- **Channel test:** before shadow and then every 7 days [OWNER-SET D-2], a test
   alert must be received and acknowledged by the owner, and the test recorded.
 
 ## 6. HALT, FLATTEN, FREEZE, and incidents
@@ -234,8 +234,8 @@ secret in the record:
 
 1. Create a Binance API key with Spot trading only; withdrawals, margin, and
    futures disabled on the key.
-2. Restrict the key to the executor's IP address(es) [OPEN: address].
-3. Store the key only where the executor identity reads it [OPEN: mechanism].
+2. Restrict the key to the executor's IP address(es) [OWNER-SET D-7: a rented server with a fixed IP; the address is recorded when it exists].
+3. Store the key only where the executor identity reads it [OWNER-SET D-8: the operating system's credential store, readable only by the executor's account].
    It never enters the repository, a log, a report, a screenshot, CI, or an
    AI's context.
 4. **Rehearse rotation:** create a replacement key, switch the executor to it,
@@ -269,7 +269,7 @@ anomaly: an incident [FROZEN §0].
    [FROZEN §22]; (b) resolve every outstanding order through its
    `clientOrderId` (§7), cancelling any still open; (c) decide what happens
    to the live position that remains: hold it under HALT, or FLATTEN it
-   [OPEN: which, or who decides at the time]; (d) reconcile (§3); (e) only
+   [OWNER-SET D-6: hold it under HALT; the owner decides at the time]; (d) reconcile (§3); (e) only
    then remove the order-sending adapter. Changing the stage label alone is
    not a risk reduction.
 3. Rolling back deployed code or configuration is done from HALT: enter HALT,
@@ -282,12 +282,10 @@ anomaly: an incident [FROZEN §0].
 
 | Where | Value |
 |---|---|
-| §2.2 | External alert channel |
-| §2.3 | Shadow duration or decision count before canary; fee headroom |
-| §3 | Reconciliation tolerance on a real venue (the simulator value is set) |
-| §4, §5 | Channel test interval |
-| §10 | Hold or FLATTEN the remaining live position when leaving canary |
-| §8 | Executor IP address(es); key storage mechanism |
+| §8 | The rented server's IP address (D-7), once the server exists |
+| §2.3, T18-06 | The live exchange filters, read from Binance's public exchange information (not an owner choice) |
+
+The other open values were set by the owner on 2026-09-29 (D-1 to D-8).
 
 The §1 inputs `L-01`–`L-04`, the §25 signature and the §16 AI reviewer were
 settled by the owner on 2026-09-26; `L-01` stays `0` until the owner revisits
