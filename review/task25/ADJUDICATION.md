@@ -51,3 +51,13 @@ drill rerun into a fresh directory is byte-identical to the committed
 evidence; `pytest -q` 1576 passed, 4 skipped; ruff, format, mypy (53 files),
 6 import contracts, `git diff --check` clean; no frozen file changed. A
 complete Astra re-review is still required.
+
+## Astra re-review, attempt 3 (complete): ACCEPT
+
+Record: `ASTRA_REREVIEW_9727496.md`. A25-1..A25-3, T25-03, A25R-1 and A25R-2
+judged correct; all six drills met; 20 evidence files reproduced byte for
+byte. A25R-3 remains unspecified; the reviewer did not invent one.
+
+| ID | Decision | Disposition |
+| --- | --- | --- |
+| A25R-4 | AGREE — NON-BLOCKING, claim narrowed now, code later | A FLATTEN sell whose reply is lost is not logged as an ORDER nor counted. The packet's claim is narrowed here. The logging repair goes with the Tasks 23-24 post-merge fixes (`review/task23-24-postmerge/`), which touch the same loop. |
