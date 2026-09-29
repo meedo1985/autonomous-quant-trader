@@ -2,7 +2,7 @@
   "authorizations": 1,
   "cost_model_hash": "3f5e62ab2df26f360f3ca13d2db379e95a1e52b25dc3d2c8f2683878b49327ae",
   "data_manifest_hash": "5f92ec5041c9560d5f31bdb99b9686d7522697e65a8e61d514a0b0dda6d0b65b",
-  "events": 5,
+  "events": 15,
   "final_balances": {
     "BTC": "0.00108",
     "USDT": "10112.19265619063110844658275690"

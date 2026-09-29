@@ -65,11 +65,10 @@ def _config() -> object:
 def test_the_freeze_drill_recovers_from_a_lost_reply(tmp_path: Path) -> None:
     drills = _drills()
     # A gap long before the window: the drill must still use the unbroken run.
-    result = drills.drill_freeze_reconcile(
-        _series(24 * 20, gap_at=3), _config(), tmp_path
-    )
+    out = tmp_path / "freeze"
+    result = drills.drill_freeze_reconcile(_series(24 * 20, gap_at=3), _config(), out)
     assert result.passed, result.observed
-    steps = json.loads((tmp_path / "steps.json").read_text("utf-8"))
+    steps = json.loads((out / "steps.json").read_text("utf-8"))
     assert "SimulatedTimeout" in steps[0]
     assert steps[1].startswith("blind check refused")
     assert steps[-1].startswith("after the full check: HALT")
@@ -80,3 +79,16 @@ def test_a_freeze_from_a_rejection_does_not_count_as_the_drill() -> None:
     assert drills.controller_froze_on_timeout(["SimulatedTimeout: no response"])
     assert not drills.controller_froze_on_timeout(["NO_FILL_BAR: gapped history"])
     assert not drills.controller_froze_on_timeout([])
+
+
+def test_drills_never_overwrite_earlier_evidence(tmp_path: Path) -> None:
+    """A25-3: an existing output is refused, not cleared."""
+    drills = _drills()
+    (tmp_path / "freeze").mkdir()
+    (tmp_path / "freeze" / "incidents.jsonl").write_text("earlier", "utf-8")
+    with pytest.raises(FileExistsError):
+        drills.drill_freeze_reconcile(_series(24 * 20), _config(), tmp_path / "freeze")
+    assert (tmp_path / "freeze" / "incidents.jsonl").read_text("utf-8") == "earlier"
+    config = ROOT / "configs" / "paper_trading.example.toml"
+    code = drills.main(["--config", str(config), "--out", str(tmp_path)])
+    assert code == 2

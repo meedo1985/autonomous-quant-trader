@@ -23,8 +23,12 @@ python scripts/run_drills.py --config configs/paper_trading.example.toml \
   archives are not committed (`data/raw/` is ignored); the manifest hash
   identifies them.
 - Window: 2020-07-06 to 2020-11-29, inside the longest unbroken run of bars
-  (2020-06-28 to 2020-11-30). The clean run uses all of it; the other drills
-  use its first 30 days (to 2020-08-05).
+  (2020-06-28 to 2020-11-30). The clean and HALT drills use all of it; the
+  others use its first 30 days (to 2020-08-05).
+- The script refuses a non-empty output directory and never clears an
+  earlier attempt's logs (A25-3). The first committed outputs (commit
+  `01f10ad`) were removed with `git rm` and regenerated after the Astra
+  review; they remain in git history.
 - Configuration: `configs/paper_trading.example.toml`. Owner-set values:
   S-1 0.05% price limit, S-2 2-minute approvals, T21-Q1, T22-Q1, T23-Q1,
   T23-Q2, S-5 health limits. The exchange filters are still `[OPEN]` example
@@ -72,29 +76,43 @@ The loop's determinism across two runs is covered by
 
 ### 3.2 HALT drill — met
 
-Expected: owner HALT on 2020-07-16; no order after it; ends in HALT.
+Expected: owner HALT on 2020-07-16, over the full window. The clean run
+(the control) places an order after that time; with the HALT there is none;
+ends in HALT.
 
 ```
-2020-07-06T00:00 ORDER            INFO     BUY 1.09908 FILLED
-2020-07-16T00:00 STATE_TRANSITION CRITICAL RUNNING -> HALT  OWNER_HALT
-2020-08-05T00:00 SHUTDOWN         INFO     mode HALT
+control (clean): 2020-11-26T09:00 ORDER INFO SELL 0.14313 FILLED
+halt:            2020-07-06T00:00 ORDER            INFO     BUY 1.09908 FILLED
+                 2020-07-16T00:00 STATE_TRANSITION CRITICAL RUNNING -> HALT OWNER_HALT
+                 2020-11-29T00:00 SHUTDOWN         INFO     mode HALT
 ```
 
-Orders after the HALT: 0. The coins are kept (HALT sells nothing).
+Orders after the HALT: 0, against 1 in the control. The coins are kept
+(HALT sells nothing). A first version ran only 30 days, where no order was
+due anyway, so it could not tell a working HALT from a broken one (Astra
+A25-1). With trading in HALT forced on, this drill now fails (see
+`ADJUDICATION.md`).
 
 ### 3.3 FLATTEN drill — met
 
-Expected: owner FLATTEN on 2020-07-16; bounded sells; HALT with at most an
-unsellable remainder.
+Expected: owner FLATTEN on 2020-07-16. Each logged sell is at most half of
+the holding before it, one per hour, and each starts from what the last one
+left. Then HALT with a non-negative remainder.
 
 ```
 2020-07-16T00:00 STATE_TRANSITION CRITICAL RUNNING -> FLATTEN OWNER_FLATTEN
-2020-07-16T10:00 STATE_TRANSITION CRITICAL FLATTEN -> HALT    FLATTEN_DONE
+2020-07-16T00:00 ORDER FLATTEN held_before 1.09908 orig_qty 0.54954
+2020-07-16T01:00 ORDER FLATTEN held_before 0.54954 orig_qty 0.27477
+2020-07-16T02:00 ORDER FLATTEN held_before 0.27477 orig_qty 0.13738
+   … 10 steps in all (flatten/steps.json) …
+2020-07-16T10:00 STATE_TRANSITION CRITICAL FLATTEN -> HALT FLATTEN_DONE
                  "no sellable step within the bound; BTC left: 0.00108"
 ```
 
-Ten hourly steps of at most half the holding each, then HALT. 0.00108 BTC
-is left, because half of it is below the 5 USDT minimum order. See T25-01.
+Largest step: exactly 0.5000 of the holding. 0.00108 BTC is left, because
+half of it is below the 5 USDT minimum order. The first version checked
+only the remainder, and would have accepted one 100% sell (Astra A25-2). It
+now checks every step from the audit log, and a 100% step fails it.
 
 ### 3.4 Ambiguous-order drill — met
 
@@ -158,13 +176,12 @@ health breach, crash marker) are each tested in `tests/integration/test_paper_lo
 
 ## 4. Findings disclosed by this task
 
-- **T25-01. FLATTEN sells are not logged as orders.** The operations log
-  records FLATTEN only as mode changes (entry, then FLATTEN_DONE). The ten
-  individual sells of drill 3.3 appear only in the simulator's own event list
-  and in the balances. Executor orders are logged. Section 22 requires state
-  transitions to be logged, which they are. An audit trail of every order is
-  still the better standard. Proposed for a follow-up to the Task 24 loop,
-  not changed here, because the loop is reviewed and merged code.
+- **T25-01. FLATTEN sells were not logged as orders — repaired.** The
+  operations log recorded FLATTEN only as mode changes. After Astra's A25-2
+  review, the loop (`src/aqt/app/paper_loop.py`) now logs every FLATTEN sell
+  as an `ORDER` event with `state FLATTEN`, its quantities and the holding it
+  was sized from. This is a change to the Task 24 loop, reviewed under
+  Task 25.
 - **T25-02. The exchange filters are example values** (`[OPEN]`). They must
   come from Binance's exchange information before any stage using real
   prices (see T18-06).

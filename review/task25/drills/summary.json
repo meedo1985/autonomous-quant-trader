@@ -9,14 +9,14 @@
     },
     {
       "name": "halt",
-      "expected": "owner HALT at 2020-07-16T00:00:00+00:00: no order after it; ends in HALT",
-      "observed": "orders after HALT 0, final HALT",
+      "expected": "owner HALT at 2020-07-16T00:00:00+00:00: the clean run places an order after that time; with the HALT there is none; ends in HALT",
+      "observed": "clean-run orders after that time 1 (2020-11-26T09:00); orders after HALT 0, final HALT",
       "passed": true
     },
     {
       "name": "flatten",
-      "expected": "owner FLATTEN at 2020-07-16T00:00:00+00:00: sells in bounded steps, then HALT with at most an unsellable remainder",
-      "observed": "transitions [('RUNNING', 'FLATTEN', 'OWNER_FLATTEN'), ('FLATTEN', 'HALT', 'FLATTEN_DONE')], final HALT, BTC left 0.00108",
+      "expected": "owner FLATTEN at 2020-07-16T00:00:00+00:00: each logged sell is at most 0.5 of the holding before it, one per hour, chained, then HALT with a non-negative remainder",
+      "observed": "10 steps, largest share 0.5000, transitions [('RUNNING', 'FLATTEN', 'OWNER_FLATTEN'), ('FLATTEN', 'HALT', 'FLATTEN_DONE')], final HALT, BTC left 0.00108",
       "passed": true
     },
     {

@@ -18,7 +18,7 @@ import json
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -92,11 +92,8 @@ class _Runner:
         **kwargs: object,
     ) -> tuple[RunReport, Path]:
         out = self.root / name
-        out.mkdir(parents=True, exist_ok=True)
-        for stale in ("operations.jsonl", "report.json"):
-            (out / stale).unlink(missing_ok=True)
-        if incidents is None:
-            (out / "incidents.jsonl").unlink(missing_ok=True)
+        # Never reuse or clear an earlier attempt's logs (section 26, A25-3).
+        out.mkdir(parents=True, exist_ok=False)
         operations = out / "operations.jsonl"
         report = run_paper(
             replace(config, run_id=f"drill-{name}"),
@@ -127,18 +124,28 @@ def drill_clean(runner: _Runner, config: PaperConfig) -> DrillResult:
     )
 
 
-def drill_halt(runner: _Runner, config: PaperConfig) -> DrillResult:
-    at = config.start + 10 * DAY
-    report, out = runner.run("halt", config, commands={at: Trigger.OWNER_HALT})
-    after = [
+def _orders_from(out: Path, at: datetime) -> list[dict[str, Any]]:
+    return [
         e
         for e in _events(out / "operations.jsonl")
         if e["kind"] == "ORDER" and str(e["at"]) >= at.isoformat()
     ]
-    passed = report.final_mode == "HALT" and after == []
+
+
+def drill_halt(runner: _Runner, config: PaperConfig, control: Path) -> DrillResult:
+    """Over the clean run's window, so the clean run is the control: it shows
+    an order the HALT must suppress (A25-1)."""
+    at = config.start + 10 * DAY
+    expected_orders = _orders_from(control, at)
+    report, out = runner.run("halt", config, commands={at: Trigger.OWNER_HALT})
+    after = _orders_from(out, at)
+    passed = report.final_mode == "HALT" and after == [] and len(expected_orders) > 0
     return DrillResult(
         "halt",
-        f"owner HALT at {at.isoformat()}: no order after it; ends in HALT",
+        f"owner HALT at {at.isoformat()}: the clean run places an order after "
+        "that time; with the HALT there is none; ends in HALT",
+        f"clean-run orders after that time {len(expected_orders)} "
+        f"({', '.join(str(e['at'])[:16] for e in expected_orders)}); "
         f"orders after HALT {len(after)}, final {report.final_mode}",
         passed,
     )
@@ -149,21 +156,43 @@ def drill_flatten(runner: _Runner, config: PaperConfig) -> DrillResult:
     report, out = runner.run("flatten", config, commands={at: Trigger.OWNER_FLATTEN})
     moves = _transitions(out)
     held = Decimal(report.final_balances.get("BTC", "0"))
-    # FLATTEN ends when half of what is left is below the notional minimum.
-    lowest = min(
-        Decimal(repr(bar.close))
-        for bar in runner.series.bars
-        if config.start <= bar.open_time < config.end
-    )
+    steps = [
+        (
+            str(e["at"])[:16],
+            Decimal(e["fields"]["held_before"]),
+            Decimal(e["fields"]["orig_qty"]),
+            Decimal(e["fields"]["executed_qty"]),
+        )
+        for e in _orders_from(out, at)
+        if e["fields"].get("state") == "FLATTEN"
+    ]
+    fraction = config.flatten.max_step_fraction
+    # Each step from the audit log (A25-2): at most `fraction` of the holding
+    # it was sized from, one per hour, and each starts from what the last
+    # left. The remainder is never negative.
+    bounded = all(qty <= held_before * fraction for _, held_before, qty, _ in steps)
+    hourly = all(a[0] < b[0] for a, b in zip(steps, steps[1:], strict=False))
+    chained = all(b[1] == a[1] - a[3] for a, b in zip(steps, steps[1:], strict=False))
+    last = steps[-1][1] - steps[-1][3] if steps else None
     passed = (
-        report.final_mode == "HALT"
+        len(steps) >= 2
+        and bounded
+        and hourly
+        and chained
+        and last == held
+        and held >= 0
+        and report.final_mode == "HALT"
         and ("FLATTEN", "HALT", "FLATTEN_DONE") in moves
-        and held < 2 * config.filters.min_notional / lowest + config.filters.step_size
     )
+    trace = [[t, str(h), str(q), str(x)] for t, h, q, x in steps]
+    (out / "steps.json").write_text(json.dumps(trace, indent=2) + "\n", "utf-8")
     return DrillResult(
         "flatten",
-        f"owner FLATTEN at {at.isoformat()}: sells in bounded steps, then HALT "
-        "with at most an unsellable remainder",
+        f"owner FLATTEN at {at.isoformat()}: each logged sell is at most "
+        f"{fraction} of the holding before it, one per hour, chained, then HALT "
+        "with a non-negative remainder",
+        f"{len(steps)} steps, largest share "
+        f"{max((q / h for _, h, q, _ in steps), default=0):.4f}, "
         f"transitions {moves}, final {report.final_mode}, BTC left {held}",
         passed,
     )
@@ -225,9 +254,7 @@ def drill_freeze_reconcile(
 ) -> DrillResult:
     """Controller level: the paper loop never leaves FREEZE within a run, so
     the recovery half is exercised on the same components directly."""
-    out.mkdir(parents=True, exist_ok=True)
-    for stale in ("operations.jsonl", "incidents.jsonl"):
-        (out / stale).unlink(missing_ok=True)
+    out.mkdir(parents=True, exist_ok=False)
     at = config.start + 10 * DAY
     step_id = (
         "aqt-flat-"
@@ -306,7 +333,7 @@ def run_drills(
     short = replace(config, end=config.start + DRILL_DAYS * DAY)
     drills: list[Callable[[], DrillResult]] = [
         lambda: drill_clean(runner, config),
-        lambda: drill_halt(runner, short),
+        lambda: drill_halt(runner, config, out / "clean"),
         lambda: drill_flatten(runner, short),
         lambda: drill_ambiguous(runner, short),
         lambda: drill_refuse_start(runner, short),
@@ -322,6 +349,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=Path("review/task25/drills"))
     args = parser.parse_args(argv)
 
+    if args.out.exists() and any(args.out.iterdir()):
+        print(
+            f"refusing: {args.out} is not empty; use a fresh directory", file=sys.stderr
+        )
+        return 2
     config = load_config(args.config)
     build = build_exploration_manifest(EXPLORATION, config.symbol, args.raw)
     results = run_drills(config, build.series, build.manifest.manifest_sha256, args.out)

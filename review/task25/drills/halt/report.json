@@ -12,7 +12,7 @@
     "INSIDE_REBALANCE_BAND": 239
   },
   "health_breach_hours": 0,
-  "hours": 720,
+  "hours": 3504,
   "note": "Bar count is not sample size. Paper run on the exploration partition against the simulator; no edge, Sharpe, or promotion claim is made.",
   "orders_sent": 1,
   "predictor": "VOL_TARGET_BUY_AND_HOLD",
