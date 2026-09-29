@@ -21,8 +21,7 @@ are within section 16 scope and need re-review.
 | T25-03 | Repaired | Git warned that the committed ledgers would be checked out with CRLF under `core.autocrlf`. A CRLF copy of `drills/flatten/operations.jsonl` fails `verify_ledger` (LF intact: True; CRLF intact: False). `.gitattributes` now marks `/review/task25/drills/** -text`, as the frozen files already are. | `git check-attr text` reports `unset` for the drill ledgers. |
 
 Follow-up: the drill script wrote JSON with the platform's line endings, so
-its output differed by OS. It now writes `
-` everywhere, and the committed
+its output differed by OS. It now writes LF line endings everywhere, and the committed
 JSON files were converted to LF. A full rerun into a fresh scratch directory
 matched every committed drill file byte for byte (`diff -r`: identical).
 `tests/integration/test_drills.py`: 3 passed.
