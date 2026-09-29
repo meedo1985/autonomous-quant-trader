@@ -673,6 +673,8 @@ def test_a_flatten_sell_with_a_lost_reply_is_logged_and_counted(
     assert [f["client_order_id"] for f in lost] == [step_id]  # type: ignore[index]
     assert report.final_mode == "FREEZE"
     assert report.orders_sent == report.authorizations + 1
+    # F35-3: the audit entry says how much was sent, and at what cap.
+    assert lost[0]["orig_qty"] and lost[0]["limit_price"]  # type: ignore[index]
 
 
 def test_no_decision_is_stamped_before_a_waiting_startup_check(
@@ -689,3 +691,66 @@ def test_no_decision_is_stamped_before_a_waiting_startup_check(
     assert orders and all(
         str(e["at"]) >= (config.start + HOUR).isoformat() for e in orders
     )
+    # F35-4: START is stamped when the waiting check ended, not at `start`.
+    [start] = [e for e in _ops(tmp_path) if e["kind"] == "STARTUP"]
+    assert str(start["at"]).startswith("2020-01-09T00:00:10")  # one 10 s wait
+
+
+def test_an_owner_halt_at_a_skipped_start_hour_still_applies(
+    tmp_path: Path,
+) -> None:
+    """F35-1 (the reviewer's scenario): a restart with an unknown order makes
+    the startup check wait past `start`; the owner's HALT for that hour is
+    applied when the check ends, and nothing trades."""
+    config = _config(2)
+    record = LocalRecord(config.starting_balances, {"aqt-unknown-at-start": None})
+    report = _run(
+        tmp_path,
+        config,
+        _series(24 * 12),
+        local_record=record,
+        commands={config.start: Trigger.OWNER_HALT},
+    )
+    assert report.final_mode == "HALT" and report.orders_sent == 0
+    halts = [
+        e
+        for e in _ops(tmp_path)
+        if e["kind"] == "STATE_TRANSITION"
+        and e["fields"].get("trigger") == "OWNER_HALT"  # type: ignore[union-attr]
+    ]
+    assert len(halts) == 1
+
+
+@pytest.mark.parametrize("content", ["[]", "null", '"text"'])
+def test_a_manifest_that_is_not_an_object_is_a_logged_refusal(
+    tmp_path: Path, content: str
+) -> None:
+    """F35-2: valid JSON that is not an object refuses through the logged
+    REFUSE_START path, like malformed JSON."""
+    root = _copy_frozen(tmp_path / "repo")
+    (root / "FROZEN_HASHES.json").write_text(content, "utf-8")
+    report = _run(tmp_path / "run", _config(2), _series(24 * 12), repository_root=root)
+    assert report.final_mode == "REFUSED" and report.orders_sent == 0
+    assert any(
+        e["fields"].get("decision") == "REFUSE_START"  # type: ignore[union-attr]
+        for e in _ops(tmp_path / "run")
+    )
+
+
+def test_a_dust_breach_while_running_ends_in_halt_without_an_order(
+    tmp_path: Path,
+) -> None:
+    """A2324-2 from RUNNING: the stop alerts, FLATTEN finds nothing to sell,
+    and the run halts with no order."""
+    config = _config(
+        12, starting_balances={"USDT": Decimal(0), "BTC": Decimal("0.000009")}
+    )
+    series = _crash_series(24 * 22, crash_at=24 * 12)
+    report = _run(tmp_path, config, series)
+    triggers = [
+        e["fields"].get("trigger")  # type: ignore[union-attr]
+        for e in _ops(tmp_path)
+        if e["kind"] == "STATE_TRANSITION"
+    ]
+    assert triggers.count("LOSS_STOP") == 1 and "FLATTEN_DONE" in triggers
+    assert report.final_mode == "HALT" and report.orders_sent == 0

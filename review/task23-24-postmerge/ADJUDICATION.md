@@ -43,3 +43,24 @@ Validation after the A2324R repairs: `pytest -q` 1586 passed, 4 skipped;
 ruff, format (101 files), mypy (53 files), 6 import contracts and `git diff
 --check` clean; no frozen file differs from `main`; the Task 25 drills rerun
 byte-identical. Not yet re-reviewed.
+
+## Fable 5.1 re-review of `c9e4c44` (same-family stand-in)
+
+Record: `FABLE_REREVIEW_C9E4C44.md` (committed `d30e9c8` before these
+repairs). A2324-1, A2324-2, A2324-3, A25R-4 and A2324R-1 judged correct;
+A2324-4 and A2324R-2 incomplete. Verdict FIX.
+
+| ID | Decision | Evidence and disposition | Validation |
+| --- | --- | --- | --- |
+| F35-1 | AGREE — BLOCKER, repaired | My A2324R-2 skip dropped owner commands keyed to skipped hours. The skip now applies any owner command for a skipped hour when the startup check ends (`apply_owner`), so an owner HALT wins before any trading. | `test_an_owner_halt_at_a_skipped_start_hour_still_applies` (reviewer's scenario: HALT, 0 orders, one OWNER_HALT) |
+| F35-2 | AGREE — repaired | A manifest that is valid JSON but not an object is treated as unreadable; `frozen_hash_problems` also catches `TypeError` and `AttributeError`. Refused through the logged path. | `test_a_manifest_that_is_not_an_object_is_a_logged_refusal` (`[]`, `null`, a string) |
+| F35-3 | AGREE — repaired | The controller records each FLATTEN order's quantity and cap (`attempts`) before sending; FLATTEN_UNKNOWN logs `orig_qty` and `limit_price`. | Lost-reply test asserts both fields |
+| F35-4 | AGREE — repaired | STARTUP START and the controller's entry time use the startup report's time (after the waits); `startup_check` opens its incident at the report's time. | Waiting-startup test asserts START at 00:00:10 (one 10 s wait) |
+| Dust from RUNNING | AGREE — test added | — | `test_a_dust_breach_while_running_ends_in_halt_without_an_order` |
+
+Each F35 test fails on `c9e4c44` (6 failures) and passes after.
+
+Validation after the F35 repairs: `pytest -q` 1591 passed, 4 skipped; ruff,
+format (101 files), mypy (53 files), 6 import contracts, `git diff --check`
+clean; no frozen file differs from `main`; Task 25 drills rerun
+byte-identical. The different-family (Astra) re-review is still required.

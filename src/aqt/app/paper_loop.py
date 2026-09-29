@@ -320,7 +320,14 @@ def frozen_hash_problems(root: Path) -> list[str]:
         text = constitution.read_bytes().replace(expected.encode(), b"")
         if hashlib.sha256(text).hexdigest() != expected:
             problems.append("RESEARCH_CONSTITUTION.md: content hash does not match")
-    except (OSError, KeyError, ValueError, IndexError) as error:
+    except (
+        OSError,
+        KeyError,
+        ValueError,
+        IndexError,
+        TypeError,
+        AttributeError,
+    ) as error:
         problems.append(f"frozen hashes unreadable: {error}")
     return problems
 
@@ -444,6 +451,8 @@ def run_paper(
     except (OSError, ValueError):
         # `frozen_hash_problems` refuses the start, logged (A2324-4).
         frozen = {}
+    if not isinstance(frozen, dict):
+        frozen = {}  # valid JSON but not an object: refused below (F35-2)
     counts = _Counts()
     counter = _CountingSink()
     refused: list[str] = []
@@ -532,12 +541,28 @@ def run_paper(
         Event(
             EventKind.STARTUP,
             Severity.INFO,
-            config.start,
+            decision.report.at,
             {"decision": "START", "run_id": config.run_id, "symbol": config.symbol},
         )
     )
 
-    controller = SafetyController(router, incidents, config.start, mode=Mode.RUNNING)
+    ready = decision.report.at  # after any section 21 waits (A2324R-2, F35-4)
+    controller = SafetyController(router, incidents, ready, mode=Mode.RUNNING)
+
+    def apply_owner(hour: datetime, at: datetime) -> None:
+        """Apply the owner's command for `hour` at `at`; a refusal is logged."""
+        try:
+            controller.trigger(owner[hour], at, "owner command")
+        except SafetyError as error:
+            router.emit(
+                Event(
+                    EventKind.STATE_TRANSITION,
+                    Severity.WARNING,
+                    at,
+                    {"command": str(owner[hour]), "refused": str(error)},
+                )
+            )
+
     issued = iter(range(1 << 62))
     governor = Governor(
         config.governor, nonce_source=lambda: nonce_for(config.run_id, next(issued))
@@ -551,28 +576,16 @@ def run_paper(
     try:
         moment = config.start
         # A startup check that waited (section 21) ends after `start`: no
-        # decision may be stamped before it (A2324R-2).
-        while moment < decision.report.at:
+        # decision may be stamped before it (A2324R-2). An owner command for a
+        # skipped hour still applies, as soon as the check ends (F35-1).
+        while moment < ready:
+            if moment in owner:
+                apply_owner(moment, ready)
             moment += HOUR
         while moment < config.end:
             decision_time, moment = moment, moment + HOUR
             if decision_time in owner:
-                try:
-                    controller.trigger(
-                        owner[decision_time], decision_time, "owner command"
-                    )
-                except SafetyError as error:
-                    router.emit(
-                        Event(
-                            EventKind.STATE_TRANSITION,
-                            Severity.WARNING,
-                            decision_time,
-                            {
-                                "command": str(owner[decision_time]),
-                                "refused": str(error),
-                            },
-                        )
-                    )
+                apply_owner(decision_time, decision_time)
             breaches = health_breaches(
                 config.health, decision_time, observe(decision_time)
             )
@@ -658,6 +671,7 @@ def run_paper(
                             {
                                 "client_order_id": lost,
                                 "held_before": str(sized_from),
+                                **_attempt(controller, lost),
                                 "side": "SELL",
                                 "state": "FLATTEN_UNKNOWN",
                             },
@@ -805,6 +819,15 @@ def _write_refuse_marker(
             handle.write(text)
     except OSError:
         pass  # the original error is re-raised either way
+
+
+def _attempt(controller: SafetyController, client_order_id: str) -> dict[str, str]:
+    """What the controller sent for `client_order_id`, if it recorded it."""
+    attempt = controller.attempts.get(client_order_id)
+    if attempt is None:
+        return {}
+    quantity, cap = attempt
+    return {"orig_qty": str(quantity), "limit_price": str(cap)}
 
 
 def _absence(config: PaperConfig, clock: _Clock) -> AbsenceCheck:
