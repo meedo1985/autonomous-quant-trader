@@ -349,6 +349,17 @@ def test_an_owner_flatten_sells_everything_then_halts(tmp_path: Path) -> None:
     assert report.final_mode == "HALT"
     _assert_flatten_remainder_is_unsellable(report.final_balances["BTC"], series)
     assert report.orders_sent > report.authorizations  # the FLATTEN sells
+    # T25-01: every FLATTEN sell is logged with the holding it was sized from.
+    events = [
+        json.loads(line)["payload"]
+        for line in (tmp_path / "operations.jsonl").read_text().splitlines()
+    ]
+    sells = [e["fields"] for e in events if e["fields"].get("state") == "FLATTEN"]
+    assert len(sells) == report.orders_sent - report.authorizations
+    assert all(
+        Decimal(s["orig_qty"]) <= Decimal(s["held_before"]) * Decimal("0.5")
+        for s in sells
+    )
 
 
 def test_an_owner_halt_stops_all_orders(tmp_path: Path) -> None:
