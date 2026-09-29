@@ -590,6 +590,8 @@ def run_paper(
                 controller.trigger(Trigger.LOSS_STOP, decision_time, detail)
                 stop_armed = False
             if controller.mode is Mode.FLATTEN:
+                # The venue balance `tick` sizes from, for the audit log.
+                sized_from = exchange.balances().get(base, Decimal(0))
                 flat = controller.tick(
                     exchange,
                     config.symbol,
@@ -601,6 +603,23 @@ def run_paper(
                 )
                 if flat is not None:
                     counts.orders += 1
+                    # Every FLATTEN sell is in the audit log with the holding
+                    # it was sized from (T25-01, A25-2).
+                    router.emit(
+                        Event(
+                            EventKind.ORDER,
+                            Severity.INFO,
+                            decision_time,
+                            {
+                                "client_order_id": flat.client_order_id,
+                                "executed_qty": str(flat.executed_qty),
+                                "held_before": str(sized_from),
+                                "orig_qty": str(flat.orig_qty),
+                                "side": str(flat.side),
+                                "state": "FLATTEN",
+                            },
+                        )
+                    )
                     zero_fills = _zero_fill_alert(
                         router, zero_fills, flat, decision_time
                     )

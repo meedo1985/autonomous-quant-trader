@@ -1,0 +1,6 @@
+[
+  "after the timed-out sell: FREEZE (SimulatedTimeout: no response for aqt-flat-770c921e6dc5bd21578cb39ff39)",
+  "blind check refused: reconciliation failed: BTC: venue 0.50000, expected 1; USDT: venue 4592.708432204618745971120, expected 0",
+  "full check passed=True, resolved=['aqt-flat-770c921e6dc5bd21578cb39ff39']",
+  "after the full check: HALT; BTC 0.50000"
+]
