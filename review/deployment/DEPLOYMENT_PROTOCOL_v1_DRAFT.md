@@ -283,7 +283,7 @@ anomaly: an incident [FROZEN §0].
 | Where | Value |
 |---|---|
 | §8 | The rented server's IP address (D-7), once the server exists |
-| §2.3, T18-06 | The live exchange filters, read from Binance's public exchange information (not an owner choice) |
+| §2.3 | The live exchange filters, re-read from Binance's public exchange information on the day (not an owner choice; checked equal on 2026-09-26, `review/exchange-filters/`; T18-06 not applicable to limit orders) |
 
 The other open values were set by the owner on 2026-09-29 (D-1 to D-8).
 
