@@ -182,9 +182,12 @@ health breach, crash marker) are each tested in `tests/integration/test_paper_lo
   as an `ORDER` event with `state FLATTEN`, its quantities and the holding it
   was sized from. This is a change to the Task 24 loop, reviewed under
   Task 25.
-- **T25-02. The exchange filters are example values** (`[OPEN]`). They must
-  come from Binance's exchange information before any stage using real
-  prices (see T18-06).
+- **T25-02. The exchange filters — resolved after the drills.** The
+  configured filters were checked against Binance's BTCUSDT exchange
+  information of 2026-09-26 and are equal (PR #33,
+  `review/exchange-filters/BTCUSDT_FILTERS_2026-09-26.md`); T18-06 does not
+  apply to limit orders. The drills ran with these same values. They must be
+  re-read on the day before any stage using real prices.
 
 ## 5. What is still not satisfied
 
