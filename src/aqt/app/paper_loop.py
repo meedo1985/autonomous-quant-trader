@@ -590,6 +590,8 @@ def run_paper(
                 controller.trigger(Trigger.LOSS_STOP, decision_time, detail)
                 stop_armed = False
             if controller.mode is Mode.FLATTEN:
+                # The venue balance `tick` sizes from, for the audit log.
+                sized_from = exchange.balances().get(base, Decimal(0))
                 flat = controller.tick(
                     exchange,
                     config.symbol,
@@ -611,9 +613,7 @@ def run_paper(
                             {
                                 "client_order_id": flat.client_order_id,
                                 "executed_qty": str(flat.executed_qty),
-                                "held_before": str(
-                                    local.balances.get(base, Decimal(0))
-                                ),
+                                "held_before": str(sized_from),
                                 "orig_qty": str(flat.orig_qty),
                                 "side": str(flat.side),
                                 "state": "FLATTEN",

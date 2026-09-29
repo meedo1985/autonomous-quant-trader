@@ -25,3 +25,29 @@ its output differed by OS. It now writes LF line endings everywhere, and the com
 JSON files were converted to LF. A full rerun into a fresh scratch directory
 matched every committed drill file byte for byte (`diff -r`: identical).
 `tests/integration/test_drills.py`: 3 passed.
+
+## Astra re-review attempts
+
+- Attempt 1 (`ASTRA_REREVIEW_ATTEMPT_1.md`): stopped for low memory, no
+  findings.
+- Attempt 2 (`ASTRA_REREVIEW_ATTEMPT_2.md`, committed `7e49b08` before these
+  repairs): cut off by the Codex usage limit before its final report, so no
+  verdict. Before the cut-off it confirmed: both original mutations now fail;
+  all 11 ledgers intact; all 31 drill files survive checkout byte for byte
+  with `core.autocrlf=true` (T25-03); the replay reproduced all 20 evidence
+  files; the packet matches the logs; a failed reconciliation freezes before
+  another FLATTEN step; the zero-fill alert still fires; the no-overwrite
+  rule preserved earlier incidents and `summary.json`.
+
+| ID | Decision | Evidence and disposition | Validation |
+| --- | --- | --- | --- |
+| A25R-1 | AGREE — BLOCKER, repaired | My A25-2 repair replaced the remainder check instead of adding to it, so a FLATTEN that stopped after two valid half-steps (0.27477 BTC left) passed. The drill now requires both: every step bounded, hourly and chained, and the final remainder below twice the notional minimum at the window's lowest price. | Mutation "stop after 2 steps" now fails the drill (see validation below). |
+| A25R-2 | AGREE — repaired | `held_before` came from the loop's reconciled record, which can differ from the venue balance `tick` sizes from when the tolerance is not zero. The loop now reads the venue balance immediately before `tick` and logs that. With the owner's zero tolerance the logged values are unchanged. | Drill rerun byte-identical (see below). |
+| A25R-3 | NOT RECOVERABLE | Mentioned as a second "logging limitation" but never described before the cut-off. A completed re-review must restate it if it still holds. | — |
+
+Validation of the A25R repairs: mutations HALT gate bypass, 100% FLATTEN
+step and FLATTEN stopped after 2 steps each now fail their drill; a full
+drill rerun into a fresh directory is byte-identical to the committed
+evidence; `pytest -q` 1576 passed, 4 skipped; ruff, format, mypy (53 files),
+6 import contracts, `git diff --check` clean; no frozen file changed. A
+complete Astra re-review is still required.

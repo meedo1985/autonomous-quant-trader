@@ -174,8 +174,19 @@ def drill_flatten(runner: _Runner, config: PaperConfig) -> DrillResult:
     hourly = all(a[0] < b[0] for a, b in zip(steps, steps[1:], strict=False))
     chained = all(b[1] == a[1] - a[3] for a, b in zip(steps, steps[1:], strict=False))
     last = steps[-1][1] - steps[-1][3] if steps else None
+    # And it ran to the end (A25R-1): half of what is left is below the
+    # notional minimum at any price in the window, so no step was skipped.
+    lowest = min(
+        Decimal(repr(bar.close))
+        for bar in runner.series.bars
+        if config.start <= bar.open_time < config.end
+    )
+    unsellable = (
+        held < 2 * config.filters.min_notional / lowest + config.filters.step_size
+    )
     passed = (
         len(steps) >= 2
+        and unsellable
         and bounded
         and hourly
         and chained
