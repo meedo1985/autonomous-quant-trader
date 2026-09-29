@@ -7,3 +7,5 @@
 /schemas/*.schema.json -text
 /specs/*_v1.md -text
 *.sha256 -text
+# Hash-chained evidence ledgers: byte-exact, or their chains break (T25-03).
+/review/task25/drills/** -text

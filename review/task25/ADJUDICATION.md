@@ -13,3 +13,9 @@ Repairs by Claude Opus 5.5.
 
 The repairs touch `src/aqt/app/paper_loop.py` (one logged event), so they
 are within section 16 scope and need re-review.
+
+## Found by the implementer after the repairs
+
+| ID | Decision | Evidence and disposition | Validation |
+| --- | --- | --- | --- |
+| T25-03 | Repaired | Git warned that the committed ledgers would be checked out with CRLF under `core.autocrlf`. A CRLF copy of `drills/flatten/operations.jsonl` fails `verify_ledger` (LF intact: True; CRLF intact: False). `.gitattributes` now marks `/review/task25/drills/** -text`, as the frozen files already are. | `git check-attr text` reports `unset` for the drill ledgers. |
