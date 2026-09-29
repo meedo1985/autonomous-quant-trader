@@ -15,7 +15,7 @@ end = 2020-11-29T00:00:00Z
 USDT = "10000"
 BTC = "0"
 
-[filters]                        # [OPEN] example Binance-like BTCUSDT filters
+[filters]                        # Binance BTCUSDT as of 2026-09-26 (review/exchange-filters/); re-read before a live stage
 step_size = "0.00001"
 min_qty = "0.00001"
 max_qty = "9000"
