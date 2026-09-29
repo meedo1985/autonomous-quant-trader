@@ -550,6 +550,10 @@ def run_paper(
 
     try:
         moment = config.start
+        # A startup check that waited (section 21) ends after `start`: no
+        # decision may be stamped before it (A2324R-2).
+        while moment < decision.report.at:
+            moment += HOUR
         while moment < config.end:
             decision_time, moment = moment, moment + HOUR
             if decision_time in owner:
@@ -807,7 +811,10 @@ def _absence(config: PaperConfig, clock: _Clock) -> AbsenceCheck:
     """Section 21 absence confirmation with the executor's owner-set delay
     and answer count (T22-Q1), on the simulated clock (A2324-1)."""
     return AbsenceCheck(
-        config.executor.not_found_delay, config.executor.absence_queries, clock.sleep
+        config.executor.not_found_delay,
+        config.executor.absence_queries,
+        clock.sleep,
+        clock,
     )
 
 

@@ -673,3 +673,19 @@ def test_a_flatten_sell_with_a_lost_reply_is_logged_and_counted(
     assert [f["client_order_id"] for f in lost] == [step_id]  # type: ignore[index]
     assert report.final_mode == "FREEZE"
     assert report.orders_sent == report.authorizations + 1
+
+
+def test_no_decision_is_stamped_before_a_waiting_startup_check(
+    tmp_path: Path,
+) -> None:
+    """A2324R-2 (the reviewer's scenario): an unknown order at startup is
+    confirmed absent after two answers 10 s apart, so the check ends after
+    `start`; the first hour is skipped rather than traded backdated."""
+    config = _config(2)
+    record = LocalRecord(config.starting_balances, {"aqt-unknown-at-start": None})
+    report = _run(tmp_path, config, _series(24 * 12), local_record=record)
+    assert report.refused == ()
+    orders = [e for e in _ops(tmp_path) if e["kind"] == "ORDER"]
+    assert orders and all(
+        str(e["at"]) >= (config.start + HOUR).isoformat() for e in orders
+    )

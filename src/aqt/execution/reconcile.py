@@ -59,11 +59,13 @@ _TERMINAL: Final = frozenset({OrderStatus.FILLED, OrderStatus.EXPIRED})
 class AbsenceCheck:
     """Section 21 absence confirmation for an order whose outcome is
     unknown: `queries` NOT_FOUND answers in a row, `delay` apart (owner-set
-    T22-Q1: 10 s, 2 answers). `sleep` waits `delay` on the caller's clock."""
+    T22-Q1: 10 s, 2 answers). `sleep` waits `delay` on the caller's clock,
+    and `clock` must show that it did (A2324R-1), as the executor requires."""
 
     delay: timedelta
     queries: int
     sleep: Callable[[timedelta], None]
+    clock: Callable[[], datetime]
 
     def __post_init__(self) -> None:
         if self.delay <= timedelta(0) or self.queries < 2:
@@ -169,7 +171,10 @@ def _query(
             return "unresolved (NOT_FOUND, absence not confirmed)"
         if answers >= absence.queries:
             return None  # confirmed absent (section 21)
+        before = require_utc(absence.clock(), field_name="clock")
         absence.sleep(absence.delay)
+        if require_utc(absence.clock(), field_name="clock") - before < absence.delay:
+            return "unresolved (the clock did not advance by the protocol delay)"
 
 
 def reconcile(
@@ -195,6 +200,9 @@ def reconcile(
             differences.append(f"{client_order_id}: not terminal ({found.status})")
         resolved[client_order_id] = found
 
+    if absence is not None:
+        # The report is as of the end of any waits, never before (A2324R-2).
+        at = max(at, require_utc(absence.clock(), field_name="clock"))
     readable = True
     try:
         open_orders = venue.open_orders()

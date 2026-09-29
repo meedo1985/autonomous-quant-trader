@@ -47,8 +47,25 @@ FILTERS = SymbolFilters(
 )
 BOUNDS = FlattenBounds(max_step_fraction=Decimal("0.5"), max_slippage_bps=Decimal("50"))
 TOLERANCE: dict[str, Decimal] = {}
-ABSENCE = AbsenceCheck(timedelta(seconds=10), 2, lambda _: None)
-"""Section 21: two NOT_FOUND answers, 10 s apart (owner-set T22-Q1)."""
+
+
+class FakeClock:
+    """A clock that `sleep` advances, as the paper loop's does."""
+
+    def __init__(self, now: datetime) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def sleep(self, duration: timedelta) -> None:
+        self.now += duration
+
+
+def _absence(at: datetime) -> AbsenceCheck:
+    """Section 21: two NOT_FOUND answers, 10 s apart (owner-set T22-Q1)."""
+    clock = FakeClock(at)
+    return AbsenceCheck(timedelta(seconds=10), 2, clock.sleep, clock)
 
 
 @pytest.fixture(autouse=True)
@@ -766,9 +783,9 @@ def test_recovery_needs_a_report_that_resolved_every_flatten_order(
     assert controller.mode is Mode.FREEZE
 
     record = LocalRecord(exchange.balances(), controller.sent)
-    full = reconcile(exchange, record, TOLERANCE, at, ABSENCE)
+    full = reconcile(exchange, record, TOLERANCE, at, _absence(at))
     assert full.passed and cid in full.resolved
-    assert controller.exit_freeze(full, at) is Mode.HALT
+    assert controller.exit_freeze(full, full.at) is Mode.HALT  # after the waits
     assert controller.sent == {}
 
 
@@ -786,11 +803,9 @@ def test_the_override_needs_a_report_that_resolved_every_flatten_order(
     assert controller.mode is Mode.HALT
 
     record = LocalRecord(exchange.balances(), controller.sent)
-    full = replace(
-        _override(controller, incidents, at),
-        reconciliation=reconcile(exchange, record, TOLERANCE, at, ABSENCE),
-    )
-    assert controller.override_halt(full, at) is Mode.RUNNING
+    checked = reconcile(exchange, record, TOLERANCE, at, _absence(at))
+    full = replace(_override(controller, incidents, checked.at), reconciliation=checked)
+    assert controller.override_halt(full, checked.at) is Mode.RUNNING
     assert controller.sent == {}
 
 
@@ -852,7 +867,7 @@ def test_only_a_passed_reconciliation_settles_flatten_orders(
     assert cid in controller.sent
     record = LocalRecord(exchange.balances(), controller.sent)
     controller.settle_flatten(
-        reconcile(exchange, record, TOLERANCE, T0 + 5 * HOUR, ABSENCE)
+        reconcile(exchange, record, TOLERANCE, T0 + 5 * HOUR, _absence(T0 + 5 * HOUR))
     )
     assert controller.sent == {}
 
@@ -898,10 +913,48 @@ def test_a_lagging_not_found_is_queried_again_after_the_delay(
     assert _tick(controller, exchange, 1) is None
     assert controller.mode is Mode.FREEZE and step_id in controller.sent
     slept: list[timedelta] = []
-    check = AbsenceCheck(timedelta(seconds=10), 2, slept.append)
+    clock = FakeClock(at + HOUR)
+
+    def sleep(duration: timedelta) -> None:
+        slept.append(duration)
+        clock.sleep(duration)
+
+    check = AbsenceCheck(timedelta(seconds=10), 2, sleep, clock)
     record = LocalRecord({"USDT": Decimal("0"), "BTC": Decimal("1")}, controller.sent)
     report = reconcile(exchange, record, TOLERANCE, at + HOUR, check)
     found = report.resolved[step_id]
     assert found is not None and found.executed_qty == 0
     assert slept == [timedelta(seconds=10)]
     assert report.passed
+
+
+@pytest.mark.parametrize("drift", [timedelta(0), timedelta(seconds=-5)])
+def test_absence_needs_the_clock_to_advance_by_the_delay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, drift: timedelta
+) -> None:
+    """A2324R-1: a sleep that does not move the clock forward by the delay
+    confirms nothing; the order stays unresolved."""
+    controller, _, exchange, cid = _frozen_with_unknown_flatten_order(
+        tmp_path, monkeypatch
+    )
+    at = T0 + 5 * HOUR
+    clock = FakeClock(at)
+    check = AbsenceCheck(timedelta(seconds=10), 2, lambda _: clock.sleep(drift), clock)
+    record = LocalRecord(exchange.balances(), controller.sent)
+    report = reconcile(exchange, record, TOLERANCE, at, check)
+    assert not report.passed and cid not in report.resolved
+    assert "did not advance" in report.differences[0]
+
+
+def test_the_report_is_stamped_after_the_waits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A2324R-2: an absence check that waited stamps its report at the end
+    of the waits, not before."""
+    controller, _, exchange, _ = _frozen_with_unknown_flatten_order(
+        tmp_path, monkeypatch
+    )
+    at = T0 + 5 * HOUR
+    record = LocalRecord(exchange.balances(), controller.sent)
+    report = reconcile(exchange, record, TOLERANCE, at, _absence(at))
+    assert report.passed and report.at == at + timedelta(seconds=10)

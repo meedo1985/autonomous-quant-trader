@@ -27,3 +27,19 @@ repairs change no drill outcome.
 These repairs touch section 16 protected code (reconciliation, safety,
 loop) and need an Astra review and the owner's behavioural review before
 merge.
+
+## Astra re-review attempt 1 (cut off): A2324R-1, A2324R-2
+
+Record: `ASTRA_REREVIEW_ATTEMPT_1.md` (committed `4b0d72f` before these
+repairs). No verdict; the reviewer confirmed the A2324-2..4 reproductions and
+the one-query FREEZE case now pass.
+
+| ID | Decision | Evidence and disposition | Validation |
+| --- | --- | --- | --- |
+| A2324R-1 | AGREE — repaired | `AbsenceCheck` trusted `sleep`. It now takes a `clock`; after each wait the clock must have advanced by at least the delay, or the order is unresolved ("the clock did not advance by the protocol delay"), as the executor already requires. | `test_absence_needs_the_clock_to_advance_by_the_delay` (no advance; 5 s backwards). |
+| A2324R-2 | AGREE — repaired | The waits left reports stamped at the pre-wait time. `reconcile` now stamps a report that used an `AbsenceCheck` at the later of `at` and the clock after the waits. Callers must then act at or after that time: `exit_freeze` and `override_halt` already refuse a report later than their `at`. The loop skips any decision hour before the startup check's report time, so nothing is traded backdated. | `test_the_report_is_stamped_after_the_waits` (report at `at + 10 s`); `test_no_decision_is_stamped_before_a_waiting_startup_check` (the reviewer's scenario; fails when the skip is removed: a FILLED order at 00:00). Two recovery tests now act at the report's time. |
+
+Validation after the A2324R repairs: `pytest -q` 1586 passed, 4 skipped;
+ruff, format (101 files), mypy (53 files), 6 import contracts and `git diff
+--check` clean; no frozen file differs from `main`; the Task 25 drills rerun
+byte-identical. Not yet re-reviewed.
