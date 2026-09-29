@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import socket
 from dataclasses import dataclass, field, replace
@@ -13,7 +14,7 @@ import pytest
 
 from aqt.core.ledger import LedgerError
 from aqt.data.bars import Bar, BarSeries
-from aqt.execution.reconcile import LocalRecord, reconcile
+from aqt.execution.reconcile import AbsenceCheck, LocalRecord, reconcile
 from aqt.execution.safety import (
     MODE_TRANSITIONS,
     FlattenBounds,
@@ -27,7 +28,9 @@ from aqt.execution.safety import (
 )
 from aqt.execution.simulator import (
     ExchangeError,
+    Fault,
     Order,
+    Scenario,
     SimulatedExchange,
     SymbolFilters,
 )
@@ -44,6 +47,8 @@ FILTERS = SymbolFilters(
 )
 BOUNDS = FlattenBounds(max_step_fraction=Decimal("0.5"), max_slippage_bps=Decimal("50"))
 TOLERANCE: dict[str, Decimal] = {}
+ABSENCE = AbsenceCheck(timedelta(seconds=10), 2, lambda _: None)
+"""Section 21: two NOT_FOUND answers, 10 s apart (owner-set T22-Q1)."""
 
 
 @pytest.fixture(autouse=True)
@@ -761,7 +766,7 @@ def test_recovery_needs_a_report_that_resolved_every_flatten_order(
     assert controller.mode is Mode.FREEZE
 
     record = LocalRecord(exchange.balances(), controller.sent)
-    full = reconcile(exchange, record, TOLERANCE, at)
+    full = reconcile(exchange, record, TOLERANCE, at, ABSENCE)
     assert full.passed and cid in full.resolved
     assert controller.exit_freeze(full, at) is Mode.HALT
     assert controller.sent == {}
@@ -783,7 +788,7 @@ def test_the_override_needs_a_report_that_resolved_every_flatten_order(
     record = LocalRecord(exchange.balances(), controller.sent)
     full = replace(
         _override(controller, incidents, at),
-        reconciliation=reconcile(exchange, record, TOLERANCE, at),
+        reconciliation=reconcile(exchange, record, TOLERANCE, at, ABSENCE),
     )
     assert controller.override_halt(full, at) is Mode.RUNNING
     assert controller.sent == {}
@@ -846,5 +851,57 @@ def test_only_a_passed_reconciliation_settles_flatten_orders(
         controller.settle_flatten(failed)
     assert cid in controller.sent
     record = LocalRecord(exchange.balances(), controller.sent)
-    controller.settle_flatten(reconcile(exchange, record, TOLERANCE, T0 + 5 * HOUR))
+    controller.settle_flatten(
+        reconcile(exchange, record, TOLERANCE, T0 + 5 * HOUR, ABSENCE)
+    )
     assert controller.sent == {}
+
+
+def test_one_not_found_never_resolves_an_unknown_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A2324-1: a single NOT_FOUND is not absence. Without the section 21
+    check the order stays unresolved, and FREEZE cannot be left."""
+    controller, _, exchange, cid = _frozen_with_unknown_flatten_order(
+        tmp_path, monkeypatch
+    )
+    at = T0 + 5 * HOUR
+    record = LocalRecord(exchange.balances(), controller.sent)
+    once = reconcile(exchange, record, TOLERANCE, at)
+    assert not once.passed and cid not in once.resolved
+    assert "absence not confirmed" in once.differences[0]
+    with pytest.raises(SafetyError, match="reconciliation failed"):
+        controller.exit_freeze(once, at)
+    assert controller.mode is Mode.FREEZE and cid in controller.sent
+
+
+def test_a_lagging_not_found_is_queried_again_after_the_delay(
+    tmp_path: Path,
+) -> None:
+    """A2324-1 (the reviewer's scenario): a FLATTEN sell that expired
+    unfilled, whose reply was lost, and whose first query lags with
+    NOT_FOUND. The delayed second query finds it, so it resolves to the real
+    order, not to absence."""
+    at = T0 + 4 * HOUR
+    step_id = (
+        "aqt-flat-"
+        + hashlib.sha256(f"BTCUSDT|{at.isoformat()}|1".encode()).hexdigest()[:27]
+    )
+    exchange = SimulatedExchange(
+        {"BTCUSDT": _series([100.0] * 4 + [90.0] * 4)},  # gap below the cap
+        {"BTCUSDT": FILTERS},
+        {"USDT": Decimal("0"), "BTC": Decimal("1")},
+        scenario=Scenario({step_id: Fault(timeout=True, not_found_queries=1)}),
+    )
+    controller, _, _ = _controller(tmp_path, Mode.RUNNING)
+    controller.trigger(Trigger.OWNER_FLATTEN, at)
+    assert _tick(controller, exchange, 1) is None
+    assert controller.mode is Mode.FREEZE and step_id in controller.sent
+    slept: list[timedelta] = []
+    check = AbsenceCheck(timedelta(seconds=10), 2, slept.append)
+    record = LocalRecord({"USDT": Decimal("0"), "BTC": Decimal("1")}, controller.sent)
+    report = reconcile(exchange, record, TOLERANCE, at + HOUR, check)
+    found = report.resolved[step_id]
+    assert found is not None and found.executed_qty == 0
+    assert slept == [timedelta(seconds=10)]
+    assert report.passed

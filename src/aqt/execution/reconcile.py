@@ -5,7 +5,10 @@
 
 1. every order sent since the last successful reconciliation is queried by
    its `clientOrderId`, and must resolve to a terminal order equal to the
-   local copy (or be absent, when the local record never saw it);
+   local copy, or, when the local record never learned its outcome, be
+   confirmed absent by the section 21 protocol: `AbsenceCheck.queries`
+   NOT_FOUND answers, each after `AbsenceCheck.delay`. Without an
+   `AbsenceCheck`, a NOT_FOUND for such an order is unresolved (A2324-1);
 2. every open order on the venue must be one of those orders, and none may
    still be open;
 3. every balance must equal the last reconciled balance plus the exact
@@ -24,9 +27,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Context, Decimal
 from types import MappingProxyType
 from typing import Final, Protocol
@@ -39,6 +42,7 @@ from aqt.governor.authorization import Authorization
 from aqt.governor.machine import Governor
 
 __all__ = [
+    "AbsenceCheck",
     "LocalRecord",
     "ReconciliationReport",
     "ReconcilingVenue",
@@ -49,6 +53,21 @@ __all__ = [
 _DEC: Final = Context(prec=34)
 _QUOTE: Final[str] = "USDT"
 _TERMINAL: Final = frozenset({OrderStatus.FILLED, OrderStatus.EXPIRED})
+
+
+@dataclass(frozen=True, slots=True)
+class AbsenceCheck:
+    """Section 21 absence confirmation for an order whose outcome is
+    unknown: `queries` NOT_FOUND answers in a row, `delay` apart (owner-set
+    T22-Q1: 10 s, 2 answers). `sleep` waits `delay` on the caller's clock."""
+
+    delay: timedelta
+    queries: int
+    sleep: Callable[[timedelta], None]
+
+    def __post_init__(self) -> None:
+        if self.delay <= timedelta(0) or self.queries < 2:
+            raise ValueError(f"invalid absence check: {self.delay}, {self.queries}")
 
 
 class ReconcilingVenue(Protocol):
@@ -127,11 +146,38 @@ def _apply(balances: dict[str, Decimal], order: Order) -> None:
         balances[asset] = _DEC.add(balances.get(asset, Decimal(0)), change)
 
 
+def _query(
+    venue: ReconcilingVenue,
+    client_order_id: str,
+    known: Order | None,
+    absence: AbsenceCheck | None,
+) -> Order | None | str:
+    """The venue's order, `None` when absent, or why it is unresolved."""
+    answers = 0
+    while True:
+        try:
+            return venue.query_order(client_order_id)
+        except ExchangeError as error:
+            if error.code != "NOT_FOUND":
+                return f"unresolved ({error})"
+        except Exception as error:  # noqa: BLE001 - any failure is unresolved
+            return f"unresolved ({type(error).__name__}: {error})"
+        answers += 1
+        if known is not None:
+            return None  # a known order that vanished: the caller sees the difference
+        if absence is None:
+            return "unresolved (NOT_FOUND, absence not confirmed)"
+        if answers >= absence.queries:
+            return None  # confirmed absent (section 21)
+        absence.sleep(absence.delay)
+
+
 def reconcile(
     venue: ReconcilingVenue,
     local: LocalRecord,
     tolerance: Mapping[str, Decimal],
     at: datetime,
+    absence: AbsenceCheck | None = None,
 ) -> ReconciliationReport:
     at = require_utc(at, field_name="at")
     if any(not value.is_finite() or value < 0 for value in tolerance.values()):
@@ -139,17 +185,9 @@ def reconcile(
     differences: list[str] = []
     resolved: dict[str, Order | None] = {}
     for client_order_id, known in sorted(local.orders.items()):
-        try:
-            found: Order | None = venue.query_order(client_order_id)
-        except ExchangeError as error:
-            if error.code != "NOT_FOUND":
-                differences.append(f"{client_order_id}: unresolved ({error})")
-                continue
-            found = None
-        except Exception as error:  # noqa: BLE001 - any failure is unresolved
-            differences.append(
-                f"{client_order_id}: unresolved ({type(error).__name__}: {error})"
-            )
+        found = _query(venue, client_order_id, known, absence)
+        if isinstance(found, str):
+            differences.append(f"{client_order_id}: {found}")
             continue
         if known is not None and found != known:
             differences.append(f"{client_order_id}: venue differs from local copy")

@@ -57,6 +57,7 @@ from aqt.core.ledger import append_entry, read_entries
 from aqt.data.bars import require_utc
 from aqt.execution.orders import capped_price
 from aqt.execution.reconcile import (
+    AbsenceCheck,
     LocalRecord,
     ReconciliationReport,
     ReconcilingVenue,
@@ -540,12 +541,13 @@ def startup_check(
     tolerance: Mapping[str, Decimal],
     incidents: IncidentLog,
     at: datetime,
+    absence: AbsenceCheck | None = None,
 ) -> StartupDecision:
     """Section 19, "Startup reconciliation required": REFUSE_START on any
     reconciliation difference or open incident. A failed reconciliation
     opens an incident. The other REFUSE_START conditions of the deployment
     draft section 4 (hashes, alert channel, health) belong to the loop."""
-    report = reconcile(venue, local, tolerance, at)
+    report = reconcile(venue, local, tolerance, at, absence)
     reasons: list[str] = []
     if not report.passed:
         reasons.append("reconciliation failed: " + "; ".join(report.differences))
