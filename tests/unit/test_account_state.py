@@ -121,6 +121,8 @@ def test_another_record_type_last_refuses(tmp_path: Path) -> None:
         ("entered_at", "2026-09-29T02:00:00"),  # naive
         ("stop_armed", "yes"),
         ("zero_fills", True),
+        ("incidents_seen", -1),
+        ("incidents_seen", "3"),
         ("sent", {"aqt-flat-1": {"client_order_id": "x"}}),  # incomplete order
     ],
 )

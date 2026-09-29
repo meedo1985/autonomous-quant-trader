@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import MappingProxyType
@@ -33,6 +33,7 @@ from aqt.execution.simulator import Order, OrderStatus
 __all__ = ["RECORD_TYPE", "AccountDir", "AccountState", "StateError", "StateJournal"]
 
 RECORD_TYPE: Final[str] = "aqt.app.account_state.v1"
+_SAVED_FORMAT: Final[str] = "%Y-%m-%dT%H:%M:%SZ"  # `aqt.core.ledger` stamps
 
 
 class StateError(ValueError):
@@ -113,6 +114,9 @@ class AccountState:
     stop_armed: bool
     last_increase: datetime | None
     zero_fills: int = 0
+    incidents_seen: int = 0
+    """Entries in the incident log when saved: an incident opened after it
+    is an alarm this snapshot has not applied (part b)."""
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -122,8 +126,8 @@ class AccountState:
             require_utc(self.last_increase, field_name="last_increase")
         if not self.peak.is_finite() or self.peak < 0:
             raise StateError(f"invalid peak {self.peak}")
-        if self.zero_fills < 0:
-            raise StateError(f"invalid zero_fills {self.zero_fills}")
+        if self.zero_fills < 0 or self.incidents_seen < 0:
+            raise StateError("zero_fills and incidents_seen must not be negative")
         for name in ("sent", "attempts"):
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
 
@@ -133,6 +137,7 @@ class AccountState:
                 k: [str(q), str(c)] for k, (q, c) in sorted(self.attempts.items())
             },
             "entered_at": self.entered_at.isoformat(),
+            "incidents_seen": self.incidents_seen,
             "last_increase": (
                 None if self.last_increase is None else self.last_increase.isoformat()
             ),
@@ -163,8 +168,13 @@ class AccountState:
                 raise StateError("record.balances must be a mapping")
             stop_armed = data["stop_armed"]
             zero_fills = data["zero_fills"]
-            if not isinstance(stop_armed, bool) or type(zero_fills) is not int:
-                raise StateError("stop_armed must be a bool and zero_fills an int")
+            seen = data["incidents_seen"]
+            if not isinstance(stop_armed, bool) or {type(zero_fills), type(seen)} != {
+                int
+            }:
+                raise StateError(
+                    "stop_armed must be a bool, zero_fills and incidents_seen ints"
+                )
             last = data["last_increase"]
             return cls(
                 mode=Mode(data["mode"]),
@@ -185,6 +195,7 @@ class AccountState:
                 stop_armed=stop_armed,
                 last_increase=None if last is None else _time(last, "last_increase"),
                 zero_fills=zero_fills,
+                incidents_seen=seen,
             )
         except (KeyError, IndexError, TypeError, ValueError) as error:
             if isinstance(error, StateError):
@@ -211,6 +222,11 @@ class StateJournal:
         """The last snapshot, or `None` for an account never run. A damaged
         chain raises `LedgerError`; a snapshot that does not parse exactly,
         or an entry of another type, raises `StateError`."""
+        last = self.load_saved()
+        return None if last is None else last[0]
+
+    def load_saved(self) -> tuple[AccountState, datetime] | None:
+        """`load`, with the time the snapshot was saved at."""
         if not self.path.exists():
             return None
         entries = read_entries(self.path)
@@ -219,7 +235,8 @@ class StateJournal:
         last = entries[-1]
         if last.record_type != RECORD_TYPE:
             raise StateError(f"unexpected record type {last.record_type!r}")
-        return AccountState.from_mapping(last.payload)
+        saved_at = datetime.strptime(last.recorded_at_utc, _SAVED_FORMAT)
+        return AccountState.from_mapping(last.payload), saved_at.replace(tzinfo=UTC)
 
 
 @dataclass(frozen=True, slots=True)

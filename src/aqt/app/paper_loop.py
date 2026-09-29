@@ -21,6 +21,14 @@ inside one unbroken run of bars; the startup reconciliation fails; or an
 incident is open. A non-simulator adapter is
 refused when the configuration is read. Every refusal is logged.
 
+With a state journal (Task 27, `aqt.app.state`) a run resumes the account
+where its last run left it: the saved mode (moved on by any alarm the
+incident log recorded after the snapshot), the unsettled orders, the
+loss-stop peak. A HALT, FLATTEN or FREEZE resumes as itself, never as
+RUNNING. The state is saved after every hour, after an owner command, and
+before any order is sent. A damaged or inconsistent journal, or a start not
+after the last save, is a REFUSE_START.
+
 The run is deterministic: the clock is the bar clock, and governor nonces
 come from the run id and a counter, so two runs of one configuration produce
 the same report and the same log bytes.
@@ -33,19 +41,21 @@ import json
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Final
 
 from aqt.allocation.predictor import PREDICTOR_BENCHMARK, baseline_proposal
-from aqt.core.ledger import LedgerError, verify_ledger
+from aqt.app.state import AccountState, StateError, StateJournal
+from aqt.core.ledger import LedgerError, read_entries, verify_ledger
 from aqt.data.bars import BarSeries, require_utc
 from aqt.data.binance_public import DownloadError, refuse_credentials
 from aqt.execution.machine import Executor, State
-from aqt.execution.orders import ExecutorConfig
+from aqt.execution.orders import ExecutorConfig, client_order_id_for
 from aqt.execution.reconcile import AbsenceCheck, LocalRecord, reconcile, settle
 from aqt.execution.safety import (
+    MODE_TRANSITIONS,
     FlattenBounds,
     IncidentLog,
     Mode,
@@ -430,6 +440,8 @@ def run_paper(
     local_record: LocalRecord | None = None,
     commands: Mapping[datetime, Trigger] | None = None,
     observe: Callable[[datetime], Observation] = bar_clock_observation,
+    journal: StateJournal | None = None,
+    venue: SimulatedExchange | None = None,
 ) -> RunReport:
     """Run the loop over every hourly decision in `[start, end)`.
 
@@ -440,7 +452,17 @@ def run_paper(
     health-check readings for an hour (default: the bar clock, which never
     breaches); a breach blocks every order that hour, and at start it is a
     REFUSE_START.
+
+    `journal` holds the account's saved state (Task 27); `incidents` must be
+    the same account's incident log. `venue` is the exchange to trade
+    against (default: a new simulator holding the starting balances); a
+    resumed account must be given the venue its state describes, or the
+    startup reconciliation refuses.
     """
+    if journal is not None and local_record is not None:
+        raise ConfigError("a resumed account's record comes from its journal")
+    if venue is not None and scenario is not None:
+        raise ConfigError("a scenario configures a new simulator, not a given venue")
     owner = dict(commands or {})
     if any(
         t not in (Trigger.OWNER_HALT, Trigger.OWNER_FLATTEN) for t in owner.values()
@@ -510,18 +532,41 @@ def run_paper(
     marker = refuse_marker_path(incidents)
     if marker.exists():
         refuse(f"an earlier run stopped on an error; see {marker.name}")
+    resumed: AccountState | None = None
+    mode, entered = Mode.RUNNING, config.start
+    if journal is not None:
+        try:
+            loaded = journal.load_saved()
+            if loaded is not None:
+                resumed, saved_at = loaded
+                if config.start <= saved_at:
+                    refuse(f"start is not after the saved state ({saved_at})")
+                place = _resume(resumed, incidents)
+                if isinstance(place, str):
+                    refuse(place)
+                else:
+                    mode, entered = place
+        except (LedgerError, StateError, OSError) as error:
+            refuse(f"saved state unreadable: {error}")
     window = contiguous_window(series, config.start, config.end)
     if isinstance(window, str):
         refuse(window)
         return report("REFUSED", config.starting_balances)
     series = window
-    exchange = SimulatedExchange(
-        {config.symbol: series},
-        {config.symbol: config.filters},
-        dict(config.starting_balances),
-        scenario=scenario,
-    )
+    if venue is not None:
+        exchange = venue
+    else:
+        exchange = SimulatedExchange(
+            {config.symbol: series},
+            {config.symbol: config.filters},
+            dict(config.starting_balances),
+            scenario=scenario,
+        )
     local = local_record or LocalRecord(config.starting_balances)
+    if resumed is not None:
+        # Unsettled FLATTEN orders are resolved by the startup reconciliation.
+        record = resumed.record
+        local = LocalRecord(record.balances, {**record.orders, **resumed.sent})
     for breach in health_breaches(config.health, config.start, observe(config.start)):
         refuse(f"health check at start: {breach.kind} {dict(breach.fields)}")
     if not refused:
@@ -532,22 +577,30 @@ def run_paper(
             incidents,
             config.start,
             _absence(config, _Clock(config.start)),
+            resuming=mode,
         )
         for reason in decision.reasons:
             refuse(reason)
     if refused:
         return report("REFUSED", config.starting_balances)
-    router.emit(
-        Event(
-            EventKind.STARTUP,
-            Severity.INFO,
-            decision.report.at,
-            {"decision": "START", "run_id": config.run_id, "symbol": config.symbol},
-        )
-    )
+    started: dict[str, str | int | bool | None] = {
+        "decision": "START",
+        "run_id": config.run_id,
+        "symbol": config.symbol,
+    }
+    if resumed is not None:
+        started["resumed_mode"] = str(mode)
+    router.emit(Event(EventKind.STARTUP, Severity.INFO, decision.report.at, started))
 
     ready = decision.report.at  # after any section 21 waits (A2324R-2, F35-4)
-    controller = SafetyController(router, incidents, ready, mode=Mode.RUNNING)
+    local = decision.report.next_record()
+    controller = SafetyController(
+        router, incidents, ready if resumed is None else entered, mode=mode
+    )
+    if mode in (Mode.HALT, Mode.FREEZE) and not incidents.open_incidents():
+        # The section 14 way out needs an open incident to close: a crash can
+        # fall between closing the incidents and saving RUNNING.
+        incidents.open("STATE_RESUMED", f"resumed {mode}, no incident open", ready)
 
     def apply_owner(hour: datetime, at: datetime) -> None:
         """Apply the owner's command for `hour` at `at`; a refusal is logged."""
@@ -564,14 +617,42 @@ def run_paper(
             )
 
     issued = iter(range(1 << 62))
+    # A resumed run's nonces differ from every earlier run's, since its start
+    # is after all of them: no client order id is reused.
+    seed = config.run_id if resumed is None else f"{config.run_id}|{ready.isoformat()}"
     governor = Governor(
-        config.governor, nonce_source=lambda: nonce_for(config.run_id, next(issued))
+        config.governor, nonce_source=lambda: nonce_for(seed, next(issued))
     )
     last_increase: datetime | None = None
     base = config.symbol.removesuffix(_QUOTE)
     peak = Decimal(0)
     stop_armed = True  # L-03 fires once per fall below the line
     zero_fills = 0
+    if resumed is not None:
+        peak, stop_armed = resumed.peak, resumed.stop_armed
+        last_increase, zero_fills = resumed.last_increase, resumed.zero_fills
+
+    def save(at: datetime, record: LocalRecord | None = None) -> None:
+        """Append the account's state to the journal, if there is one."""
+        if journal is None:
+            return
+        seen = len(read_entries(incidents.path)) if incidents.path.exists() else 0
+        sent = dict(controller.sent)
+        journal.save(
+            AccountState(
+                mode=controller.mode,
+                entered_at=controller.entered_at,
+                record=local if record is None else record,
+                sent=sent,
+                attempts={k: controller.attempts[k] for k in sent},
+                peak=peak,
+                stop_armed=stop_armed,
+                last_increase=last_increase,
+                zero_fills=zero_fills,
+                incidents_seen=seen,
+            ),
+            at,
+        )
 
     try:
         moment = config.start
@@ -582,10 +663,19 @@ def run_paper(
             if moment in owner:
                 apply_owner(moment, ready)
             moment += HOUR
+        save(ready)
+        decision_time = ready
+        # A FLATTEN sell is saved as sent before it is placed (Task 27).
+        controller.before_send = lambda: save(decision_time)
+        done: datetime | None = None
         while moment < config.end:
+            if done is not None:
+                save(done)  # the hour just finished
             decision_time, moment = moment, moment + HOUR
+            done = decision_time
             if decision_time in owner:
                 apply_owner(decision_time, decision_time)
+                save(decision_time)
             breaches = health_breaches(
                 config.health, decision_time, observe(decision_time)
             )
@@ -702,6 +792,10 @@ def run_paper(
                 counts.refusals[code] = counts.refusals.get(code, 0) + 1
                 continue
             counts.authorizations += 1
+            # Saved as sent before it is placed: after a crash in between, the
+            # startup reconciliation must resolve it (Task 27).
+            unsent = {client_order_id_for(authorization): None}
+            save(decision_time, LocalRecord(local.balances, {**local.orders, **unsent}))
             clock = _Clock(decision_time)
             executor = Executor(
                 governor,
@@ -763,6 +857,8 @@ def run_paper(
             if filled and authorization.side is Side.BUY:
                 last_increase = proposal.decision_time
             local = check.next_record()
+        if done is not None:
+            save(done)
 
     except BaseException as error:
         # T23-04: an audit write (or anything else) failed mid-run. The mode
@@ -819,6 +915,29 @@ def _write_refuse_marker(
             handle.write(text)
     except OSError:
         pass  # the original error is re-raised either way
+
+
+def _resume(saved: AccountState, incidents: IncidentLog) -> tuple[Mode, datetime] | str:
+    """The mode to resume and when it began: the saved mode, moved on by every
+    alarm the incident log recorded after the snapshot (a crash can fall
+    between an alarm and its save). A reason to refuse if they disagree."""
+    entries = read_entries(incidents.path) if incidents.path.exists() else ()
+    if len(entries) < saved.incidents_seen:
+        return "the incident log is shorter than the saved state recorded"
+    mode, at = saved.mode, saved.entered_at
+    for entry in entries[saved.incidents_seen :]:
+        if entry.record_type != IncidentLog.OPEN:
+            continue
+        kind = str(entry.payload.get("kind"))
+        # HALT_OVERRIDE_FAILED is opened in HALT and leaves HALT (safety.py).
+        target = Mode.HALT if kind == "HALT_OVERRIDE_FAILED" else None
+        if kind in Trigger.__members__:
+            target = MODE_TRANSITIONS.get((mode, Trigger(kind)))
+        if target is None:
+            return f"incident {kind} cannot follow the saved mode {mode}"
+        stamp = datetime.strptime(entry.recorded_at_utc, "%Y-%m-%dT%H:%M:%SZ")
+        mode, at = target, max(at, stamp.replace(tzinfo=UTC))
+    return mode, at
 
 
 def _attempt(controller: SafetyController, client_order_id: str) -> dict[str, str]:
