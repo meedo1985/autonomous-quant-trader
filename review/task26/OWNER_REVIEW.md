@@ -12,6 +12,8 @@ this behaviour, the question is asked again before merge.
    protected test period). Is that what you want?" — **Yes**
 
 Reviews so far: Fable 5.1 FIX (`FABLE_REVIEW_EA14844.md`), repaired at
-`5c39ac1`. Outstanding: an Astra review. No live call has been made by the
-app; the first real run is the owner's. Merge only on the owner's
+`5c39ac1`. Outstanding: an Astra review. Apart from the one key-free
+server-time request the Fable reviewer made through the CLI against its
+instructions (recorded in `FABLE_REVIEW_EA14844.md`), no live call has been
+made; the first real price fetch is the owner's. Merge only on the owner's
 instruction.
