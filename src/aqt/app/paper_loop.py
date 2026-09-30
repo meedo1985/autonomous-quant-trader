@@ -44,7 +44,7 @@ from aqt.data.bars import BarSeries, require_utc
 from aqt.data.binance_public import DownloadError, refuse_credentials
 from aqt.execution.machine import Executor, State
 from aqt.execution.orders import ExecutorConfig
-from aqt.execution.reconcile import LocalRecord, reconcile, settle
+from aqt.execution.reconcile import AbsenceCheck, LocalRecord, reconcile, settle
 from aqt.execution.safety import (
     FlattenBounds,
     IncidentLog,
@@ -208,6 +208,12 @@ def load_config(path: Path) -> PaperConfig:
                 max_qty=_decimal(fil["max_qty"], "max_qty"),
                 min_notional=_decimal(fil["min_notional"], "min_notional"),
                 tick_size=_decimal(fil["tick_size"], "tick_size"),
+                # Optional; never silently dropped (A2324-3).
+                max_notional=(
+                    _decimal(fil["max_notional"], "max_notional")
+                    if "max_notional" in fil
+                    else None
+                ),
             ),
             governor=GovernorConfig(
                 max_slippage_bps=_decimal(gov["max_slippage_bps"], "max_slippage_bps"),
@@ -314,7 +320,14 @@ def frozen_hash_problems(root: Path) -> list[str]:
         text = constitution.read_bytes().replace(expected.encode(), b"")
         if hashlib.sha256(text).hexdigest() != expected:
             problems.append("RESEARCH_CONSTITUTION.md: content hash does not match")
-    except (OSError, KeyError, ValueError, IndexError) as error:
+    except (
+        OSError,
+        KeyError,
+        ValueError,
+        IndexError,
+        TypeError,
+        AttributeError,
+    ) as error:
         problems.append(f"frozen hashes unreadable: {error}")
     return problems
 
@@ -433,7 +446,13 @@ def run_paper(
         t not in (Trigger.OWNER_HALT, Trigger.OWNER_FLATTEN) for t in owner.values()
     ):
         raise ConfigError("only OWNER_HALT and OWNER_FLATTEN can be commanded")
-    frozen = json.loads((repository_root / "FROZEN_HASHES.json").read_text("utf-8"))
+    try:
+        frozen = json.loads((repository_root / "FROZEN_HASHES.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        # `frozen_hash_problems` refuses the start, logged (A2324-4).
+        frozen = {}
+    if not isinstance(frozen, dict):
+        frozen = {}  # valid JSON but not an object: refused below (F35-2)
     counts = _Counts()
     counter = _CountingSink()
     refused: list[str] = []
@@ -442,8 +461,8 @@ def run_paper(
         return RunReport(
             run_id=config.run_id,
             refused=tuple(refused),
-            protocol_hash=frozen["protocol_file_sha256"],
-            cost_model_hash=frozen["cost_model_sha256"],
+            protocol_hash=str(frozen.get("protocol_file_sha256", "unreadable")),
+            cost_model_hash=str(frozen.get("cost_model_sha256", "unreadable")),
             data_manifest_hash=data_manifest_hash,
             predictor=str(PREDICTOR_BENCHMARK),
             hours=int((config.end - config.start) / HOUR),
@@ -507,7 +526,12 @@ def run_paper(
         refuse(f"health check at start: {breach.kind} {dict(breach.fields)}")
     if not refused:
         decision = startup_check(
-            exchange, local, config.tolerance, incidents, config.start
+            exchange,
+            local,
+            config.tolerance,
+            incidents,
+            config.start,
+            _absence(config, _Clock(config.start)),
         )
         for reason in decision.reasons:
             refuse(reason)
@@ -517,12 +541,28 @@ def run_paper(
         Event(
             EventKind.STARTUP,
             Severity.INFO,
-            config.start,
+            decision.report.at,
             {"decision": "START", "run_id": config.run_id, "symbol": config.symbol},
         )
     )
 
-    controller = SafetyController(router, incidents, config.start, mode=Mode.RUNNING)
+    ready = decision.report.at  # after any section 21 waits (A2324R-2, F35-4)
+    controller = SafetyController(router, incidents, ready, mode=Mode.RUNNING)
+
+    def apply_owner(hour: datetime, at: datetime) -> None:
+        """Apply the owner's command for `hour` at `at`; a refusal is logged."""
+        try:
+            controller.trigger(owner[hour], at, "owner command")
+        except SafetyError as error:
+            router.emit(
+                Event(
+                    EventKind.STATE_TRANSITION,
+                    Severity.WARNING,
+                    at,
+                    {"command": str(owner[hour]), "refused": str(error)},
+                )
+            )
+
     issued = iter(range(1 << 62))
     governor = Governor(
         config.governor, nonce_source=lambda: nonce_for(config.run_id, next(issued))
@@ -535,25 +575,17 @@ def run_paper(
 
     try:
         moment = config.start
+        # A startup check that waited (section 21) ends after `start`: no
+        # decision may be stamped before it (A2324R-2). An owner command for a
+        # skipped hour still applies, as soon as the check ends (F35-1).
+        while moment < ready:
+            if moment in owner:
+                apply_owner(moment, ready)
+            moment += HOUR
         while moment < config.end:
             decision_time, moment = moment, moment + HOUR
             if decision_time in owner:
-                try:
-                    controller.trigger(
-                        owner[decision_time], decision_time, "owner command"
-                    )
-                except SafetyError as error:
-                    router.emit(
-                        Event(
-                            EventKind.STATE_TRANSITION,
-                            Severity.WARNING,
-                            decision_time,
-                            {
-                                "command": str(owner[decision_time]),
-                                "refused": str(error),
-                            },
-                        )
-                    )
+                apply_owner(decision_time, decision_time)
             breaches = health_breaches(
                 config.health, decision_time, observe(decision_time)
             )
@@ -579,12 +611,8 @@ def run_paper(
             # section 5). It sells only from RUNNING: in HALT the owner's HALT
             # wins (OWNER_ANSWERS_2026-09-28.md, F24-1, F24R-1), and an owner
             # FLATTEN simply goes on. FREEZE is left alone until reconciled.
-            if (
-                breached
-                and stop_armed
-                and held >= config.filters.min_qty
-                and controller.mode is not Mode.FREEZE
-            ):
+            # Even a holding too small to sell alerts (A2324-2).
+            if breached and stop_armed and controller.mode is not Mode.FREEZE:
                 keep = 1 - config.loss_stop_fraction
                 detail = f"equity {equity:.2f} below {keep} x peak {peak:.2f}"
                 controller.trigger(Trigger.LOSS_STOP, decision_time, detail)
@@ -592,6 +620,7 @@ def run_paper(
             if controller.mode is Mode.FLATTEN:
                 # The venue balance `tick` sizes from, for the audit log.
                 sized_from = exchange.balances().get(base, Decimal(0))
+                pending = set(controller.sent)
                 flat = controller.tick(
                     exchange,
                     config.symbol,
@@ -625,6 +654,28 @@ def run_paper(
                     )
                     local = _reconcile_flatten(
                         exchange, local, config, controller, decision_time
+                    )
+                for lost in (
+                    set(controller.sent)
+                    - pending
+                    - {flat.client_order_id if flat else ""}
+                ):
+                    # A sell whose outcome is unknown is sent all the same
+                    # (A25R-4); the controller is in FREEZE.
+                    counts.orders += 1
+                    router.emit(
+                        Event(
+                            EventKind.ORDER,
+                            Severity.CRITICAL,
+                            decision_time,
+                            {
+                                "client_order_id": lost,
+                                "held_before": str(sized_from),
+                                **_attempt(controller, lost),
+                                "side": "SELL",
+                                "state": "FLATTEN_UNKNOWN",
+                            },
+                        )
                     )
                 continue
             if not controller.may_trade():
@@ -697,7 +748,9 @@ def run_paper(
                     f"{result.client_order_id} unknown",
                 )
                 continue
-            check = reconcile(exchange, local, config.tolerance, clock.now)
+            check = reconcile(
+                exchange, local, config.tolerance, clock.now, _absence(config, clock)
+            )
             if not check.passed:
                 controller.trigger(
                     Trigger.RECONCILIATION_FAILED,
@@ -768,6 +821,26 @@ def _write_refuse_marker(
         pass  # the original error is re-raised either way
 
 
+def _attempt(controller: SafetyController, client_order_id: str) -> dict[str, str]:
+    """What the controller sent for `client_order_id`, if it recorded it."""
+    attempt = controller.attempts.get(client_order_id)
+    if attempt is None:
+        return {}
+    quantity, cap = attempt
+    return {"orig_qty": str(quantity), "limit_price": str(cap)}
+
+
+def _absence(config: PaperConfig, clock: _Clock) -> AbsenceCheck:
+    """Section 21 absence confirmation with the executor's owner-set delay
+    and answer count (T22-Q1), on the simulated clock (A2324-1)."""
+    return AbsenceCheck(
+        config.executor.not_found_delay,
+        config.executor.absence_queries,
+        clock.sleep,
+        clock,
+    )
+
+
 def _reconcile_flatten(
     exchange: SimulatedExchange,
     local: LocalRecord,
@@ -778,7 +851,9 @@ def _reconcile_flatten(
     """Reconcile the FLATTEN orders the controller has sent; FREEZE on
     failure. Only a passed check settles them and advances the baseline."""
     record = LocalRecord(local.balances, {**local.orders, **controller.sent})
-    check = reconcile(exchange, record, config.tolerance, at)
+    check = reconcile(
+        exchange, record, config.tolerance, at, _absence(config, _Clock(at))
+    )
     if not check.passed:
         controller.trigger(
             Trigger.RECONCILIATION_FAILED, at, "; ".join(check.differences)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import socket
 from dataclasses import dataclass, field, replace
@@ -13,7 +14,7 @@ import pytest
 
 from aqt.core.ledger import LedgerError
 from aqt.data.bars import Bar, BarSeries
-from aqt.execution.reconcile import LocalRecord, reconcile
+from aqt.execution.reconcile import AbsenceCheck, LocalRecord, reconcile
 from aqt.execution.safety import (
     MODE_TRANSITIONS,
     FlattenBounds,
@@ -27,7 +28,9 @@ from aqt.execution.safety import (
 )
 from aqt.execution.simulator import (
     ExchangeError,
+    Fault,
     Order,
+    Scenario,
     SimulatedExchange,
     SymbolFilters,
 )
@@ -44,6 +47,25 @@ FILTERS = SymbolFilters(
 )
 BOUNDS = FlattenBounds(max_step_fraction=Decimal("0.5"), max_slippage_bps=Decimal("50"))
 TOLERANCE: dict[str, Decimal] = {}
+
+
+class FakeClock:
+    """A clock that `sleep` advances, as the paper loop's does."""
+
+    def __init__(self, now: datetime) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def sleep(self, duration: timedelta) -> None:
+        self.now += duration
+
+
+def _absence(at: datetime) -> AbsenceCheck:
+    """Section 21: two NOT_FOUND answers, 10 s apart (owner-set T22-Q1)."""
+    clock = FakeClock(at)
+    return AbsenceCheck(timedelta(seconds=10), 2, clock.sleep, clock)
 
 
 @pytest.fixture(autouse=True)
@@ -761,9 +783,9 @@ def test_recovery_needs_a_report_that_resolved_every_flatten_order(
     assert controller.mode is Mode.FREEZE
 
     record = LocalRecord(exchange.balances(), controller.sent)
-    full = reconcile(exchange, record, TOLERANCE, at)
+    full = reconcile(exchange, record, TOLERANCE, at, _absence(at))
     assert full.passed and cid in full.resolved
-    assert controller.exit_freeze(full, at) is Mode.HALT
+    assert controller.exit_freeze(full, full.at) is Mode.HALT  # after the waits
     assert controller.sent == {}
 
 
@@ -781,11 +803,9 @@ def test_the_override_needs_a_report_that_resolved_every_flatten_order(
     assert controller.mode is Mode.HALT
 
     record = LocalRecord(exchange.balances(), controller.sent)
-    full = replace(
-        _override(controller, incidents, at),
-        reconciliation=reconcile(exchange, record, TOLERANCE, at),
-    )
-    assert controller.override_halt(full, at) is Mode.RUNNING
+    checked = reconcile(exchange, record, TOLERANCE, at, _absence(at))
+    full = replace(_override(controller, incidents, checked.at), reconciliation=checked)
+    assert controller.override_halt(full, checked.at) is Mode.RUNNING
     assert controller.sent == {}
 
 
@@ -846,5 +866,133 @@ def test_only_a_passed_reconciliation_settles_flatten_orders(
         controller.settle_flatten(failed)
     assert cid in controller.sent
     record = LocalRecord(exchange.balances(), controller.sent)
-    controller.settle_flatten(reconcile(exchange, record, TOLERANCE, T0 + 5 * HOUR))
+    controller.settle_flatten(
+        reconcile(exchange, record, TOLERANCE, T0 + 5 * HOUR, _absence(T0 + 5 * HOUR))
+    )
     assert controller.sent == {}
+
+
+def test_one_not_found_never_resolves_an_unknown_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A2324-1: a single NOT_FOUND is not absence. Without the section 21
+    check the order stays unresolved, and FREEZE cannot be left."""
+    controller, _, exchange, cid = _frozen_with_unknown_flatten_order(
+        tmp_path, monkeypatch
+    )
+    at = T0 + 5 * HOUR
+    record = LocalRecord(exchange.balances(), controller.sent)
+    once = reconcile(exchange, record, TOLERANCE, at)
+    assert not once.passed and cid not in once.resolved
+    assert "absence not confirmed" in once.differences[0]
+    with pytest.raises(SafetyError, match="reconciliation failed"):
+        controller.exit_freeze(once, at)
+    assert controller.mode is Mode.FREEZE and cid in controller.sent
+
+
+def test_a_lagging_not_found_is_queried_again_after_the_delay(
+    tmp_path: Path,
+) -> None:
+    """A2324-1 (the reviewer's scenario): a FLATTEN sell that expired
+    unfilled, whose reply was lost, and whose first query lags with
+    NOT_FOUND. The delayed second query finds it, so it resolves to the real
+    order, not to absence."""
+    at = T0 + 4 * HOUR
+    step_id = (
+        "aqt-flat-"
+        + hashlib.sha256(f"BTCUSDT|{at.isoformat()}|1".encode()).hexdigest()[:27]
+    )
+    exchange = SimulatedExchange(
+        {"BTCUSDT": _series([100.0] * 4 + [90.0] * 4)},  # gap below the cap
+        {"BTCUSDT": FILTERS},
+        {"USDT": Decimal("0"), "BTC": Decimal("1")},
+        scenario=Scenario({step_id: Fault(timeout=True, not_found_queries=1)}),
+    )
+    controller, _, _ = _controller(tmp_path, Mode.RUNNING)
+    controller.trigger(Trigger.OWNER_FLATTEN, at)
+    assert _tick(controller, exchange, 1) is None
+    assert controller.mode is Mode.FREEZE and step_id in controller.sent
+    slept: list[timedelta] = []
+    clock = FakeClock(at + HOUR)
+
+    def sleep(duration: timedelta) -> None:
+        slept.append(duration)
+        clock.sleep(duration)
+
+    check = AbsenceCheck(timedelta(seconds=10), 2, sleep, clock)
+    record = LocalRecord({"USDT": Decimal("0"), "BTC": Decimal("1")}, controller.sent)
+    report = reconcile(exchange, record, TOLERANCE, at + HOUR, check)
+    found = report.resolved[step_id]
+    assert found is not None and found.executed_qty == 0
+    assert slept == [timedelta(seconds=10)]
+    assert report.passed
+
+
+@pytest.mark.parametrize("drift", [timedelta(0), timedelta(seconds=-5)])
+def test_absence_needs_the_clock_to_advance_by_the_delay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, drift: timedelta
+) -> None:
+    """A2324R-1: a sleep that does not move the clock forward by the delay
+    confirms nothing; the order stays unresolved."""
+    controller, _, exchange, cid = _frozen_with_unknown_flatten_order(
+        tmp_path, monkeypatch
+    )
+    at = T0 + 5 * HOUR
+    clock = FakeClock(at)
+    check = AbsenceCheck(timedelta(seconds=10), 2, lambda _: clock.sleep(drift), clock)
+    record = LocalRecord(exchange.balances(), controller.sent)
+    report = reconcile(exchange, record, TOLERANCE, at, check)
+    assert not report.passed and cid not in report.resolved
+    assert "did not advance" in report.differences[0]
+
+
+def test_the_report_is_stamped_after_the_waits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A2324R-2: an absence check that waited stamps its report at the end
+    of the waits, not before."""
+    controller, _, exchange, _ = _frozen_with_unknown_flatten_order(
+        tmp_path, monkeypatch
+    )
+    at = T0 + 5 * HOUR
+    record = LocalRecord(exchange.balances(), controller.sent)
+    report = reconcile(exchange, record, TOLERANCE, at, _absence(at))
+    assert report.passed and report.at == at + timedelta(seconds=10)
+
+
+def test_a_clock_that_moves_back_fails_instead_of_backdating(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A2324R-3 (the reviewer's scenario): the delay is honoured, but the
+    clock read for the report is back at the start. The report fails and is
+    stamped no earlier than the last accepted reading."""
+    controller, _, exchange, _ = _frozen_with_unknown_flatten_order(
+        tmp_path, monkeypatch
+    )
+    at = T0 + 5 * HOUR
+    readings = iter((at, at + timedelta(seconds=10), at))
+    check = AbsenceCheck(
+        timedelta(seconds=10), 2, lambda _: None, lambda: next(readings)
+    )
+    record = LocalRecord(exchange.balances(), controller.sent)
+    report = reconcile(exchange, record, TOLERANCE, at, check)
+    assert not report.passed
+    assert report.at == at + timedelta(seconds=10)
+    assert "clock moved backwards" in report.differences[-1]
+
+
+def test_a_clock_behind_the_start_confirms_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A2324R-3: a first reading before `at` is a backward clock; the order
+    stays unresolved."""
+    controller, _, exchange, cid = _frozen_with_unknown_flatten_order(
+        tmp_path, monkeypatch
+    )
+    at = T0 + 5 * HOUR
+    clock = FakeClock(at - timedelta(seconds=1))
+    check = AbsenceCheck(timedelta(seconds=10), 2, clock.sleep, clock)
+    record = LocalRecord(exchange.balances(), controller.sent)
+    report = reconcile(exchange, record, TOLERANCE, at, check)
+    assert not report.passed and cid not in report.resolved
+    assert "moved backwards" in report.differences[0]

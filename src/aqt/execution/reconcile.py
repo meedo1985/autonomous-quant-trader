@@ -5,7 +5,10 @@
 
 1. every order sent since the last successful reconciliation is queried by
    its `clientOrderId`, and must resolve to a terminal order equal to the
-   local copy (or be absent, when the local record never saw it);
+   local copy, or, when the local record never learned its outcome, be
+   confirmed absent by the section 21 protocol: `AbsenceCheck.queries`
+   NOT_FOUND answers, each after `AbsenceCheck.delay`. Without an
+   `AbsenceCheck`, a NOT_FOUND for such an order is unresolved (A2324-1);
 2. every open order on the venue must be one of those orders, and none may
    still be open;
 3. every balance must equal the last reconciled balance plus the exact
@@ -24,9 +27,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Context, Decimal
 from types import MappingProxyType
 from typing import Final, Protocol
@@ -39,6 +42,7 @@ from aqt.governor.authorization import Authorization
 from aqt.governor.machine import Governor
 
 __all__ = [
+    "AbsenceCheck",
     "LocalRecord",
     "ReconciliationReport",
     "ReconcilingVenue",
@@ -49,6 +53,23 @@ __all__ = [
 _DEC: Final = Context(prec=34)
 _QUOTE: Final[str] = "USDT"
 _TERMINAL: Final = frozenset({OrderStatus.FILLED, OrderStatus.EXPIRED})
+
+
+@dataclass(frozen=True, slots=True)
+class AbsenceCheck:
+    """Section 21 absence confirmation for an order whose outcome is
+    unknown: `queries` NOT_FOUND answers in a row, `delay` apart (owner-set
+    T22-Q1: 10 s, 2 answers). `sleep` waits `delay` on the caller's clock,
+    and `clock` must show that it did (A2324R-1), as the executor requires."""
+
+    delay: timedelta
+    queries: int
+    sleep: Callable[[timedelta], None]
+    clock: Callable[[], datetime]
+
+    def __post_init__(self) -> None:
+        if self.delay <= timedelta(0) or self.queries < 2:
+            raise ValueError(f"invalid absence check: {self.delay}, {self.queries}")
 
 
 class ReconcilingVenue(Protocol):
@@ -127,29 +148,60 @@ def _apply(balances: dict[str, Decimal], order: Order) -> None:
         balances[asset] = _DEC.add(balances.get(asset, Decimal(0)), change)
 
 
+def _query(
+    venue: ReconcilingVenue,
+    client_order_id: str,
+    known: Order | None,
+    absence: AbsenceCheck | None,
+    latest: datetime,
+) -> tuple[Order | None | str, datetime]:
+    """The venue's order, `None` when absent, or why it is unresolved; and
+    the latest accepted clock reading, which never moves back (A2324R-3)."""
+    answers = 0
+    while True:
+        try:
+            return venue.query_order(client_order_id), latest
+        except ExchangeError as error:
+            if error.code != "NOT_FOUND":
+                return f"unresolved ({error})", latest
+        except Exception as error:  # noqa: BLE001 - any failure is unresolved
+            return f"unresolved ({type(error).__name__}: {error})", latest
+        answers += 1
+        if known is not None:
+            return None, latest  # a known order that vanished: the caller sees it
+        if absence is None:
+            return "unresolved (NOT_FOUND, absence not confirmed)", latest
+        if answers >= absence.queries:
+            return None, latest  # confirmed absent (section 21)
+        before = require_utc(absence.clock(), field_name="clock")
+        if before < latest:
+            return "unresolved (the clock moved backwards)", latest
+        absence.sleep(absence.delay)
+        after = require_utc(absence.clock(), field_name="clock")
+        if after - before < absence.delay:
+            return "unresolved (the clock did not advance by the protocol delay)", max(
+                latest, before, after
+            )
+        latest = after
+
+
 def reconcile(
     venue: ReconcilingVenue,
     local: LocalRecord,
     tolerance: Mapping[str, Decimal],
     at: datetime,
+    absence: AbsenceCheck | None = None,
 ) -> ReconciliationReport:
     at = require_utc(at, field_name="at")
     if any(not value.is_finite() or value < 0 for value in tolerance.values()):
         raise ValueError("tolerances must be finite and non-negative")
     differences: list[str] = []
     resolved: dict[str, Order | None] = {}
+    latest = at
     for client_order_id, known in sorted(local.orders.items()):
-        try:
-            found: Order | None = venue.query_order(client_order_id)
-        except ExchangeError as error:
-            if error.code != "NOT_FOUND":
-                differences.append(f"{client_order_id}: unresolved ({error})")
-                continue
-            found = None
-        except Exception as error:  # noqa: BLE001 - any failure is unresolved
-            differences.append(
-                f"{client_order_id}: unresolved ({type(error).__name__}: {error})"
-            )
+        found, latest = _query(venue, client_order_id, known, absence, latest)
+        if isinstance(found, str):
+            differences.append(f"{client_order_id}: {found}")
             continue
         if known is not None and found != known:
             differences.append(f"{client_order_id}: venue differs from local copy")
@@ -157,6 +209,14 @@ def reconcile(
             differences.append(f"{client_order_id}: not terminal ({found.status})")
         resolved[client_order_id] = found
 
+    if absence is not None:
+        # The report is as of the end of any waits, never before (A2324R-2),
+        # and a clock that moved back fails it rather than backdating it
+        # (A2324R-3).
+        now = require_utc(absence.clock(), field_name="clock")
+        if now < latest:
+            differences.append("clock moved backwards during reconciliation")
+        at = max(latest, now)
     readable = True
     try:
         open_orders = venue.open_orders()

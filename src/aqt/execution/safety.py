@@ -57,6 +57,7 @@ from aqt.core.ledger import append_entry, read_entries
 from aqt.data.bars import require_utc
 from aqt.execution.orders import capped_price
 from aqt.execution.reconcile import (
+    AbsenceCheck,
     LocalRecord,
     ReconciliationReport,
     ReconcilingVenue,
@@ -266,6 +267,9 @@ class SafetyController:
         it."""
         self._flatten_steps = 0
         self._last_flatten_decision: datetime | None = None
+        self.attempts: dict[str, tuple[Decimal, Decimal]] = {}
+        """Quantity and price cap of every FLATTEN order sent, for the audit
+        log even when its reply is lost (F35-3)."""
 
     def may_trade(self) -> bool:
         """Whether the governor and executor may act at all."""
@@ -480,6 +484,7 @@ class SafetyController:
         seed = f"{symbol}|{at.isoformat()}|{self._flatten_steps}"
         client_order_id = "aqt-flat-" + hashlib.sha256(seed.encode()).hexdigest()[:27]
         self.sent[client_order_id] = None
+        self.attempts[client_order_id] = (quantity, cap)
         self._last_flatten_decision = decision_time
         try:
             order = venue.place_order(
@@ -540,16 +545,17 @@ def startup_check(
     tolerance: Mapping[str, Decimal],
     incidents: IncidentLog,
     at: datetime,
+    absence: AbsenceCheck | None = None,
 ) -> StartupDecision:
     """Section 19, "Startup reconciliation required": REFUSE_START on any
     reconciliation difference or open incident. A failed reconciliation
     opens an incident. The other REFUSE_START conditions of the deployment
     draft section 4 (hashes, alert channel, health) belong to the loop."""
-    report = reconcile(venue, local, tolerance, at)
+    report = reconcile(venue, local, tolerance, at, absence)
     reasons: list[str] = []
     if not report.passed:
         reasons.append("reconciliation failed: " + "; ".join(report.differences))
-        incidents.open(str(Trigger.RECONCILIATION_FAILED), reasons[-1], at)
+        incidents.open(str(Trigger.RECONCILIATION_FAILED), reasons[-1], report.at)
     still_open = incidents.open_incidents()
     if still_open:
         reasons.append(f"open incidents: {', '.join(still_open)}")

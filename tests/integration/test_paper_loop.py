@@ -590,3 +590,167 @@ def test_a_loss_stop_breach_after_an_owner_halt_alerts_but_sells_nothing(
     ]
     assert orders_after == []
     assert report.final_mode == "HALT"
+
+
+def _ops(path: Path) -> list[dict[str, object]]:
+    return [
+        json.loads(line)["payload"]
+        for line in (path / "operations.jsonl").read_text().splitlines()
+    ]
+
+
+def test_a_breach_on_a_holding_too_small_to_sell_still_alerts(tmp_path: Path) -> None:
+    """A2324-2: an account of dust below the minimum quantity, halted by the
+    owner, falls more than 20%: the stop alerts CRITICAL with an incident."""
+    config = _config(
+        12, starting_balances={"USDT": Decimal(0), "BTC": Decimal("0.000009")}
+    )
+    series = _crash_series(24 * 22, crash_at=24 * 12)
+    report = _run(tmp_path, config, series, commands={config.start: Trigger.OWNER_HALT})
+    stops = [
+        e
+        for e in _ops(tmp_path)
+        if e["kind"] == "STATE_TRANSITION" and e["fields"].get("trigger") == "LOSS_STOP"  # type: ignore[union-attr]
+    ]
+    assert len(stops) == 1 and stops[0]["severity"] == "CRITICAL"
+    assert report.orders_sent == 0 and report.final_mode == "HALT"
+
+
+def test_the_configuration_reads_the_maximum_notional(tmp_path: Path) -> None:
+    """A2324-3: a configured maximum is never silently dropped."""
+    text = (ROOT / "configs" / "paper_trading.example.toml").read_text("utf-8")
+    path = tmp_path / "config.toml"
+    path.write_text(text.replace("[filters]", '[filters]\nmax_notional = "20"', 1))
+    assert load_config(path).filters.max_notional == Decimal(20)
+    assert (
+        load_config(
+            ROOT / "configs" / "paper_trading.example.toml"
+        ).filters.max_notional
+        is None
+    )
+
+
+def test_a_malformed_frozen_manifest_is_a_logged_refusal(tmp_path: Path) -> None:
+    """A2324-4: a damaged FROZEN_HASHES.json refuses the start through the
+    normal, logged REFUSE_START path instead of raising."""
+    root = _copy_frozen(tmp_path / "repo")
+    (root / "FROZEN_HASHES.json").write_text("{", "utf-8")
+    report = _run(tmp_path / "run", _config(2), _series(24 * 12), repository_root=root)
+    assert report.final_mode == "REFUSED" and report.orders_sent == 0
+    assert report.protocol_hash == "unreadable"
+    refusals = [e for e in _ops(tmp_path / "run") if e["kind"] == "STARTUP"]
+    assert refusals and all(
+        e["fields"]["decision"] == "REFUSE_START"  # type: ignore[index]
+        for e in refusals
+    )
+
+
+def test_a_flatten_sell_with_a_lost_reply_is_logged_and_counted(
+    tmp_path: Path,
+) -> None:
+    """A25R-4: the sell reached the venue and filled, its reply was lost; the
+    loop logs it as FLATTEN_UNKNOWN, counts it, and ends in FREEZE."""
+    config = _config(12)
+    flatten_at = config.start + 5 * 24 * HOUR + 3 * HOUR
+    step_id = (
+        "aqt-flat-"
+        + hashlib.sha256(f"BTCUSDT|{flatten_at.isoformat()}|1".encode()).hexdigest()[
+            :27
+        ]
+    )
+    report = _run(
+        tmp_path,
+        config,
+        _series(24 * 22),
+        commands={flatten_at: Trigger.OWNER_FLATTEN},
+        scenario=Scenario({step_id: Fault(timeout=True)}),
+    )
+    lost = [
+        e["fields"]
+        for e in _ops(tmp_path)
+        if e["kind"] == "ORDER" and e["fields"].get("state") == "FLATTEN_UNKNOWN"  # type: ignore[union-attr]
+    ]
+    assert [f["client_order_id"] for f in lost] == [step_id]  # type: ignore[index]
+    assert report.final_mode == "FREEZE"
+    assert report.orders_sent == report.authorizations + 1
+    # F35-3: the audit entry says how much was sent, and at what cap.
+    assert lost[0]["orig_qty"] and lost[0]["limit_price"]  # type: ignore[index]
+
+
+def test_no_decision_is_stamped_before_a_waiting_startup_check(
+    tmp_path: Path,
+) -> None:
+    """A2324R-2 (the reviewer's scenario): an unknown order at startup is
+    confirmed absent after two answers 10 s apart, so the check ends after
+    `start`; the first hour is skipped rather than traded backdated."""
+    config = _config(2)
+    record = LocalRecord(config.starting_balances, {"aqt-unknown-at-start": None})
+    report = _run(tmp_path, config, _series(24 * 12), local_record=record)
+    assert report.refused == ()
+    orders = [e for e in _ops(tmp_path) if e["kind"] == "ORDER"]
+    assert orders and all(
+        str(e["at"]) >= (config.start + HOUR).isoformat() for e in orders
+    )
+    # F35-4: START is stamped when the waiting check ended, not at `start`.
+    [start] = [e for e in _ops(tmp_path) if e["kind"] == "STARTUP"]
+    assert str(start["at"]).startswith("2020-01-09T00:00:10")  # one 10 s wait
+
+
+def test_an_owner_halt_at_a_skipped_start_hour_still_applies(
+    tmp_path: Path,
+) -> None:
+    """F35-1 (the reviewer's scenario): a restart with an unknown order makes
+    the startup check wait past `start`; the owner's HALT for that hour is
+    applied when the check ends, and nothing trades."""
+    config = _config(2)
+    record = LocalRecord(config.starting_balances, {"aqt-unknown-at-start": None})
+    report = _run(
+        tmp_path,
+        config,
+        _series(24 * 12),
+        local_record=record,
+        commands={config.start: Trigger.OWNER_HALT},
+    )
+    assert report.final_mode == "HALT" and report.orders_sent == 0
+    halts = [
+        e
+        for e in _ops(tmp_path)
+        if e["kind"] == "STATE_TRANSITION"
+        and e["fields"].get("trigger") == "OWNER_HALT"  # type: ignore[union-attr]
+    ]
+    assert len(halts) == 1
+
+
+@pytest.mark.parametrize("content", ["[]", "null", '"text"'])
+def test_a_manifest_that_is_not_an_object_is_a_logged_refusal(
+    tmp_path: Path, content: str
+) -> None:
+    """F35-2: valid JSON that is not an object refuses through the logged
+    REFUSE_START path, like malformed JSON."""
+    root = _copy_frozen(tmp_path / "repo")
+    (root / "FROZEN_HASHES.json").write_text(content, "utf-8")
+    report = _run(tmp_path / "run", _config(2), _series(24 * 12), repository_root=root)
+    assert report.final_mode == "REFUSED" and report.orders_sent == 0
+    assert any(
+        e["fields"].get("decision") == "REFUSE_START"  # type: ignore[union-attr]
+        for e in _ops(tmp_path / "run")
+    )
+
+
+def test_a_dust_breach_while_running_ends_in_halt_without_an_order(
+    tmp_path: Path,
+) -> None:
+    """A2324-2 from RUNNING: the stop alerts, FLATTEN finds nothing to sell,
+    and the run halts with no order."""
+    config = _config(
+        12, starting_balances={"USDT": Decimal(0), "BTC": Decimal("0.000009")}
+    )
+    series = _crash_series(24 * 22, crash_at=24 * 12)
+    report = _run(tmp_path, config, series)
+    triggers = [
+        e["fields"].get("trigger")  # type: ignore[union-attr]
+        for e in _ops(tmp_path)
+        if e["kind"] == "STATE_TRANSITION"
+    ]
+    assert triggers.count("LOSS_STOP") == 1 and "FLATTEN_DONE" in triggers
+    assert report.final_mode == "HALT" and report.orders_sent == 0
