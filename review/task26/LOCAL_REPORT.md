@@ -103,3 +103,25 @@ Each F26-1..F26-4 test fails on `ea14844` (7 failures) and passes after.
 Validation after the F26 repairs: `pytest -q` 1599 passed, 4 skipped;
 ruff, format (104 files), mypy (55 files), 6 import contracts and `git diff
 --check` clean; no frozen file changed. Not yet re-reviewed.
+
+## Astra review of `3b9a006` (text-only) and repairs
+
+Record: `ASTRA_REVIEW_3B9A006.md` (committed `b9f602f`). The Codex sandbox
+cannot start on the owner's Android/proot machine, so the reviewer read
+attached texts and ran nothing. F26-1, F26-2, F26-5 correct; F26-3, F26-4
+incomplete (A26-3, A26-5); F26-6, F26-7 disclosures adequate. Verdict FIX.
+
+| ID | Decision | Disposition | Validation |
+| --- | --- | --- | --- |
+| A26-1 | AGREE — BLOCKER, repaired | `append` takes the Task 10 ledger's cross-process lock file (`<store>.lock`, `aqt.core.ledger._exclusive_lock`, Windows and POSIX) and re-reads the store under it, so a writer with a stale view is refused as a duplicate. A lock not acquired within the ledger's timeout refuses the append. | `test_a_stale_second_writer_is_refused_under_the_lock`, `test_an_append_waits_for_the_lock_and_then_refuses` |
+| A26-2 | AGREE — BLOCKER, repaired | A store is bound to one allow-listed symbol (`LiveBarStore(path, symbol)`); every row records it, reading refuses a row of another symbol, and `fetch_new_bars` refuses a different symbol before any request. `series()` takes no symbol. Stored format change: rows gain `"symbol"`; `expected_store.jsonl` regenerated accordingly. | `test_one_store_never_mixes_symbols` (reviewer's scenario) |
+| A26-3 | AGREE — BLOCKER, repaired | Reading checks the whole file: the first bar not before `LIVE_START_FLOOR`, each later bar exactly one hour after the previous (no gap, duplicate or reordering), each refusal naming the line. A damaged history therefore refuses before any request, and `append` refuses a restricted first bar with or without `first`. | `test_the_whole_stored_history_is_checked` (gap, duplicate, out of order, last lockbox hour), `test_append_refuses_a_first_bar_in_restricted_data` |
+| A26-4 | AGREE — repaired | A non-empty store not ending in a newline is refused ("no final newline"), so nothing is appended onto a cut-off row. | `test_a_row_without_its_newline_is_refused_before_any_append` |
+| A26-5 | AGREE — repaired | `start` must be hour-aligned (`require_aligned_utc`) before any request. | `test_an_unaligned_start_is_refused_before_any_request` |
+
+The new tests use the new store signature, so they cannot run unchanged on
+`3b9a006`; each covers the reviewer's scenario as written.
+
+Validation after the A26 repairs (Python 3.14.4, Linux aarch64 proot):
+`pytest -q` 1609 passed, 4 skipped; ruff, format, mypy, 6 import contracts
+and `git diff --check` clean; no frozen file changed. Not yet re-reviewed.

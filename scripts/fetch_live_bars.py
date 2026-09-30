@@ -36,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
         refuse_credentials(os.environ)
         result = fetch_new_bars(
             urllib_transport,
-            LiveBarStore(args.store),
+            LiveBarStore(args.store, args.symbol),
             args.symbol,
             datetime.now(UTC),
             MAX_SKEW,

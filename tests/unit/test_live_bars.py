@@ -12,6 +12,8 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
+from aqt.core import ledger
+from aqt.data.bars import Bar
 from aqt.data.binance_public import FetchResponse, PublicRequest
 from aqt.data.live_bars import (
     KLINES_URL,
@@ -81,7 +83,7 @@ def test_a_fresh_store_gets_every_closed_bar_and_not_the_forming_one(
 ) -> None:
     now = T0 + 5 * HOUR + timedelta(minutes=3)
     exchange = Exchange(_hours(5), now)
-    store = LiveBarStore(tmp_path / "bars.jsonl")
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
     result = fetch_new_bars(exchange, store, "BTCUSDT", now, SKEW, start=T0)
     assert result.appended == 5
     assert [b.close for b in store.bars()] == [100.0, 101.0, 102.0, 103.0, 104.0]
@@ -91,7 +93,7 @@ def test_a_fresh_store_gets_every_closed_bar_and_not_the_forming_one(
 
 
 def test_a_second_fetch_resumes_after_the_last_bar(tmp_path: Path) -> None:
-    store = LiveBarStore(tmp_path / "bars.jsonl")
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
     fetch_new_bars(
         Exchange(_hours(3), T0 + 3 * HOUR),
         store,
@@ -112,7 +114,7 @@ def test_a_second_fetch_resumes_after_the_last_bar(tmp_path: Path) -> None:
 def test_a_gap_in_the_reply_appends_nothing(tmp_path: Path) -> None:
     rows = _hours(5)
     del rows[2]  # Binance skipped an hour
-    store = LiveBarStore(tmp_path / "bars.jsonl")
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
     now = T0 + 5 * HOUR
     with pytest.raises(LiveBarError, match="gap"):
         fetch_new_bars(Exchange(rows, now), store, "BTCUSDT", now, SKEW, start=T0)
@@ -120,7 +122,7 @@ def test_a_gap_in_the_reply_appends_nothing(tmp_path: Path) -> None:
 
 
 def test_a_gap_at_the_start_is_refused(tmp_path: Path) -> None:
-    store = LiveBarStore(tmp_path / "bars.jsonl")
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
     now = T0 + 5 * HOUR
     with pytest.raises(LiveBarError, match="gap"):
         fetch_new_bars(
@@ -129,7 +131,7 @@ def test_a_gap_at_the_start_is_refused(tmp_path: Path) -> None:
 
 
 def test_duplicates_and_out_of_order_bars_are_refused(tmp_path: Path) -> None:
-    store = LiveBarStore(tmp_path / "bars.jsonl")
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
     bars = parse_klines(json.dumps(_hours(3, forming=False)).encode(), T0 + 3 * HOUR)
     store.append(bars)
     with pytest.raises(LiveBarError, match="duplicate or out of order"):
@@ -165,7 +167,7 @@ def test_an_unclosed_bar_before_the_last_row_is_refused() -> None:
 def test_a_skewed_clock_fetches_nothing(tmp_path: Path, offset: timedelta) -> None:
     now = T0 + 5 * HOUR
     exchange = Exchange(_hours(5), now + offset)
-    store = LiveBarStore(tmp_path / "bars.jsonl")
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
     with pytest.raises(LiveBarError, match="skew"):
         fetch_new_bars(exchange, store, "BTCUSDT", now, SKEW, start=T0)
     assert [r.url for r in exchange.requests] == [TIME_URL]
@@ -175,21 +177,21 @@ def test_a_skewed_clock_fetches_nothing(tmp_path: Path, offset: timedelta) -> No
 def test_an_empty_store_needs_a_start_and_symbols_are_allow_listed(
     tmp_path: Path,
 ) -> None:
-    store = LiveBarStore(tmp_path / "bars.jsonl")
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
     exchange = Exchange(_hours(2), T0 + 2 * HOUR)
     with pytest.raises(LiveBarError, match="explicit start"):
         fetch_new_bars(exchange, store, "BTCUSDT", T0 + 2 * HOUR, SKEW)
     with pytest.raises(LiveBarError, match="not allowed"):
-        fetch_new_bars(exchange, store, "DOGEUSDT", T0 + 2 * HOUR, SKEW, start=T0)
+        LiveBarStore(tmp_path / "doge.jsonl", "DOGEUSDT")
 
 
 def test_more_than_one_page_is_fetched_in_order(tmp_path: Path) -> None:
     now = T0 + 2100 * HOUR + timedelta(seconds=1)
     exchange = Exchange(_hours(2100), now)
-    store = LiveBarStore(tmp_path / "bars.jsonl")
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
     result = fetch_new_bars(exchange, store, "BTCUSDT", now, SKEW, start=T0)
     assert result.appended == 2100
-    series = store.series("BTCUSDT")
+    series = store.series()
     assert len(series) == 2100
 
 
@@ -242,7 +244,7 @@ def test_the_committed_fixture_replays_byte_identically(tmp_path: Path) -> None:
     now = T0 + 5 * HOUR + timedelta(minutes=2)
     stores = []
     for name in ("a", "b"):
-        store = LiveBarStore(tmp_path / f"{name}.jsonl")
+        store = LiveBarStore(tmp_path / f"{name}.jsonl", "BTCUSDT")
         fetch_new_bars(FixtureExchange(now), store, "BTCUSDT", now, SKEW, start=T0)
         stores.append(store.path.read_bytes())
     expected = (FIXTURE / "expected_store.jsonl").read_bytes()
@@ -256,7 +258,7 @@ def test_a_local_clock_ahead_never_stores_the_forming_bar(tmp_path: Path) -> Non
     server = T0 + 5 * HOUR - timedelta(seconds=3)
     now = server + timedelta(seconds=4)
     exchange = Exchange(_hours(4, forming=False) + [_row(T0 + 4 * HOUR, 123.0)], server)
-    store = LiveBarStore(tmp_path / "bars.jsonl")
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
     result = fetch_new_bars(exchange, store, "BTCUSDT", now, SKEW, start=T0)
     assert result.appended == 4
     assert result.last_open_time == T0 + 3 * HOUR
@@ -266,7 +268,7 @@ def test_a_local_clock_ahead_never_stores_the_forming_bar(tmp_path: Path) -> Non
 def test_a_torn_store_line_is_a_named_refusal(tmp_path: Path) -> None:
     """F26-2: a crash mid-append leaves a torn line; the store refuses,
     naming the file and line, instead of raising a raw parse error."""
-    store = LiveBarStore(tmp_path / "bars.jsonl")
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
     store.append(parse_klines(json.dumps(_hours(1, forming=False)).encode(), T0 + HOUR))
     with store.path.open("a", encoding="utf-8") as handle:
         handle.write('{"close": 100.0, "hi')
@@ -287,7 +289,7 @@ def test_the_store_never_starts_in_restricted_data(
 ) -> None:
     """F26-3: no start before 2026-09-01; refused before any request."""
     exchange = Exchange(_hours(3), T0)
-    store = LiveBarStore(tmp_path / "bars.jsonl")
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
     with pytest.raises(LiveBarError, match="lockbox"):
         fetch_new_bars(exchange, store, "BTCUSDT", T0, SKEW, start=start)
     assert exchange.requests == [] and store.bars() == ()
@@ -297,7 +299,7 @@ def test_a_bad_start_is_refused_before_any_request(tmp_path: Path) -> None:
     """F26-4: input checks come first, so a bad start never reaches the
     network."""
     exchange = Exchange(_hours(3), T0)
-    store = LiveBarStore(tmp_path / "bars.jsonl")
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
     with pytest.raises(LiveBarError, match="UTC"):
         fetch_new_bars(
             exchange, store, "BTCUSDT", T0, SKEW, start=datetime(2026, 9, 29)
@@ -331,3 +333,134 @@ def test_the_cli_turns_network_errors_into_a_refusal(
         "2026-09-29T00:00:00+00:00",
     ]
     assert module.main(args) == 2
+
+
+def _closed(n: int) -> tuple[Bar, ...]:
+    return parse_klines(json.dumps(_hours(n, forming=False)).encode(), T0 + n * HOUR)
+
+
+def _write_rows(path: Path, times: list[datetime], symbol: str = "BTCUSDT") -> None:
+    path.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "close": 100.0,
+                    "high": 100.0,
+                    "low": 100.0,
+                    "open": 100.0,
+                    "open_time": t.isoformat(),
+                    "symbol": symbol,
+                    "volume": 1.0,
+                },
+                sort_keys=True,
+            )
+            + "\n"
+            for t in times
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_a_stale_second_writer_is_refused_under_the_lock(tmp_path: Path) -> None:
+    """A26-1: two fetchers both saw an empty store and both append the same
+    hour. The second re-reads the store under the lock and is refused."""
+    first = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    second = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    first.append(_closed(2), first=T0)
+    with pytest.raises(LiveBarError, match="duplicate"):
+        second.append(_closed(2), first=T0)
+    assert len(first.bars()) == 2
+
+
+def test_an_append_waits_for_the_lock_and_then_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A26-1: while another appender holds the lock, nothing is written."""
+    monkeypatch.setattr(ledger, "LOCK_TIMEOUT_SECONDS", 0.2)
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    with ledger._exclusive_lock(store.path):
+        with pytest.raises(LiveBarError, match="could not acquire"):
+            store.append(_closed(1))
+    assert store.bars() == ()
+
+
+def test_one_store_never_mixes_symbols(tmp_path: Path) -> None:
+    """A26-2 (the reviewer's scenario): ETH requested into a BTC store is
+    refused before any request, and an ETH row in a BTC store is refused."""
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    store.append(_closed(1))
+    exchange = Exchange(_hours(2), T0 + 2 * HOUR)
+    with pytest.raises(LiveBarError, match="ETHUSDT into the BTCUSDT store"):
+        fetch_new_bars(exchange, store, "ETHUSDT", T0 + 2 * HOUR, SKEW)
+    assert exchange.requests == []
+    _write_rows(store.path, [T0], symbol="ETHUSDT")
+    with pytest.raises(LiveBarError, match="line 1: 'ETHUSDT' in the BTCUSDT store"):
+        store.bars()
+
+
+@pytest.mark.parametrize(
+    ("times", "match"),
+    [
+        ([T0, T0 + 2 * HOUR], "line 2: gap"),
+        ([T0, T0], "line 2: duplicate"),
+        ([T0 + HOUR, T0], "line 2: duplicate or out of order"),
+        ([datetime(2026, 8, 31, 23, tzinfo=UTC)], "line 1: .*lockbox"),
+    ],
+)
+def test_the_whole_stored_history_is_checked(
+    tmp_path: Path, times: list[datetime], match: str
+) -> None:
+    """A26-3 (the reviewer's scenarios): a gap, a duplicate, an out-of-order
+    row or a restricted hour anywhere in the file refuses reading, so a fetch
+    appends nothing after it."""
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    _write_rows(store.path, times)
+    before = store.path.read_bytes()
+    with pytest.raises(LiveBarError, match=match):
+        store.bars()
+    later = T0 + 5 * HOUR
+    with pytest.raises(LiveBarError):
+        fetch_new_bars(Exchange(_hours(5), later), store, "BTCUSDT", later, SKEW)
+    assert store.path.read_bytes() == before
+
+
+def test_append_refuses_a_first_bar_in_restricted_data(tmp_path: Path) -> None:
+    """A26-3: `append` itself keeps restricted hours out of an empty store."""
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    restricted = datetime(2026, 8, 31, 23, tzinfo=UTC)
+    bar = Bar(restricted, 1.0, 1.0, 1.0, 1.0, 1.0)
+    for first in (None, restricted):
+        with pytest.raises(LiveBarError, match="lockbox"):
+            store.append((bar,), first=first)
+    assert not store.path.exists()
+
+
+def test_a_row_without_its_newline_is_refused_before_any_append(
+    tmp_path: Path,
+) -> None:
+    """A26-4 (the reviewer's scenario): a write cut off just before its
+    newline leaves valid JSON; the store refuses instead of appending onto
+    that line."""
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    store.append(_closed(1))
+    store.path.write_bytes(store.path.read_bytes()[:-1])
+    before = store.path.read_bytes()
+    with pytest.raises(LiveBarError, match="line 1: no final newline"):
+        store.append(_closed(2)[1:])
+    assert store.path.read_bytes() == before
+
+
+def test_an_unaligned_start_is_refused_before_any_request(tmp_path: Path) -> None:
+    """A26-5: a start off the hour never reaches the network."""
+    exchange = Exchange(_hours(3), T0 + 3 * HOUR)
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    with pytest.raises(LiveBarError, match="not aligned"):
+        fetch_new_bars(
+            exchange,
+            store,
+            "BTCUSDT",
+            T0 + 3 * HOUR,
+            SKEW,
+            start=T0 + timedelta(minutes=30),
+        )
+    assert exchange.requests == []

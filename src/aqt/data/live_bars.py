@@ -24,7 +24,15 @@ from pathlib import Path
 from typing import Final
 from urllib.parse import urlencode
 
-from aqt.data.bars import BAR_INTERVAL, Bar, BarSemanticsError, BarSeries, require_utc
+from aqt.core.ledger import LedgerError, _exclusive_lock
+from aqt.data.bars import (
+    BAR_INTERVAL,
+    Bar,
+    BarSemanticsError,
+    BarSeries,
+    require_aligned_utc,
+    require_utc,
+)
 from aqt.data.binance_public import (
     ALLOWED_SYMBOLS,
     INTERVAL,
@@ -106,36 +114,58 @@ def parse_klines(body: bytes, now: datetime) -> tuple[Bar, ...]:
 
 
 class LiveBarStore:
-    """Append-only JSON-lines file of closed bars, one hour after another."""
+    """Append-only JSON-lines file of one symbol's closed bars, one hour
+    after another, never before `LIVE_START_FLOOR`.
 
-    def __init__(self, path: Path) -> None:
+    Every row names its symbol, so a store cannot mix symbols (A26-2).
+    Reading checks the whole file, not only its last row (A26-3): the
+    symbol, the floor, and that each bar is exactly one hour after the one
+    before. Appenders are serialized across processes by the ledger's lock
+    file, and each re-reads the store under it (A26-1)."""
+
+    def __init__(self, path: Path, symbol: str) -> None:
+        if symbol not in ALLOWED_SYMBOLS:
+            raise LiveBarError(f"symbol {symbol!r} is not allowed")
         self.path = path
+        self.symbol = symbol
 
     def bars(self) -> tuple[Bar, ...]:
         if not self.path.exists():
             return ()
-        bars = []
-        lines = self.path.read_text("utf-8").splitlines()
+        text = self.path.read_text("utf-8")
+        lines = text.splitlines()
+        if text and not text.endswith("\n"):
+            # A write cut off before its newline: refuse before any append
+            # joins the next row onto it (A26-4).
+            raise LiveBarError(f"{self.path} line {len(lines)}: no final newline")
+        bars: list[Bar] = []
         for number, line in enumerate(lines, start=1):
+            where = f"{self.path} line {number}"
             try:
                 row = json.loads(line)
-                bars.append(
-                    Bar(
-                        datetime.fromisoformat(row["open_time"]),
-                        row["open"],
-                        row["high"],
-                        row["low"],
-                        row["close"],
-                        row["volume"],
-                    )
+                symbol = row["symbol"]
+                bar = Bar(
+                    datetime.fromisoformat(row["open_time"]),
+                    row["open"],
+                    row["high"],
+                    row["low"],
+                    row["close"],
+                    row["volume"],
                 )
             except (ValueError, KeyError, TypeError, BarSemanticsError) as error:
                 # A torn or edited line: refuse, naming it (F26-2).
-                raise LiveBarError(f"{self.path} line {number}: {error}") from None
+                raise LiveBarError(f"{where}: {error}") from None
+            if symbol != self.symbol:
+                raise LiveBarError(f"{where}: {symbol!r} in the {self.symbol} store")
+            try:
+                _require_next(bar, bars[-1].open_time + BAR_INTERVAL if bars else None)
+            except LiveBarError as error:
+                raise LiveBarError(f"{where}: {error}") from None
+            bars.append(bar)
         return tuple(bars)
 
-    def series(self, symbol: str) -> BarSeries:
-        return BarSeries(symbol, self.bars())
+    def series(self) -> BarSeries:
+        return BarSeries(self.symbol, self.bars())
 
     def last_open_time(self) -> datetime | None:
         bars = self.bars()
@@ -146,21 +176,26 @@ class LiveBarStore:
         and on an empty store the first must be at `first` when given."""
         if not new:
             return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with _exclusive_lock(self.path):
+                self._append_locked(new, first)
+        except LedgerError as error:  # the lock was not acquired
+            raise LiveBarError(f"{error}; nothing appended") from None
+
+    def _append_locked(self, new: tuple[Bar, ...], first: datetime | None) -> None:
         last = self.last_open_time()
-        if last is not None:
-            expected = last + BAR_INTERVAL
-        else:
-            expected = new[0].open_time if first is None else first
-        for bar in new:
-            if bar.open_time != expected:
-                kind = (
-                    "gap" if bar.open_time > expected else "duplicate or out of order"
-                )
-                raise LiveBarError(
-                    f"{kind}: bar {bar.open_time.isoformat()} where "
-                    f"{expected.isoformat()} is next; nothing appended"
-                )
-            expected += BAR_INTERVAL
+        try:
+            if last is None:
+                _require_next(new[0], None)  # the floor
+                expected = new[0].open_time if first is None else first
+            else:
+                expected = last + BAR_INTERVAL
+            for bar in new:
+                _require_next(bar, expected)
+                expected = bar.open_time + BAR_INTERVAL
+        except LiveBarError as error:
+            raise LiveBarError(f"{error}; nothing appended") from None
         lines = "".join(
             json.dumps(
                 {
@@ -169,6 +204,7 @@ class LiveBarStore:
                     "low": b.low,
                     "open": b.open,
                     "open_time": b.open_time.isoformat(),
+                    "symbol": self.symbol,
                     "volume": b.volume,
                 },
                 sort_keys=True,
@@ -176,11 +212,29 @@ class LiveBarStore:
             + "\n"
             for b in new
         )
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write(lines)
             handle.flush()
             os.fsync(handle.fileno())
+
+
+def _require_next(bar: Bar, expected: datetime | None) -> None:
+    """`bar` must open at `expected`; a store's first bar (`expected` None)
+    must not be before `LIVE_START_FLOOR` (A26-3)."""
+    if expected is None:
+        if bar.open_time < LIVE_START_FLOOR:
+            raise LiveBarError(
+                f"bar {bar.open_time.isoformat()} is before "
+                f"{LIVE_START_FLOOR.isoformat()}: confirmation and lockbox data "
+                "never enter the live store"
+            )
+        return
+    if bar.open_time != expected:
+        kind = "gap" if bar.open_time > expected else "duplicate or out of order"
+        raise LiveBarError(
+            f"{kind}: bar {bar.open_time.isoformat()} where "
+            f"{expected.isoformat()} is next"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,8 +263,8 @@ def fetch_new_bars(
     when the store is empty) and append them. Refuses a skewed clock.
     Every input is checked before any request (F26-4)."""
     now = require_utc(now, field_name="now")
-    if symbol not in ALLOWED_SYMBOLS:
-        raise LiveBarError(f"symbol {symbol!r} is not allowed")
+    if symbol != store.symbol:
+        raise LiveBarError(f"symbol {symbol} into the {store.symbol} store (A26-2)")
     last = store.last_open_time()
     if last is not None:
         begin = last + BAR_INTERVAL
@@ -218,7 +272,7 @@ def fetch_new_bars(
         raise LiveBarError("an empty store needs an explicit start")
     else:
         try:
-            begin = require_utc(start, field_name="start")
+            begin = require_aligned_utc(start, BAR_INTERVAL, field_name="start")
         except BarSemanticsError as error:
             raise LiveBarError(str(error)) from None
     if begin < LIVE_START_FLOOR:
