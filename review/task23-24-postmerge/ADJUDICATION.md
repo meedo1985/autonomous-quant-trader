@@ -64,3 +64,22 @@ Validation after the F35 repairs: `pytest -q` 1591 passed, 4 skipped; ruff,
 format (101 files), mypy (53 files), 6 import contracts, `git diff --check`
 clean; no frozen file differs from `main`; Task 25 drills rerun
 byte-identical. The different-family (Astra) re-review is still required.
+
+## Astra re-review of `ca4f1bd` (text-only)
+
+Record: `ASTRA_REREVIEW_CA4F1BD.md` (committed `a9c7959`). The Codex
+sandbox cannot start on the owner's Android/proot machine, so the reviewer
+read attached texts and ran nothing. A2324-1..4, A25R-4 and F35-1..4 judged
+correct; A2324R-1 and A2324R-2 incomplete (via A2324R-3, A2324R-4). Verdict
+FIX.
+
+| ID | Decision | Evidence and disposition | Validation |
+| --- | --- | --- | --- |
+| A2324R-3 | AGREE — BLOCKER, repaired | `reconcile` only compared the readings around each wait, and stamped the report with `max(at, clock())`, so a final reading back at the start passed and backdated the report. The latest accepted reading now starts at `at` and is threaded through every query; a reading before it leaves the order unresolved ("the clock moved backwards"), and a final reading before it fails the report. The report is stamped at the later of the latest accepted reading and the final one, never earlier. | `test_a_clock_that_moves_back_fails_instead_of_backdating` (reviewer's scenario: fails, stamped `at + 10 s`); `test_a_clock_behind_the_start_confirms_nothing`. Both fail on `ca4f1bd` and pass after. |
+| A2324R-4 | AGREE — NON-BLOCKING, open | Startup does not carry `decision.report.next_record()` forward, so orders confirmed absent are queried again, and FLATTEN reconciliation waits do not advance the loop. Bounded, sell-only simulator behaviour; no extra exposure shown. Left for the owner to schedule (with Task 27 part b2, which rewires startup resume). | Not yet. |
+| A2324R-5 | AGREE — NON-BLOCKING, open | REFUSE_START after a waiting startup check is stamped `config.start`, before its incident. Same scheduling as A2324R-4. | Not yet. |
+
+Validation after the A2324R-3 repair (Python 3.14.4, Linux aarch64 proot):
+`pytest -q` 1593 passed, 4 skipped; ruff, format, mypy, 6 import contracts
+and `git diff --check` clean. Different-family re-review of the repair is
+still required.

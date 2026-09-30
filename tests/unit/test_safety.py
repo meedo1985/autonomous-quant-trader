@@ -958,3 +958,41 @@ def test_the_report_is_stamped_after_the_waits(
     record = LocalRecord(exchange.balances(), controller.sent)
     report = reconcile(exchange, record, TOLERANCE, at, _absence(at))
     assert report.passed and report.at == at + timedelta(seconds=10)
+
+
+def test_a_clock_that_moves_back_fails_instead_of_backdating(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A2324R-3 (the reviewer's scenario): the delay is honoured, but the
+    clock read for the report is back at the start. The report fails and is
+    stamped no earlier than the last accepted reading."""
+    controller, _, exchange, _ = _frozen_with_unknown_flatten_order(
+        tmp_path, monkeypatch
+    )
+    at = T0 + 5 * HOUR
+    readings = iter((at, at + timedelta(seconds=10), at))
+    check = AbsenceCheck(
+        timedelta(seconds=10), 2, lambda _: None, lambda: next(readings)
+    )
+    record = LocalRecord(exchange.balances(), controller.sent)
+    report = reconcile(exchange, record, TOLERANCE, at, check)
+    assert not report.passed
+    assert report.at == at + timedelta(seconds=10)
+    assert "clock moved backwards" in report.differences[-1]
+
+
+def test_a_clock_behind_the_start_confirms_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A2324R-3: a first reading before `at` is a backward clock; the order
+    stays unresolved."""
+    controller, _, exchange, cid = _frozen_with_unknown_flatten_order(
+        tmp_path, monkeypatch
+    )
+    at = T0 + 5 * HOUR
+    clock = FakeClock(at - timedelta(seconds=1))
+    check = AbsenceCheck(timedelta(seconds=10), 2, clock.sleep, clock)
+    record = LocalRecord(exchange.balances(), controller.sent)
+    report = reconcile(exchange, record, TOLERANCE, at, check)
+    assert not report.passed and cid not in report.resolved
+    assert "moved backwards" in report.differences[0]

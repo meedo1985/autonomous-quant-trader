@@ -153,28 +153,36 @@ def _query(
     client_order_id: str,
     known: Order | None,
     absence: AbsenceCheck | None,
-) -> Order | None | str:
-    """The venue's order, `None` when absent, or why it is unresolved."""
+    latest: datetime,
+) -> tuple[Order | None | str, datetime]:
+    """The venue's order, `None` when absent, or why it is unresolved; and
+    the latest accepted clock reading, which never moves back (A2324R-3)."""
     answers = 0
     while True:
         try:
-            return venue.query_order(client_order_id)
+            return venue.query_order(client_order_id), latest
         except ExchangeError as error:
             if error.code != "NOT_FOUND":
-                return f"unresolved ({error})"
+                return f"unresolved ({error})", latest
         except Exception as error:  # noqa: BLE001 - any failure is unresolved
-            return f"unresolved ({type(error).__name__}: {error})"
+            return f"unresolved ({type(error).__name__}: {error})", latest
         answers += 1
         if known is not None:
-            return None  # a known order that vanished: the caller sees the difference
+            return None, latest  # a known order that vanished: the caller sees it
         if absence is None:
-            return "unresolved (NOT_FOUND, absence not confirmed)"
+            return "unresolved (NOT_FOUND, absence not confirmed)", latest
         if answers >= absence.queries:
-            return None  # confirmed absent (section 21)
+            return None, latest  # confirmed absent (section 21)
         before = require_utc(absence.clock(), field_name="clock")
+        if before < latest:
+            return "unresolved (the clock moved backwards)", latest
         absence.sleep(absence.delay)
-        if require_utc(absence.clock(), field_name="clock") - before < absence.delay:
-            return "unresolved (the clock did not advance by the protocol delay)"
+        after = require_utc(absence.clock(), field_name="clock")
+        if after - before < absence.delay:
+            return "unresolved (the clock did not advance by the protocol delay)", max(
+                latest, before, after
+            )
+        latest = after
 
 
 def reconcile(
@@ -189,8 +197,9 @@ def reconcile(
         raise ValueError("tolerances must be finite and non-negative")
     differences: list[str] = []
     resolved: dict[str, Order | None] = {}
+    latest = at
     for client_order_id, known in sorted(local.orders.items()):
-        found = _query(venue, client_order_id, known, absence)
+        found, latest = _query(venue, client_order_id, known, absence, latest)
         if isinstance(found, str):
             differences.append(f"{client_order_id}: {found}")
             continue
@@ -201,8 +210,13 @@ def reconcile(
         resolved[client_order_id] = found
 
     if absence is not None:
-        # The report is as of the end of any waits, never before (A2324R-2).
-        at = max(at, require_utc(absence.clock(), field_name="clock"))
+        # The report is as of the end of any waits, never before (A2324R-2),
+        # and a clock that moved back fails it rather than backdating it
+        # (A2324R-3).
+        now = require_utc(absence.clock(), field_name="clock")
+        if now < latest:
+            differences.append("clock moved backwards during reconciliation")
+        at = max(latest, now)
     readable = True
     try:
         open_orders = venue.open_orders()
