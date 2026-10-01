@@ -313,3 +313,31 @@ Validation after these repairs (Python 3.14.4, Linux aarch64 proot, exit 0
 each): `pytest -q` 1700 passed, 4 skipped; `ruff check .`, `ruff format
 --check .`, `mypy src scripts`, `lint-imports` (6 kept), `git diff --check`
 clean; frozen verification (Python port) PASS. Not yet re-reviewed.
+
+## Astra re-review of `ad24b7d` and repairs
+
+Record: `ASTRA_REREVIEW_AD24B7D.md`, text-only. A27-16, A27-18, A27-19
+correct (and the A27-18 "late" disposition accepted); A27-17 incomplete (via
+A27-20..A27-22); A27-23 a question for the owner. Verdict FIX. The
+reviewer's reproduction was run locally at `ad24b7d`: A27-20 (0, 1), A27-21
+peak 100 and no incident, A27-22 (2, 1); A27-23 printed FLATTEN, one
+incident, no order.
+
+| ID | Astra severity | Decision | Evidence and disposition | Validation |
+| --- | --- | --- | --- | --- |
+| A27-20 | BLOCKER | AGREE — repaired | A refused override ended its hour without firing that hour's breach. A refused or failed override now fires the hour's valuation when its reconciliation ended; an accepted one resets the line instead (Q27-1, Q27-2). A first repair counted the firing twice after a kill (the incident was logged before the crash and replayed again); startup now skips as many missed firings as LOSS_STOP incidents the log holds after the snapshot. | `test_a_refused_override_still_records_the_hours_breach` (1 and 1) |
+| A27-21 | BLOCKER | AGREE — repaired | The startup and FREEZE_EXIT replays used the run's contiguous window, losing earlier bars across a data gap. They now use every bar given (`history`); trading still uses the window. | `test_a_restart_values_bars_before_a_data_gap` (peak 120, one incident) |
+| A27-22 | NON-BLOCKING | AGREE — repaired | The replay returned only the first missed firing. It returns every one, each raised at startup. | `test_every_missed_firing_is_recorded` (2 and 2) |
+| A27-23 | QUESTION | Owner answered "Fire as usual" (`OWNER_ANSWERS.md`) | Behaviour kept and now tested. | `test_a_fall_in_a_health_breach_hour_fires_but_trades_nothing` (passes before and after: it pins the approved behaviour) |
+
+The three repair tests fail at `ad24b7d` and pass after. The reviewer's
+reproduction passes in full.
+
+Validation after these repairs (Python 3.14.4, Linux aarch64 proot, exit 0
+each): `ruff check .`, `ruff format --check .`, `mypy src scripts`,
+`lint-imports` (6 kept), `git diff --check` clean; frozen verification
+(Python port) PASS; the affected test files (`test_paper_recovery.py`,
+`test_paper_restart.py`, `test_paper_loop.py`, `test_live_bars.py`,
+`test_account_state.py`, `test_safety.py`) pass. The full `pytest -q` was
+not rerun after these repairs (owner asked to save for another laptop; see
+`review/handoff/RESUME_2026-10-01.md`). Not yet re-reviewed.

@@ -590,6 +590,7 @@ def run_paper(
                     mode, entered = place
         except (LedgerError, StateError, OSError) as error:
             refuse(f"saved state unreadable: {error}")
+    history = series  # every bar given, for recovery across a data gap (A27-21)
     window = contiguous_window(series, config.start, config.end)
     if isinstance(window, str):
         refuse(window)
@@ -708,7 +709,7 @@ def run_paper(
         # the holdings the startup check confirmed, which include any order
         # sent just before the crash (A27-9).
         peak, stop_armed, valued, missed = _replay(
-            series,
+            history,
             local.balances,
             base,
             (resumed.valued_through, saved_at, config.start),
@@ -719,13 +720,23 @@ def run_paper(
         # A buy that filled before the crash, found by the startup check,
         # is a risk increase all the same (A27-2).
         last_increase = _last_increase(decision.report, last_increase)
-        if missed is not None:
+        # A firing the incident log holds after the snapshot happened before
+        # the crash; only the rest are missed (A27-20). In order, so the
+        # first ones are those.
+        logged = sum(
+            1
+            for entry in read_entries(incidents.path)[resumed.incidents_seen :]
+            if entry.record_type == IncidentLog.OPEN
+            and entry.payload.get("kind") == str(Trigger.LOSS_STOP)
+        )
+        for hour in missed[logged:]:
             # A breach in an hour the process was down still alerts, opens
-            # its incident and, from RUNNING, sells (S-4), now.
+            # its incident and, from RUNNING, sells (S-4), now: one each, as
+            # the running loop would have (A27-22).
             controller.trigger(
                 Trigger.LOSS_STOP,
                 ready,
-                f"missed at {missed.isoformat()} while the process was down",
+                f"missed at {hour.isoformat()} while the process was down",
             )
             # The latch stays as the replay left it: a later missed hour
             # back above the line re-armed it (A27-14).
@@ -833,7 +844,7 @@ def run_paper(
             return
         recovered(check)
         peak, stop_armed, valued, _ = _replay(
-            series,
+            history,
             local.balances,
             base,
             (valued, hour, hour + HOUR),
@@ -969,7 +980,11 @@ def run_paper(
             if decision_time in ends and end_halt(decision_time, mark):
                 # The hour ends with its override attempt, ended or not:
                 # nothing after it may be stamped before its reconciliation
-                # ended (A27-8), and only HALT or FREEZE can follow a refusal.
+                # ended (A27-8). A refused override authorizes nothing, so
+                # the hour's breach is still recorded, when it ended (A27-20);
+                # an accepted one reset the line (Q27-1, Q27-2).
+                if controller.mode is not Mode.RUNNING:
+                    fire(valuation, busy_until)
                 continue
             fire(valuation, decision_time)
             if controller.mode is Mode.FLATTEN:
@@ -1222,17 +1237,17 @@ def _replay(
     fraction: Decimal,
     *,
     fires: bool,
-) -> tuple[Decimal, bool, datetime | None, datetime | None]:
+) -> tuple[Decimal, bool, datetime | None, list[datetime]]:
     """The loop's loss-stop bookkeeping for every decision hour the snapshot
     has not valued, until the start, for the bars present: the peak, the
-    latch, the last hour valued, and the first hour the stop would have
-    fired, if any. `window` is the snapshot's `valued_through`, its save
-    time and the start; with nothing valued yet the saved hour is the first.
+    latch, the last hour valued, and every hour the stop would have fired.
+    `window` is the snapshot's `valued_through`, its save time and the
+    start; with nothing valued yet the saved hour is the first.
     `holdings` are those the startup check confirmed. In FREEZE (`fires`
     false) the stop neither fires nor disarms, as in the loop."""
     valued, saved_at, start = window
     peak, armed = latch
-    missed: datetime | None = None
+    missed: list[datetime] = []
     if valued is None:
         hour = saved_at.replace(minute=0, second=0, microsecond=0)
     else:
@@ -1251,7 +1266,7 @@ def _replay(
         if equity >= peak * (1 - fraction):
             armed = True
         elif armed and fires:
-            missed = missed or hour
+            missed.append(hour)
             armed = False
         hour += HOUR
     return peak, armed, valued, missed

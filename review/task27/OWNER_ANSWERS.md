@@ -56,3 +56,16 @@ record, checked in full on every read. The words "signed, committed" in the
 "Effect on Task 27" section above were the AI's paraphrase; this answer
 settles them. Tamper evidence for the store stays open (T27-10) and is to be
 revisited before any real-money use.
+
+## A27-23: the loss stop in a health-breach hour (asked 2026-10-01)
+
+Asked by Claude Opus 5.5: "in an hour where a health check fails (clock
+skew, slow loop, stale data), nothing is ever traded. But if that hour's
+closed price shows a fall of more than 20% from the peak, what should the
+20% loss stop do?" — **"Fire as usual (Recommended)"**: "Record the breach
+and switch to FLATTEN now; the first selling step waits for a healthy hour.
+Same answer whether or not the app restarts. Safer side: a fall is never
+ignored."
+
+Effect: the part b2 behaviour stands (L-03 valued and fired in a
+health-breach hour; no order that hour). No loss bound changes.

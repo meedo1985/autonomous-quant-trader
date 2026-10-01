@@ -720,3 +720,135 @@ def test_hours_with_unresolved_orders_are_valued_after_the_recovery(
     state = _saved(exited)[0]
     assert state.mode is Mode.HALT and state.valued_through is not None
     assert state.valued_through > FROZEN_AT + 5 * HOUR
+
+
+def _hours_run(
+    account: AccountDir, series: BarSeries, start: datetime, end: datetime, **kw: object
+) -> RunReport:
+    report = _run(
+        account.root,
+        _config(1, start=start, end=end),
+        series,
+        incidents=account.incident_log(),
+        journal=account.journal,
+        venue=_Venue(ONE_BTC),
+        **kw,
+    )
+    assert report.refused == ()
+    return report
+
+
+def test_a_refused_override_still_records_the_hours_breach(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A27-20 (the reviewer's scenario): an invalid override in an hour below
+    the line. The breach is recorded once, running on or killed before the
+    hour-end save and restarted."""
+    series = _priced({START - HOUR: 70.0, START: 100.0})
+    continuous, restarted = AccountDir(tmp_path / "c"), AccountDir(tmp_path / "r")
+    for account in (continuous, restarted):
+        _seed(account, START - HOUR, Mode.HALT, ONE_BTC, "100")
+
+    def invalid(account: AccountDir) -> OwnerOverride:
+        ids = account.incident_log().open_incidents()
+        return replace(_override(ids, START), written_record="")
+
+    _hours_run(
+        continuous,
+        series,
+        START,
+        START + 2 * HOUR,
+        overrides={START: invalid(continuous)},
+    )
+    real = StateJournal.save
+
+    def kill(self: StateJournal, state: AccountState, at: datetime) -> None:
+        if state.valued_through == START:
+            raise _Killed
+        real(self, state, at)
+
+    with monkeypatch.context() as patch, pytest.raises(_Killed):
+        patch.setattr(StateJournal, "save", kill)
+        _hours_run(
+            restarted,
+            series,
+            START,
+            START + HOUR,
+            overrides={START: invalid(restarted)},
+        )
+    loop.refuse_marker_path(restarted.incident_log()).unlink()
+    _hours_run(restarted, series, START + HOUR, START + 2 * HOUR)
+    assert (_losses(continuous), _losses(restarted)) == (1, 1)
+
+
+def test_a_restart_values_bars_before_a_data_gap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A27-21 (the reviewer's scenario): the peak of 120 was valued but not
+    saved; the restart's window starts after a missing bar. The replay still
+    sees the earlier bar: peak 120 and the fall to 90 recorded."""
+    priced = _priced({START - HOUR: 120.0, START: 90.0}, default=90.0)
+    series = BarSeries(
+        symbol=priced.symbol,
+        bars=tuple(b for b in priced.bars if b.open_time != START + HOUR),
+    )
+    account = AccountDir(tmp_path / "a")
+    _seed(account, START - HOUR, Mode.HALT, ONE_BTC, "100")
+    real = StateJournal.save
+
+    def kill(self: StateJournal, state: AccountState, at: datetime) -> None:
+        if state.peak == Decimal(120):
+            raise _Killed
+        real(self, state, at)
+
+    with monkeypatch.context() as patch, pytest.raises(_Killed):
+        patch.setattr(StateJournal, "save", kill)
+        _hours_run(account, series, START, START + HOUR)
+    loop.refuse_marker_path(account.incident_log()).unlink()
+    _hours_run(account, series, START + 3 * HOUR, START + 4 * HOUR)
+    saved = account.journal.load()
+    assert saved is not None and saved.peak == Decimal(120) and _losses(account) == 1
+
+
+def test_every_missed_firing_is_recorded(tmp_path: Path) -> None:
+    """A27-22 (the reviewer's scenario): two separate falls while down give
+    two LOSS_STOP incidents, as running through them does."""
+    series = _priced(
+        {START - HOUR: 70.0, START: 100.0, START + HOUR: 70.0, START + 2 * HOUR: 100.0}
+    )
+    continuous, restarted = AccountDir(tmp_path / "c"), AccountDir(tmp_path / "r")
+    for account in (continuous, restarted):
+        _seed(account, START - HOUR, Mode.HALT, ONE_BTC, "100")
+    _hours_run(continuous, series, START, START + 4 * HOUR)
+    _hours_run(restarted, series, START + 4 * HOUR, START + 5 * HOUR)
+    assert (_losses(continuous), _losses(restarted)) == (2, 2)
+
+
+def test_a_fall_in_a_health_breach_hour_fires_but_trades_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A27-23, owner answer "Fire as usual": a breach in a health-breach hour
+    is recorded and RUNNING enters FLATTEN; no order is placed that hour."""
+    account = AccountDir(tmp_path / "a")
+    _seed(account, START - 2 * HOUR, Mode.RUNNING, ONE_BTC, "100")
+    config = _config(1, start=START - HOUR, end=START + HOUR)
+
+    def observe(at: datetime) -> loop.Observation:
+        observation = loop.bar_clock_observation(at)
+        if at != START:  # only the second hour is unhealthy
+            return observation
+        stale = at - config.health.max_data_age - timedelta(seconds=1)
+        return replace(observation, latest_bar_close=stale)
+
+    monkeypatch.setattr(loop, "baseline_proposal", lambda *_: "synthetic hold")
+    report = _run(
+        account.root,
+        config,
+        _priced({START - HOUR: 70.0}),
+        incidents=account.incident_log(),
+        journal=account.journal,
+        venue=_Venue(ONE_BTC),
+        observe=observe,
+    )
+    assert report.final_mode == "FLATTEN" and report.orders_sent == 0
+    assert report.health_breach_hours == 1 and _losses(account) == 1
