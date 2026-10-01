@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -44,6 +45,7 @@ __all__ = [
     "KLINES_URL",
     "TIME_URL",
     "FetchResult",
+    "GapRecord",
     "LiveBarError",
     "LiveBarStore",
     "fetch_new_bars",
@@ -113,9 +115,33 @@ def parse_klines(body: bytes, now: datetime) -> tuple[Bar, ...]:
     return tuple(bars)
 
 
+@dataclass(frozen=True, slots=True)
+class GapRecord:
+    """The owner's signed statement that Binance has no bars from
+    `first_missing` until `resumes_at` (owner answer Q27-3, T26-04). The
+    hours stay missing; nothing is filled."""
+
+    first_missing: datetime
+    resumes_at: datetime
+    actor: str
+    statement: str
+    recorded_at: datetime
+
+    def as_row(self, symbol: str) -> dict[str, str]:
+        return {
+            "gap_actor": self.actor,
+            "gap_first_missing": self.first_missing.isoformat(),
+            "gap_recorded_at": self.recorded_at.isoformat(),
+            "gap_resumes_at": self.resumes_at.isoformat(),
+            "gap_statement": self.statement,
+            "symbol": symbol,
+        }
+
+
 class LiveBarStore:
     """Append-only JSON-lines file of one symbol's closed bars, one hour
-    after another, never before `LIVE_START_FLOOR`.
+    after another, never before `LIVE_START_FLOOR`; the only jump allowed is
+    over an owner-signed `GapRecord` (Q27-3).
 
     Every row names its symbol, so a store cannot mix symbols (A26-2).
     Reading checks the whole file, not only its last row (A26-3): the
@@ -129,9 +155,11 @@ class LiveBarStore:
         self.path = path
         self.symbol = symbol
 
-    def bars(self) -> tuple[Bar, ...]:
+    def _read(self) -> tuple[tuple[Bar, ...], tuple[GapRecord, ...], datetime | None]:
+        """Every bar, every gap record, and the hour the next bar must open
+        at (`None` for an empty store); refuses anything else."""
         if not self.path.exists():
-            return ()
+            return (), (), None
         text = self.path.read_text("utf-8")
         lines = text.splitlines()
         if text and not text.endswith("\n"):
@@ -139,37 +167,94 @@ class LiveBarStore:
             # joins the next row onto it (A26-4).
             raise LiveBarError(f"{self.path} line {len(lines)}: no final newline")
         bars: list[Bar] = []
+        gaps: list[GapRecord] = []
+        expected: datetime | None = None
         for number, line in enumerate(lines, start=1):
             where = f"{self.path} line {number}"
             try:
                 row = json.loads(line)
                 symbol = row["symbol"]
-                bar = Bar(
-                    datetime.fromisoformat(row["open_time"]),
-                    row["open"],
-                    row["high"],
-                    row["low"],
-                    row["close"],
-                    row["volume"],
-                )
+                if "gap_first_missing" in row:
+                    gap = GapRecord(
+                        datetime.fromisoformat(row["gap_first_missing"]),
+                        datetime.fromisoformat(row["gap_resumes_at"]),
+                        row["gap_actor"],
+                        row["gap_statement"],
+                        datetime.fromisoformat(row["gap_recorded_at"]),
+                    )
+                else:
+                    bar = Bar(
+                        datetime.fromisoformat(row["open_time"]),
+                        row["open"],
+                        row["high"],
+                        row["low"],
+                        row["close"],
+                        row["volume"],
+                    )
             except (ValueError, KeyError, TypeError, BarSemanticsError) as error:
                 # A torn or edited line: refuse, naming it (F26-2).
                 raise LiveBarError(f"{where}: {error}") from None
             if symbol != self.symbol:
                 raise LiveBarError(f"{where}: {symbol!r} in the {self.symbol} store")
             try:
-                _require_next(bar, bars[-1].open_time + BAR_INTERVAL if bars else None)
+                if "gap_first_missing" in row:
+                    _require_gap(gap, expected)
+                    gaps.append(gap)
+                    expected = gap.resumes_at
+                else:
+                    _require_next(bar, expected)
+                    bars.append(bar)
+                    expected = bar.open_time + BAR_INTERVAL
             except LiveBarError as error:
                 raise LiveBarError(f"{where}: {error}") from None
-            bars.append(bar)
-        return tuple(bars)
+        return tuple(bars), tuple(gaps), expected
+
+    def bars(self) -> tuple[Bar, ...]:
+        return self._read()[0]
+
+    def gaps(self) -> tuple[GapRecord, ...]:
+        """The owner-signed gaps, in order; their hours have no bar."""
+        return self._read()[1]
 
     def series(self) -> BarSeries:
+        """The bars; a recorded gap is a missing interval, never filled."""
         return BarSeries(self.symbol, self.bars())
 
     def last_open_time(self) -> datetime | None:
         bars = self.bars()
         return bars[-1].open_time if bars else None
+
+    def next_open_time(self) -> datetime | None:
+        """The hour the next bar must open at, after any recorded gap."""
+        return self._read()[2]
+
+    def acknowledge_gap(
+        self, resumes_at: datetime, actor: str, statement: str, at: datetime
+    ) -> GapRecord:
+        """Record the owner's signed statement that Binance has no bars from
+        the store's next hour until `resumes_at` (Q27-3). Refused unless
+        `resumes_at` is a later hour and the owner and statement are given."""
+        if not actor.strip() or not statement.strip():
+            raise LiveBarError("a gap record needs the owner's name and statement")
+        try:
+            resumes_at = require_aligned_utc(
+                resumes_at, BAR_INTERVAL, field_name="resumes_at"
+            )
+            at = require_utc(at, field_name="at")
+        except BarSemanticsError as error:
+            raise LiveBarError(str(error)) from None
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with _exclusive_lock(self.path):
+                expected = self._read()[2]
+                if expected is None:
+                    raise LiveBarError("an empty store has no gap to record")
+                gap = GapRecord(expected, resumes_at, actor, statement, at)
+                _require_gap(gap, expected)
+                self._write([gap.as_row(self.symbol)])
+        except LedgerError as error:  # the lock was not acquired
+            raise LiveBarError(f"{error}; nothing recorded") from None
+        return gap
 
     def append(self, new: tuple[Bar, ...], first: datetime | None = None) -> None:
         """Append `new`; each bar must be exactly one hour after the last,
@@ -184,20 +269,18 @@ class LiveBarStore:
             raise LiveBarError(f"{error}; nothing appended") from None
 
     def _append_locked(self, new: tuple[Bar, ...], first: datetime | None) -> None:
-        last = self.last_open_time()
+        expected = self.next_open_time()
         try:
-            if last is None:
+            if expected is None:
                 _require_next(new[0], None)  # the floor
                 expected = new[0].open_time if first is None else first
-            else:
-                expected = last + BAR_INTERVAL
             for bar in new:
                 _require_next(bar, expected)
                 expected = bar.open_time + BAR_INTERVAL
         except LiveBarError as error:
             raise LiveBarError(f"{error}; nothing appended") from None
-        lines = "".join(
-            json.dumps(
+        self._write(
+            [
                 {
                     "close": b.close,
                     "high": b.high,
@@ -206,16 +289,30 @@ class LiveBarStore:
                     "open_time": b.open_time.isoformat(),
                     "symbol": self.symbol,
                     "volume": b.volume,
-                },
-                sort_keys=True,
-            )
-            + "\n"
-            for b in new
+                }
+                for b in new
+            ]
         )
+
+    def _write(self, rows: Sequence[Mapping[str, object]]) -> None:
+        """Append `rows`, fsynced; the caller holds the lock."""
+        lines = "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
         with self.path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write(lines)
             handle.flush()
             os.fsync(handle.fileno())
+
+
+def _require_gap(gap: GapRecord, expected: datetime | None) -> None:
+    """A gap record starts at the hour the next bar was due and ends at a
+    later hour; it never opens a store."""
+    if expected is None or gap.first_missing != expected:
+        due = "nothing" if expected is None else expected.isoformat()
+        raise LiveBarError(
+            f"gap record from {gap.first_missing.isoformat()} where {due} is next"
+        )
+    if gap.resumes_at <= gap.first_missing:
+        raise LiveBarError(f"gap record ends at {gap.resumes_at.isoformat()}")
 
 
 def _require_next(bar: Bar, expected: datetime | None) -> None:
@@ -265,9 +362,9 @@ def fetch_new_bars(
     now = require_utc(now, field_name="now")
     if symbol != store.symbol:
         raise LiveBarError(f"symbol {symbol} into the {store.symbol} store (A26-2)")
-    last = store.last_open_time()
-    if last is not None:
-        begin = last + BAR_INTERVAL
+    after = store.next_open_time()  # past any owner-signed gap (Q27-3)
+    if after is not None:
+        begin = after
     elif start is None:
         raise LiveBarError("an empty store needs an explicit start")
     else:

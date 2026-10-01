@@ -119,3 +119,72 @@ clean; no frozen file differs from `main`. `scripts/run_drills.py` rerun
 into a scratch directory is byte-identical to `review/task25/drills`
 (`diff -r`). `verify_frozen.ps1` not run (PowerShell 7 absent); git shows no
 frozen diff.
+
+# Part b2: the ways back from FREEZE and HALT, and the live-store gap record
+
+Date: 2026-10-01. Coding AI: Claude Opus 5.5 (`claude-opus-5-5`). Same branch,
+on `main` with PRs #35 and #36 merged in (`33b39a4`). Owner answers used:
+Q27-1, Q27-2, Q27-3 (`OWNER_ANSWERS.md`), T27-01 "Allow it" (same file).
+
+## What changed
+
+| File | Change |
+| --- | --- |
+| `src/aqt/app/paper_loop.py` (section 16 protected) | `OwnerOverride` and `run_paper(overrides=...)`: the owner's section 14 override at an hour; the loop reconciles and calls `override_halt`. On success the loss-stop peak is reset to the equity then and the stop armed (Q27-1, Q27-2); nothing trades that hour. Owner command `FREEZE_EXIT`: reconcile, and on a pass `exit_freeze` to HALT. Reservations of unreconciled executor orders are released by the passed recovery reconciliation. No decision before a reconciliation that waited has ended (A2324R-4); REFUSE_START stamped when the startup check ended (A2324R-5) |
+| `src/aqt/data/live_bars.py` | `GapRecord`, `LiveBarStore.acknowledge_gap`, `gaps()`, `next_open_time()`: an owner-signed record lets the store continue after a real Binance gap; the hours stay missing (Q27-3, T26-04) |
+| `scripts/fetch_live_bars.py` | `--acknowledge-gap RESUMES_AT --actor --statement`: signs a gap record; no request is made |
+| `tests/integration/test_paper_recovery.py` (new), `tests/unit/test_live_bars.py` | 9 and 8 new tests |
+| `review/task27/OWNER_ANSWERS.md` | T27-01 answer recorded |
+
+Behaviour:
+- **Nothing leaves FREEZE by itself.** Only the owner's `FREEZE_EXIT`
+  command starts a reconciliation; a failed one is logged with its reason and
+  FREEZE stays (its incident is already open). A pass leads to HALT, never
+  RUNNING (section 22); the incident stays open for the section 14 override.
+  Default behaviour, and so the Task 25 drills, are unchanged.
+- **HALT ends only on the override**, with all five section 14 artifacts:
+  the owner supplies the incident ids (every open one), the written record,
+  the cause, the owner action and the timestamp; the loop supplies the
+  reconciliation. Any missing or wrong artifact is a logged refusal and HALT
+  stays. A failed reconciliation at the override is a new safety event: the
+  account FREEZEs with a new incident.
+- A command for an hour that is skipped (startup or a reconciliation still
+  waiting, a health breach, no bar) is logged as refused, never lost silently.
+  A FREEZE_EXIT outside FREEZE is refused and the hour goes on.
+
+## Review skills applied (AGENTS.md)
+
+`task-gate-review`, `quant-code-review`, `scientific-reproducibility-review`
+and `binance-quant-review` were read from `.agents/skills/` and applied by
+the implementer. This is self-review, not independent review.
+
+| ID | Source | Severity | Finding | Disposition |
+| --- | --- | --- | --- | --- |
+| T27-07 | quant-code-review (self) | BLOCKER, repaired | A FREEZE_EXIT in a non-FREEZE hour skipped that hour, including a FLATTEN step | Refused and the hour goes on; `test_freeze_exit_outside_freeze_is_refused_and_the_hour_goes_on` (fails without the repair) |
+| T27-08 | binance-quant-review (self) | BLOCKER, repaired | A reconciliation mismatch at the override was only a refusal, not an incident (section 0) | FREEZE with `RECONCILIATION_FAILED`; `test_a_failed_reconciliation_at_the_override_freezes` (fails without the repair) |
+| T27-09 | quant-code-review (self) | NON-BLOCKING, repaired | A recovery left the governor reservation of a frozen executor order held, so no later decision could be authorized (`OUTSTANDING_AUTHORIZATION`) | Released by the passed recovery reconciliation (`settle`); the override test fails with 88 such refusals without it |
+| T27-10 | binance-quant-review (self) | NON-BLOCKING, open | The live store is a plain JSON-lines file, not hash-chained: an edit that keeps continuity (a bar value, a gap record's text) is not detected. The gap record's "signature" is the owner's name and statement, not a cryptographic signature | Disclosed; a chained or signed store is a later decision |
+| T27-11 | binance-quant-review (self) | QUESTION | Whether Binance can have a real kline gap, and how it is announced, was not checked against official Binance documentation (no network check by the AI) | For the owner's walkthrough; the record trusts the owner's statement |
+| T27-12 | scientific-reproducibility-review (self) | NON-BLOCKING, open | Task 25 drills not rerun on this machine: `data/raw` exploration archives are absent and the AI does not download Binance data | Owner to rerun on the PC: `python scripts/run_drills.py --config configs/paper_trading.example.toml --out <scratch>` then `diff -r <scratch> review/task25/drills` |
+
+Mutation checks (each reverted): settle removed, 1 fails; REFUSE_START
+stamp at start, 1 fails; no waiting-reconciliation skip, 1 fails; T27-07 and
+T27-08 repairs removed, 2 fail. Every `T0..` test uses synthetic bars.
+
+The T27-04 limit is closed; T27-05 is closed by the gap record.
+
+## Validation (part b2)
+
+Python 3.14.4, Linux aarch64 (Android proot), `.venv`, exit 0 each:
+`pytest -q` 1672 passed, 4 skipped; `ruff check .` clean; `ruff format
+--check .` clean; `mypy src scripts` no issues; `lint-imports` 6 kept;
+`git diff --check` clean. Frozen files: a Python port of
+`review/task6/verify_frozen.ps1` (PowerShell absent; same checks in the same
+order, run from scratch space, not committed) printed PASS for 28/28 trusted
+bytes and exact inventory, 14/14 sidecars, the Constitution self-hash, 7/7
+manifest and protocol bindings, and the nested bindings. Task 25 drills: not
+rerun (T27-12). Windows was not exercised (the lock's `msvcrt` branch).
+
+Local gate: PASS for part b2 with T27-10, T27-11, T27-12 open. Required
+before merge: different-model (Astra) review and the owner's section 16
+walkthrough.

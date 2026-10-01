@@ -464,3 +464,97 @@ def test_an_unaligned_start_is_refused_before_any_request(tmp_path: Path) -> Non
             start=T0 + timedelta(minutes=30),
         )
     assert exchange.requests == []
+
+
+def test_a_signed_gap_record_lets_the_store_continue_after_a_real_gap(
+    tmp_path: Path,
+) -> None:
+    """Q27-3: Binance is missing hour 2. The fetch is refused; the owner signs
+    a gap record; the next fetch continues at hour 3. Hour 2 stays missing."""
+    rows = _hours(5)
+    del rows[2]
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    store.append(_closed(2))
+    now = T0 + 5 * HOUR
+    with pytest.raises(LiveBarError, match="gap"):
+        fetch_new_bars(Exchange(rows, now), store, "BTCUSDT", now, SKEW)
+    gap = store.acknowledge_gap(T0 + 3 * HOUR, "owner", "Binance outage", now)
+    assert (gap.first_missing, gap.resumes_at) == (T0 + 2 * HOUR, T0 + 3 * HOUR)
+    exchange = Exchange(rows, now)
+    result = fetch_new_bars(exchange, store, "BTCUSDT", now, SKEW)
+    assert result.appended == 2
+    start = parse_qs(urlsplit(exchange.requests[-1].url).query)["startTime"][0]
+    assert int(start) == _ms(T0 + 3 * HOUR)
+    opens = [b.open_time for b in store.bars()]
+    assert opens == [T0, T0 + HOUR, T0 + 3 * HOUR, T0 + 4 * HOUR]
+    assert store.gaps() == (gap,)
+    assert store.series().missing_open_times() == (T0 + 2 * HOUR,)
+
+
+@pytest.mark.parametrize(
+    ("resumes_at", "actor", "statement", "match"),
+    [
+        (T0 + HOUR, "owner", "outage", "ends at"),  # not after the due hour
+        (T0 + 3 * HOUR, " ", "outage", "owner's name"),
+        (T0 + 3 * HOUR, "owner", "", "owner's name"),
+        (T0 + 3 * HOUR + timedelta(minutes=5), "owner", "outage", "not aligned"),
+    ],
+)
+def test_a_gap_record_is_refused_unless_complete(
+    tmp_path: Path, resumes_at: datetime, actor: str, statement: str, match: str
+) -> None:
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    store.append(_closed(1))
+    before = store.path.read_bytes()
+    with pytest.raises(LiveBarError, match=match):
+        store.acknowledge_gap(resumes_at, actor, statement, T0 + 5 * HOUR)
+    assert store.path.read_bytes() == before
+
+
+def test_an_empty_store_has_no_gap_to_record(tmp_path: Path) -> None:
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    with pytest.raises(LiveBarError, match="empty store"):
+        store.acknowledge_gap(T0 + 3 * HOUR, "owner", "outage", T0 + 5 * HOUR)
+
+
+def test_an_edited_gap_record_is_refused(tmp_path: Path) -> None:
+    """A gap row that does not start where the next bar was due refuses the
+    whole store, like any other break in the history."""
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    store.append(_closed(2))
+    store.acknowledge_gap(T0 + 4 * HOUR, "owner", "outage", T0 + 5 * HOUR)
+    text = store.path.read_text("utf-8")
+    moved = (T0 + 3 * HOUR).isoformat()
+    store.path.write_text(text.replace((T0 + 2 * HOUR).isoformat(), moved), "utf-8")
+    with pytest.raises(LiveBarError, match="line 3: gap record from"):
+        store.bars()
+
+
+def test_the_cli_signs_a_gap_without_any_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[2] / "scripts" / "fetch_live_bars.py"
+    spec = importlib.util.spec_from_file_location("fetch_live_bars_gap", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["fetch_live_bars_gap"] = module
+    spec.loader.exec_module(module)
+
+    def no_network(_: PublicRequest) -> FetchResponse:
+        raise AssertionError("no request may be made")
+
+    monkeypatch.setattr(module, "urllib_transport", no_network)
+    monkeypatch.delenv("BINANCE_API_KEY", raising=False)
+    store = LiveBarStore(tmp_path / "b.jsonl", "BTCUSDT")
+    store.append(_closed(2))
+    args = [
+        "--store",
+        str(store.path),
+        "--acknowledge-gap",
+        "2026-09-29T05:00:00+00:00",
+    ]
+    assert module.main([*args, "--actor", "owner", "--statement", "outage"]) == 0
+    assert store.next_open_time() == T0 + 5 * HOUR
+    assert module.main([*args, "--actor", "owner"]) == 2  # unsigned: refused

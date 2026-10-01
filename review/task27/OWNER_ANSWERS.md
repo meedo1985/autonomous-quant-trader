@@ -26,3 +26,17 @@ loss-stop peak is reset to equity at that moment and the stop re-arms from
 there. Q27-3: a signed, committed gap record lets the live store continue
 after a real Binance gap; the gap stays recorded and is never filled. None of
 this changes the adopted `L-03` 20% bound.
+
+## T27-01 (asked 2026-09-30, from `LOCAL_REPORT.md` part b1)
+
+Asked by Claude Opus 5.5 in a Claude Code session: "after a crash, the app
+can resume in HALT, FLATTEN or FREEZE while an incident is still open. None
+of those modes can buy, and trading can only restart after you close every
+incident and reconciliation passes (section 14). Should such a start be
+allowed?" — **"Allow it (Recommended)"**: "The app restarts in
+HALT/FLATTEN/FREEZE with the incident still open. A resumed FLATTEN keeps
+selling, so protection continues after a crash. A start that would be
+RUNNING with an open incident is still refused."
+
+Effect: the part b1 behaviour of `startup_check(resuming=...)` stands. This
+answer changes no frozen file and no loss bound.
