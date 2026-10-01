@@ -237,9 +237,10 @@ class StateJournal:
         entries = read_entries(self.path)
         if not entries:
             return None
-        for entry in entries:  # every entry, not only the last (A27-6)
+        for entry in entries:  # every entry, not only the last (A27-6, A27-12)
             if entry.record_type != RECORD_TYPE:
                 raise StateError(f"unexpected record type {entry.record_type!r}")
+            AccountState.from_mapping(entry.payload)
         last = entries[-1]
         saved_at = datetime.strptime(last.recorded_at_utc, _SAVED_FORMAT)
         return AccountState.from_mapping(last.payload), saved_at.replace(tzinfo=UTC)

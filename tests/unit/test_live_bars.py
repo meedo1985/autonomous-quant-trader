@@ -621,3 +621,17 @@ def test_a_bar_row_cannot_be_turned_into_a_gap(tmp_path: Path) -> None:
     store.path.write_text("".join(json.dumps(r) + "\n" for r in rows), "utf-8")
     with pytest.raises(LiveBarError, match="line 2: not a bar row or a gap"):
         store.bars()
+
+
+def test_a_duplicate_in_the_reply_stores_nothing(tmp_path: Path) -> None:
+    """A27-11 (the reviewer's scenario): hours 1, 1, 2 after hour 0. Only a
+    forward gap keeps the bars before it; a duplicate refuses the whole
+    reply."""
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    store.append(_closed(1))
+    before = store.path.read_bytes()
+    rows = [_row(T0 + i * HOUR) for i in (1, 1, 2)]
+    now = T0 + 4 * HOUR
+    with pytest.raises(LiveBarError, match="duplicate"):
+        fetch_new_bars(Exchange(rows, now), store, "BTCUSDT", now, SKEW)
+    assert store.path.read_bytes() == before

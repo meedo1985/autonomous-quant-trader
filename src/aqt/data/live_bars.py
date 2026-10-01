@@ -434,13 +434,16 @@ def fetch_new_bars(
         )
         bars = parse_klines(_get(transport, f"{KLINES_URL}?{query}"), cutoff)
         bars = tuple(b for b in bars if b.open_time >= begin)
-        # The bars before a gap are stored, then the gap refuses: the owner
-        # can then record exactly the missing hours (A27-4, Q27-3).
+        # At a gap the bars before it are stored, then the gap refuses: the
+        # owner can then record exactly the missing hours (A27-4, Q27-3). A
+        # duplicate or reordered bar refuses the whole reply (A27-11).
         whole = 0
         while (
             whole < len(bars) and bars[whole].open_time == begin + whole * BAR_INTERVAL
         ):
             whole += 1
+        if whole < len(bars) and bars[whole].open_time < begin + whole * BAR_INTERVAL:
+            store.append(bars, first=begin)  # refuses, nothing stored
         store.append(bars[:whole], first=begin)
         appended += whole
         if whole < len(bars):

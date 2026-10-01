@@ -215,3 +215,32 @@ Validation after the A27 repairs (Python 3.14.4, Linux aarch64 proot, exit 0
 each): `pytest -q` 1686 passed, 4 skipped; `ruff check .`, `ruff format
 --check .`, `mypy src scripts`, `lint-imports` (6 kept), `git diff --check`
 clean; frozen verification (Python port) PASS. Not yet re-reviewed.
+
+## Astra re-review of `bca6984` and repairs
+
+Record: `ASTRA_REREVIEW_BCA6984.md`, text-only. A27-2, A27-4, A27-5, A27-7
+correct; A27-1, A27-3, A27-6 incomplete (via A27-8..A27-10, A27-12). Verdict
+FIX. The reviewer's three reproductions were run locally at `bca6984`: all
+failed as predicted (A27-8 stamps `00:00`, `02:00`, `00:00`; A27-9 peak 100,
+no LOSS_STOP; A27-10 no new LOSS_STOP; A27-11 prefix written; A27-12
+accepted). After the repairs all pass.
+
+| ID | Astra severity | Decision | Evidence and disposition | Validation |
+| --- | --- | --- | --- | --- |
+| A27-8 | BLOCKER | AGREE — repaired | A refused override (or a failed reconciliation at it) fell through to the rest of the hour at the hour's start, after its reconciliation had ended. Any override attempt that reconciles now ends the hour; only HALT or FREEZE can follow, so nothing is traded either way, and the hour's loss check runs the next hour. | `test_a_refused_override_after_a_wait_ends_its_hour` |
+| A27-9 | BLOCKER | AGREE — repaired | The replay valued missed hours with the saved holdings, missing a buy that filled before the crash. The saved hour is valued with the saved holdings (its valuation precedes its orders); every later missed hour with the holdings the startup reconciliation confirmed. Orders pending at a save are decided in the saved hour, so this is the loop's own sequencing. | `test_missed_hours_are_valued_with_the_confirmed_holdings` (peak 120, LOSS_STOP recorded, `last_increase` restored) |
+| A27-10 | BLOCKER | AGREE — repaired | The replay restored the peak only. `_replay` now runs the loop's loss-stop bookkeeping for each missed hour: peak, re-arming, and the first hour the stop would have fired. A missed firing is raised at startup (alert, incident and, from RUNNING, FLATTEN under S-4). In FREEZE the stop neither fires nor disarms, as in the loop. | `test_missed_hours_rearm_the_loss_stop` |
+| A27-11 | NON-BLOCKING | AGREE — repaired | The bars before a break were stored for a duplicate too. Only a forward gap keeps them; a duplicate or reordered bar refuses the whole reply, as the module states. | `test_a_duplicate_in_the_reply_stores_nothing` |
+| A27-12 | NON-BLOCKING | AGREE — repaired | `load_saved` parsed only the last snapshot. Every snapshot must now parse exactly. | `test_an_earlier_malformed_snapshot_refuses` |
+| T27-13 | self (found while repairing A27-10) | BLOCKER, repaired | Making FREEZE_EXIT a command (part b2) dropped the loss check's FREEZE exclusion: a fall in FREEZE opened a LOSS_STOP incident every armed hour, unlike before. The exclusion is restored. | `test_a_freeze_records_no_loss_stop` |
+
+Each new test fails at `bca6984` (6 failures) and passes after.
+`test_ending_a_halt_rearms_the_loss_stop_from_equity_now` now saves its
+inflated peak with the stop spent: with it armed, the replay correctly
+records the fall, which the override (naming only earlier incidents) then
+refuses. The test's subject, the reset at the override, is unchanged.
+
+Validation after these repairs (Python 3.14.4, Linux aarch64 proot, exit 0
+each): `pytest -q` 1692 passed, 4 skipped; `ruff check .`, `ruff format
+--check .`, `mypy src scripts`, `lint-imports` (6 kept), `git diff --check`
+clean; frozen verification (Python port) PASS. Not yet re-reviewed.

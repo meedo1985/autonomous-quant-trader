@@ -697,15 +697,32 @@ def run_paper(
     if resumed is not None:
         peak, stop_armed = resumed.peak, resumed.stop_armed
         last_increase, zero_fills = resumed.last_increase, resumed.zero_fills
-        # Hours valued after the last save were lost with the process; value
-        # them again from the bars and the saved holdings (A27-3).
-        unsaved = _equities(
-            series, resumed.record.balances, base, saved_at, config.start
+        # Hours valued after the last save were lost with the process: run
+        # them again as the loop would have, peak and latch (A27-3, A27-10).
+        # The saved hour is valued before its orders with the saved holdings;
+        # later hours with the holdings the startup check confirmed, which
+        # include any order sent just before the crash (A27-9).
+        peak, stop_armed, missed = _replay(
+            series,
+            (resumed.record.balances, local.balances),
+            base,
+            (saved_at, config.start),
+            (peak, stop_armed),
+            config.loss_stop_fraction,
+            fires=controller.mode is not Mode.FREEZE,
         )
-        peak = max([peak, *unsaved])
         # A buy that filled before the crash, found by the startup check,
         # is a risk increase all the same (A27-2).
         last_increase = _last_increase(decision.report, last_increase)
+        if missed is not None:
+            # A breach in an hour the process was down still alerts, opens
+            # its incident and, from RUNNING, sells (S-4), now.
+            controller.trigger(
+                Trigger.LOSS_STOP,
+                ready,
+                f"missed at {missed.isoformat()} while the process was down",
+            )
+            stop_armed = False
     unsettled: list[Authorization] = []
     """Authorizations whose orders a failed or unclear outcome left
     unreconciled; their reservations wait for a passed reconciliation."""
@@ -765,7 +782,9 @@ def run_paper(
         save(check.at)
 
     def end_halt(hour: datetime, mark: Decimal) -> bool:
-        """The owner's section 14 override at `hour`; whether HALT ended."""
+        """The owner's section 14 override at `hour`. True when it was tried
+        (a reconciliation ran), whether HALT ended or not; False when it was
+        refused at once because the account is not in HALT."""
         nonlocal peak, stop_armed
         if controller.mode is not Mode.HALT:
             refuse_command(
@@ -781,7 +800,7 @@ def run_paper(
                 Trigger.RECONCILIATION_FAILED, check.at, "; ".join(check.differences)
             )
             save(check.at)
-            return False
+            return True
         wanted = ends[hour]
         override = HaltOverride(
             incident_ids=wanted.incident_ids,
@@ -795,7 +814,7 @@ def run_paper(
             controller.override_halt(override, check.at)
         except SafetyError as error:
             refuse_command(Trigger.HALT_OVERRIDE, check.at, str(error))
-            return False
+            return True
         recovered(check)
         # Q27-1, Q27-2: ending a HALT re-arms the loss stop from the equity
         # now, so it fires on the next 20% fall from here: at the last close
@@ -883,13 +902,16 @@ def run_paper(
                     f"not in FREEZE ({controller.mode})",
                 )
             if decision_time in ends and end_halt(decision_time, mark):
-                continue  # nothing trades in the hour HALT ends
+                # The hour ends with its override attempt, ended or not:
+                # nothing after it may be stamped before its reconciliation
+                # ended (A27-8), and only HALT or FREEZE can follow a refusal.
+                continue
             # Every breach alerts and opens an incident (deployment draft
             # section 5). It sells only from RUNNING: in HALT the owner's HALT
             # wins (OWNER_ANSWERS_2026-09-28.md, F24-1, F24R-1), and an owner
-            # FLATTEN simply goes on. Even a holding too small to sell alerts
-            # (A2324-2).
-            if breached and stop_armed:
+            # FLATTEN simply goes on. FREEZE is left alone until reconciled
+            # (T27-13). Even a holding too small to sell alerts (A2324-2).
+            if breached and stop_armed and controller.mode is not Mode.FREEZE:
                 keep = 1 - config.loss_stop_fraction
                 detail = f"equity {equity:.2f} below {keep} x peak {peak:.2f}"
                 controller.trigger(Trigger.LOSS_STOP, decision_time, detail)
@@ -1135,28 +1157,44 @@ def _resume(saved: AccountState, incidents: IncidentLog) -> tuple[Mode, datetime
     return mode, at
 
 
-def _equities(
+def _replay(
     series: BarSeries,
-    balances: Mapping[str, Decimal],
+    holdings: tuple[Mapping[str, Decimal], Mapping[str, Decimal]],
     base: str,
-    after: datetime,
-    before: datetime,
-) -> list[Decimal]:
-    """Equity at every decision hour from the hour of `after` until before
-    `before`, as the loop values it (the previous bar's close), for the bars
-    present. The saved hour is included: a save can precede its valuation."""
-    hour = after.replace(minute=0, second=0, microsecond=0)
-    values = []
-    while hour < before:
+    window: tuple[datetime, datetime],
+    latch: tuple[Decimal, bool],
+    fraction: Decimal,
+    *,
+    fires: bool,
+) -> tuple[Decimal, bool, datetime | None]:
+    """The loop's loss-stop bookkeeping for every decision hour from the
+    saved hour until the start, for the bars present: the peak, the latch,
+    and the first hour the stop would have fired, if any. `holdings` are the
+    saved ones (for the saved hour, valued before its orders) and the
+    confirmed ones (for every later hour). In FREEZE (`fires` false) the
+    stop neither fires nor disarms, as in the loop."""
+    saved, confirmed = holdings
+    saved_at, start = window
+    peak, armed = latch
+    missed: datetime | None = None
+    first = saved_at.replace(minute=0, second=0, microsecond=0)
+    hour = first
+    while hour < start:
         try:
             mark = Decimal(repr(series.bar_at(hour - HOUR).close))
         except Exception:  # noqa: BLE001 - no bar: that hour valued nothing
-            mark = None
-        if mark is not None:
-            held = balances.get(base, Decimal(0))
-            values.append(held * mark + balances.get(_QUOTE, Decimal(0)))
+            hour += HOUR
+            continue
+        held = saved if hour == first else confirmed
+        equity = held.get(base, Decimal(0)) * mark + held.get(_QUOTE, Decimal(0))
+        peak = max(peak, equity)
+        if equity >= peak * (1 - fraction):
+            armed = True
+        elif armed and fires:
+            missed = missed or hour
+            armed = False
         hour += HOUR
-    return values
+    return peak, armed, missed
 
 
 def _last_increase(

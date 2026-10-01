@@ -14,12 +14,13 @@ import pytest
 import aqt.app.paper_loop as loop
 from aqt.app.paper_loop import OwnerOverride, RunReport, nonce_for
 from aqt.app.state import AccountDir, AccountState, StateJournal
+from aqt.backtest.costs import Side as TradeSide
 from aqt.core.ledger import read_entries
 from aqt.data.bars import BarSeries
 from aqt.execution.orders import ExecutorConfig, client_order_id_for
 from aqt.execution.reconcile import LocalRecord
 from aqt.execution.safety import IncidentLog, Mode, OwnerAction, Trigger
-from aqt.execution.simulator import Fault, Scenario
+from aqt.execution.simulator import Fault, Order, OrderStatus, Scenario
 from aqt.monitoring.events import Event
 from tests.integration.test_paper_loop import (
     HOUR,
@@ -148,7 +149,10 @@ def test_ending_a_halt_rearms_the_loss_stop_from_equity_now(tmp_path: Path) -> N
         account, venue, series, START, middle, {START + 2 * HOUR: Trigger.OWNER_HALT}
     )
     state, saved_at = _saved(account)
-    account.journal.save(replace(state, peak=state.peak * 3), saved_at)
+    # A fall the stop already recorded: spent, far below the line.
+    account.journal.save(
+        replace(state, peak=state.peak * 3, stop_armed=False), saved_at
+    )
     ids = account.incident_log().open_incidents()
     at = middle  # before the loss check of that hour, in the first hour
 
@@ -425,3 +429,167 @@ def test_a_resumed_state_incident_is_replayed(tmp_path: Path) -> None:
     )
     incidents.open("STATE_RESUMED", "resumed HALT, no incident open", START + HOUR)
     assert loop._resume(saved, incidents) == (Mode.HALT, START + HOUR)
+
+
+class _Venue:
+    """A venue whose balances and orders are given; nothing trades."""
+
+    def __init__(
+        self, balances: dict[str, Decimal], orders: dict[str, Order] | None = None
+    ) -> None:
+        self._balances, self._orders = balances, orders or {}
+
+    def balances(self) -> dict[str, Decimal]:
+        return dict(self._balances)
+
+    def open_orders(self) -> tuple[()]:
+        return ()
+
+    def query_order(self, client_order_id: str) -> Order:
+        return self._orders[client_order_id]
+
+
+def _priced(prices: dict[datetime, float], default: float = 100.0) -> BarSeries:
+    bars = []
+    for bar in _series(24 * 14).bars:
+        price = prices.get(bar.open_time, default)
+        bars.append(replace(bar, open=price, high=price, low=price, close=price))
+    return BarSeries(symbol="BTCUSDT", bars=tuple(bars))
+
+
+def _seed(
+    account: AccountDir,
+    at: datetime,
+    mode: Mode,
+    balances: dict[str, Decimal],
+    peak: str,
+    armed: bool = True,
+    orders: dict[str, Order | None] | None = None,
+) -> None:
+    incidents = account.incident_log()
+    if mode is Mode.HALT:
+        incidents.open(str(Trigger.OWNER_HALT), "owner halt", at)
+    if mode is Mode.FREEZE:
+        incidents.open(str(Trigger.AMBIGUOUS_ORDER), "lost", at)
+    if not armed:
+        incidents.open(str(Trigger.LOSS_STOP), "earlier fall", at)
+    seen = len(read_entries(incidents.path)) if incidents.path.exists() else 0
+    account.journal.save(
+        AccountState(
+            mode=mode,
+            entered_at=at,
+            record=LocalRecord(balances, orders or {}),
+            sent={},
+            attempts={},
+            peak=Decimal(peak),
+            stop_armed=armed,
+            last_increase=None,
+            incidents_seen=seen,
+        ),
+        at,
+    )
+
+
+def _one_hour(
+    account: AccountDir, venue: _Venue, series: BarSeries, start: datetime, **kw: object
+) -> RunReport:
+    report = _run(
+        account.root,
+        _config(1, start=start, end=start + HOUR),
+        series,
+        incidents=account.incident_log(),
+        journal=account.journal,
+        venue=venue,
+        **kw,
+    )
+    assert report.refused == ()
+    return report
+
+
+def _losses(account: AccountDir) -> int:
+    return sum(
+        e.record_type == IncidentLog.OPEN
+        and e.payload["kind"] == str(Trigger.LOSS_STOP)
+        for e in read_entries(account.incidents_path)
+    )
+
+
+ONE_BTC = {"BTC": Decimal(1), "USDT": Decimal(0)}
+
+
+def test_a_refused_override_after_a_wait_ends_its_hour(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A27-8 (the reviewer's scenario): an override refused after a two-hour
+    reconciliation; the loss stop of that hour is not stamped before it."""
+    account = AccountDir(tmp_path / "a")
+    _seed(account, START - HOUR, Mode.HALT, ONE_BTC, "120")
+    invalid = replace(
+        _override(account.incident_log().open_incidents(), START), written_record=""
+    )
+    real = loop.reconcile
+
+    def delayed(*args: object, **kwargs: object) -> object:
+        report = real(*args, **kwargs)  # type: ignore[arg-type]
+        return replace(report, at=report.at + 2 * HOUR)
+
+    monkeypatch.setattr(loop, "reconcile", delayed)
+    _one_hour(
+        account, _Venue(ONE_BTC), _priced({}, 90.0), START, overrides={START: invalid}
+    )
+    stamps = [e.recorded_at_utc for e in read_entries(account.operations_path)]
+    assert stamps == sorted(stamps)
+
+
+def test_missed_hours_are_valued_with_the_confirmed_holdings(tmp_path: Path) -> None:
+    """A27-9 (the reviewer's scenario): a buy sent just before the crash
+    fills; while the process is down BTC closes at 120, then 90. The restart
+    values those hours with the bought BTC: peak 120, and the fall below 96
+    is recorded."""
+    buy = Order(
+        client_order_id="recovered-buy",
+        symbol="BTCUSDT",
+        side=TradeSide.BUY,
+        orig_qty=Decimal(1),
+        executed_qty=Decimal(1),
+        status=OrderStatus.FILLED,
+        decision_time=START,
+        fill_time=START,
+        fill_price=Decimal(100),
+        quote_amount=Decimal(100),
+        cost_quote=Decimal(0),
+        cost_bps=Decimal(0),
+        limit_price=None,
+    )
+    account = AccountDir(tmp_path / "a")
+    cash = {"BTC": Decimal(0), "USDT": Decimal(100)}
+    _seed(account, START, Mode.RUNNING, cash, "100", orders={buy.client_order_id: None})
+    restart = START + 3 * HOUR
+    series = _priced({START + HOUR: 120.0, START + 2 * HOUR: 90.0})
+    venue = _Venue(ONE_BTC, {buy.client_order_id: buy})
+    _one_hour(account, venue, series, restart, commands={restart: Trigger.OWNER_HALT})
+    saved = account.journal.load()
+    assert saved is not None and saved.last_increase == START
+    assert saved.peak == Decimal(120) and _losses(account) == 1
+
+
+def test_missed_hours_rearm_the_loss_stop(tmp_path: Path) -> None:
+    """A27-10 (the reviewer's scenario): a spent stop re-arms in a missed hour
+    back at the peak, and the next missed fall is recorded."""
+    account = AccountDir(tmp_path / "a")
+    _seed(account, START, Mode.HALT, ONE_BTC, "100", armed=False)
+    before = _losses(account)
+    series = _priced({START - HOUR: 70.0, START: 100.0, START + HOUR: 70.0})
+    _one_hour(account, _Venue(ONE_BTC), series, START + 2 * HOUR)
+    assert _losses(account) == before + 1
+
+
+def test_a_freeze_records_no_loss_stop(tmp_path: Path) -> None:
+    """T27-13: FREEZE is left alone until reconciled: a fall during it, live
+    or missed, opens no LOSS_STOP incident and leaves the stop armed."""
+    account = AccountDir(tmp_path / "a")
+    _seed(account, START, Mode.FREEZE, ONE_BTC, "100")
+    series = _priced({START: 70.0, START + HOUR: 70.0, START + 2 * HOUR: 70.0})
+    report = _one_hour(account, _Venue(ONE_BTC), series, START + 2 * HOUR)
+    assert report.final_mode == "FREEZE" and _losses(account) == 0
+    assert _saved(account)[0].stop_armed is True

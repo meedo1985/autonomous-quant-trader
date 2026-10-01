@@ -180,3 +180,15 @@ def test_a_foreign_entry_anywhere_in_the_journal_refuses(tmp_path: Path) -> None
     journal.save(_state(), T0 + timedelta(hours=1))
     with pytest.raises(StateError, match="unexpected record type"):
         journal.load_saved()
+
+
+def test_an_earlier_malformed_snapshot_refuses(tmp_path: Path) -> None:
+    """A27-12: every snapshot must parse exactly, not only the last."""
+    journal = StateJournal(tmp_path / "state.jsonl")
+    malformed = {**_state().as_mapping(), "attempts": {"x": "12"}}
+    append_entry(
+        journal.path, record_type=RECORD_TYPE, payload=malformed, recorded_at_utc=T0
+    )
+    journal.save(_state(), T0 + timedelta(hours=1))
+    with pytest.raises(StateError, match="exactly"):
+        journal.load_saved()
