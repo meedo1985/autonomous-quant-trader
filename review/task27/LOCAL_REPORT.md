@@ -244,3 +244,30 @@ Validation after these repairs (Python 3.14.4, Linux aarch64 proot, exit 0
 each): `pytest -q` 1692 passed, 4 skipped; `ruff check .`, `ruff format
 --check .`, `mypy src scripts`, `lint-imports` (6 kept), `git diff --check`
 clean; frozen verification (Python port) PASS. Not yet re-reviewed.
+
+## Astra re-review of `c6c8f06` and repairs
+
+Record: `ASTRA_REREVIEW_C6C8F06.md`, text-only. A27-8, A27-12, T27-13
+correct; A27-9, A27-10, A27-11 incomplete (via A27-13..A27-15). Verdict FIX.
+The reviewer's combined reproduction was run locally at `c6c8f06`: every
+case failed as predicted (A27-13 peak 120 with a LOSS_STOP; A27-14 one
+incident, not two; A27-15 prefix written for 1,3,3 and 1,3,2).
+
+| ID | Astra severity | Decision | Evidence and disposition | Validation |
+| --- | --- | --- | --- | --- |
+| A27-13 | BLOCKER | AGREE — repaired | A snapshot did not say whether its hour was already valued, so the replay valued an hour-end snapshot's post-buy holdings at the hour's earlier mark. Every snapshot now records `valued_through`, the last decision hour its peak and latch include; the replay starts the hour after it (the saved hour only when nothing was valued yet) and values every replayed hour with the holdings the startup check confirmed. Snapshot schema change: `valued_through` is a required field. | `test_an_hour_end_snapshot_is_not_valued_again` |
+| A27-14 | BLOCKER | AGREE — repaired | Startup set the latch to spent after raising a missed firing, discarding a later replayed re-arm. The latch now stays as the replay left it. | `test_a_missed_firing_keeps_the_replayed_latch` (two incidents) |
+| A27-15 | NON-BLOCKING | AGREE — repaired | The prefix rule looked only at the first break. The bars before a gap are kept only when the whole reply is strictly increasing; any duplicate or reordered bar refuses all of it. | `test_a_bad_bar_after_a_gap_still_stores_nothing` (1,3,3 and 1,3,2) |
+
+After the repairs the reviewer's reproduction passes except its A27-14 case,
+which seeds through the test helper `_seed`; that helper now defaults to a
+snapshot that has valued its own hour, so the seeded fall at H is no longer
+a missed hour. With the scenario as the reviewer describes it (snapshot
+valued through H-1, `valued=START - HOUR`) the case passes; the permanent
+test uses that seed. The new tests cannot run unchanged at `c6c8f06` (the
+snapshot field is new); each covers the reviewer's scenario as written.
+
+Validation after these repairs (Python 3.14.4, Linux aarch64 proot, exit 0
+each): `pytest -q` 1696 passed, 4 skipped; `ruff check .`, `ruff format
+--check .`, `mypy src scripts`, `lint-imports` (6 kept), `git diff --check`
+clean; frozen verification (Python port) PASS. Not yet re-reviewed.

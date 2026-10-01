@@ -113,6 +113,10 @@ class AccountState:
     peak: Decimal
     stop_armed: bool
     last_increase: datetime | None
+    valued_through: datetime | None
+    """The last decision hour whose valuation `peak` and `stop_armed`
+    include (`None` before any): a restart replays only later hours
+    (A27-13)."""
     zero_fills: int = 0
     incidents_seen: int = 0
     """Entries in the incident log when saved: an incident opened after it
@@ -122,8 +126,9 @@ class AccountState:
         object.__setattr__(
             self, "entered_at", require_utc(self.entered_at, field_name="entered_at")
         )
-        if self.last_increase is not None:
-            require_utc(self.last_increase, field_name="last_increase")
+        for name in ("last_increase", "valued_through"):
+            if getattr(self, name) is not None:
+                require_utc(getattr(self, name), field_name=name)
         if not self.peak.is_finite() or self.peak < 0:
             raise StateError(f"invalid peak {self.peak}")
         if self.zero_fills < 0 or self.incidents_seen < 0:
@@ -153,6 +158,9 @@ class AccountState:
             },
             "sent": {k: _order_out(v) for k, v in sorted(self.sent.items())},
             "stop_armed": self.stop_armed,
+            "valued_through": (
+                None if self.valued_through is None else self.valued_through.isoformat()
+            ),
             "zero_fills": self.zero_fills,
         }
 
@@ -176,6 +184,7 @@ class AccountState:
                     "stop_armed must be a bool, zero_fills and incidents_seen ints"
                 )
             last = data["last_increase"]
+            valued = data["valued_through"]
             state = cls(
                 mode=Mode(data["mode"]),
                 entered_at=_time(data["entered_at"], "entered_at"),
@@ -194,6 +203,9 @@ class AccountState:
                 peak=_decimal(data["peak"], "peak"),
                 stop_armed=stop_armed,
                 last_increase=None if last is None else _time(last, "last_increase"),
+                valued_through=(
+                    None if valued is None else _time(valued, "valued_through")
+                ),
                 zero_fills=zero_fills,
                 incidents_seen=seen,
             )

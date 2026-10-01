@@ -635,3 +635,19 @@ def test_a_duplicate_in_the_reply_stores_nothing(tmp_path: Path) -> None:
     with pytest.raises(LiveBarError, match="duplicate"):
         fetch_new_bars(Exchange(rows, now), store, "BTCUSDT", now, SKEW)
     assert store.path.read_bytes() == before
+
+
+@pytest.mark.parametrize("hours", [(1, 3, 3), (1, 3, 2)])
+def test_a_bad_bar_after_a_gap_still_stores_nothing(
+    tmp_path: Path, hours: tuple[int, ...]
+) -> None:
+    """A27-15: a duplicate or reordered bar anywhere refuses the whole reply,
+    even after a forward gap; only a clean gap keeps the bars before it."""
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    store.append(_closed(1))
+    before = store.path.read_bytes()
+    rows = [_row(T0 + i * HOUR) for i in hours]
+    now = T0 + 5 * HOUR
+    with pytest.raises(LiveBarError, match="duplicate or out of order|gap"):
+        fetch_new_bars(Exchange(rows, now), store, "BTCUSDT", now, SKEW)
+    assert store.path.read_bytes() == before

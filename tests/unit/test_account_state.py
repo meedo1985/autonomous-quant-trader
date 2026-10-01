@@ -58,6 +58,7 @@ def _state(**changes: object) -> AccountState:
         peak=Decimal("10000.000000000000001"),
         stop_armed=False,
         last_increase=T0,
+        valued_through=T0 + timedelta(hours=1),
         zero_fills=2,
     )
     return replace(base, **changes)

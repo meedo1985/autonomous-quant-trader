@@ -693,20 +693,21 @@ def run_paper(
     base = config.symbol.removesuffix(_QUOTE)
     peak = Decimal(0)
     stop_armed = True  # L-03 fires once per fall below the line
+    valued: datetime | None = None  # the last hour `peak` includes
     zero_fills = 0
     if resumed is not None:
         peak, stop_armed = resumed.peak, resumed.stop_armed
         last_increase, zero_fills = resumed.last_increase, resumed.zero_fills
         # Hours valued after the last save were lost with the process: run
-        # them again as the loop would have, peak and latch (A27-3, A27-10).
-        # The saved hour is valued before its orders with the saved holdings;
-        # later hours with the holdings the startup check confirmed, which
-        # include any order sent just before the crash (A27-9).
-        peak, stop_armed, missed = _replay(
+        # them again as the loop would have, peak and latch (A27-3, A27-10),
+        # from the hour after the last one the snapshot valued (A27-13), with
+        # the holdings the startup check confirmed, which include any order
+        # sent just before the crash (A27-9).
+        peak, stop_armed, valued, missed = _replay(
             series,
-            (resumed.record.balances, local.balances),
+            local.balances,
             base,
-            (saved_at, config.start),
+            (resumed.valued_through, saved_at, config.start),
             (peak, stop_armed),
             config.loss_stop_fraction,
             fires=controller.mode is not Mode.FREEZE,
@@ -722,7 +723,8 @@ def run_paper(
                 ready,
                 f"missed at {missed.isoformat()} while the process was down",
             )
-            stop_armed = False
+            # The latch stays as the replay left it: a later missed hour
+            # back above the line re-armed it (A27-14).
     unsettled: list[Authorization] = []
     """Authorizations whose orders a failed or unclear outcome left
     unreconciled; their reservations wait for a passed reconciliation."""
@@ -744,6 +746,7 @@ def run_paper(
                 peak=peak,
                 stop_armed=stop_armed,
                 last_increase=last_increase,
+                valued_through=valued,
                 zero_fills=zero_fills,
                 incidents_seen=seen,
             ),
@@ -883,6 +886,7 @@ def run_paper(
             held = local.balances.get(base, Decimal(0))
             equity = held * mark + local.balances.get(_QUOTE, Decimal(0))
             peak = max(peak, equity)
+            valued = decision_time
             breached = equity < peak * (1 - config.loss_stop_fraction)
             if not breached:
                 stop_armed = True
@@ -1159,42 +1163,46 @@ def _resume(saved: AccountState, incidents: IncidentLog) -> tuple[Mode, datetime
 
 def _replay(
     series: BarSeries,
-    holdings: tuple[Mapping[str, Decimal], Mapping[str, Decimal]],
+    holdings: Mapping[str, Decimal],
     base: str,
-    window: tuple[datetime, datetime],
+    window: tuple[datetime | None, datetime, datetime],
     latch: tuple[Decimal, bool],
     fraction: Decimal,
     *,
     fires: bool,
-) -> tuple[Decimal, bool, datetime | None]:
-    """The loop's loss-stop bookkeeping for every decision hour from the
-    saved hour until the start, for the bars present: the peak, the latch,
-    and the first hour the stop would have fired, if any. `holdings` are the
-    saved ones (for the saved hour, valued before its orders) and the
-    confirmed ones (for every later hour). In FREEZE (`fires` false) the
-    stop neither fires nor disarms, as in the loop."""
-    saved, confirmed = holdings
-    saved_at, start = window
+) -> tuple[Decimal, bool, datetime | None, datetime | None]:
+    """The loop's loss-stop bookkeeping for every decision hour the snapshot
+    has not valued, until the start, for the bars present: the peak, the
+    latch, the last hour valued, and the first hour the stop would have
+    fired, if any. `window` is the snapshot's `valued_through`, its save
+    time and the start; with nothing valued yet the saved hour is the first.
+    `holdings` are those the startup check confirmed. In FREEZE (`fires`
+    false) the stop neither fires nor disarms, as in the loop."""
+    valued, saved_at, start = window
     peak, armed = latch
     missed: datetime | None = None
-    first = saved_at.replace(minute=0, second=0, microsecond=0)
-    hour = first
+    if valued is None:
+        hour = saved_at.replace(minute=0, second=0, microsecond=0)
+    else:
+        hour = valued + HOUR
     while hour < start:
         try:
             mark = Decimal(repr(series.bar_at(hour - HOUR).close))
         except Exception:  # noqa: BLE001 - no bar: that hour valued nothing
             hour += HOUR
             continue
-        held = saved if hour == first else confirmed
-        equity = held.get(base, Decimal(0)) * mark + held.get(_QUOTE, Decimal(0))
+        equity = holdings.get(base, Decimal(0)) * mark + holdings.get(
+            _QUOTE, Decimal(0)
+        )
         peak = max(peak, equity)
+        valued = hour
         if equity >= peak * (1 - fraction):
             armed = True
         elif armed and fires:
             missed = missed or hour
             armed = False
         hour += HOUR
-    return peak, armed, missed
+    return peak, armed, valued, missed
 
 
 def _last_increase(

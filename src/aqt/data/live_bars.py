@@ -23,6 +23,7 @@ import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 from pathlib import Path
 from typing import Final
 from urllib.parse import urlencode
@@ -442,7 +443,8 @@ def fetch_new_bars(
             whole < len(bars) and bars[whole].open_time == begin + whole * BAR_INTERVAL
         ):
             whole += 1
-        if whole < len(bars) and bars[whole].open_time < begin + whole * BAR_INTERVAL:
+        ordered = all(a.open_time < b.open_time for a, b in pairwise(bars))
+        if whole < len(bars) and not ordered:
             store.append(bars, first=begin)  # refuses, nothing stored
         store.append(bars[:whole], first=begin)
         appended += whole

@@ -387,6 +387,7 @@ def test_a_peak_valued_but_not_saved_is_valued_again(
             peak=Decimal("100"),
             stop_armed=True,
             last_increase=None,
+            valued_through=prior,
             incidents_seen=1,
         ),
         prior,
@@ -426,6 +427,7 @@ def test_a_resumed_state_incident_is_replayed(tmp_path: Path) -> None:
         peak=Decimal(1),
         stop_armed=True,
         last_increase=None,
+        valued_through=None,
     )
     incidents.open("STATE_RESUMED", "resumed HALT, no incident open", START + HOUR)
     assert loop._resume(saved, incidents) == (Mode.HALT, START + HOUR)
@@ -465,7 +467,10 @@ def _seed(
     peak: str,
     armed: bool = True,
     orders: dict[str, Order | None] | None = None,
+    valued: datetime | None = None,
 ) -> None:
+    """A snapshot saved at `at` that has valued up to `valued` (default: the
+    hour `at` itself, as an hour-end or pre-send snapshot has)."""
     incidents = account.incident_log()
     if mode is Mode.HALT:
         incidents.open(str(Trigger.OWNER_HALT), "owner halt", at)
@@ -484,6 +489,7 @@ def _seed(
             peak=Decimal(peak),
             stop_armed=armed,
             last_increase=None,
+            valued_through=at if valued is None else valued,
             incidents_seen=seen,
         ),
         at,
@@ -593,3 +599,32 @@ def test_a_freeze_records_no_loss_stop(tmp_path: Path) -> None:
     report = _one_hour(account, _Venue(ONE_BTC), series, START + 2 * HOUR)
     assert report.final_mode == "FREEZE" and _losses(account) == 0
     assert _saved(account)[0].stop_armed is True
+
+
+def test_an_hour_end_snapshot_is_not_valued_again(tmp_path: Path) -> None:
+    """A27-13 (the reviewer's scenario): the hour-end snapshot of a buy
+    already holds the BTC. Its hour is not valued again with those holdings
+    at the earlier mark, so no peak of 120 is invented and no stop fires."""
+    account = AccountDir(tmp_path / "a")
+    _seed(account, START, Mode.RUNNING, ONE_BTC, "100")
+    restart = START + HOUR
+    series = _priced({START - HOUR: 120.0, START: 90.0})
+    _one_hour(
+        account,
+        _Venue(ONE_BTC),
+        series,
+        restart,
+        commands={restart: Trigger.OWNER_HALT},
+    )
+    saved = account.journal.load()
+    assert saved is not None and saved.peak == Decimal(100) and _losses(account) == 0
+
+
+def test_a_missed_firing_keeps_the_replayed_latch(tmp_path: Path) -> None:
+    """A27-14 (the reviewer's scenario): a missed fall at H, a missed return
+    at H+1, then a new fall in the first live hour: two LOSS_STOP incidents."""
+    account = AccountDir(tmp_path / "a")
+    _seed(account, START, Mode.HALT, ONE_BTC, "100", valued=START - HOUR)
+    series = _priced({START - HOUR: 70.0, START: 100.0, START + HOUR: 70.0})
+    _one_hour(account, _Venue(ONE_BTC), series, START + 2 * HOUR)
+    assert _losses(account) == 2
