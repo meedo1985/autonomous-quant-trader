@@ -8,8 +8,10 @@ host, no key, signature or auth header, redirects refused.
 Every row passes the `aqt.data.bars` checks and must span exactly its hour.
 The bar still forming is left out; a malformed or irregular closed bar is
 refused, never skipped. Bars are appended to a local store that accepts only
-the next hour: a gap, a duplicate or an out-of-order bar refuses the whole
-batch, and nothing is filled or corrected (Constitution section 6). A clock
+the next hour: a duplicate or an out-of-order bar refuses the whole batch; at
+a gap the bars before it are stored and the rest refused. Nothing is filled
+or corrected (Constitution section 6); the store continues after a gap only
+on the owner's signed gap record (Q27-3). A clock
 more than `max_skew` away from Binance's refuses the fetch (owner setting
 S-5: 5 s).
 """
@@ -61,6 +63,19 @@ KLINES_URL: Final[str] = "https://data-api.binance.vision/api/v3/klines"
 TIME_URL: Final[str] = "https://data-api.binance.vision/api/v3/time"
 MAX_LIMIT: Final[int] = 1000
 _HOUR_MS: Final[int] = 3_600_000
+_BAR_KEYS: Final = frozenset(
+    {"close", "high", "low", "open", "open_time", "symbol", "volume"}
+)
+_GAP_KEYS: Final = frozenset(
+    {
+        "gap_actor",
+        "gap_first_missing",
+        "gap_recorded_at",
+        "gap_resumes_at",
+        "gap_statement",
+        "symbol",
+    }
+)
 
 
 class LiveBarError(RuntimeError):
@@ -127,6 +142,21 @@ class GapRecord:
     statement: str
     recorded_at: datetime
 
+    def __post_init__(self) -> None:
+        """The whole contract, on writing and on reading (A27-5)."""
+        if not all(
+            isinstance(t, str) and t.strip() for t in (self.actor, self.statement)
+        ):
+            raise LiveBarError("a gap record needs the owner's name and statement")
+        try:
+            for name in ("first_missing", "resumes_at"):
+                require_aligned_utc(getattr(self, name), BAR_INTERVAL, field_name=name)
+            require_utc(self.recorded_at, field_name="recorded_at")
+        except BarSemanticsError as error:
+            raise LiveBarError(str(error)) from None
+        if self.resumes_at <= self.first_missing:
+            raise LiveBarError(f"gap record ends at {self.resumes_at.isoformat()}")
+
     def as_row(self, symbol: str) -> dict[str, str]:
         return {
             "gap_actor": self.actor,
@@ -173,6 +203,9 @@ class LiveBarStore:
             where = f"{self.path} line {number}"
             try:
                 row = json.loads(line)
+                if not isinstance(row, dict) or set(row) not in (_BAR_KEYS, _GAP_KEYS):
+                    # Exactly a bar or exactly a gap record, nothing mixed (A27-5).
+                    raise ValueError("not a bar row or a gap record row")
                 symbol = row["symbol"]
                 if "gap_first_missing" in row:
                     gap = GapRecord(
@@ -191,7 +224,13 @@ class LiveBarStore:
                         row["close"],
                         row["volume"],
                     )
-            except (ValueError, KeyError, TypeError, BarSemanticsError) as error:
+            except (
+                ValueError,
+                KeyError,
+                TypeError,
+                BarSemanticsError,
+                LiveBarError,
+            ) as error:
                 # A torn or edited line: refuse, naming it (F26-2).
                 raise LiveBarError(f"{where}: {error}") from None
             if symbol != self.symbol:
@@ -229,27 +268,24 @@ class LiveBarStore:
         return self._read()[2]
 
     def acknowledge_gap(
-        self, resumes_at: datetime, actor: str, statement: str, at: datetime
+        self,
+        first_missing: datetime,
+        resumes_at: datetime,
+        actor: str,
+        statement: str,
+        at: datetime,
     ) -> GapRecord:
         """Record the owner's signed statement that Binance has no bars from
-        the store's next hour until `resumes_at` (Q27-3). Refused unless
-        `resumes_at` is a later hour and the owner and statement are given."""
-        if not actor.strip() or not statement.strip():
-            raise LiveBarError("a gap record needs the owner's name and statement")
-        try:
-            resumes_at = require_aligned_utc(
-                resumes_at, BAR_INTERVAL, field_name="resumes_at"
-            )
-            at = require_utc(at, field_name="at")
-        except BarSemanticsError as error:
-            raise LiveBarError(str(error)) from None
+        `first_missing` until `resumes_at` (Q27-3). `first_missing` must be
+        the hour the store's next bar is due, so every bar before the gap is
+        stored first and no valid hour is called missing (A27-4)."""
+        gap = GapRecord(first_missing, resumes_at, actor, statement, at)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
             with _exclusive_lock(self.path):
                 expected = self._read()[2]
                 if expected is None:
                     raise LiveBarError("an empty store has no gap to record")
-                gap = GapRecord(expected, resumes_at, actor, statement, at)
                 _require_gap(gap, expected)
                 self._write([gap.as_row(self.symbol)])
         except LedgerError as error:  # the lock was not acquired
@@ -311,8 +347,6 @@ def _require_gap(gap: GapRecord, expected: datetime | None) -> None:
         raise LiveBarError(
             f"gap record from {gap.first_missing.isoformat()} where {due} is next"
         )
-    if gap.resumes_at <= gap.first_missing:
-        raise LiveBarError(f"gap record ends at {gap.resumes_at.isoformat()}")
 
 
 def _require_next(bar: Bar, expected: datetime | None) -> None:
@@ -400,8 +434,17 @@ def fetch_new_bars(
         )
         bars = parse_klines(_get(transport, f"{KLINES_URL}?{query}"), cutoff)
         bars = tuple(b for b in bars if b.open_time >= begin)
-        store.append(bars, first=begin)
-        appended += len(bars)
+        # The bars before a gap are stored, then the gap refuses: the owner
+        # can then record exactly the missing hours (A27-4, Q27-3).
+        whole = 0
+        while (
+            whole < len(bars) and bars[whole].open_time == begin + whole * BAR_INTERVAL
+        ):
+            whole += 1
+        store.append(bars[:whole], first=begin)
+        appended += whole
+        if whole < len(bars):
+            store.append(bars[whole:], first=begin)  # refuses, naming the gap
         if len(bars) < MAX_LIMIT - 1:
             break
         begin = bars[-1].open_time + BAR_INTERVAL

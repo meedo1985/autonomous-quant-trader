@@ -111,14 +111,15 @@ def test_a_second_fetch_resumes_after_the_last_bar(tmp_path: Path) -> None:
     assert int(start) == _ms(T0 + 3 * HOUR)
 
 
-def test_a_gap_in_the_reply_appends_nothing(tmp_path: Path) -> None:
+def test_a_gap_in_the_reply_stores_only_the_bars_before_it(tmp_path: Path) -> None:
+    """A27-4: the bars before the gap are stored, nothing after it."""
     rows = _hours(5)
     del rows[2]  # Binance skipped an hour
     store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
     now = T0 + 5 * HOUR
     with pytest.raises(LiveBarError, match="gap"):
         fetch_new_bars(Exchange(rows, now), store, "BTCUSDT", now, SKEW, start=T0)
-    assert store.bars() == ()
+    assert [b.open_time for b in store.bars()] == [T0, T0 + HOUR]
 
 
 def test_a_gap_at_the_start_is_refused(tmp_path: Path) -> None:
@@ -478,7 +479,9 @@ def test_a_signed_gap_record_lets_the_store_continue_after_a_real_gap(
     now = T0 + 5 * HOUR
     with pytest.raises(LiveBarError, match="gap"):
         fetch_new_bars(Exchange(rows, now), store, "BTCUSDT", now, SKEW)
-    gap = store.acknowledge_gap(T0 + 3 * HOUR, "owner", "Binance outage", now)
+    gap = store.acknowledge_gap(
+        T0 + 2 * HOUR, T0 + 3 * HOUR, "owner", "Binance outage", now
+    )
     assert (gap.first_missing, gap.resumes_at) == (T0 + 2 * HOUR, T0 + 3 * HOUR)
     exchange = Exchange(rows, now)
     result = fetch_new_bars(exchange, store, "BTCUSDT", now, SKEW)
@@ -507,14 +510,14 @@ def test_a_gap_record_is_refused_unless_complete(
     store.append(_closed(1))
     before = store.path.read_bytes()
     with pytest.raises(LiveBarError, match=match):
-        store.acknowledge_gap(resumes_at, actor, statement, T0 + 5 * HOUR)
+        store.acknowledge_gap(T0 + HOUR, resumes_at, actor, statement, T0 + 5 * HOUR)
     assert store.path.read_bytes() == before
 
 
 def test_an_empty_store_has_no_gap_to_record(tmp_path: Path) -> None:
     store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
     with pytest.raises(LiveBarError, match="empty store"):
-        store.acknowledge_gap(T0 + 3 * HOUR, "owner", "outage", T0 + 5 * HOUR)
+        store.acknowledge_gap(T0, T0 + 3 * HOUR, "owner", "outage", T0 + 5 * HOUR)
 
 
 def test_an_edited_gap_record_is_refused(tmp_path: Path) -> None:
@@ -522,7 +525,9 @@ def test_an_edited_gap_record_is_refused(tmp_path: Path) -> None:
     whole store, like any other break in the history."""
     store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
     store.append(_closed(2))
-    store.acknowledge_gap(T0 + 4 * HOUR, "owner", "outage", T0 + 5 * HOUR)
+    store.acknowledge_gap(
+        T0 + 2 * HOUR, T0 + 4 * HOUR, "owner", "outage", T0 + 5 * HOUR
+    )
     text = store.path.read_text("utf-8")
     moved = (T0 + 3 * HOUR).isoformat()
     store.path.write_text(text.replace((T0 + 2 * HOUR).isoformat(), moved), "utf-8")
@@ -553,8 +558,66 @@ def test_the_cli_signs_a_gap_without_any_request(
         "--store",
         str(store.path),
         "--acknowledge-gap",
+        "2026-09-29T02:00:00+00:00",
         "2026-09-29T05:00:00+00:00",
     ]
     assert module.main([*args, "--actor", "owner", "--statement", "outage"]) == 0
     assert store.next_open_time() == T0 + 5 * HOUR
     assert module.main([*args, "--actor", "owner"]) == 2  # unsigned: refused
+
+
+def test_a_gap_record_names_exactly_the_missing_hours(tmp_path: Path) -> None:
+    """A27-4 (the reviewer's scenario): the store holds hour 0, Binance has
+    hours 1 and 3. The fetch stores hour 1; only hour 2 can be recorded as
+    missing, never the valid hour 1."""
+    rows = [_row(T0 + i * HOUR) for i in (0, 1, 3)]
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    store.append(_closed(1))
+    now = T0 + 4 * HOUR
+    with pytest.raises(LiveBarError, match="gap"):
+        fetch_new_bars(Exchange(rows, now), store, "BTCUSDT", now, SKEW)
+    assert store.next_open_time() == T0 + 2 * HOUR
+    with pytest.raises(LiveBarError, match="gap record from"):
+        store.acknowledge_gap(T0 + HOUR, T0 + 3 * HOUR, "owner", "outage", now)
+    gap = store.acknowledge_gap(T0 + 2 * HOUR, T0 + 3 * HOUR, "owner", "outage", now)
+    assert gap.first_missing == T0 + 2 * HOUR
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"gap_actor": "", "gap_statement": ""},  # unsigned
+        {"gap_recorded_at": "2026-09-29T04:00:00"},  # not UTC
+        {"gap_resumes_at": (T0 + 2 * HOUR + timedelta(minutes=1)).isoformat()},
+    ],
+)
+def test_a_gap_record_is_checked_in_full_when_read(
+    tmp_path: Path, change: dict[str, str]
+) -> None:
+    """A27-5: reading enforces the whole gap contract, not only its place."""
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    store.append(_closed(2))
+    store.acknowledge_gap(T0 + 2 * HOUR, T0 + 3 * HOUR, "owner", "outage", T0)
+    rows = [json.loads(line) for line in store.path.read_text("utf-8").splitlines()]
+    rows[-1].update(change)
+    store.path.write_text("".join(json.dumps(r) + "\n" for r in rows), "utf-8")
+    with pytest.raises(LiveBarError, match="line 3"):
+        store.bars()
+
+
+def test_a_bar_row_cannot_be_turned_into_a_gap(tmp_path: Path) -> None:
+    """A27-5 (the reviewer's scenario): gap fields added to a stored bar row
+    are refused; the bar cannot vanish behind them."""
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    store.append(_closed(3))
+    rows = [json.loads(line) for line in store.path.read_text("utf-8").splitlines()]
+    rows[1].update(
+        gap_first_missing=(T0 + HOUR).isoformat(),
+        gap_resumes_at=(T0 + 2 * HOUR).isoformat(),
+        gap_actor="owner",
+        gap_statement="outage",
+        gap_recorded_at=T0.isoformat(),
+    )
+    store.path.write_text("".join(json.dumps(r) + "\n" for r in rows), "utf-8")
+    with pytest.raises(LiveBarError, match="line 2: not a bar row or a gap"):
+        store.bars()

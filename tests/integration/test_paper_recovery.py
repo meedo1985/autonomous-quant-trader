@@ -13,13 +13,14 @@ import pytest
 
 import aqt.app.paper_loop as loop
 from aqt.app.paper_loop import OwnerOverride, RunReport, nonce_for
-from aqt.app.state import AccountDir
+from aqt.app.state import AccountDir, AccountState, StateJournal
 from aqt.core.ledger import read_entries
 from aqt.data.bars import BarSeries
 from aqt.execution.orders import ExecutorConfig, client_order_id_for
 from aqt.execution.reconcile import LocalRecord
-from aqt.execution.safety import IncidentLog, OwnerAction, Trigger
+from aqt.execution.safety import IncidentLog, Mode, OwnerAction, Trigger
 from aqt.execution.simulator import Fault, Scenario
+from aqt.monitoring.events import Event
 from tests.integration.test_paper_loop import (
     HOUR,
     _config,
@@ -281,3 +282,146 @@ def test_a_failed_reconciliation_at_the_override_freezes(
     assert report.final_mode == "FREEZE"
     assert len(account.incident_log().open_incidents()) == len(ids) + 1
     assert _saved(account)[0].mode.value == "FREEZE"
+
+
+def test_saves_follow_a_recovery_that_waited(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A27-1 (the reviewer's scenario): the override's reconciliation ends
+    two hours after it began. No later save and no SHUTDOWN is stamped
+    before it."""
+    series = _series(24 * 14)
+    account, venue = AccountDir(tmp_path / "a"), _venue(series)
+    _account(account, venue, series, START, START + HOUR, {START: Trigger.OWNER_HALT})
+    at = START + HOUR
+    real = loop.reconcile
+
+    def delayed(*args: object, **kwargs: object) -> object:
+        report = real(*args, **kwargs)  # type: ignore[arg-type]
+        return replace(report, at=report.at + 2 * HOUR)
+
+    monkeypatch.setattr(loop, "reconcile", delayed)
+    ids = account.incident_log().open_incidents()
+    _run(
+        account.root,
+        _config(1, start=at, end=at + HOUR),
+        series,
+        incidents=account.incident_log(),
+        journal=account.journal,
+        venue=venue,
+        overrides={at: _override(ids, at)},
+    )
+    for path in (account.journal.path, account.operations_path):
+        stamps = [e.recorded_at_utc for e in read_entries(path)]
+        assert stamps == sorted(stamps), path.name
+
+
+class _Killed(BaseException):
+    """A hard kill: nothing after it runs."""
+
+
+def test_a_buy_filled_before_a_crash_keeps_its_risk_increase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A27-2 (the reviewer's scenario): killed after the buy filled, before
+    its bookkeeping. The restart finds the fill and restores the governor's
+    last risk increase from it."""
+    series = _series(24 * 14)
+    account, venue = AccountDir(tmp_path / "a"), _venue(series)
+    real = loop.AlertRouter.emit
+
+    def kill_after_buy(self: loop.AlertRouter, event: Event) -> None:
+        fields = event.fields
+        if str(event.kind) == "ORDER" and fields.get("side") == "BUY":
+            if fields.get("executed_qty") not in (None, "0"):
+                raise _Killed
+        real(self, event)
+
+    with monkeypatch.context() as patch, pytest.raises(_Killed):
+        patch.setattr(loop.AlertRouter, "emit", kill_after_buy)
+        _account(account, venue, series, START, START + HOUR)
+    loop.refuse_marker_path(account.incident_log()).unlink()
+    report = _account(account, venue, series, START + HOUR, START + 2 * HOUR)
+    assert report.refused == ()
+    assert _saved(account)[0].last_increase == START
+
+
+def test_a_peak_valued_but_not_saved_is_valued_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A27-3 (the reviewer's scenario): saved peak 100, an hour values 120,
+    the process dies before saving it. The restart values that hour again
+    from the bars, so the peak is 120 and the 20% line 96, not 80."""
+    bars = []
+    for bar in _series(24 * 14).bars:
+        price = 120.0 if bar.open_time == START else 100.0
+        if bar.open_time == START + HOUR:
+            price = 90.0
+        bars.append(replace(bar, open=price, high=price, low=price, close=price))
+    series = BarSeries(symbol="BTCUSDT", bars=tuple(bars))
+
+    class Venue:
+        def balances(self) -> dict[str, Decimal]:
+            return {"BTC": Decimal("1"), "USDT": Decimal("0")}
+
+        def open_orders(self) -> tuple[()]:
+            return ()
+
+        def query_order(self, client_order_id: str) -> None:
+            raise AssertionError(client_order_id)
+
+    account, venue = AccountDir(tmp_path / "a"), Venue()
+    prior = START - HOUR
+    account.incident_log().open(str(Trigger.OWNER_HALT), "owner halt", prior)
+    account.journal.save(
+        AccountState(
+            mode=Mode.HALT,
+            entered_at=prior,
+            record=LocalRecord(venue.balances()),
+            sent={},
+            attempts={},
+            peak=Decimal("100"),
+            stop_armed=True,
+            last_increase=None,
+            incidents_seen=1,
+        ),
+        prior,
+    )
+    real = StateJournal.save
+
+    def killed_save(self: StateJournal, state: AccountState, at: datetime) -> None:
+        if state.peak == Decimal("120"):
+            raise _Killed
+        real(self, state, at)
+
+    with monkeypatch.context() as patch, pytest.raises(_Killed):
+        patch.setattr(StateJournal, "save", killed_save)
+        _account(account, venue, series, START + HOUR, START + 2 * HOUR)  # type: ignore[arg-type]
+    loop.refuse_marker_path(account.incident_log()).unlink()
+    report = _account(account, venue, series, START + 2 * HOUR, START + 3 * HOUR)  # type: ignore[arg-type]
+    assert report.refused == ()
+    assert _saved(account)[0].peak == Decimal("120")
+    kinds = [
+        e.payload["kind"]
+        for e in read_entries(account.incidents_path)
+        if e.record_type == IncidentLog.OPEN
+    ]
+    assert str(Trigger.LOSS_STOP) in kinds  # 90 is below 96: recorded in HALT
+
+
+def test_a_resumed_state_incident_is_replayed(tmp_path: Path) -> None:
+    """A27-7: a crash after STATE_RESUMED is opened but before it is saved;
+    replaying it keeps HALT instead of refusing the start."""
+    incidents = IncidentLog(tmp_path / "incidents.jsonl")
+    saved = AccountState(
+        mode=Mode.HALT,
+        entered_at=START,
+        record=LocalRecord({"USDT": Decimal(1)}),
+        sent={},
+        attempts={},
+        peak=Decimal(1),
+        stop_armed=True,
+        last_increase=None,
+    )
+    incidents.open("STATE_RESUMED", "resumed HALT, no incident open", START + HOUR)
+    assert loop._resume(saved, incidents) == (Mode.HALT, START + HOUR)

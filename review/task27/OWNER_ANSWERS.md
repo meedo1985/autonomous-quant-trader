@@ -40,3 +40,19 @@ RUNNING with an open incident is still refused."
 
 Effect: the part b1 behaviour of `startup_check(resuming=...)` stands. This
 answer changes no frozen file and no loss bound.
+
+## Q27-3 follow-up: how a gap record is signed (asked 2026-10-01, Astra A27-5)
+
+Asked by Claude Opus 5.5: "when Binance has a real gap, you 'sign' a record
+so the live price store can continue. Right now the signature is your name
+and a statement saved in the store file, which anyone with access to the
+file could edit. How strong should it be?" — **"Name + statement
+(Recommended)"**: "Keep it as now: the app checks the record is complete and
+in the right place, but the file itself can be edited. Simple, enough for
+paper trading; can be strengthened before real money."
+
+Effect: "signed" in Q27-3 means the owner's name and statement in the gap
+record, checked in full on every read. The words "signed, committed" in the
+"Effect on Task 27" section above were the AI's paraphrase; this answer
+settles them. Tamper evidence for the store stays open (T27-10) and is to be
+revisited before any real-money use.

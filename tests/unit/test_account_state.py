@@ -154,3 +154,29 @@ def test_snapshots_are_canonical_json(tmp_path: Path) -> None:
     line = json.loads(journal.path.read_text("utf-8").splitlines()[0])
     assert line["payload"]["peak"] == "10000.000000000000001"
     assert line["payload"]["record"]["balances"]["USDT"] == "1234.567890123456789"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"attempts": {"x": "12"}},  # a string read as a pair
+        {"attempts": {"x": ["1", "2", "3"]}},  # truncated to two
+        {"unknown": 1},  # an unknown field
+        {"peak": "1.0e3"},  # parses, but not as written
+    ],
+)
+def test_a_snapshot_must_parse_exactly(change: dict[str, object]) -> None:
+    """A27-6: a snapshot is accepted only if it is exactly what the state
+    writes."""
+    payload = {**_state().as_mapping(), **change}
+    with pytest.raises(StateError, match="exactly|parse"):
+        AccountState.from_mapping(payload)
+
+
+def test_a_foreign_entry_anywhere_in_the_journal_refuses(tmp_path: Path) -> None:
+    """A27-6: every entry is a snapshot, not only the last."""
+    journal = StateJournal(tmp_path / "state.jsonl")
+    append_entry(journal.path, record_type="other.v1", payload={}, recorded_at_utc=T0)
+    journal.save(_state(), T0 + timedelta(hours=1))
+    with pytest.raises(StateError, match="unexpected record type"):
+        journal.load_saved()

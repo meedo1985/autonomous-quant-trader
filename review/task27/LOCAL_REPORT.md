@@ -188,3 +188,30 @@ rerun (T27-12). Windows was not exercised (the lock's `msvcrt` branch).
 Local gate: PASS for part b2 with T27-10, T27-11, T27-12 open. Required
 before merge: different-model (Astra) review and the owner's section 16
 walkthrough.
+
+## Astra review of `2b94313` and repairs
+
+Record: `ASTRA_REVIEW_2B94313.md` (committed `bf21419`), text-only (the
+Codex sandbox cannot start here). Verdict FIX. Every reproduction in the
+record was then run locally (`.venv`, `PYTHONPATH=.`) at `2b94313`: all
+seven failed as the reviewer predicted. After the repairs all seven pass.
+
+| ID | Astra severity | Decision | Evidence and disposition | Validation |
+| --- | --- | --- | --- | --- |
+| A27-1 | BLOCKER | AGREE — repaired | The hourly and final saves and SHUTDOWN used the hour's start, not the end of a reconciliation that waited; journal and log stamps went back (reproduced: `...03:00Z`, then `...01:00Z`). They now use the later of the two. The override's peak reset values equity at the last close before its reconciliation ended. | `test_saves_follow_a_recovery_that_waited` |
+| A27-2 | BLOCKER | AGREE — repaired | A buy filled before a crash and found by the startup check left `last_increase` unset (reproduced: `None`). Any filled buy a passed reconciliation resolves, at startup or in a recovery, now moves `last_increase` to its decision time. | `test_a_buy_filled_before_a_crash_keeps_its_risk_increase` |
+| A27-3 | BLOCKER | AGREE — repaired | A peak valued but not saved was lost (reproduced: 100, not 120). On resume every decision hour from the saved hour to the start is valued again from the bars and the saved holdings; the saved hour is included because a save can precede its valuation. Holdings are the saved ones: an order sent after the last save is resolved by the startup check, not replayed into the peak. | `test_a_peak_valued_but_not_saved_is_valued_again` (also asserts the LOSS_STOP incident in HALT) |
+| A27-4 | BLOCKER | AGREE — repaired | A gap record began at the store's next hour even when valid bars before the gap had been refused with the batch (reproduced). A fetch now stores the bars before a gap and then refuses; `append` itself stays all-or-nothing. `acknowledge_gap` takes the first missing hour from the owner and refuses unless it is the hour the store expects. CLI: `--acknowledge-gap FIRST_MISSING RESUMES_AT`. | `test_a_gap_record_names_exactly_the_missing_hours`, `test_a_gap_in_the_reply_stores_only_the_bars_before_it` |
+| A27-5 | BLOCKER | AGREE — repaired; provenance decided by the owner | Reading checked only a gap's place (reproduced: an unsigned hybrid row hid a bar). A row must now be exactly a bar or exactly a gap record; `GapRecord` enforces the whole contract (owner name and statement, hour-aligned UTC hours, UTC record time, a later end) on reading and writing. Provenance: owner answer "Name + statement" (`OWNER_ANSWERS.md`). | `test_a_bar_row_cannot_be_turned_into_a_gap`, `test_a_gap_record_is_checked_in_full_when_read` (unsigned, non-UTC, unaligned) |
+| A27-6 | NON-BLOCKING | AGREE — repaired | `from_mapping` coerced and truncated (reproduced: `"12"` accepted). A snapshot is now accepted only if the state writes it back identically; `load_saved` checks every entry's record type. | `test_a_snapshot_must_parse_exactly` (4 cases), `test_a_foreign_entry_anywhere_in_the_journal_refuses` |
+| A27-7 | NON-BLOCKING | AGREE — repaired | A replayed `STATE_RESUMED` refused the start (reproduced). It is opened in HALT or FREEZE and leaves the mode as it is, like `HALT_OVERRIDE_FAILED`. | `test_a_resumed_state_incident_is_replayed` |
+
+Each new test fails at `2b94313` (14 failures; the gap-record tests also
+because `acknowledge_gap` now takes the first missing hour) and passes after.
+Self-review findings: Astra supported T27-07, T27-08, T27-09; T27-10 is now
+the owner-accepted limit above; T27-11 and T27-12 stay open.
+
+Validation after the A27 repairs (Python 3.14.4, Linux aarch64 proot, exit 0
+each): `pytest -q` 1686 passed, 4 skipped; `ruff check .`, `ruff format
+--check .`, `mypy src scripts`, `lint-imports` (6 kept), `git diff --check`
+clean; frozen verification (Python port) PASS. Not yet re-reviewed.

@@ -56,6 +56,7 @@ from typing import Final
 
 from aqt.allocation.predictor import PREDICTOR_BENCHMARK, baseline_proposal
 from aqt.app.state import AccountState, StateError, StateJournal
+from aqt.backtest.costs import Side as TradeSide
 from aqt.core.ledger import LedgerError, read_entries, verify_ledger
 from aqt.data.bars import BarSeries, require_utc
 from aqt.data.binance_public import DownloadError, refuse_credentials
@@ -573,6 +574,7 @@ def run_paper(
     if marker.exists():
         refuse(f"an earlier run stopped on an error; see {marker.name}")
     resumed: AccountState | None = None
+    saved_at = config.start
     mode, entered = Mode.RUNNING, config.start
     if journal is not None:
         try:
@@ -695,6 +697,15 @@ def run_paper(
     if resumed is not None:
         peak, stop_armed = resumed.peak, resumed.stop_armed
         last_increase, zero_fills = resumed.last_increase, resumed.zero_fills
+        # Hours valued after the last save were lost with the process; value
+        # them again from the bars and the saved holdings (A27-3).
+        unsaved = _equities(
+            series, resumed.record.balances, base, saved_at, config.start
+        )
+        peak = max([peak, *unsaved])
+        # A buy that filled before the crash, found by the startup check,
+        # is a risk increase all the same (A27-2).
+        last_increase = _last_increase(decision.report, last_increase)
     unsettled: list[Authorization] = []
     """Authorizations whose orders a failed or unclear outcome left
     unreconciled; their reservations wait for a passed reconciliation."""
@@ -735,8 +746,10 @@ def run_paper(
     def recovered(check: ReconciliationReport) -> None:
         """Carry a recovery's passed reconciliation forward."""
         nonlocal local, unsettled
+        nonlocal last_increase
         released = set(settle(check, governor, unsettled))
         unsettled = [a for a in unsettled if a.nonce not in released]
+        last_increase = _last_increase(check, last_increase)
         local = check.next_record()
 
     def leave_freeze(hour: datetime) -> None:
@@ -785,7 +798,13 @@ def run_paper(
             return False
         recovered(check)
         # Q27-1, Q27-2: ending a HALT re-arms the loss stop from the equity
-        # now, so it fires on the next 20% fall from here.
+        # now, so it fires on the next 20% fall from here: at the last close
+        # before the reconciliation ended, which may have waited (A27-1).
+        closed = check.at.replace(minute=0, second=0, microsecond=0) - HOUR
+        try:
+            mark = Decimal(repr(series.bar_at(closed).close))
+        except Exception:  # noqa: BLE001 - no newer bar: the hour's mark
+            pass
         balances = local.balances
         peak = balances.get(base, Decimal(0)) * mark + balances.get(_QUOTE, Decimal(0))
         stop_armed = True
@@ -809,7 +828,9 @@ def run_paper(
         done: datetime | None = None
         while moment < config.end:
             if done is not None:
-                save(done)  # the hour just finished
+                # The hour just finished, never before work it waited for
+                # (A27-1).
+                save(max(done, busy_until))
             decision_time, moment = moment, moment + HOUR
             done = max(decision_time, busy_until)
             if decision_time < busy_until:
@@ -1029,7 +1050,7 @@ def run_paper(
                 last_increase = proposal.decision_time
             local = check.next_record()
         if done is not None:
-            save(done)
+            save(max(done, busy_until))
 
     except BaseException as error:
         # T23-04: an audit write (or anything else) failed mid-run. The mode
@@ -1042,7 +1063,7 @@ def run_paper(
         Event(
             EventKind.SHUTDOWN,
             Severity.INFO,
-            config.end,
+            max(config.end, busy_until),
             {"mode": str(controller.mode), "run_id": config.run_id},
         )
     )
@@ -1100,8 +1121,11 @@ def _resume(saved: AccountState, incidents: IncidentLog) -> tuple[Mode, datetime
         if entry.record_type != IncidentLog.OPEN:
             continue
         kind = str(entry.payload.get("kind"))
-        # HALT_OVERRIDE_FAILED is opened in HALT and leaves HALT (safety.py).
+        # HALT_OVERRIDE_FAILED is opened in HALT and leaves HALT (safety.py);
+        # STATE_RESUMED is opened in HALT or FREEZE and leaves it (A27-7).
         target = Mode.HALT if kind == "HALT_OVERRIDE_FAILED" else None
+        if kind == "STATE_RESUMED" and mode in (Mode.HALT, Mode.FREEZE):
+            target = mode
         if kind in Trigger.__members__:
             target = MODE_TRANSITIONS.get((mode, Trigger(kind)))
         if target is None:
@@ -1109,6 +1133,41 @@ def _resume(saved: AccountState, incidents: IncidentLog) -> tuple[Mode, datetime
         stamp = datetime.strptime(entry.recorded_at_utc, "%Y-%m-%dT%H:%M:%SZ")
         mode, at = target, max(at, stamp.replace(tzinfo=UTC))
     return mode, at
+
+
+def _equities(
+    series: BarSeries,
+    balances: Mapping[str, Decimal],
+    base: str,
+    after: datetime,
+    before: datetime,
+) -> list[Decimal]:
+    """Equity at every decision hour from the hour of `after` until before
+    `before`, as the loop values it (the previous bar's close), for the bars
+    present. The saved hour is included: a save can precede its valuation."""
+    hour = after.replace(minute=0, second=0, microsecond=0)
+    values = []
+    while hour < before:
+        try:
+            mark = Decimal(repr(series.bar_at(hour - HOUR).close))
+        except Exception:  # noqa: BLE001 - no bar: that hour valued nothing
+            mark = None
+        if mark is not None:
+            held = balances.get(base, Decimal(0))
+            values.append(held * mark + balances.get(_QUOTE, Decimal(0)))
+        hour += HOUR
+    return values
+
+
+def _last_increase(
+    report: ReconciliationReport, current: datetime | None
+) -> datetime | None:
+    """`current`, moved to the decision of any filled buy `report` resolved."""
+    for order in report.resolved.values():
+        if order is not None and order.side is TradeSide.BUY and order.executed_qty:
+            if current is None or order.decision_time > current:
+                current = order.decision_time
+    return current
 
 
 def _attempt(controller: SafetyController, client_order_id: str) -> dict[str, str]:

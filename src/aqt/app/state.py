@@ -176,7 +176,7 @@ class AccountState:
                     "stop_armed must be a bool, zero_fills and incidents_seen ints"
                 )
             last = data["last_increase"]
-            return cls(
+            state = cls(
                 mode=Mode(data["mode"]),
                 entered_at=_time(data["entered_at"], "entered_at"),
                 record=LocalRecord(
@@ -201,6 +201,11 @@ class AccountState:
             if isinstance(error, StateError):
                 raise
             raise StateError(f"snapshot does not parse: {error!r}") from None
+        # Exact: the snapshot must be what this state writes, so no unknown
+        # field, coerced value or truncated pair is accepted (A27-6).
+        if state.as_mapping() != data:
+            raise StateError("snapshot does not parse exactly")
+        return state
 
 
 class StateJournal:
@@ -232,9 +237,10 @@ class StateJournal:
         entries = read_entries(self.path)
         if not entries:
             return None
+        for entry in entries:  # every entry, not only the last (A27-6)
+            if entry.record_type != RECORD_TYPE:
+                raise StateError(f"unexpected record type {entry.record_type!r}")
         last = entries[-1]
-        if last.record_type != RECORD_TYPE:
-            raise StateError(f"unexpected record type {last.record_type!r}")
         saved_at = datetime.strptime(last.recorded_at_utc, _SAVED_FORMAT)
         return AccountState.from_mapping(last.payload), saved_at.replace(tzinfo=UTC)
 
