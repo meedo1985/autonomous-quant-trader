@@ -693,7 +693,11 @@ def run_paper(
     base = config.symbol.removesuffix(_QUOTE)
     peak = Decimal(0)
     stop_armed = True  # L-03 fires once per fall below the line
-    valued: datetime | None = None  # the last hour `peak` includes
+    valued: datetime | None = None
+    """The last decision hour `peak` and the latch include, valued with
+    reconciled holdings. An hour valued while orders are unresolved would
+    use holdings the venue may contradict: it is left for the next passed
+    reconciliation to value (A27-18)."""
     zero_fills = 0
     if resumed is not None:
         peak, stop_armed = resumed.peak, resumed.stop_armed
@@ -772,9 +776,55 @@ def run_paper(
         last_increase = _last_increase(check, last_increase)
         local = check.next_record()
 
+    def mark_at(hour: datetime) -> Decimal | None:
+        """The close the decision at `hour` sees, if its bar exists."""
+        try:
+            return Decimal(repr(series.bar_at(hour - HOUR).close))
+        except Exception:  # noqa: BLE001 - no bar for this hour
+            return None
+
+    def value(hour: datetime, mark: Decimal | None) -> tuple[Decimal, bool] | None:
+        """L-03 bookkeeping for `hour`, once, in every hour with a bar, as a
+        restart replays it (A27-17): the equity and whether it is below the
+        line. Nothing for an hour already valued (one a HALT override reset
+        covers, A27-16) or while orders are unresolved (A27-18)."""
+        nonlocal peak, stop_armed, valued
+        if mark is None or (valued is not None and hour <= valued):
+            return None
+        if local.orders or controller.sent:
+            return None
+        held = local.balances
+        equity = held.get(base, Decimal(0)) * mark + held.get(_QUOTE, Decimal(0))
+        peak = max(peak, equity)
+        valued = hour
+        breached = equity < peak * (1 - config.loss_stop_fraction)
+        if not breached:
+            stop_armed = True
+        return equity, breached
+
+    def fire(result: tuple[Decimal, bool] | None, at: datetime) -> None:
+        """The L-03 stop for a valued hour. Every breach alerts and opens an
+        incident (deployment draft section 5). It sells only from RUNNING:
+        in HALT the owner's HALT wins (OWNER_ANSWERS_2026-09-28.md, F24-1,
+        F24R-1), and an owner FLATTEN simply goes on. FREEZE is left alone
+        until reconciled (T27-13). Even a holding too small to sell alerts
+        (A2324-2)."""
+        nonlocal stop_armed
+        if result is None or not result[1] or not stop_armed:
+            return
+        if controller.mode is Mode.FREEZE:
+            return
+        keep = 1 - config.loss_stop_fraction
+        detail = f"equity {result[0]:.2f} below {keep} x peak {peak:.2f}"
+        controller.trigger(Trigger.LOSS_STOP, at, detail)
+        stop_armed = False
+
     def leave_freeze(hour: datetime) -> None:
         """FREEZE to HALT on a passed reconciliation (section 22). A failed
-        one leaves FREEZE as it is; its incident is already open."""
+        one leaves FREEZE as it is; its incident is already open. The hours
+        left unvalued while orders were unresolved are valued now, with the
+        confirmed holdings, as a restart would (A27-18)."""
+        nonlocal peak, stop_armed, valued
         _, check = recover(hour)
         try:
             controller.exit_freeze(check, check.at)
@@ -782,13 +832,22 @@ def run_paper(
             refuse_command(Trigger.FREEZE_EXIT, check.at, str(error))
             return
         recovered(check)
+        peak, stop_armed, valued, _ = _replay(
+            series,
+            local.balances,
+            base,
+            (valued, hour, hour + HOUR),
+            (peak, stop_armed),
+            config.loss_stop_fraction,
+            fires=False,
+        )
         save(check.at)
 
     def end_halt(hour: datetime, mark: Decimal) -> bool:
         """The owner's section 14 override at `hour`. True when it was tried
         (a reconciliation ran), whether HALT ended or not; False when it was
         refused at once because the account is not in HALT."""
-        nonlocal peak, stop_armed
+        nonlocal peak, stop_armed, valued
         if controller.mode is not Mode.HALT:
             refuse_command(
                 Trigger.HALT_OVERRIDE, hour, f"not in HALT ({controller.mode})"
@@ -830,6 +889,9 @@ def run_paper(
         balances = local.balances
         peak = balances.get(base, Decimal(0)) * mark + balances.get(_QUOTE, Decimal(0))
         stop_armed = True
+        # The reset is the valuation of the hour it took effect in: no hour
+        # up to it is valued again, now or on a restart (A27-16).
+        valued = max(hour, closed + HOUR)
         save(check.at)
         return True
 
@@ -842,6 +904,7 @@ def run_paper(
             if moment in owner:
                 apply_owner(moment, ready)
             skip_recovery(moment, ready, "the startup check was still running")
+            fire(value(moment, mark_at(moment)), ready)  # valued all the same
             moment += HOUR
         save(ready)
         decision_time = ready
@@ -855,13 +918,16 @@ def run_paper(
                 save(max(done, busy_until))
             decision_time, moment = moment, moment + HOUR
             done = max(decision_time, busy_until)
+            mark = mark_at(decision_time)
             if decision_time < busy_until:
                 # A reconciliation that waited (section 21) ends after this
                 # hour began: nothing is decided before it (A2324R-4). An owner
-                # command still applies, as soon as it ends.
+                # command still applies, as soon as it ends; the hour is still
+                # valued for the loss stop, as a restart would (A27-17).
                 if decision_time in owner:
                     apply_owner(decision_time, busy_until)
                 skip_recovery(decision_time, busy_until, "a reconciliation was running")
+                fire(value(decision_time, mark), busy_until)
                 continue
             if decision_time in owner:
                 apply_owner(decision_time, decision_time)
@@ -876,20 +942,15 @@ def run_paper(
                 for breach in breaches:
                     router.emit(breach)
                 skip_recovery(decision_time, decision_time, "health check breach")
+                # Valued all the same, as a restart would (A27-17); the stop
+                # may alert, but nothing is placed this hour.
+                fire(value(decision_time, mark), decision_time)
                 continue
-            try:
-                mark = Decimal(repr(series.bar_at(decision_time - HOUR).close))
-            except Exception:  # noqa: BLE001 - no bar for this hour: nothing to decide
+            if mark is None:  # no bar for this hour: nothing to decide
                 skip_recovery(decision_time, decision_time, "no bar for the hour")
                 continue
             # L-03 (adopted): 20% below peak equity sells everything (setting S-4).
-            held = local.balances.get(base, Decimal(0))
-            equity = held * mark + local.balances.get(_QUOTE, Decimal(0))
-            peak = max(peak, equity)
-            valued = decision_time
-            breached = equity < peak * (1 - config.loss_stop_fraction)
-            if not breached:
-                stop_armed = True
+            valuation = value(decision_time, mark)
             # FREEZE is left alone until the owner asks for a reconciliation.
             # Outside FREEZE the command is refused and the hour goes on.
             if owner.get(decision_time) is Trigger.FREEZE_EXIT:
@@ -910,16 +971,7 @@ def run_paper(
                 # nothing after it may be stamped before its reconciliation
                 # ended (A27-8), and only HALT or FREEZE can follow a refusal.
                 continue
-            # Every breach alerts and opens an incident (deployment draft
-            # section 5). It sells only from RUNNING: in HALT the owner's HALT
-            # wins (OWNER_ANSWERS_2026-09-28.md, F24-1, F24R-1), and an owner
-            # FLATTEN simply goes on. FREEZE is left alone until reconciled
-            # (T27-13). Even a holding too small to sell alerts (A2324-2).
-            if breached and stop_armed and controller.mode is not Mode.FREEZE:
-                keep = 1 - config.loss_stop_fraction
-                detail = f"equity {equity:.2f} below {keep} x peak {peak:.2f}"
-                controller.trigger(Trigger.LOSS_STOP, decision_time, detail)
-                stop_armed = False
+            fire(valuation, decision_time)
             if controller.mode is Mode.FLATTEN:
                 # The venue balance `tick` sizes from, for the audit log.
                 sized_from = exchange.balances().get(base, Decimal(0))

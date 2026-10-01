@@ -651,3 +651,23 @@ def test_a_bad_bar_after_a_gap_still_stores_nothing(
     with pytest.raises(LiveBarError, match="duplicate or out of order|gap"):
         fetch_new_bars(Exchange(rows, now), store, "BTCUSDT", now, SKEW)
     assert store.path.read_bytes() == before
+
+
+def test_an_older_row_cannot_hide_a_reordered_reply(tmp_path: Path) -> None:
+    """A27-19 (the reviewer's scenario): hours 1, 0, 2 after hour 0. The
+    whole reply, older rows included, must be strictly in order."""
+    store = LiveBarStore(tmp_path / "bars.jsonl", "BTCUSDT")
+    store.append(_closed(1))
+    before = store.path.read_bytes()
+    rows = [_row(T0 + i * HOUR) for i in (1, 0, 2)]
+    now = T0 + 4 * HOUR
+
+    def raw(request: PublicRequest) -> FetchResponse:
+        """Replies with every row as given, older ones included."""
+        if request.url == TIME_URL:
+            return FetchResponse(200, json.dumps({"serverTime": _ms(now)}).encode())
+        return FetchResponse(200, json.dumps(rows).encode())
+
+    with pytest.raises(LiveBarError, match="not strictly in time order"):
+        fetch_new_bars(raw, store, "BTCUSDT", now, SKEW)
+    assert store.path.read_bytes() == before

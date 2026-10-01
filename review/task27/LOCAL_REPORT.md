@@ -271,3 +271,45 @@ Validation after these repairs (Python 3.14.4, Linux aarch64 proot, exit 0
 each): `pytest -q` 1696 passed, 4 skipped; `ruff check .`, `ruff format
 --check .`, `mypy src scripts`, `lint-imports` (6 kept), `git diff --check`
 clean; frozen verification (Python port) PASS. Not yet re-reviewed.
+
+## Astra re-review of `9363171` and repairs
+
+Record: `ASTRA_REREVIEW_9363171.md`, text-only. A27-14 correct, and the
+reviewer accepted the A27-14 reproduction explanation; A27-13 and A27-15
+incomplete (via A27-16..A27-19). Verdict FIX. The reviewer's combined
+reproduction was run locally at `9363171`: all four cases failed as
+predicted (A27-16 peak 120 with a LOSS_STOP; A27-17 continuous 100/0 against
+restarted 120/1; A27-18 early 120, late 100; A27-19 accepted and written).
+
+Rather than another case-by-case patch, one rule now governs the loss-stop
+bookkeeping, live and on restart alike:
+
+- Every decision hour with a bar is valued once, in every mode and also in
+  hours otherwise skipped (startup or reconciliation still running, health
+  breach), with the loss stop firing as usual (stamped when the hour's wait
+  ended; never in FREEZE). A restart replays exactly the hours after the
+  snapshot's `valued_through`.
+- An hour is valued only with reconciled holdings. While orders are
+  unresolved (FREEZE leftovers, unsettled FLATTEN sells) it is not valued,
+  and the watermark stays. The next passed reconciliation (startup or
+  FREEZE_EXIT) values those hours with the confirmed holdings.
+- A HALT override's reset is the valuation of the hour it took effect in:
+  `valued_through` moves to it, so no earlier price is valued again.
+
+| ID | Astra severity | Decision | Evidence and disposition | Validation |
+| --- | --- | --- | --- | --- |
+| A27-16 | BLOCKER | AGREE — repaired | `valued_through` now moves to the reset's effective hour (the hour of the close it used). | `test_a_waited_override_reset_is_not_undone_by_a_restart` |
+| A27-17 | BLOCKER | AGREE — repaired | Hours skipped by a waiting startup (and by a waiting reconciliation or a health breach) are valued in the loop, so a restart replays nothing the running loop did not value, and the reverse. | `test_a_waiting_startup_values_its_hours_as_a_restart_would` (same peak 120 and incidents both ways) |
+| A27-18 | BLOCKER | AGREE — repaired | No valuation with unresolved orders; FREEZE_EXIT replays those hours with the confirmed holdings, as a restart does. The reviewer's "late" case writes by hand a snapshot whose watermark passed a FREEZE hour; the loop no longer writes such a snapshot, so that case cannot arise. The test runs the real loop instead. | `test_hours_with_unresolved_orders_are_valued_after_the_recovery` (watermark stays at the order's hour in FREEZE; FREEZE_EXIT moves it past the frozen hours) |
+| A27-19 | NON-BLOCKING | AGREE — repaired | The order check now covers the whole reply before older rows are filtered out. | `test_an_older_row_cannot_hide_a_reordered_reply` |
+
+Behaviour change to note for the owner's walkthrough: in a health-breach
+hour the loss stop is now valued and may alert (and, from RUNNING, enter
+FLATTEN); still nothing is placed that hour. Each new test fails at
+`9363171` (4 failures) and passes after; the reviewer's reproduction passes
+except its A27-18 "late" case, explained above.
+
+Validation after these repairs (Python 3.14.4, Linux aarch64 proot, exit 0
+each): `pytest -q` 1700 passed, 4 skipped; `ruff check .`, `ruff format
+--check .`, `mypy src scripts`, `lint-imports` (6 kept), `git diff --check`
+clean; frozen verification (Python port) PASS. Not yet re-reviewed.

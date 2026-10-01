@@ -628,3 +628,95 @@ def test_a_missed_firing_keeps_the_replayed_latch(tmp_path: Path) -> None:
     series = _priced({START - HOUR: 70.0, START: 100.0, START + HOUR: 70.0})
     _one_hour(account, _Venue(ONE_BTC), series, START + 2 * HOUR)
     assert _losses(account) == 2
+
+
+def test_a_waited_override_reset_is_not_undone_by_a_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A27-16 (the reviewer's scenario): the override's reconciliation ends
+    two hours later and resets the peak to 90 then. A restart does not
+    value the hours before the reset again: peak stays 90, no stop fires."""
+    account = AccountDir(tmp_path / "a")
+    _seed(account, START - HOUR, Mode.HALT, ONE_BTC, "100")
+    series = _priced(
+        {START - HOUR: 100.0, START: 120.0, START + HOUR: 90.0, START + 2 * HOUR: 90.0}
+    )
+    wanted = _override(account.incident_log().open_incidents(), START)
+    real = loop.reconcile
+
+    def delayed(*args: object, **kwargs: object) -> object:
+        report = real(*args, **kwargs)  # type: ignore[arg-type]
+        return replace(report, at=report.at + 2 * HOUR)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(loop, "reconcile", delayed)
+        _one_hour(account, _Venue(ONE_BTC), series, START, overrides={START: wanted})
+    before = account.journal.load()
+    assert before is not None and before.peak == Decimal(90)
+    restart = START + 3 * HOUR
+    _one_hour(
+        account,
+        _Venue(ONE_BTC),
+        series,
+        restart,
+        commands={restart: Trigger.OWNER_HALT},
+    )
+    saved = account.journal.load()
+    assert saved is not None and saved.peak == Decimal(90) and _losses(account) == 0
+
+
+def test_a_waiting_startup_values_its_hours_as_a_restart_would(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A27-17 (the reviewer's scenario): the startup check ends two hours
+    late. Running on, or stopping after the first save and restarting,
+    leaves the same peak and the same LOSS_STOP incidents."""
+    series = _priced(
+        {START - HOUR: 120.0, START: 90.0, START + HOUR: 90.0, START + 2 * HOUR: 90.0},
+        default=90.0,
+    )
+    real = loop.startup_check
+
+    def delayed(*args: object, **kwargs: object) -> object:
+        decision = real(*args, **kwargs)  # type: ignore[arg-type]
+        later = replace(decision.report, at=decision.report.at + 2 * HOUR)
+        return replace(decision, report=later)
+
+    continuous, restarted = AccountDir(tmp_path / "c"), AccountDir(tmp_path / "r")
+    for account in (continuous, restarted):
+        _seed(account, START - HOUR, Mode.HALT, ONE_BTC, "100", valued=START - HOUR)
+    with monkeypatch.context() as patch:
+        patch.setattr(loop, "startup_check", delayed)
+        report = _run(
+            continuous.root,
+            _config(1, start=START, end=START + 4 * HOUR),
+            series,
+            incidents=continuous.incident_log(),
+            journal=continuous.journal,
+            venue=_Venue(ONE_BTC),
+        )
+        assert report.refused == ()
+        _one_hour(restarted, _Venue(ONE_BTC), series, START)
+    _one_hour(restarted, _Venue(ONE_BTC), series, START + 3 * HOUR)
+    a, b = continuous.journal.load(), restarted.journal.load()
+    assert a is not None and b is not None
+    assert (a.peak, _losses(continuous)) == (b.peak, _losses(restarted))
+    assert a.peak == Decimal(120)
+
+
+def test_hours_with_unresolved_orders_are_valued_after_the_recovery(
+    tmp_path: Path,
+) -> None:
+    """A27-18: while an order is unresolved in FREEZE no hour is valued, so
+    the snapshot's watermark stays at the order's hour; FREEZE_EXIT then
+    values those hours with the confirmed holdings."""
+    series = _series(24 * 14)
+    frozen = AccountDir(tmp_path / "f")
+    _frozen_run(frozen, series, {})
+    state = _saved(frozen)[0]
+    assert state.mode is Mode.FREEZE and state.valued_through == FROZEN_AT
+    exited = AccountDir(tmp_path / "e")
+    _frozen_run(exited, series, _exits(6))
+    state = _saved(exited)[0]
+    assert state.mode is Mode.HALT and state.valued_through is not None
+    assert state.valued_through > FROZEN_AT + 5 * HOUR

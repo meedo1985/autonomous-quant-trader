@@ -433,8 +433,11 @@ def fetch_new_bars(
                 "limit": MAX_LIMIT,
             }
         )
-        bars = parse_klines(_get(transport, f"{KLINES_URL}?{query}"), cutoff)
-        bars = tuple(b for b in bars if b.open_time >= begin)
+        reply = parse_klines(_get(transport, f"{KLINES_URL}?{query}"), cutoff)
+        # The whole reply must be strictly in order, older rows included
+        # (A27-19); any duplicate or reordering refuses all of it.
+        ordered = all(a.open_time < b.open_time for a, b in pairwise(reply))
+        bars = tuple(b for b in reply if b.open_time >= begin)
         # At a gap the bars before it are stored, then the gap refuses: the
         # owner can then record exactly the missing hours (A27-4, Q27-3). A
         # duplicate or reordered bar refuses the whole reply (A27-11).
@@ -443,9 +446,11 @@ def fetch_new_bars(
             whole < len(bars) and bars[whole].open_time == begin + whole * BAR_INTERVAL
         ):
             whole += 1
-        ordered = all(a.open_time < b.open_time for a, b in pairwise(bars))
-        if whole < len(bars) and not ordered:
-            store.append(bars, first=begin)  # refuses, nothing stored
+        if not ordered:
+            raise LiveBarError(
+                "duplicate or out of order: the klines reply is not strictly "
+                "in time order; nothing appended"
+            )
         store.append(bars[:whole], first=begin)
         appended += whole
         if whole < len(bars):
