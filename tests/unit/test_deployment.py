@@ -3,6 +3,7 @@ Every repository here is a throwaway one; the real tree is never judged."""
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -41,6 +42,7 @@ def server(tmp_path: Path) -> tuple[Path, Path, str]:
     root.mkdir()
     _git(root, "init", "--quiet")
     _commit(root, "pyproject.toml", '[project]\nname = "x"\n')
+    _commit(root, ".gitignore", "__pycache__/\n")
     _commit(root, "scripts/run.py", "RUN = 1\n")
     head = _commit(root, "src/aqt/__init__.py", "")
     _git(root, "update-ref", "refs/remotes/origin/main", head)
@@ -67,12 +69,19 @@ def test_the_approved_commit_may_run(server: tuple[Path, Path, str]) -> None:
             ),
             "differs",
         ),
+        (  # ignored bytecode that Python would load (S30-2)
+            lambda r: (
+                (r / "src/aqt/__pycache__").mkdir(),
+                (r / "src/aqt/__pycache__/x.pyc").write_bytes(b""),
+            ),
+            "differs",
+        ),
     ],
 )
 def test_a_modified_checkout_refuses(
     server: tuple[Path, Path, str], change: object, reason: str
 ) -> None:
-    """Acceptance: a modified, added or masked file refuses the start."""
+    """Acceptance: a modified, added, masked or ignored file refuses."""
     root, record, _ = server
     change(root)  # type: ignore[operator]
     with pytest.raises(DeploymentError, match=reason):
@@ -166,3 +175,36 @@ def test_the_server_credential_file(
         with pytest.raises(ChannelError, match=error) as caught:
             read_file_credential(path)
         assert "123:abc" not in str(caught.value)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the server's credential file")
+def test_a_linked_credential_file_is_refused(tmp_path: Path) -> None:
+    """S30-5: the credential is read from the file itself, never a link."""
+    target = tmp_path / "real"
+    target.write_text("42\n123:abc\n")
+    os.chmod(target, 0o600)
+    (tmp_path / "telegram").symlink_to(target)
+    with pytest.raises(ChannelError, match="unreadable") as caught:
+        read_file_credential(tmp_path / "telegram")
+    assert "123:abc" not in str(caught.value)
+
+
+def test_the_server_run_refuses_before_reading_any_data(tmp_path: Path) -> None:
+    """S30-4: the runner checks the approval first, logs the refusal and
+    exits 2, before data, network or channel."""
+    path = Path(__file__).parents[2] / "scripts" / "run_paper_trading.py"
+    spec = importlib.util.spec_from_file_location("run_paper_trading", path)
+    assert spec is not None and spec.loader is not None
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    record = tmp_path / "deployments.jsonl"
+    approve(record, commit="0" * 40, approved_by="Owner", statement="ok", at=NOW)
+    config = Path(__file__).parents[2] / "configs" / "paper_trading.example.toml"
+    code = runner.main(
+        ["--config", str(config), "--raw", str(tmp_path / "no-data"),
+         "--out", str(tmp_path / "out"), "--deployment-record", str(record),
+         "--telegram"]
+    )  # fmt: skip
+    assert code == 2
+    (log,) = (tmp_path / "out").glob("*/operations.jsonl")
+    assert "REFUSE_START" in log.read_text() and "deployment: " in log.read_text()

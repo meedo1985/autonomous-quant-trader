@@ -71,3 +71,30 @@ bundle names no HEAD branch (the script checks out the commit), and
 LOCAL GATE: PASS. Required before merge (section 16: the start check is
 protocol-enforcement logic): independent different-model review, then the
 owner's walkthrough.
+
+## Sol High review of `3c41f70` and repairs
+
+Record: `SOL_REVIEW_3C41F70.md` (prompt `SOL_PROMPT_3C41F70.md`), GPT-5.6
+Sol, high effort, read-only on this PC. Verdict FIX: S30-1..S30-4 BLOCKER,
+S30-5, S30-6 NON-BLOCKING. The reviewer showed that the first install gave
+the app's own account `aqt` the code, its git history and its Python, which
+undid T30-01, T30-02 and T30-03 as written.
+
+| ID | Sol severity | Decision | Repair | Validation |
+| --- | --- | --- | --- | --- |
+| S30-1 | BLOCKER | AGREE — repaired | `install.sh` clones, checks out and builds the venv as root (`--no-compile`); `/opt/aqt` is root-owned; `aqt` gets only `/var/lib/aqt` (mode 700). The unit uses `StateDirectory=aqt`, `WorkingDirectory=/var/lib/aqt`, absolute paths into `/opt/aqt/app`, no `ReadWritePaths` on the code, `ProtectHome`, no bytecode writes. Updates in the runbook run as root. Root now runs only root-owned code. | CI step "The app's account cannot change its code, history or Python": owner of `/opt/aqt/app`, `.git`, `.venv/bin/python3` is root; `aqt` cannot create a file in `scripts`, `.git/refs`, `.venv/bin`, `/etc/aqt`. |
+| S30-2 | BLOCKER | PARTLY AGREE — repaired | Points 2-4: with S30-1 the imported code, bytecode and interpreter are root's, which only the owner changes; in addition the check refuses any ignored file under `src`, `scripts`, `configs` (e.g. a planted `.pyc`). Point 1 (the flag is optional): the boundary is the service, whose root-owned unit always passes the record; a person with a shell as `aqt` can run any program as `aqt` with or without this script, so a mandatory flag would add no protection. | `test_a_modified_checkout_refuses` (ignored `.pyc` case). |
+| S30-3 | BLOCKER | AGREE — repaired | `.git`, including `refs/remotes/origin/main`, is root-owned, so `aqt` cannot move `origin/main`; only the owner's `sudo git fetch` updates it. | Same CI ownership step (`.git/refs` not writable by `aqt`). |
+| S30-4 | BLOCKER | AGREE — repaired | The runner checks the approval before data, network or channel, logs a CRITICAL `REFUSE_START` to the run's operations log and exits 2. CI now starts the real service on a modified checkout and requires exit status 2, no restart, and the logged refusal "checkout differs". The runbook now claims steps 2, 3 and a refused step 5 for the dry run, not step 4. | `test_the_server_run_refuses_before_reading_any_data`; CI step "Step 5 on a modified checkout is refused, logged, not retried". |
+| S30-5 | NON-BLOCKING | AGREE — repaired | The credential file is opened with `O_NOFOLLOW`, checked with `fstat` (regular file, owner only) and read through the same descriptor. | `test_a_linked_credential_file_is_refused` (Linux, in CI). |
+| S30-6 | NON-BLOCKING | AGREE — disclosed | `source_sha256` covers `src/aqt` only; the start event's `commit` is the whole-tree identity (the check also requires the whole checkout to equal it). Dependency versions come from ranges in `pyproject.toml` and are not locked or logged. | Not repaired: a dependency lock and its hash in the start event belong before real money (deployment draft), not in paper. |
+
+T30 findings after the repairs: T30-01 holds now that root runs only
+root-owned code; T30-02 is closed by S30-3 (the ref is root's); T30-03's
+reason is replaced by S30-1 (the code is read-only to `aqt`), the
+start-only check remains; T30-04 is closed by S30-4 (the real service is
+started and refused in CI, though not started successfully, which needs the
+data download); T30-05 and T30-06 stand.
+
+Each new test fails at `a437872` (2 failed: the ignored `.pyc` case and the
+runner) and passes after; the symlink test runs on Linux only.

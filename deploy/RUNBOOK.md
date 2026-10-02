@@ -3,8 +3,13 @@
 For the owner. You run every step; the AI never logs into the server and
 never sees its address or any credential. Owner answers: Ubuntu (Q30-1),
 only the commit you approve runs (Q30-2), you update by hand (Q30-3). A
-GitHub test machine repeats steps 2-4 on every change (`.github/workflows/ci.yml`,
-job `runbook-dry-run`).
+GitHub test machine repeats steps 2, 3 and a refused step 5 on every change
+(`.github/workflows/ci.yml`, job `runbook-dry-run`).
+
+Who owns what: the code in `/opt/aqt/app`, its history and its Python belong
+to root, and only you (with `sudo`) change them. The app runs as its own
+account `aqt`, which can read and run the code but not change it, and writes
+only to `/var/lib/aqt`. So the app can never approve or swap its own code.
 
 This runbook authorizes nothing by itself: no real money, no Binance keys,
 and no forward paper trading until Task 29 is authorized. Until then the
@@ -32,7 +37,8 @@ sudo sh install.sh https://github.com/meedo1985/autonomous-quant-trader.git <com
 ```
 
 This creates the app's own account `aqt` (no login, not root), puts the code
-in `/opt/aqt/app`, and installs the service. It does not start anything.
+in `/opt/aqt/app` (owned by root), and installs the service. It does not
+start anything.
 
 ## 3. Approve the commit
 
@@ -40,7 +46,7 @@ Only root can write the record; the app can only read it:
 
 ```sh
 sudo /opt/aqt/app/.venv/bin/python -B /opt/aqt/app/scripts/deployment.py approve <commit> --by "Your Name" --statement "Reviewed and merged; approved for this server"
-sudo -u aqt sh -c 'cd /opt/aqt/app && .venv/bin/python scripts/deployment.py check'
+sudo -u aqt /opt/aqt/app/.venv/bin/python /opt/aqt/app/scripts/deployment.py check
 ```
 
 The check prints `May run: <commit>`. Any changed, added or hidden file in
@@ -57,9 +63,9 @@ history.
 ```sh
 sudo install -o aqt -g aqt -m 600 /dev/null /etc/aqt/telegram
 sudo -u aqt nano /etc/aqt/telegram
-sudo -u aqt sh -c 'cd /opt/aqt/app && .venv/bin/python scripts/alert_channel.py test'
-sudo -u aqt sh -c 'cd /opt/aqt/app && .venv/bin/python scripts/alert_channel.py ack <code>'
-sudo -u aqt sh -c 'cd /opt/aqt/app && .venv/bin/python scripts/download_market_data.py --root data/raw'
+sudo -u aqt sh -c 'cd /var/lib/aqt && /opt/aqt/app/.venv/bin/python /opt/aqt/app/scripts/alert_channel.py test'
+sudo -u aqt sh -c 'cd /var/lib/aqt && /opt/aqt/app/.venv/bin/python /opt/aqt/app/scripts/alert_channel.py ack <code>'
+sudo -u aqt sh -c 'cd /var/lib/aqt && /opt/aqt/app/.venv/bin/python /opt/aqt/app/scripts/download_market_data.py --root data/raw'
 ```
 
 Repeat `test` and `ack` at least every 7 days (D-2).
@@ -78,9 +84,9 @@ refuses by itself while an earlier error is unresolved (Task 27).
 ## 6. Logs
 
 - Screen output: `journalctl -u aqt-paper`.
-- Run report, operations log and incidents:
-  `/opt/aqt/app/data/processed/paper/<run id>/`.
-- Telegram tests: `/opt/aqt/app/data/processed/alerts/`.
+- Run report, operations log and incidents (a refused start too):
+  `/var/lib/aqt/data/processed/paper/<run id>/`.
+- Telegram tests: `/var/lib/aqt/data/processed/alerts/`.
 - Approvals: `/etc/aqt/deployments.jsonl`.
 
 ## 7. Update to a newer commit
@@ -89,9 +95,9 @@ Only when you decide, and only to a commit you merged:
 
 ```sh
 sudo systemctl stop aqt-paper
-sudo -u aqt git -C /opt/aqt/app fetch --quiet origin
-sudo -u aqt git -C /opt/aqt/app checkout --quiet <commit>
-sudo -u aqt /opt/aqt/app/.venv/bin/pip install --quiet -e /opt/aqt/app
+sudo git -C /opt/aqt/app fetch --quiet origin
+sudo git -C /opt/aqt/app checkout --quiet <commit>
+sudo /opt/aqt/app/.venv/bin/pip install --quiet --no-compile -e /opt/aqt/app
 sudo install -m 644 /opt/aqt/app/deploy/aqt-paper.service /etc/systemd/system/ && sudo systemctl daemon-reload
 ```
 

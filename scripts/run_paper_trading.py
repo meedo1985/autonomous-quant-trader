@@ -20,13 +20,15 @@ import argparse
 import json
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from aqt.app.paper_loop import load_config, run_paper
+from aqt.core.deployment import DeploymentError, approved_code
 from aqt.data.klines import EXPLORATION, build_exploration_manifest
 from aqt.execution.safety import IncidentLog
-from aqt.monitoring.alerts import LedgerSink, Sink, StreamSink
-from aqt.monitoring.events import Severity
+from aqt.monitoring.alerts import AlertRouter, LedgerSink, Sink, StreamSink
+from aqt.monitoring.events import Event, EventKind, Severity
 from aqt.monitoring.telegram import DEFAULT_LEDGER, ChannelError, owner_channel
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -50,7 +52,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
-    build = build_exploration_manifest(EXPLORATION, config.symbol, args.raw)
     out = args.out / config.run_id
     out.mkdir(parents=True, exist_ok=True)
     operations = out / "operations.jsonl"
@@ -58,6 +59,22 @@ def main(argv: list[str] | None = None) -> int:
         StreamSink(sys.stdout, Severity.WARNING),
         LedgerSink(operations, Severity.INFO),
     ]
+    if args.deployment_record is not None:
+        # Before any data, network or channel: a server start from code the
+        # owner did not approve stops here, logged (S30-4).
+        try:
+            approved_code(args.deployment_record, REPOSITORY_ROOT)
+        except DeploymentError as error:
+            AlertRouter(sinks).emit(
+                Event(
+                    EventKind.STARTUP,
+                    Severity.CRITICAL,
+                    datetime.now(UTC),
+                    {"decision": "REFUSE_START", "reason": f"deployment: {error}"},
+                )
+            )
+            return 2
+    build = build_exploration_manifest(EXPLORATION, config.symbol, args.raw)
     channel = None
     if args.telegram:
         try:

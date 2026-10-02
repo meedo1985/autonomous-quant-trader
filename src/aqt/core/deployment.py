@@ -4,10 +4,13 @@ The owner approves one commit at a time in a hash-chained ledger kept outside
 the checkout, where the app's account can read but not write it. A run on the
 server starts only if the checkout is exactly the newest approved commit: the
 commit is on `main` (as last fetched), nothing is modified, untracked or
-masked anywhere in the checkout, and `src/aqt` matches its committed bytes
-(`aqt.core.code_identity`). Approving records the owner's name and statement;
-like the gap record (Q27-3) it is checked every time but is not a
-cryptographic signature: the file's permissions protect it (deploy/RUNBOOK.md).
+masked anywhere in the checkout, no ignored file (such as bytecode) sits
+among the code that runs (S30-2), and `src/aqt` matches its committed bytes
+(`aqt.core.code_identity`). On the server the checkout, its history and its
+interpreter belong to root, so the app's account can change none of them
+(S30-1, S30-3; deploy/RUNBOOK.md). Approving records the owner's name and
+statement; like the gap record (Q27-3) it is checked every time but is not
+a cryptographic signature: the file's permissions protect it.
 """
 
 from __future__ import annotations
@@ -83,7 +86,11 @@ def approved_code(record: Path, root: Path) -> SourceBundle:
         for line in _git(root, "ls-files", "-v").stdout.splitlines()
         if line[:1] in {"h", "s", "S"}
     ]
-    if status.returncode or status.stdout.strip() or masked:
-        changed = (status.stdout.strip().splitlines() + masked)[:5]
+    ignored = _git(
+        root, "ls-files", "--others", "--ignored", "--exclude-standard",
+        "--", "src", "scripts", "configs",
+    ).stdout.splitlines()  # fmt: skip
+    if status.returncode or status.stdout.strip() or masked or ignored:
+        changed = (status.stdout.strip().splitlines() + masked + ignored)[:5]
         raise DeploymentError(f"checkout differs from its commit: {changed}")
     return source

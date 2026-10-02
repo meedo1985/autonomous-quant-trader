@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import secrets
+import stat
 import sys
 import urllib.error
 import urllib.request
@@ -181,10 +182,18 @@ def read_file_credential(path: Path = CREDENTIAL_FILE) -> TelegramCredential:
     if sys.platform == "win32":
         raise ChannelError("the credential file is read on Linux only")
     try:
-        info = path.stat()
-        if info.st_mode & 0o077 or info.st_uid != os.getuid():
-            raise ChannelError(f"{path} must be readable by this account only")
-        lines = path.read_text("utf-8").split()
+        # The file itself, never a link, checked and read through one
+        # descriptor (S30-5).
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, "rb") as handle:
+            info = os.fstat(handle.fileno())
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_mode & 0o077
+                or info.st_uid != os.getuid()
+            ):
+                raise ChannelError(f"{path} must be readable by this account only")
+            lines = handle.read().decode("utf-8").split()
     except ChannelError:
         raise
     except (OSError, UnicodeDecodeError) as error:

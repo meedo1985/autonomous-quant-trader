@@ -25,8 +25,9 @@ jobs:
       - run: python -m pytest
       - run: lint-imports
 
-  # Task 30 (owner answer Q30-4): deploy/RUNBOOK.md steps 2-3 on a fresh
-  # Ubuntu machine, then a modified file must refuse the start.
+  # Task 30 (owner answer Q30-4): deploy/RUNBOOK.md steps 2, 3 and a refused
+  # step 5 on a fresh Ubuntu machine: the real service, started on a
+  # modified checkout, must refuse (exit 2, logged).
   runbook-dry-run:
     runs-on: ubuntu-24.04
     steps:
@@ -39,14 +40,29 @@ jobs:
           git bundle create /tmp/app.bundle main
           echo "COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - name: Step 2, install
-        run: sudo sh deploy/install.sh /tmp/app.bundle "$COMMIT"
+        run: cd /tmp && sudo sh "$GITHUB_WORKSPACE/deploy/install.sh" /tmp/app.bundle "$COMMIT"
+      - name: The app's account cannot change its code, history or Python
+        run: |
+          test "$(stat -c %U /opt/aqt/app /opt/aqt/app/.git /opt/aqt/app/.venv/bin/python3 | sort -u)" = root
+          for target in /opt/aqt/app/scripts /opt/aqt/app/.git/refs /opt/aqt/app/.venv/bin /etc/aqt; do
+            if sudo -u aqt touch "$target/probe"; then echo "aqt can write $target"; exit 1; fi
+          done
       - name: Step 3, approve and check
         run: |
+          cd /tmp
           sudo /opt/aqt/app/.venv/bin/python -B /opt/aqt/app/scripts/deployment.py approve "$COMMIT" --by "CI dry run" --statement "runbook dry run"
-          sudo -u aqt sh -c 'cd /opt/aqt/app && .venv/bin/python scripts/deployment.py check'
+          sudo -u aqt /opt/aqt/app/.venv/bin/python /opt/aqt/app/scripts/deployment.py check
       - name: The service file is valid
         run: sudo systemd-analyze verify /etc/systemd/system/aqt-paper.service
-      - name: A modified file refuses the start
+      - name: Step 5 on a modified checkout is refused, logged, not retried
         run: |
-          echo "# changed" | sudo -u aqt tee -a /opt/aqt/app/scripts/run_paper_trading.py
-          if sudo -u aqt sh -c 'cd /opt/aqt/app && .venv/bin/python scripts/deployment.py check'; then exit 1; fi
+          cd /tmp
+          echo "# changed" | sudo tee -a /opt/aqt/app/scripts/run_paper_trading.py
+          sudo systemctl start aqt-paper
+          for _ in $(seq 60); do
+            systemctl is-active --quiet aqt-paper || break
+            sleep 1
+          done
+          test "$(systemctl show aqt-paper -p ExecMainStatus --value)" = 2
+          test "$(systemctl show aqt-paper -p NRestarts --value)" = 0
+          sudo grep -h REFUSE_START /var/lib/aqt/data/processed/paper/*/operations.jsonl | grep "checkout differs"

@@ -1,6 +1,8 @@
 # The paper loop as a service (roadmap 2 Task 30; deploy/RUNBOOK.md).
-# It runs only the owner's approved commit (--deployment-record), never as
-# root. Exit code 2 is a refused start: it is not retried.
+# It runs only the owner's approved commit (--deployment-record), as the
+# account `aqt`, never root. The code under /opt/aqt is read-only to it; it
+# writes only to /var/lib/aqt (S30-1). Exit code 2 is a refused start: it is
+# not retried.
 [Unit]
 Description=aqt paper trading
 Wants=network-online.target
@@ -8,13 +10,15 @@ After=network-online.target
 
 [Service]
 User=aqt
-WorkingDirectory=/opt/aqt/app
-ExecStart=/opt/aqt/app/.venv/bin/python scripts/run_paper_trading.py --config configs/paper_trading.example.toml --deployment-record /etc/aqt/deployments.jsonl --telegram
+StateDirectory=aqt
+WorkingDirectory=/var/lib/aqt
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/aqt/app/.venv/bin/python /opt/aqt/app/scripts/run_paper_trading.py --config /opt/aqt/app/configs/paper_trading.example.toml --deployment-record /etc/aqt/deployments.jsonl --telegram
 Restart=on-failure
 RestartPreventExitStatus=2
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/opt/aqt
+ProtectHome=yes
 PrivateTmp=yes
 
 [Install]
