@@ -48,6 +48,9 @@ class EventKind(StrEnum):
     CLOCK_SKEW = "CLOCK_SKEW"
     LOOP_LAG = "LOOP_LAG"
     REDACTION = "REDACTION"
+    ALERT_CHANNEL = (
+        "ALERT_CHANNEL"  # Task 28: the external channel failed or is untested
+    )
 
 
 @dataclass(frozen=True, slots=True)
