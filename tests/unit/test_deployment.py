@@ -219,12 +219,46 @@ def test_the_server_run_refuses_before_reading_any_data(
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
 def test_a_record_others_can_write_refuses(
-    server: tuple[Path, Path, str],
+    server: tuple[Path, Path, str], tmp_path: Path
 ) -> None:
-    """S30-7: approving leaves the record writable by its owner only, and a
-    record others can write is refused."""
-    root, record, _ = server
-    assert record.stat().st_mode & 0o777 == 0o644
+    """S30-7: a record is created owner-writable only even under a
+    permissive umask; one others can write is never appended to, nor
+    trusted."""
+    root, record, head = server
+    fresh = tmp_path / "fresh.jsonl"
+    previous = os.umask(0)
+    try:
+        approve(fresh, commit=head, approved_by="Owner", statement="ok", at=NOW)
+    finally:
+        os.umask(previous)
+    assert fresh.stat().st_mode & 0o777 == 0o644
     os.chmod(record, 0o666)
+    before = record.read_bytes()
+    with pytest.raises(DeploymentError, match="writable by others"):
+        approve(record, commit=head, approved_by="Owner", statement="ok", at=NOW)
+    assert record.read_bytes() == before
     with pytest.raises(DeploymentError, match="writable by others"):
         approved_code(record, root)
+
+
+def test_a_refusal_that_cannot_be_logged_still_exits_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """S30-9: a damaged refusal log does not turn the refusal into a crash
+    that the service would retry."""
+    path = Path(__file__).parents[2] / "scripts" / "run_paper_trading.py"
+    spec = importlib.util.spec_from_file_location("run_paper_trading", path)
+    assert spec is not None and spec.loader is not None
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    record = tmp_path / "deployments.jsonl"
+    approve(record, commit="0" * 40, approved_by="Owner", statement="ok", at=NOW)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "deployment_refusals.jsonl").write_text("torn")
+    code = runner.main(
+        ["--config", "missing.toml", "--out", str(out),
+         "--deployment-record", str(record)]
+    )  # fmt: skip
+    assert code == 2
+    assert "Refused, not logged (LedgerError): deployment: " in capsys.readouterr().err

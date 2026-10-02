@@ -59,20 +59,27 @@ def main(argv: list[str] | None = None) -> int:
         try:
             approved_code(args.deployment_record, REPOSITORY_ROOT)
         except DeploymentError as error:
-            args.out.mkdir(parents=True, exist_ok=True)
-            AlertRouter(
-                [
-                    StreamSink(sys.stdout, Severity.WARNING),
-                    LedgerSink(args.out / REFUSALS, Severity.INFO),
-                ]
-            ).emit(
-                Event(
-                    EventKind.STARTUP,
-                    Severity.CRITICAL,
-                    datetime.now(UTC),
-                    {"decision": "REFUSE_START", "reason": f"deployment: {error}"},
+            reason = f"deployment: {error}"
+            try:
+                args.out.mkdir(parents=True, exist_ok=True)
+                AlertRouter(
+                    [
+                        StreamSink(sys.stdout, Severity.WARNING),
+                        LedgerSink(args.out / REFUSALS, Severity.INFO),
+                    ]
+                ).emit(
+                    Event(
+                        EventKind.STARTUP,
+                        Severity.CRITICAL,
+                        datetime.now(UTC),
+                        {"decision": "REFUSE_START", "reason": reason},
+                    )
                 )
-            )
+            except Exception as failure:  # noqa: BLE001 - still a refusal (S30-9)
+                print(
+                    f"Refused, not logged ({type(failure).__name__}): {reason}",
+                    file=sys.stderr,
+                )
             return 2
     config = load_config(args.config)
     out = args.out / config.run_id

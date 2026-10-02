@@ -44,13 +44,28 @@ def approve(
         raise DeploymentError("give the full 40-character commit id")
     if not (approved_by.strip() and statement.strip()):
         raise DeploymentError("an approval needs the owner's name and statement")
+    if _shared(record):
+        raise DeploymentError(
+            f"{record} is writable by others, so it cannot be trusted: "
+            "move it aside and approve into a new record"
+        )
+    if not record.exists():
+        # Created owner-only from the start, whatever the umask: no other
+        # account ever gets a writable descriptor to it (S30-7).
+        os.close(os.open(record, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644))
     append_entry(
         record,
         record_type=APPROVED,
         payload={"approved_by": approved_by, "commit": commit, "statement": statement},
         recorded_at_utc=at,
     )
-    os.chmod(record, 0o644)  # whatever the caller's umask (S30-7)
+
+
+def _shared(record: Path) -> bool:
+    """Others than its owner, root on the server, may write it (S30-7)."""
+    return (
+        os.name == "posix" and record.exists() and bool(record.stat().st_mode & 0o022)
+    )
 
 
 def _git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -64,8 +79,7 @@ def _git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
 
 def approved_code(record: Path, root: Path) -> SourceBundle:
     """The checkout's source identity, if it may run; else `DeploymentError`."""
-    if os.name == "posix" and record.exists() and record.stat().st_mode & 0o022:
-        # Only its owner, root on the server, may write it (S30-7).
+    if _shared(record):
         raise DeploymentError(f"{record} is writable by others")
     try:
         verify_ledger(record).require_intact()

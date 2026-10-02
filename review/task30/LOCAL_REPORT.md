@@ -155,3 +155,19 @@ commit: ['M configs/paper_trading.example.toml']" with exit status 2 and
 no restart.
 
 LOCAL GATE: PASS. Next: Sol High re-review of `57a3b40..b7611a0`.
+
+## Sol High second re-review of `b7611a0` and repairs
+
+Record: `SOL_REREVIEW_B7611A0.md` (prompt `SOL_PROMPT_B7611A0.md`). Verdict
+FIX: S30-4 CORRECT; S30-7 INCORRECT (mode fixed only after the append, so
+another account could hold a writable descriptor); S30-8 INCOMPLETE; new
+S30-9 BLOCKER.
+
+| ID | Sol severity | Decision | Repair | Validation |
+| --- | --- | --- | --- | --- |
+| S30-7 | BLOCKER | AGREE — repaired | `approve` creates a new record with `os.open(O_CREAT | O_EXCL, 0o644)` before writing, so it is never wider than owner-writable whatever the umask, and refuses to append to an existing record that group or others can write ("move it aside and approve into a new record"); `approved_code` still refuses such a record. The after-the-fact `chmod` is gone. | `test_a_record_others_can_write_refuses` (umask 0 on a new record gives 644; a wide record is neither appended to nor trusted; Linux, in CI). |
+| S30-9 | BLOCKER | AGREE — repaired | If the refusal cannot be written (e.g. a damaged `deployment_refusals.jsonl`), the runner prints "Refused, not logged (<type>): deployment: ..." to stderr (the journal) and still exits 2, so the service does not retry. | `test_a_refusal_that_cannot_be_logged_still_exits_2`. |
+| S30-8 | — | Closed with S30-9 | The ordering repair stands (Sol); its logging edge is S30-9. | As above. |
+
+T30-01 holds again with S30-7 repaired. The S30-9 test fails at `e99f976`
+(1 failed) and passes after; the S30-7 test runs on Linux only.
