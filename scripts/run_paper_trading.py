@@ -76,11 +76,14 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 )
             except Exception as failure:  # noqa: BLE001 - still a refusal (S30-9)
-                print(
-                    f"Refused, not logged ({type(failure).__name__}): {reason}",
-                    file=sys.stderr,
-                )
-            return 2
+                try:
+                    print(
+                        f"Refused, not logged ({type(failure).__name__}): {reason}",
+                        file=sys.stderr,
+                    )
+                except Exception:  # noqa: BLE001, S110 - nowhere left to say it
+                    pass
+            return 2  # a refusal, whatever happened above: never retried
     config = load_config(args.config)
     out = args.out / config.run_id
     out.mkdir(parents=True, exist_ok=True)

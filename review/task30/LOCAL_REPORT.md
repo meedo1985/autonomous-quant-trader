@@ -185,3 +185,19 @@ service on a broken tracked configuration logged CRITICAL `REFUSE_START`,
 exit 2, no restart).
 
 LOCAL GATE: PASS. Next: Sol High re-review of `b7611a0..ca68eee`.
+
+## Sol High third re-review of `ca68eee` and repairs
+
+Record: `SOL_REREVIEW_CA68EEE.md` (prompt `SOL_PROMPT_CA68EEE.md`). Verdict
+FIX: S30-7 CORRECT; S30-8 INCOMPLETE; S30-9 INCOMPLETE (the fallback
+`print` could itself raise when stderr is unavailable); new S30-10
+NON-BLOCKING.
+
+| ID | Sol severity | Decision | Repair | Validation |
+| --- | --- | --- | --- | --- |
+| S30-9 | BLOCKER | AGREE — repaired | The fallback message is guarded too; the refusal path returns 2 whatever the log, stdout or stderr do. | `test_a_refusal_with_no_log_and_no_stderr_still_exits_2` (damaged log, stdout and stderr raising). |
+| S30-8 | — | Closed with S30-9 | As above. | As above. |
+| S30-10 | NON-BLOCKING | AGREE — repaired | A new record is set to 0644 with `fchmod` on the descriptor that created it, before it is closed: a strict umask (e.g. 077) no longer leaves it unreadable to the app's account. It adds read permission only; no writable window. | `test_a_record_others_can_write_refuses` (umask 077 gives 644; Linux, in CI). |
+
+The S30-9 test fails at `260c24c` (1 failed) and passes after; the S30-10
+case runs on Linux only.

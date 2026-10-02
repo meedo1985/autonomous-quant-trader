@@ -232,6 +232,13 @@ def test_a_record_others_can_write_refuses(
     finally:
         os.umask(previous)
     assert fresh.stat().st_mode & 0o777 == 0o644
+    strict = tmp_path / "strict.jsonl"
+    previous = os.umask(0o077)
+    try:  # S30-10: still readable by the app's account
+        approve(strict, commit=head, approved_by="Owner", statement="ok", at=NOW)
+    finally:
+        os.umask(previous)
+    assert strict.stat().st_mode & 0o777 == 0o644
     os.chmod(record, 0o666)
     before = record.read_bytes()
     with pytest.raises(DeploymentError, match="writable by others"):
@@ -262,3 +269,34 @@ def test_a_refusal_that_cannot_be_logged_still_exits_2(
     )  # fmt: skip
     assert code == 2
     assert "Refused, not logged (LedgerError): deployment: " in capsys.readouterr().err
+
+
+class _Broken:
+    def write(self, _: str) -> int:
+        raise OSError("stderr unavailable")
+
+    def flush(self) -> None:
+        raise OSError("stderr unavailable")
+
+
+def test_a_refusal_with_no_log_and_no_stderr_still_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S30-9: with the refusal log damaged and stderr gone, still exit 2."""
+    path = Path(__file__).parents[2] / "scripts" / "run_paper_trading.py"
+    spec = importlib.util.spec_from_file_location("run_paper_trading", path)
+    assert spec is not None and spec.loader is not None
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    record = tmp_path / "deployments.jsonl"
+    approve(record, commit="0" * 40, approved_by="Owner", statement="ok", at=NOW)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "deployment_refusals.jsonl").write_text("torn")
+    monkeypatch.setattr(sys, "stdout", _Broken())
+    monkeypatch.setattr(sys, "stderr", _Broken())
+    code = runner.main(
+        ["--config", "missing.toml", "--out", str(out),
+         "--deployment-record", str(record)]
+    )  # fmt: skip
+    assert code == 2

@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Final
@@ -50,9 +51,16 @@ def approve(
             "move it aside and approve into a new record"
         )
     if not record.exists():
-        # Created owner-only from the start, whatever the umask: no other
-        # account ever gets a writable descriptor to it (S30-7).
-        os.close(os.open(record, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644))
+        # Owner-writable from the start, whatever the umask: no other
+        # account ever gets a writable descriptor to it (S30-7). Readable by
+        # all, so the app's account can check it under a strict umask too
+        # (S30-10).
+        descriptor = os.open(record, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        try:
+            if sys.platform != "win32":
+                os.fchmod(descriptor, 0o644)
+        finally:
+            os.close(descriptor)
     append_entry(
         record,
         record_type=APPROVED,
