@@ -374,3 +374,15 @@ each): `pytest -q` 1705 passed, 4 skipped; `ruff check .`, `ruff format
 --check .`, `mypy src scripts` (56 files), `lint-imports` (6 kept),
 `git diff --check` clean; no frozen file changed; Task 25 drills rerun,
 identical to `review/task25/drills`. Not yet re-reviewed.
+
+## Astra re-review of `8fa1311`
+
+Record: `ASTRA_REREVIEW_8FA1311.md` (prompt `ASTRA_PROMPT_8FA1311.md`). A27-17,
+A27-22 and A27-24 CORRECT; no new findings; verdict ACCEPT, scoped to this
+repair re-review. The reviewer independently ran ruff, format check, mypy,
+lint-imports and the frozen verification (all pass); its full pytest was
+not rerun (sandbox), the author's run above stands. Noted, no change: the
+general `SafetyController.trigger()` API still accepts an untagged LOSS_STOP
+detail, but both producers in the loop tag it; compatibility with journals
+written before `8fa1311` is not established, and none is in use. Remaining
+for Task 27: the owner's section 16 walkthrough of PR #37, then "merge".
