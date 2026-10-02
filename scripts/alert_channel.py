@@ -12,7 +12,9 @@ This script never prints them. To store them once, in a Windows terminal:
 (`/pass` with no value asks for the token, so it stays out of the shell
 history.) Tests are recorded in `--ledger`. A test
 must be acknowledged at least every 7 days (D-2), or a run that uses the
-channel refuses to start. Exit code 0 on success, 2 otherwise.
+channel refuses to start. A failed send is also written to
+`alert_channel_log.jsonl` next to the ledger. Exit code 0 on success, 2
+otherwise.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ import sys
 from pathlib import Path
 
 from aqt.core.ledger import LedgerError
-from aqt.monitoring.alerts import StreamSink
+from aqt.monitoring.alerts import LedgerSink, StreamSink
 from aqt.monitoring.events import Severity
 from aqt.monitoring.telegram import DEFAULT_LEDGER, ChannelError, owner_channel
 
@@ -37,8 +39,12 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("status")
     args = parser.parse_args(argv)
     try:
+        # A failed test send is written here and to the screen (A28-3).
+        log = LedgerSink(
+            args.ledger.with_name("alert_channel_log.jsonl"), Severity.INFO
+        )
         _, tests = owner_channel(
-            args.ledger, [StreamSink(sys.stderr, Severity.CRITICAL)]
+            args.ledger, [StreamSink(sys.stderr, Severity.CRITICAL), log]
         )
         if args.command == "test":
             tests.send_test()

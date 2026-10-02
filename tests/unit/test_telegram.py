@@ -4,14 +4,17 @@ synthetic."""
 
 from __future__ import annotations
 
+import ctypes
 import io
 import json
 import re
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+from aqt.core.ledger import append_entry, read_entries
 from aqt.monitoring.alerts import AlertRouter, LedgerSink, StreamSink
 from aqt.monitoring.events import Event, EventKind, Severity
 from aqt.monitoring.telegram import (
@@ -22,6 +25,7 @@ from aqt.monitoring.telegram import (
     TelegramRequest,
     TelegramResponse,
     TelegramSink,
+    read_windows_credential,
 )
 from tests.integration.test_paper_loop import _config, _run, _series
 
@@ -94,6 +98,13 @@ def test_only_critical_events_reach_the_sink() -> None:
         TelegramResponse(
             400, b'{"ok":false,"description":"bad ' + TOKEN.encode() + b'"}'
         ),
+        # A28-1: a long description used to be cut inside the token.
+        TelegramResponse(
+            400,
+            b'{"ok":false,"description":"' + b"x" * 180 + TOKEN.encode() + b'"}',
+        ),
+        # A28-4: a reply too deep to parse.
+        TelegramResponse(200, b"[" * 100_000 + b"]" * 100_000),
     ],
 )
 def test_a_failed_send_is_alerted_locally_without_the_token(
@@ -112,7 +123,7 @@ def test_a_failed_send_is_alerted_locally_without_the_token(
     assert failure["fields"]["failed_kind"] == "STARTUP"
     assert TOKEN not in stream.getvalue()
     assert TOKEN.encode() not in log.read_bytes()
-    assert "AAAA" not in stream.getvalue()
+    assert TOKEN[:12] not in stream.getvalue() and "AAAA" not in stream.getvalue()
 
 
 def test_a_sink_without_a_local_fallback_is_refused() -> None:
@@ -155,7 +166,10 @@ def _code(fake: Fake) -> str:
 def test_a_test_must_be_acknowledged_with_its_code(tmp_path: Path) -> None:
     fake, clock = Fake(), Clock()
     tests = _tests(tmp_path, fake, clock)
-    assert tests.problem() == "no acknowledged alert channel test (D-2)"
+    assert (
+        tests.problem()
+        == "no acknowledged alert channel test for this bot and chat (D-2)"
+    )
     assert tests.due()
     tests.send_test()
     code = _code(fake)
@@ -210,7 +224,9 @@ def _acknowledged(tmp_path: Path, clock: Clock) -> tuple[Fake, ChannelTests]:
 def test_an_untested_channel_refuses_the_start(tmp_path: Path) -> None:
     tests = _tests(tmp_path, Fake(), Clock())
     report = _run(tmp_path / "run", _config(2), _series(24 * 12), channel=tests)
-    assert report.refused == ("no acknowledged alert channel test (D-2)",)
+    assert report.refused == (
+        "no acknowledged alert channel test for this bot and chat (D-2)",
+    )
 
 
 def test_an_overdue_test_refuses_the_start(tmp_path: Path) -> None:
@@ -274,3 +290,181 @@ def test_an_overdue_test_during_a_run_is_sent_and_reminded_hourly(
     # per check): the overdue test is reminded once per wall hour, not hourly
     # by the bar clock.
     assert 1 <= len(reminders) <= 2
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"url": f"https://api.telegram.org/bot{TOKEN}/sendMessage"},
+        {f"https://api.telegram.org/bot{TOKEN}/sendMessage": "x"},
+    ],
+)
+def test_a_token_inside_its_url_is_redacted(fields: dict[str, str]) -> None:
+    """A28-2: no word boundary precedes the token after `bot`."""
+    stream = io.StringIO()
+    AlertRouter([StreamSink(stream, Severity.INFO)]).emit(_event(**fields))
+    assert TOKEN[:12] not in stream.getvalue()
+
+
+def test_a_failed_test_send_is_alerted_locally(tmp_path: Path) -> None:
+    """A28-3: the owner's `test` command records its failure locally too."""
+    log = tmp_path / "log.jsonl"
+    failing = Fake(TelegramResponse(500, b""))
+    sink = TelegramSink(CREDENTIAL, failing, [LedgerSink(log, Severity.INFO)])
+    tests = ChannelTests(tmp_path / "tests.jsonl", sink, Clock())
+    with pytest.raises(ChannelError, match="not sent"):
+        tests.send_test()
+    (entry,) = read_entries(log)
+    fields = entry.payload["fields"]
+    assert entry.payload["kind"] == "ALERT_CHANNEL"
+    assert fields["failed_kind"] == "CHANNEL_TEST"
+    assert fields["error"] == "HTTP 500, not accepted"
+
+
+def test_a_check_that_fails_does_not_stop_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A28-4: whatever the hourly check meets is reported, never raised."""
+    _, tests = _acknowledged(tmp_path, Clock())
+
+    def broken(self: ChannelTests) -> bool:
+        raise RecursionError
+
+    monkeypatch.setattr(ChannelTests, "due", broken)
+    report = _run(tmp_path / "run", _config(1), _series(24 * 12), channel=tests)
+    assert report.refused == () and report.final_mode == "RUNNING"
+    log = (tmp_path / "run" / "operations.jsonl").read_text()
+    assert "channel test failed: RecursionError" in log
+
+
+def test_a_new_bot_or_chat_needs_its_own_test(tmp_path: Path) -> None:
+    """A28-5: an acknowledgment proves only the channel it was sent on."""
+    clock = Clock()
+    fake, _ = _acknowledged(tmp_path, clock)
+    old_code = _code(fake)
+    other = TelegramCredential(chat_id="43", token=TOKEN)
+    sink = TelegramSink(other, fake, [StreamSink(io.StringIO(), Severity.INFO)])
+    tests = ChannelTests(tmp_path / "tests.jsonl", sink, clock)
+    assert "no acknowledged" in str(tests.problem()) and tests.due()
+    with pytest.raises(ChannelError, match="different bot"):
+        tests.acknowledge(old_code)
+
+
+def test_a_clock_set_back_is_reported_not_trusted(tmp_path: Path) -> None:
+    """A28-6: records dated after the clock refuse, and nothing is due."""
+    clock = Clock()
+    _, tests = _acknowledged(tmp_path, clock)
+    clock.now = NOW - timedelta(days=30)
+    assert "clock is behind" in str(tests.problem()) and not tests.due()
+    with pytest.raises(ChannelError, match="clock is behind"):
+        tests.send_test()
+
+
+class Falling(Clock):
+    """A wall clock that goes back 2 hours on every reading once falling."""
+
+    def __init__(self, now: datetime) -> None:
+        super().__init__(now)
+        self.falling = False
+
+    def __call__(self) -> datetime:
+        if self.falling:
+            self.now -= timedelta(hours=2)
+        return self.now
+
+
+def test_a_clock_going_back_does_not_silence_the_hourly_check(
+    tmp_path: Path,
+) -> None:
+    """A28-6: a reading before the last check starts a new hour at once."""
+    clock = Falling(NOW)
+    _, tests = _acknowledged(tmp_path, clock)
+    clock.now = NOW + timedelta(hours=4)  # the start check still passes
+    clock.falling = True
+    report = _run(tmp_path / "run", _config(1), _series(24 * 12), channel=tests)
+    assert report.refused == () and report.final_mode == "RUNNING"
+    log = (tmp_path / "run" / "operations.jsonl").read_text()
+    assert log.count("clock is behind") >= 20  # about once per decision hour
+
+
+def test_a_code_is_never_issued_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A28-7: a random repeat is drawn again, so both tests can be confirmed."""
+    draws = iter([5, 5, 7])
+    monkeypatch.setattr(
+        "aqt.monitoring.telegram.secrets.randbelow", lambda _: next(draws)
+    )
+    clock, fake = Clock(), Fake()
+    tests = _tests(tmp_path, fake, clock)
+    tests.send_test()
+    first = _code(fake)
+    clock.now += timedelta(days=8)
+    tests.send_test()
+    second = _code(fake)
+    assert (first, second) == ("000005", "000007")
+    tests.acknowledge(first)
+    tests.acknowledge(second)
+    assert tests.problem() is None
+
+
+def test_a_well_chained_but_malformed_record_refuses(tmp_path: Path) -> None:
+    """A28-8: a naive timestamp in an intact chain is a refusal, not a crash."""
+    path = tmp_path / "tests.jsonl"
+    append_entry(
+        path,
+        record_type="aqt.channel_test.sent.v1",
+        payload={
+            "channel": "0" * 64,
+            "code_sha256": "0" * 64,
+            "sent_at": "2026-10-02T12:00:00",
+        },
+        recorded_at_utc=NOW,
+    )
+    tests = ChannelTests(path, _sink(Fake(), io.StringIO()), Clock())
+    assert "unreadable" in str(tests.problem())
+    with pytest.raises(ChannelError):
+        tests.due()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows credential store")
+@pytest.mark.parametrize(
+    ("blob", "expected"),
+    [
+        (TOKEN.encode("utf-16-le"), TOKEN),  # as `cmdkey` stores it
+        (TOKEN.encode(), TOKEN),
+        (b"\x00\xd8", None),  # not text: refused, not a traceback (A28-9)
+    ],
+)
+def test_the_credential_reader_with_a_fake_store(
+    monkeypatch: pytest.MonkeyPatch, blob: bytes, expected: str | None
+) -> None:
+    """T28-01: the success path, against a fake `advapi32`; the real store
+    is never touched."""
+    freed: list[object] = []
+    keep: list[object] = []
+
+    class FakeAdvapi:
+        def CredReadW(self, target: str, kind: int, flags: int, out: object) -> int:  # noqa: N802
+            assert (target, kind, flags) == ("aqt-telegram", 1, 0)
+            pointer = out._obj  # type: ignore[attr-defined]
+            entry = type(pointer)._type_()
+            data = (ctypes.c_ubyte * len(blob)).from_buffer_copy(blob)
+            keep.extend([entry, data])
+            entry.CredentialBlobSize = len(blob)
+            entry.CredentialBlob = ctypes.cast(data, ctypes.POINTER(ctypes.c_ubyte))
+            entry.UserName = "42"
+            pointer.contents = entry
+            return 1
+
+        def CredFree(self, pointer: object) -> None:  # noqa: N802
+            freed.append(pointer)
+
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *_, **__: FakeAdvapi(), raising=False)
+    if expected is None:
+        with pytest.raises(ChannelError, match="not readable") as caught:
+            read_windows_credential()
+        assert caught.value.__context__ is None
+    else:
+        assert read_windows_credential() == TelegramCredential("42", expected)
+    assert len(freed) == 1

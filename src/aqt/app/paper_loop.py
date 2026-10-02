@@ -929,20 +929,24 @@ def run_paper(
 
     def check_channel(at: datetime) -> None:
         """Q28-2: send a due test; alert while the test is overdue. At most
-        once per wall-clock hour; never changes the mode."""
+        once per wall-clock hour; never changes the mode, and nothing it
+        meets stops the loop (A28-4). A clock set back starts a new hour at
+        once (A28-6)."""
         nonlocal reminded
         if channel is None:
             return
         now = channel.now()
-        if reminded is not None and now - reminded < HOUR:
+        if reminded is not None and reminded <= now < reminded + HOUR:
             return
         reminded = now
         try:
             if channel.due():
                 channel.send_test()
             problem = channel.problem()
-        except (ChannelError, LedgerError, OSError) as error:
+        except ChannelError as error:  # its text holds no secret
             problem = f"channel test: {error}"
+        except Exception as error:  # noqa: BLE001 - reported, never raised
+            problem = f"channel test failed: {type(error).__name__}"
         if problem is not None:
             router.emit(
                 Event(
