@@ -98,3 +98,11 @@ data download); T30-05 and T30-06 stand.
 
 Each new test fails at `a437872` (2 failed: the ignored `.pyc` case and the
 runner) and passes after; the symlink test runs on Linux only.
+
+The first CI run of these repairs (`de0573d`, run 37034646851) failed in
+the new ownership step: "aqt can write /opt/aqt/app/scripts". Root owned
+the files, but the runner's `sudo` passed a permissive umask, so they were
+group/other-writable. `install.sh` now sets `umask 022` and ends with
+`chmod -R go-w /opt/aqt`; the runbook's update step ends with the same
+`chmod`. (Git records only the executable bit, so the check still sees a
+clean checkout.)

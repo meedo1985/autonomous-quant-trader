@@ -98,6 +98,7 @@ sudo systemctl stop aqt-paper
 sudo git -C /opt/aqt/app fetch --quiet origin
 sudo git -C /opt/aqt/app checkout --quiet <commit>
 sudo /opt/aqt/app/.venv/bin/pip install --quiet --no-compile -e /opt/aqt/app
+sudo chmod -R go-w /opt/aqt
 sudo install -m 644 /opt/aqt/app/deploy/aqt-paper.service /etc/systemd/system/ && sudo systemctl daemon-reload
 ```
 

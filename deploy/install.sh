@@ -6,6 +6,7 @@
 # account `aqt` can read and run them, never change them (S30-1, S30-3).
 # `aqt` writes only to /var/lib/aqt.
 set -eu
+umask 022  # whatever the caller's: nothing here may be writable by `aqt`
 REPO=$1
 COMMIT=$2
 
@@ -22,6 +23,7 @@ git -C /opt/aqt/app checkout --quiet "$COMMIT"
 git config --system --add safe.directory /opt/aqt/app
 python3 -m venv /opt/aqt/app/.venv
 /opt/aqt/app/.venv/bin/pip install --quiet --no-compile -e /opt/aqt/app
+chmod -R go-w /opt/aqt
 
 install -o root -g root -m 644 /opt/aqt/app/deploy/aqt-paper.service \
     /etc/systemd/system/aqt-paper.service
