@@ -201,3 +201,17 @@ NON-BLOCKING.
 
 The S30-9 test fails at `260c24c` (1 failed) and passes after; the S30-10
 case runs on Linux only.
+
+Validation after these repairs (2026-10-02): on this PC at `1c90663`
+(Python 3.14.7, Windows 11, exit 0 each) `pytest -q` 1760 passed, 9
+skipped; `ruff check .`, `ruff format --check .` (114 files), `mypy src
+scripts` (60 files), `lint-imports` (6 kept), `git diff --check` clean;
+frozen verification PASS (28/28, 14/14, self-hash, 7/7, nested); Task 25
+drills identical. CI on PR #40 at `1c90663` (run 37044396881): `checks`
+pass (Linux: 1762 passed, 7 skipped, the S30-5, S30-7 and S30-10 cases
+included); `runbook-dry-run` pass ("Approved 8302bf9...", "May run:
+8302bf9..., source 5964ef21...", record and lock not writable by `aqt`,
+the real service on a broken tracked configuration logged CRITICAL
+`REFUSE_START`, exit 2, no restart).
+
+LOCAL GATE: PASS. Next: Sol High re-review of `ca68eee..1c90663`.
