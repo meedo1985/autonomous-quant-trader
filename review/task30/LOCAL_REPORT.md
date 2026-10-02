@@ -171,3 +171,17 @@ S30-9 BLOCKER.
 
 T30-01 holds again with S30-7 repaired. The S30-9 test fails at `e99f976`
 (1 failed) and passes after; the S30-7 test runs on Linux only.
+
+Validation after these repairs (2026-10-02): on this PC at `ca68eee`
+(Python 3.14.7, Windows 11, exit 0 each) `pytest -q` 1759 passed, 9
+skipped; `ruff check .`, `ruff format --check .` (114 files), `mypy src
+scripts` (60 files), `lint-imports` (6 kept), `git diff --check` clean;
+frozen verification PASS (28/28, 14/14, self-hash, 7/7, nested); Task 25
+drills identical. CI on PR #40 at `ca68eee` (run 37041961014): `checks`
+pass (Linux: 1761 passed, 7 skipped, the S30-5 and S30-7 tests included);
+`runbook-dry-run` pass ("Approved 55d686f...", "May run: 55d686f...,
+source 83fa503f...", record and lock not writable by `aqt`, the real
+service on a broken tracked configuration logged CRITICAL `REFUSE_START`,
+exit 2, no restart).
+
+LOCAL GATE: PASS. Next: Sol High re-review of `b7611a0..ca68eee`.

@@ -1,0 +1,11 @@
+You are the independent, different-model adversarial reviewer (GPT-5.6 Sol, high effort) required by Constitution section 16, doing a third RE-REVIEW of roadmap 2 Task 30 (server runbook and code identity), branch `task30-runbook-design`, draft PR #40, head `ca68eee`. The implementation is by Claude Opus 5.5. You are read-only: do not edit, create, commit, or push files in the repository; no credentials, no network, no exchange APIs, no confirmation/lockbox data, no credential store.
+
+You run on a Windows PC inside the repository and MAY run read-only commands: `git`, reading files, and Python with `-B` that writes nothing into the repository. pytest may be blocked by the sandbox's missing temporary directory; scratch-free reproductions are fine.
+
+Your previous records: `review/task30/SOL_REVIEW_3C41F70.md`, `SOL_REREVIEW_57A3B40.md`, `SOL_REREVIEW_B7611A0.md` (FIX: S30-7 INCORRECT, S30-8 INCOMPLETE, new S30-9 BLOCKER). The author's dispositions: `review/task30/LOCAL_REPORT.md`, section "Sol High second re-review of `b7611a0` and repairs" and the validation after it (CI run 37041961014 quoted; you cannot fetch it).
+
+Review the repairs: `git diff b7611a0 ca68eee` excluding review records: `src/aqt/core/deployment.py` (`approve` creates a new record with `O_CREAT|O_EXCL` mode 0o644 before writing and refuses to append to a record others can write; `_shared`), `scripts/run_paper_trading.py` (a refusal that cannot be logged is printed to stderr and still exits 2), `tests/unit/test_deployment.py`.
+
+Check: (1) S30-7 and S30-9 are closed, and S30-8 with them — re-trace your scenarios (permissive umask; an existing wide record; a retained descriptor; the lock sidecar; a damaged or unwritable refusal log; any exception on the refusal path before `return 2`); (2) anything else these repairs introduce or reopen; (3) whether the T30 dispositions hold.
+
+Output (your final message is the record): reviewer model identity; reviewed commit; per S30-7, S30-8, S30-9 CORRECT / INCORRECT / INCOMPLETE with evidence (and any earlier finding these changes reopen); new findings S30-10, ... with severity BLOCKER / NON-BLOCKING / QUESTION, file:line, concrete scenario, reproduced yes/no (command + output); the commands you ran; verdict ACCEPT or FIX. No speculative findings without a concrete scenario.
