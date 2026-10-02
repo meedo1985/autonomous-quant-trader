@@ -8,7 +8,9 @@ Reads only the exploration archives through the Task 14 manifest builder,
 trades only against the simulator, and writes the run report, the operations
 log and the incident log under `--out/<run_id>/`. With `--telegram`, CRITICAL
 events also go to the owner's Telegram bot and the run needs a weekly test
-acknowledged within 7 days (Task 28; `scripts/alert_channel.py`). Exit code
+acknowledged within 7 days (Task 28; `scripts/alert_channel.py`). With
+`--deployment-record`, the run starts only from the owner's approved commit
+(Task 30; `scripts/deployment.py`, `deploy/RUNBOOK.md`). Exit code
 0 on a completed run, 2 on REFUSE_START.
 """
 
@@ -40,6 +42,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="also alert the owner's Telegram bot (needs a tested channel)",
     )
+    parser.add_argument(
+        "--deployment-record",
+        type=Path,
+        help="the server's deployment record; refuse unless this is its commit",
+    )
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
@@ -69,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
         environ=os.environ,
         repository_root=REPOSITORY_ROOT,
         channel=channel,
+        deployment=args.deployment_record,
     )
     text = json.dumps(report.as_mapping(), indent=2, sort_keys=True)
     (out / "report.json").write_text(text + "\n", encoding="utf-8")

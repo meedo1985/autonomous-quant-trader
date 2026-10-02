@@ -19,7 +19,9 @@ a frozen hash differs; no alert sink is configured; the operations log fails
 its chain check; a Binance credential variable is set; the run window is not
 inside one unbroken run of bars; the startup reconciliation fails; an
 incident is open; or, with the Telegram channel (Task 28), its weekly test
-is unacknowledged or overdue. A non-simulator adapter is
+is unacknowledged or overdue; or, with a deployment record (Task 30), the
+checkout is not exactly the owner's newest approved commit on `main`. A
+non-simulator adapter is
 refused when the configuration is read. Every refusal is logged.
 
 With a state journal (Task 27, `aqt.app.state`) a run resumes the account
@@ -58,6 +60,8 @@ from typing import Final
 from aqt.allocation.predictor import PREDICTOR_BENCHMARK, baseline_proposal
 from aqt.app.state import AccountState, StateError, StateJournal
 from aqt.backtest.costs import Side as TradeSide
+from aqt.core.code_identity import SourceBundle
+from aqt.core.deployment import DeploymentError, approved_code
 from aqt.core.ledger import LedgerError, read_entries, verify_ledger
 from aqt.data.bars import BarSeries, require_utc
 from aqt.data.binance_public import DownloadError, refuse_credentials
@@ -484,6 +488,7 @@ def run_paper(
     venue: SimulatedExchange | None = None,
     overrides: Mapping[datetime, OwnerOverride] | None = None,
     channel: ChannelTests | None = None,
+    deployment: Path | None = None,
 ) -> RunReport:
     """Run the loop over every hourly decision in `[start, end)`.
 
@@ -507,6 +512,11 @@ def run_paper(
     or overdue test refuses the start. During the run, at most once per
     wall-clock hour, a due test is sent and an overdue one raises a CRITICAL
     alert; the mode is unchanged (owner answer Q28-2).
+
+    `deployment` is the owner's deployment record on the server (Task 30,
+    Q30-2): the start is refused unless `repository_root` is exactly the
+    newest approved commit, and the start event names that commit and its
+    source hash.
     """
     if journal is not None and local_record is not None:
         raise ConfigError("a resumed account's record comes from its journal")
@@ -581,6 +591,12 @@ def run_paper(
         refuse(f"credential present: {error}")
     if channel is not None and (untested := channel.problem()) is not None:
         refuse(untested)
+    deployed: SourceBundle | None = None
+    if deployment is not None:
+        try:
+            deployed = approved_code(deployment, repository_root)
+        except DeploymentError as error:
+            refuse(f"deployment: {error}")
     marker = refuse_marker_path(incidents)
     if marker.exists():
         refuse(f"an earlier run stopped on an error; see {marker.name}")
@@ -645,6 +661,9 @@ def run_paper(
     }
     if resumed is not None:
         started["resumed_mode"] = str(mode)
+    if deployed is not None:
+        started["commit"] = deployed.commit
+        started["source_sha256"] = deployed.source_sha256
     router.emit(Event(EventKind.STARTUP, Severity.INFO, decision.report.at, started))
 
     ready = decision.report.at  # after any section 21 waits (A2324R-2, F35-4)

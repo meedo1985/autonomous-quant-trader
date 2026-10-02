@@ -24,3 +24,27 @@ jobs:
       - run: mypy src
       - run: python -m pytest
       - run: lint-imports
+
+  # Task 30 (owner answer Q30-4): deploy/RUNBOOK.md steps 2-3 on a fresh
+  # Ubuntu machine, then a modified file must refuse the start.
+  runbook-dry-run:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Package this commit as the reviewed main (dry run only)
+        run: |
+          git branch -f main HEAD
+          git bundle create /tmp/app.bundle main
+          echo "COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Step 2, install
+        run: sudo sh deploy/install.sh /tmp/app.bundle "$COMMIT"
+      - name: Step 3, approve and check
+        run: |
+          sudo /opt/aqt/app/.venv/bin/python -B /opt/aqt/app/scripts/deployment.py approve "$COMMIT" --by "CI dry run" --statement "runbook dry run"
+          sudo -u aqt sh -c 'cd /opt/aqt/app && .venv/bin/python scripts/deployment.py check'
+      - name: The service file is valid
+        run: sudo systemd-analyze verify /etc/systemd/system/aqt-paper.service
+      - name: A modified file refuses the start
+        run: |
+          echo "# changed" | sudo -u aqt tee -a /opt/aqt/app/scripts/run_paper_trading.py
+          if sudo -u aqt sh -c 'cd /opt/aqt/app && .venv/bin/python scripts/deployment.py check'; then exit 1; fi
