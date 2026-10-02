@@ -44,7 +44,7 @@ How that reads here:
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Context, Decimal
@@ -270,6 +270,10 @@ class SafetyController:
         self.attempts: dict[str, tuple[Decimal, Decimal]] = {}
         """Quantity and price cap of every FLATTEN order sent, for the audit
         log even when its reply is lost (F35-3)."""
+        self.before_send: Callable[[], None] | None = None
+        """Called after a FLATTEN order is recorded in `sent` and before it is
+        placed, so a caller can persist it first (Task 27). If it raises,
+        nothing is placed."""
 
     def may_trade(self) -> bool:
         """Whether the governor and executor may act at all."""
@@ -486,6 +490,8 @@ class SafetyController:
         self.sent[client_order_id] = None
         self.attempts[client_order_id] = (quantity, cap)
         self._last_flatten_decision = decision_time
+        if self.before_send is not None:
+            self.before_send()
         try:
             order = venue.place_order(
                 client_order_id,
@@ -546,17 +552,22 @@ def startup_check(
     incidents: IncidentLog,
     at: datetime,
     absence: AbsenceCheck | None = None,
+    *,
+    resuming: Mode = Mode.RUNNING,
 ) -> StartupDecision:
     """Section 19, "Startup reconciliation required": REFUSE_START on any
     reconciliation difference or open incident. A failed reconciliation
-    opens an incident. The other REFUSE_START conditions of the deployment
-    draft section 4 (hashes, alert channel, health) belong to the loop."""
+    opens an incident. A start that resumes a saved HALT, FLATTEN or FREEZE
+    (`resuming`, Task 27) may have incidents open: it cannot trade, and
+    section 14 closes them only on the way back to RUNNING. The other
+    REFUSE_START conditions of the deployment draft section 4 (hashes, alert
+    channel, health) belong to the loop."""
     report = reconcile(venue, local, tolerance, at, absence)
     reasons: list[str] = []
     if not report.passed:
         reasons.append("reconciliation failed: " + "; ".join(report.differences))
         incidents.open(str(Trigger.RECONCILIATION_FAILED), reasons[-1], report.at)
     still_open = incidents.open_incidents()
-    if still_open:
+    if still_open and resuming is Mode.RUNNING:
         reasons.append(f"open incidents: {', '.join(still_open)}")
     return StartupDecision(start=not reasons, reasons=tuple(reasons), report=report)

@@ -21,6 +21,22 @@ inside one unbroken run of bars; the startup reconciliation fails; or an
 incident is open. A non-simulator adapter is
 refused when the configuration is read. Every refusal is logged.
 
+With a state journal (Task 27, `aqt.app.state`) a run resumes the account
+where its last run left it: the saved mode (moved on by any alarm the
+incident log recorded after the snapshot), the unsettled orders, the
+loss-stop peak. A HALT, FLATTEN or FREEZE resumes as itself, never as
+RUNNING. The state is saved after every hour, after an owner command, and
+before any order is sent. A damaged or inconsistent journal, or a start not
+after the last save, is a REFUSE_START.
+
+The ways back (Task 27 part b2): on the owner's FREEZE_EXIT command the
+loop reconciles, and a passed reconciliation leads to HALT (section 22);
+nothing leaves FREEZE by itself. HALT ends only on
+the owner's section 14 override (`OwnerOverride`, reconciled by the loop at
+that hour); ending it resets the loss-stop peak to the equity then (owner
+answers Q27-1, Q27-2). Neither trades in the hour it happens. No decision
+is taken before a reconciliation that waited has ended (A2324R-4).
+
 The run is deterministic: the clock is the bar clock, and governor nonces
 come from the run id and a counter, so two runs of one configuration produce
 the same report and the same log bytes.
@@ -33,29 +49,46 @@ import json
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Final
 
 from aqt.allocation.predictor import PREDICTOR_BENCHMARK, baseline_proposal
-from aqt.core.ledger import LedgerError, verify_ledger
+from aqt.app.state import AccountState, StateError, StateJournal
+from aqt.backtest.costs import Side as TradeSide
+from aqt.core.ledger import LedgerError, read_entries, verify_ledger
 from aqt.data.bars import BarSeries, require_utc
 from aqt.data.binance_public import DownloadError, refuse_credentials
 from aqt.execution.machine import Executor, State
-from aqt.execution.orders import ExecutorConfig
-from aqt.execution.reconcile import AbsenceCheck, LocalRecord, reconcile, settle
+from aqt.execution.orders import ExecutorConfig, client_order_id_for
+from aqt.execution.reconcile import (
+    AbsenceCheck,
+    LocalRecord,
+    ReconciliationReport,
+    reconcile,
+    settle,
+)
 from aqt.execution.safety import (
+    MODE_TRANSITIONS,
     FlattenBounds,
+    HaltOverride,
     IncidentLog,
     Mode,
+    OwnerAction,
     SafetyController,
     SafetyError,
     Trigger,
     startup_check,
 )
 from aqt.execution.simulator import Order, Scenario, SimulatedExchange, SymbolFilters
-from aqt.governor.authorization import ActualState, GovernorConfig, Refusal, Side
+from aqt.governor.authorization import (
+    ActualState,
+    Authorization,
+    GovernorConfig,
+    Refusal,
+    Side,
+)
 from aqt.governor.machine import Governor
 from aqt.monitoring.alerts import AlertConfigError, AlertRouter, Sink
 from aqt.monitoring.events import Event, EventKind, Severity
@@ -65,6 +98,7 @@ __all__ = [
     "ConfigError",
     "HealthLimits",
     "Observation",
+    "OwnerOverride",
     "PaperConfig",
     "RunReport",
     "contiguous_window",
@@ -77,6 +111,20 @@ __all__ = [
 HOUR: Final = timedelta(hours=1)
 _QUOTE: Final[str] = "USDT"
 _SIMULATOR: Final[str] = "simulator"
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerOverride:
+    """The owner's part of a section 14 HALT override, for one hour. The loop
+    adds the reconciliation it takes at that hour; `SafetyController.
+    override_halt` refuses anything missing. `incident_ids` must name every
+    open incident."""
+
+    incident_ids: tuple[str, ...]
+    written_record: str
+    cause: str
+    owner_action: OwnerAction
+    timestamp: datetime
 
 
 class ConfigError(ValueError):
@@ -430,6 +478,9 @@ def run_paper(
     local_record: LocalRecord | None = None,
     commands: Mapping[datetime, Trigger] | None = None,
     observe: Callable[[datetime], Observation] = bar_clock_observation,
+    journal: StateJournal | None = None,
+    venue: SimulatedExchange | None = None,
+    overrides: Mapping[datetime, OwnerOverride] | None = None,
 ) -> RunReport:
     """Run the loop over every hourly decision in `[start, end)`.
 
@@ -440,12 +491,24 @@ def run_paper(
     health-check readings for an hour (default: the bar clock, which never
     breaches); a breach blocks every order that hour, and at start it is a
     REFUSE_START.
+
+    `journal` holds the account's saved state (Task 27); `incidents` must be
+    the same account's incident log. `venue` is the exchange to trade
+    against (default: a new simulator holding the starting balances); a
+    resumed account must be given the venue its state describes, or the
+    startup reconciliation refuses. `overrides` are the owner's HALT
+    overrides, applied at the given hour.
     """
+    if journal is not None and local_record is not None:
+        raise ConfigError("a resumed account's record comes from its journal")
+    if venue is not None and scenario is not None:
+        raise ConfigError("a scenario configures a new simulator, not a given venue")
     owner = dict(commands or {})
-    if any(
-        t not in (Trigger.OWNER_HALT, Trigger.OWNER_FLATTEN) for t in owner.values()
-    ):
-        raise ConfigError("only OWNER_HALT and OWNER_FLATTEN can be commanded")
+    commandable = (Trigger.OWNER_HALT, Trigger.OWNER_FLATTEN, Trigger.FREEZE_EXIT)
+    if any(t not in commandable for t in owner.values()):
+        raise ConfigError(
+            "only OWNER_HALT, OWNER_FLATTEN and FREEZE_EXIT can be commanded"
+        )
     try:
         frozen = json.loads((repository_root / "FROZEN_HASHES.json").read_text("utf-8"))
     except (OSError, ValueError):
@@ -483,14 +546,14 @@ def run_paper(
         refused.append(f"no alert sink: {error}")
         return report("REFUSED", config.starting_balances)
 
-    def refuse(reason: str) -> None:
+    def refuse(reason: str, at: datetime | None = None) -> None:
         refused.append(reason)
         try:
             router.emit(
                 Event(
                     EventKind.STARTUP,
                     Severity.CRITICAL,
-                    config.start,
+                    config.start if at is None else at,
                     {"decision": "REFUSE_START", "reason": reason},
                 )
             )
@@ -510,18 +573,43 @@ def run_paper(
     marker = refuse_marker_path(incidents)
     if marker.exists():
         refuse(f"an earlier run stopped on an error; see {marker.name}")
+    resumed: AccountState | None = None
+    saved_at = config.start
+    mode, entered = Mode.RUNNING, config.start
+    if journal is not None:
+        try:
+            loaded = journal.load_saved()
+            if loaded is not None:
+                resumed, saved_at = loaded
+                if config.start <= saved_at:
+                    refuse(f"start is not after the saved state ({saved_at})")
+                place = _resume(resumed, incidents)
+                if isinstance(place, str):
+                    refuse(place)
+                else:
+                    mode, entered = place
+        except (LedgerError, StateError, OSError) as error:
+            refuse(f"saved state unreadable: {error}")
+    history = series  # every bar given, for recovery across a data gap (A27-21)
     window = contiguous_window(series, config.start, config.end)
     if isinstance(window, str):
         refuse(window)
         return report("REFUSED", config.starting_balances)
     series = window
-    exchange = SimulatedExchange(
-        {config.symbol: series},
-        {config.symbol: config.filters},
-        dict(config.starting_balances),
-        scenario=scenario,
-    )
+    if venue is not None:
+        exchange = venue
+    else:
+        exchange = SimulatedExchange(
+            {config.symbol: series},
+            {config.symbol: config.filters},
+            dict(config.starting_balances),
+            scenario=scenario,
+        )
     local = local_record or LocalRecord(config.starting_balances)
+    if resumed is not None:
+        # Unsettled FLATTEN orders are resolved by the startup reconciliation.
+        record = resumed.record
+        local = LocalRecord(record.balances, {**record.orders, **resumed.sent})
     for breach in health_breaches(config.health, config.start, observe(config.start)):
         refuse(f"health check at start: {breach.kind} {dict(breach.fields)}")
     if not refused:
@@ -532,25 +620,37 @@ def run_paper(
             incidents,
             config.start,
             _absence(config, _Clock(config.start)),
+            resuming=mode,
         )
         for reason in decision.reasons:
-            refuse(reason)
+            # Stamped when the check ended, after any waits (A2324R-5).
+            refuse(reason, decision.report.at)
     if refused:
         return report("REFUSED", config.starting_balances)
-    router.emit(
-        Event(
-            EventKind.STARTUP,
-            Severity.INFO,
-            decision.report.at,
-            {"decision": "START", "run_id": config.run_id, "symbol": config.symbol},
-        )
-    )
+    started: dict[str, str | int | bool | None] = {
+        "decision": "START",
+        "run_id": config.run_id,
+        "symbol": config.symbol,
+    }
+    if resumed is not None:
+        started["resumed_mode"] = str(mode)
+    router.emit(Event(EventKind.STARTUP, Severity.INFO, decision.report.at, started))
 
     ready = decision.report.at  # after any section 21 waits (A2324R-2, F35-4)
-    controller = SafetyController(router, incidents, ready, mode=Mode.RUNNING)
+    local = decision.report.next_record()
+    controller = SafetyController(
+        router, incidents, ready if resumed is None else entered, mode=mode
+    )
+    if mode in (Mode.HALT, Mode.FREEZE) and not incidents.open_incidents():
+        # The section 14 way out needs an open incident to close: a crash can
+        # fall between closing the incidents and saving RUNNING.
+        incidents.open("STATE_RESUMED", f"resumed {mode}, no incident open", ready)
 
     def apply_owner(hour: datetime, at: datetime) -> None:
-        """Apply the owner's command for `hour` at `at`; a refusal is logged."""
+        """Apply the owner's command for `hour` at `at`; a refusal is logged.
+        FREEZE_EXIT waits for the hour's reconciliation (`leave_freeze`)."""
+        if owner[hour] is Trigger.FREEZE_EXIT:
+            return
         try:
             controller.trigger(owner[hour], at, "owner command")
         except SafetyError as error:
@@ -563,15 +663,256 @@ def run_paper(
                 )
             )
 
+    ends = dict(overrides or {})
+
+    def refuse_command(command: Trigger, at: datetime, reason: str) -> None:
+        router.emit(
+            Event(
+                EventKind.STATE_TRANSITION,
+                Severity.WARNING,
+                at,
+                {"command": str(command), "refused": reason},
+            )
+        )
+
+    def skip_recovery(hour: datetime, at: datetime, reason: str) -> None:
+        """Log the owner's HALT override or FREEZE_EXIT for `hour` that was
+        not applied, so no command is lost silently."""
+        if hour in ends:
+            refuse_command(Trigger.HALT_OVERRIDE, at, reason)
+        if owner.get(hour) is Trigger.FREEZE_EXIT:
+            refuse_command(Trigger.FREEZE_EXIT, at, reason)
+
     issued = iter(range(1 << 62))
+    # A resumed run's nonces differ from every earlier run's, since its start
+    # is after all of them: no client order id is reused.
+    seed = config.run_id if resumed is None else f"{config.run_id}|{ready.isoformat()}"
     governor = Governor(
-        config.governor, nonce_source=lambda: nonce_for(config.run_id, next(issued))
+        config.governor, nonce_source=lambda: nonce_for(seed, next(issued))
     )
     last_increase: datetime | None = None
     base = config.symbol.removesuffix(_QUOTE)
     peak = Decimal(0)
     stop_armed = True  # L-03 fires once per fall below the line
+    valued: datetime | None = None
+    """The last decision hour `peak` and the latch include, valued with
+    reconciled holdings. An hour valued while orders are unresolved would
+    use holdings the venue may contradict: it is left for the next passed
+    reconciliation to value (A27-18)."""
     zero_fills = 0
+    if resumed is not None:
+        peak, stop_armed = resumed.peak, resumed.stop_armed
+        last_increase, zero_fills = resumed.last_increase, resumed.zero_fills
+        # Hours valued after the last save were lost with the process: run
+        # them again as the loop would have, peak and latch (A27-3, A27-10),
+        # from the hour after the last one the snapshot valued (A27-13), with
+        # the holdings the startup check confirmed, which include any order
+        # sent just before the crash (A27-9).
+        peak, stop_armed, valued, missed = _replay(
+            history,
+            local.balances,
+            base,
+            (resumed.valued_through, saved_at, config.start),
+            (peak, stop_armed),
+            config.loss_stop_fraction,
+            fires=controller.mode is not Mode.FREEZE,
+        )
+        # A buy that filled before the crash, found by the startup check,
+        # is a risk increase all the same (A27-2).
+        last_increase = _last_increase(decision.report, last_increase)
+        # A firing the incident log holds after the snapshot happened before
+        # the crash (A27-20); only the hours without one are missed. Matched
+        # by decision hour, not counted: the bars given may not reach back
+        # to the hour a logged firing was for (A27-24).
+        logged = [
+            str(entry.payload.get("detail", ""))
+            for entry in read_entries(incidents.path)[resumed.incidents_seen :]
+            if entry.record_type == IncidentLog.OPEN
+            and entry.payload.get("kind") == str(Trigger.LOSS_STOP)
+        ]
+        for hour in missed:
+            if any(_fired_for(hour) in detail for detail in logged):
+                continue
+            # A breach in an hour the process was down still alerts, opens
+            # its incident and, from RUNNING, sells (S-4), now: one each, as
+            # the running loop would have (A27-22).
+            controller.trigger(
+                Trigger.LOSS_STOP,
+                ready,
+                f"{_fired_for(hour)} missed while the process was down",
+            )
+            # The latch stays as the replay left it: a later missed hour
+            # back above the line re-armed it (A27-14).
+    unsettled: list[Authorization] = []
+    """Authorizations whose orders a failed or unclear outcome left
+    unreconciled; their reservations wait for a passed reconciliation."""
+    busy_until = ready
+
+    def save(at: datetime, record: LocalRecord | None = None) -> None:
+        """Append the account's state to the journal, if there is one."""
+        if journal is None:
+            return
+        seen = len(read_entries(incidents.path)) if incidents.path.exists() else 0
+        sent = dict(controller.sent)
+        journal.save(
+            AccountState(
+                mode=controller.mode,
+                entered_at=controller.entered_at,
+                record=local if record is None else record,
+                sent=sent,
+                attempts={k: controller.attempts[k] for k in sent},
+                peak=peak,
+                stop_armed=stop_armed,
+                last_increase=last_increase,
+                valued_through=valued,
+                zero_fills=zero_fills,
+                incidents_seen=seen,
+            ),
+            at,
+        )
+
+    def recover(hour: datetime) -> tuple[LocalRecord, ReconciliationReport]:
+        """Reconcile everything outstanding at `hour`, as recovery needs."""
+        nonlocal busy_until
+        record = LocalRecord(local.balances, {**local.orders, **controller.sent})
+        check = reconcile(
+            exchange, record, config.tolerance, hour, _absence(config, _Clock(hour))
+        )
+        busy_until = max(busy_until, check.at)
+        return record, check
+
+    def recovered(check: ReconciliationReport) -> None:
+        """Carry a recovery's passed reconciliation forward."""
+        nonlocal local, unsettled
+        nonlocal last_increase
+        released = set(settle(check, governor, unsettled))
+        unsettled = [a for a in unsettled if a.nonce not in released]
+        last_increase = _last_increase(check, last_increase)
+        local = check.next_record()
+
+    def mark_at(hour: datetime) -> Decimal | None:
+        """The close the decision at `hour` sees, if its bar exists."""
+        try:
+            return Decimal(repr(series.bar_at(hour - HOUR).close))
+        except Exception:  # noqa: BLE001 - no bar for this hour
+            return None
+
+    def value(
+        hour: datetime, mark: Decimal | None
+    ) -> tuple[datetime, Decimal, bool] | None:
+        """L-03 bookkeeping for `hour`, once, in every hour with a bar, as a
+        restart replays it (A27-17): the hour, the equity and whether it is
+        below the line. Nothing for an hour already valued (one a HALT override reset
+        covers, A27-16) or while orders are unresolved (A27-18)."""
+        nonlocal peak, stop_armed, valued
+        if mark is None or (valued is not None and hour <= valued):
+            return None
+        if local.orders or controller.sent:
+            return None
+        held = local.balances
+        equity = held.get(base, Decimal(0)) * mark + held.get(_QUOTE, Decimal(0))
+        peak = max(peak, equity)
+        valued = hour
+        breached = equity < peak * (1 - config.loss_stop_fraction)
+        if not breached:
+            stop_armed = True
+        return hour, equity, breached
+
+    def fire(result: tuple[datetime, Decimal, bool] | None, at: datetime) -> None:
+        """The L-03 stop for a valued hour. Every breach alerts and opens an
+        incident (deployment draft section 5). It sells only from RUNNING:
+        in HALT the owner's HALT wins (OWNER_ANSWERS_2026-09-28.md, F24-1,
+        F24R-1), and an owner FLATTEN simply goes on. FREEZE is left alone
+        until reconciled (T27-13). Even a holding too small to sell alerts
+        (A2324-2)."""
+        nonlocal stop_armed
+        if result is None or not result[2] or not stop_armed:
+            return
+        if controller.mode is Mode.FREEZE:
+            return
+        keep = 1 - config.loss_stop_fraction
+        detail = (
+            f"{_fired_for(result[0])} equity {result[1]:.2f} below {keep}"
+            f" x peak {peak:.2f}"
+        )
+        controller.trigger(Trigger.LOSS_STOP, at, detail)
+        stop_armed = False
+
+    def leave_freeze(hour: datetime) -> None:
+        """FREEZE to HALT on a passed reconciliation (section 22). A failed
+        one leaves FREEZE as it is; its incident is already open. The hours
+        left unvalued while orders were unresolved are valued now, with the
+        confirmed holdings, as a restart would (A27-18)."""
+        nonlocal peak, stop_armed, valued
+        _, check = recover(hour)
+        try:
+            controller.exit_freeze(check, check.at)
+        except SafetyError as error:
+            refuse_command(Trigger.FREEZE_EXIT, check.at, str(error))
+            return
+        recovered(check)
+        peak, stop_armed, valued, _ = _replay(
+            history,
+            local.balances,
+            base,
+            (valued, hour, hour + HOUR),
+            (peak, stop_armed),
+            config.loss_stop_fraction,
+            fires=False,
+        )
+        save(check.at)
+
+    def end_halt(hour: datetime, mark: Decimal) -> bool:
+        """The owner's section 14 override at `hour`. True when it was tried
+        (a reconciliation ran), whether HALT ended or not; False when it was
+        refused at once because the account is not in HALT."""
+        nonlocal peak, stop_armed, valued
+        if controller.mode is not Mode.HALT:
+            refuse_command(
+                Trigger.HALT_OVERRIDE, hour, f"not in HALT ({controller.mode})"
+            )
+            return False
+        _, check = recover(hour)
+        if not check.passed:
+            # A mismatch found in HALT is a new safety event: FREEZE, as any
+            # failed reconciliation does.
+            refuse_command(Trigger.HALT_OVERRIDE, check.at, "reconciliation failed")
+            controller.trigger(
+                Trigger.RECONCILIATION_FAILED, check.at, "; ".join(check.differences)
+            )
+            save(check.at)
+            return True
+        wanted = ends[hour]
+        override = HaltOverride(
+            incident_ids=wanted.incident_ids,
+            written_record=wanted.written_record,
+            cause=wanted.cause,
+            reconciliation=check,
+            owner_action=wanted.owner_action,
+            timestamp=wanted.timestamp,
+        )
+        try:
+            controller.override_halt(override, check.at)
+        except SafetyError as error:
+            refuse_command(Trigger.HALT_OVERRIDE, check.at, str(error))
+            return True
+        recovered(check)
+        # Q27-1, Q27-2: ending a HALT re-arms the loss stop from the equity
+        # now, so it fires on the next 20% fall from here: at the last close
+        # before the reconciliation ended, which may have waited (A27-1).
+        closed = check.at.replace(minute=0, second=0, microsecond=0) - HOUR
+        try:
+            mark = Decimal(repr(series.bar_at(closed).close))
+        except Exception:  # noqa: BLE001 - no newer bar: the hour's mark
+            pass
+        balances = local.balances
+        peak = balances.get(base, Decimal(0)) * mark + balances.get(_QUOTE, Decimal(0))
+        stop_armed = True
+        # The reset is the valuation of the hour it took effect in: no hour
+        # up to it is valued again, now or on a restart (A27-16).
+        valued = max(hour, closed + HOUR)
+        save(check.at)
+        return True
 
     try:
         moment = config.start
@@ -581,11 +922,35 @@ def run_paper(
         while moment < ready:
             if moment in owner:
                 apply_owner(moment, ready)
+            skip_recovery(moment, ready, "the startup check was still running")
+            fire(value(moment, mark_at(moment)), ready)  # valued all the same
             moment += HOUR
+        save(ready)
+        decision_time = ready
+        # A FLATTEN sell is saved as sent before it is placed (Task 27).
+        controller.before_send = lambda: save(decision_time)
+        done: datetime | None = None
         while moment < config.end:
+            if done is not None:
+                # The hour just finished, never before work it waited for
+                # (A27-1).
+                save(max(done, busy_until))
             decision_time, moment = moment, moment + HOUR
+            done = max(decision_time, busy_until)
+            mark = mark_at(decision_time)
+            if decision_time < busy_until:
+                # A reconciliation that waited (section 21) ends after this
+                # hour began: nothing is decided before it (A2324R-4). An owner
+                # command still applies, as soon as it ends; the hour is still
+                # valued for the loss stop, as a restart would (A27-17).
+                if decision_time in owner:
+                    apply_owner(decision_time, busy_until)
+                skip_recovery(decision_time, busy_until, "a reconciliation was running")
+                fire(value(decision_time, mark), busy_until)
+                continue
             if decision_time in owner:
                 apply_owner(decision_time, decision_time)
+                save(decision_time)
             breaches = health_breaches(
                 config.health, decision_time, observe(decision_time)
             )
@@ -595,28 +960,41 @@ def run_paper(
                 counts.health += 1
                 for breach in breaches:
                     router.emit(breach)
+                skip_recovery(decision_time, decision_time, "health check breach")
+                # Valued all the same, as a restart would (A27-17); the stop
+                # may alert, but nothing is placed this hour.
+                fire(value(decision_time, mark), decision_time)
                 continue
-            try:
-                mark = Decimal(repr(series.bar_at(decision_time - HOUR).close))
-            except Exception:  # noqa: BLE001 - no bar for this hour: nothing to decide
+            if mark is None:  # no bar for this hour: nothing to decide
+                skip_recovery(decision_time, decision_time, "no bar for the hour")
                 continue
             # L-03 (adopted): 20% below peak equity sells everything (setting S-4).
-            held = local.balances.get(base, Decimal(0))
-            equity = held * mark + local.balances.get(_QUOTE, Decimal(0))
-            peak = max(peak, equity)
-            breached = equity < peak * (1 - config.loss_stop_fraction)
-            if not breached:
-                stop_armed = True
-            # Every breach alerts and opens an incident (deployment draft
-            # section 5). It sells only from RUNNING: in HALT the owner's HALT
-            # wins (OWNER_ANSWERS_2026-09-28.md, F24-1, F24R-1), and an owner
-            # FLATTEN simply goes on. FREEZE is left alone until reconciled.
-            # Even a holding too small to sell alerts (A2324-2).
-            if breached and stop_armed and controller.mode is not Mode.FREEZE:
-                keep = 1 - config.loss_stop_fraction
-                detail = f"equity {equity:.2f} below {keep} x peak {peak:.2f}"
-                controller.trigger(Trigger.LOSS_STOP, decision_time, detail)
-                stop_armed = False
+            valuation = value(decision_time, mark)
+            # FREEZE is left alone until the owner asks for a reconciliation.
+            # Outside FREEZE the command is refused and the hour goes on.
+            if owner.get(decision_time) is Trigger.FREEZE_EXIT:
+                if controller.mode is Mode.FREEZE:
+                    leave_freeze(decision_time)
+                    if decision_time in ends:
+                        refuse_command(
+                            Trigger.HALT_OVERRIDE, busy_until, "FREEZE_EXIT this hour"
+                        )
+                    continue
+                refuse_command(
+                    Trigger.FREEZE_EXIT,
+                    decision_time,
+                    f"not in FREEZE ({controller.mode})",
+                )
+            if decision_time in ends and end_halt(decision_time, mark):
+                # The hour ends with its override attempt, ended or not:
+                # nothing after it may be stamped before its reconciliation
+                # ended (A27-8). A refused override authorizes nothing, so
+                # the hour's breach is still recorded, when it ended (A27-20);
+                # an accepted one reset the line (Q27-1, Q27-2).
+                if controller.mode is not Mode.RUNNING:
+                    fire(valuation, busy_until)
+                continue
+            fire(valuation, decision_time)
             if controller.mode is Mode.FLATTEN:
                 # The venue balance `tick` sizes from, for the audit log.
                 sized_from = exchange.balances().get(base, Decimal(0))
@@ -652,9 +1030,10 @@ def run_paper(
                     zero_fills = _zero_fill_alert(
                         router, zero_fills, flat, decision_time
                     )
-                    local = _reconcile_flatten(
+                    local, finished = _reconcile_flatten(
                         exchange, local, config, controller, decision_time
                     )
+                    busy_until = max(busy_until, finished)
                 for lost in (
                     set(controller.sent)
                     - pending
@@ -702,6 +1081,10 @@ def run_paper(
                 counts.refusals[code] = counts.refusals.get(code, 0) + 1
                 continue
             counts.authorizations += 1
+            # Saved as sent before it is placed: after a crash in between, the
+            # startup reconciliation must resolve it (Task 27).
+            unsent = {client_order_id_for(authorization): None}
+            save(decision_time, LocalRecord(local.balances, {**local.orders, **unsent}))
             clock = _Clock(decision_time)
             executor = Executor(
                 governor,
@@ -741,7 +1124,9 @@ def run_paper(
             local = LocalRecord(
                 local.balances, {**local.orders, result.client_order_id: result.order}
             )
+            busy_until = max(busy_until, clock.now)
             if result.state is State.FREEZE:
+                unsettled.append(authorization)
                 controller.trigger(
                     Trigger.AMBIGUOUS_ORDER,
                     clock.now,
@@ -751,7 +1136,9 @@ def run_paper(
             check = reconcile(
                 exchange, local, config.tolerance, clock.now, _absence(config, clock)
             )
+            busy_until = max(busy_until, check.at)
             if not check.passed:
+                unsettled.append(authorization)
                 controller.trigger(
                     Trigger.RECONCILIATION_FAILED,
                     clock.now,
@@ -763,6 +1150,8 @@ def run_paper(
             if filled and authorization.side is Side.BUY:
                 last_increase = proposal.decision_time
             local = check.next_record()
+        if done is not None:
+            save(max(done, busy_until))
 
     except BaseException as error:
         # T23-04: an audit write (or anything else) failed mid-run. The mode
@@ -775,7 +1164,7 @@ def run_paper(
         Event(
             EventKind.SHUTDOWN,
             Severity.INFO,
-            config.end,
+            max(config.end, busy_until),
             {"mode": str(controller.mode), "run_id": config.run_id},
         )
     )
@@ -821,6 +1210,93 @@ def _write_refuse_marker(
         pass  # the original error is re-raised either way
 
 
+def _resume(saved: AccountState, incidents: IncidentLog) -> tuple[Mode, datetime] | str:
+    """The mode to resume and when it began: the saved mode, moved on by every
+    alarm the incident log recorded after the snapshot (a crash can fall
+    between an alarm and its save). A reason to refuse if they disagree."""
+    entries = read_entries(incidents.path) if incidents.path.exists() else ()
+    if len(entries) < saved.incidents_seen:
+        return "the incident log is shorter than the saved state recorded"
+    mode, at = saved.mode, saved.entered_at
+    for entry in entries[saved.incidents_seen :]:
+        if entry.record_type != IncidentLog.OPEN:
+            continue
+        kind = str(entry.payload.get("kind"))
+        # HALT_OVERRIDE_FAILED is opened in HALT and leaves HALT (safety.py);
+        # STATE_RESUMED is opened in HALT or FREEZE and leaves it (A27-7).
+        target = Mode.HALT if kind == "HALT_OVERRIDE_FAILED" else None
+        if kind == "STATE_RESUMED" and mode in (Mode.HALT, Mode.FREEZE):
+            target = mode
+        if kind in Trigger.__members__:
+            target = MODE_TRANSITIONS.get((mode, Trigger(kind)))
+        if target is None:
+            return f"incident {kind} cannot follow the saved mode {mode}"
+        stamp = datetime.strptime(entry.recorded_at_utc, "%Y-%m-%dT%H:%M:%SZ")
+        mode, at = target, max(at, stamp.replace(tzinfo=UTC))
+    return mode, at
+
+
+def _replay(
+    series: BarSeries,
+    holdings: Mapping[str, Decimal],
+    base: str,
+    window: tuple[datetime | None, datetime, datetime],
+    latch: tuple[Decimal, bool],
+    fraction: Decimal,
+    *,
+    fires: bool,
+) -> tuple[Decimal, bool, datetime | None, list[datetime]]:
+    """The loop's loss-stop bookkeeping for every decision hour the snapshot
+    has not valued, until the start, for the bars present: the peak, the
+    latch, the last hour valued, and every hour the stop would have fired.
+    `window` is the snapshot's `valued_through`, its save time and the
+    start; with nothing valued yet the saved hour is the first.
+    `holdings` are those the startup check confirmed. In FREEZE (`fires`
+    false) the stop neither fires nor disarms, as in the loop."""
+    valued, saved_at, start = window
+    peak, armed = latch
+    missed: list[datetime] = []
+    if valued is None:
+        hour = saved_at.replace(minute=0, second=0, microsecond=0)
+    else:
+        hour = valued + HOUR
+    while hour < start:
+        try:
+            mark = Decimal(repr(series.bar_at(hour - HOUR).close))
+        except Exception:  # noqa: BLE001 - no bar: that hour valued nothing
+            hour += HOUR
+            continue
+        equity = holdings.get(base, Decimal(0)) * mark + holdings.get(
+            _QUOTE, Decimal(0)
+        )
+        peak = max(peak, equity)
+        valued = hour
+        if equity >= peak * (1 - fraction):
+            armed = True
+        elif armed and fires:
+            missed.append(hour)
+            armed = False
+        hour += HOUR
+    return peak, armed, valued, missed
+
+
+def _fired_for(hour: datetime) -> str:
+    """The tag naming the decision hour a LOSS_STOP incident is for, so a
+    restart can tell which replayed firings the log already holds (A27-24)."""
+    return f"[decision hour {hour.isoformat()}]"
+
+
+def _last_increase(
+    report: ReconciliationReport, current: datetime | None
+) -> datetime | None:
+    """`current`, moved to the decision of any filled buy `report` resolved."""
+    for order in report.resolved.values():
+        if order is not None and order.side is TradeSide.BUY and order.executed_qty:
+            if current is None or order.decision_time > current:
+                current = order.decision_time
+    return current
+
+
 def _attempt(controller: SafetyController, client_order_id: str) -> dict[str, str]:
     """What the controller sent for `client_order_id`, if it recorded it."""
     attempt = controller.attempts.get(client_order_id)
@@ -847,17 +1323,18 @@ def _reconcile_flatten(
     config: PaperConfig,
     controller: SafetyController,
     at: datetime,
-) -> LocalRecord:
+) -> tuple[LocalRecord, datetime]:
     """Reconcile the FLATTEN orders the controller has sent; FREEZE on
-    failure. Only a passed check settles them and advances the baseline."""
+    failure. Only a passed check settles them and advances the baseline.
+    Also returns when the check ended, after any waits (A2324R-4)."""
     record = LocalRecord(local.balances, {**local.orders, **controller.sent})
     check = reconcile(
         exchange, record, config.tolerance, at, _absence(config, _Clock(at))
     )
     if not check.passed:
         controller.trigger(
-            Trigger.RECONCILIATION_FAILED, at, "; ".join(check.differences)
+            Trigger.RECONCILIATION_FAILED, check.at, "; ".join(check.differences)
         )
-        return record
+        return record, check.at
     controller.settle_flatten(check)
-    return check.next_record()
+    return check.next_record(), check.at
