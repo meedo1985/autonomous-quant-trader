@@ -106,3 +106,20 @@ group/other-writable. `install.sh` now sets `umask 022` and ends with
 `chmod -R go-w /opt/aqt`; the runbook's update step ends with the same
 `chmod`. (Git records only the executable bit, so the check still sees a
 clean checkout.)
+
+Validation after the repairs (2026-10-02): on this PC at `de0573d`
+(Python 3.14.7, Windows 11, exit 0 each) `pytest -q` 1757 passed, 8
+skipped; `ruff check .`, `ruff format --check .` (114 files), `mypy src
+scripts` (60 files), `lint-imports` (6 kept), `git diff --check` clean;
+frozen verification PASS (28/28, 14/14, self-hash, 7/7, nested); Task 25
+drills identical. `57a3b40` changes only `deploy/` and this report. CI on
+PR #40 at `57a3b40` (run 37036463907): `checks` pass (Linux, Python 3.12:
+1758 passed, 7 skipped, the credential-file and symlink tests included);
+`runbook-dry-run` pass: ownership step (no write by `aqt` to `scripts`,
+`.git/refs`, `.venv/bin`, `/etc/aqt`), "Installed 893c8a2...", "Approved
+893c8a2...", "May run: 893c8a2..., source c1bf970a...", unit verified,
+then the real service started on a modified checkout logged a CRITICAL
+`REFUSE_START` "deployment: checkout differs from its commit: ['M
+scripts/run_paper_trading.py']", with exit status 2 and no restart.
+
+LOCAL GATE: PASS. Next: Sol High re-review of `3c41f70..57a3b40`.
