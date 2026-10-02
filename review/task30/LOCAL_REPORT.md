@@ -139,3 +139,19 @@ INCOMPLETE; new S30-7, S30-8 BLOCKER.
 T30-01 holds again with S30-7 repaired; T30-04 with S30-8. Each new runner
 test fails at `dc2db31` (2 failed) and passes after; the S30-7 test runs on
 Linux only.
+
+Validation after these repairs (2026-10-02): on this PC at `b7611a0`
+(Python 3.14.7, Windows 11, exit 0 each) `pytest -q` 1758 passed, 9
+skipped; `ruff check .`, `ruff format --check .` (114 files), `mypy src
+scripts` (60 files), `lint-imports` (6 kept), `git diff --check` clean;
+frozen verification PASS (28/28, 14/14, self-hash, 7/7, nested); Task 25
+drills identical. CI on PR #40 at `b7611a0` (run 37038667542): `checks`
+pass (Linux: 1760 passed, 7 skipped, the S30-5 and S30-7 tests included);
+`runbook-dry-run` pass: ownership checks, "Approved 96a83ea...", record
+and lock not writable by `aqt`, "May run: 96a83ea..., source 3091cbf1...",
+unit verified, then the real service on a broken tracked configuration
+logged CRITICAL `REFUSE_START` "deployment: checkout differs from its
+commit: ['M configs/paper_trading.example.toml']" with exit status 2 and
+no restart.
+
+LOCAL GATE: PASS. Next: Sol High re-review of `57a3b40..b7611a0`.
