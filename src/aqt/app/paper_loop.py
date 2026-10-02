@@ -17,8 +17,9 @@ order, against the Task 18 simulator only:
 `start` refuses (REFUSE_START) before anything runs if any of these holds:
 a frozen hash differs; no alert sink is configured; the operations log fails
 its chain check; a Binance credential variable is set; the run window is not
-inside one unbroken run of bars; the startup reconciliation fails; or an
-incident is open. A non-simulator adapter is
+inside one unbroken run of bars; the startup reconciliation fails; an
+incident is open; or, with the Telegram channel (Task 28), its weekly test
+is unacknowledged or overdue. A non-simulator adapter is
 refused when the configuration is read. Every refusal is logged.
 
 With a state journal (Task 27, `aqt.app.state`) a run resumes the account
@@ -93,6 +94,7 @@ from aqt.governor.machine import Governor
 from aqt.monitoring.alerts import AlertConfigError, AlertRouter, Sink
 from aqt.monitoring.events import Event, EventKind, Severity
 from aqt.monitoring.health import check_clock_skew, check_loop_lag, check_stale_data
+from aqt.monitoring.telegram import ChannelError, ChannelTests
 
 __all__ = [
     "ConfigError",
@@ -481,6 +483,7 @@ def run_paper(
     journal: StateJournal | None = None,
     venue: SimulatedExchange | None = None,
     overrides: Mapping[datetime, OwnerOverride] | None = None,
+    channel: ChannelTests | None = None,
 ) -> RunReport:
     """Run the loop over every hourly decision in `[start, end)`.
 
@@ -498,6 +501,12 @@ def run_paper(
     resumed account must be given the venue its state describes, or the
     startup reconciliation refuses. `overrides` are the owner's HALT
     overrides, applied at the given hour.
+
+    `channel` is the Telegram channel's weekly test (Task 28), given when
+    the run uses the channel: its sink must be among `sinks`. An unacknowledged
+    or overdue test refuses the start. During the run, at most once per
+    wall-clock hour, a due test is sent and an overdue one raises a CRITICAL
+    alert; the mode is unchanged (owner answer Q28-2).
     """
     if journal is not None and local_record is not None:
         raise ConfigError("a resumed account's record comes from its journal")
@@ -570,6 +579,8 @@ def run_paper(
         refuse_credentials(environ)
     except DownloadError as error:
         refuse(f"credential present: {error}")
+    if channel is not None and (untested := channel.problem()) is not None:
+        refuse(untested)
     marker = refuse_marker_path(incidents)
     if marker.exists():
         refuse(f"an earlier run stopped on an error; see {marker.name}")
@@ -914,6 +925,34 @@ def run_paper(
         save(check.at)
         return True
 
+    reminded: datetime | None = None
+
+    def check_channel(at: datetime) -> None:
+        """Q28-2: send a due test; alert while the test is overdue. At most
+        once per wall-clock hour; never changes the mode."""
+        nonlocal reminded
+        if channel is None:
+            return
+        now = channel.now()
+        if reminded is not None and now - reminded < HOUR:
+            return
+        reminded = now
+        try:
+            if channel.due():
+                channel.send_test()
+            problem = channel.problem()
+        except (ChannelError, LedgerError, OSError) as error:
+            problem = f"channel test: {error}"
+        if problem is not None:
+            router.emit(
+                Event(
+                    EventKind.ALERT_CHANNEL,
+                    Severity.CRITICAL,
+                    at,
+                    {"channel": "telegram", "problem": problem},
+                )
+            )
+
     try:
         moment = config.start
         # A startup check that waited (section 21) ends after `start`: no
@@ -936,6 +975,7 @@ def run_paper(
                 # (A27-1).
                 save(max(done, busy_until))
             decision_time, moment = moment, moment + HOUR
+            check_channel(decision_time)
             done = max(decision_time, busy_until)
             mark = mark_at(decision_time)
             if decision_time < busy_until:

@@ -53,6 +53,8 @@ _SECRET_VALUE: Final = (
     re.compile(r"(?=[A-Za-z0-9]{64}\b)(?![0-9a-f]{64}\b)[A-Za-z0-9]{64}"),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
     re.compile(r"\bBearer\s+\S+", re.IGNORECASE),
+    # A Telegram bot token: the bot's number, a colon, 35 characters (Task 28).
+    re.compile(r"\b\d{6,12}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"),
 )
 
 
