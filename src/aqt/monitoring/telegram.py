@@ -4,8 +4,10 @@
 - `TelegramSink` sends each CRITICAL event as one message. A failed send is
   never raised into the loop: it is written, as a CRITICAL `ALERT_CHANNEL`
   event, to the local sinks.
-- The bot token and chat id come from the OS credential store (D-8), one
-  entry `aqt-telegram`: user name the chat id, password the token. They are
+- The bot token and chat id come from the OS credential store (D-8): on
+  Windows one entry `aqt-telegram`, user name the chat id, password the
+  token; on the Ubuntu server (Task 30) the file `/etc/aqt/telegram`, chat id
+  then token on two lines, readable only by the app's account. They are
   never in the repository, a configuration file, a log, a report or a test
   (section 28). Every error text here is built from the exception type and
   the HTTP status only, never from an exception's message or Telegram's
@@ -22,7 +24,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
+import stat
 import sys
 import urllib.error
 import urllib.request
@@ -39,6 +43,7 @@ from aqt.monitoring.alerts import Sink
 from aqt.monitoring.events import Event, EventKind, Severity
 
 __all__ = [
+    "CREDENTIAL_FILE",
     "CREDENTIAL_TARGET",
     "DEFAULT_LEDGER",
     "TEST_INTERVAL",
@@ -49,12 +54,15 @@ __all__ = [
     "TelegramResponse",
     "TelegramSink",
     "owner_channel",
+    "read_credential",
+    "read_file_credential",
     "read_windows_credential",
     "urllib_transport",
 ]
 
 TELEGRAM_HOST: Final[str] = "api.telegram.org"
 CREDENTIAL_TARGET: Final[str] = "aqt-telegram"
+CREDENTIAL_FILE: Final[Path] = Path("/etc/aqt/telegram")
 DEFAULT_LEDGER: Final[Path] = Path("data/processed/alerts/channel_tests.jsonl")
 TEST_INTERVAL: Final[timedelta] = timedelta(days=7)  # OWNER-SET D-2
 SENT: Final[str] = "aqt.channel_test.sent.v1"
@@ -166,6 +174,40 @@ def read_windows_credential(target: str = CREDENTIAL_TARGET) -> TelegramCredenti
     if not chat_id or not token:
         raise ChannelError(f"credential {target!r} lacks a chat id or a token")
     return TelegramCredential(chat_id=chat_id, token=token)
+
+
+def read_file_credential(path: Path = CREDENTIAL_FILE) -> TelegramCredential:
+    """Read the chat id and token from `path`, a file that only its owner, the
+    account reading it, may read (the server's store, D-8, T28-06)."""
+    if sys.platform == "win32":
+        raise ChannelError("the credential file is read on Linux only")
+    try:
+        # The file itself, never a link, checked and read through one
+        # descriptor (S30-5).
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, "rb") as handle:
+            info = os.fstat(handle.fileno())
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_mode & 0o077
+                or info.st_uid != os.getuid()
+            ):
+                raise ChannelError(f"{path} must be readable by this account only")
+            lines = handle.read().decode("utf-8").split()
+    except ChannelError:
+        raise
+    except (OSError, UnicodeDecodeError) as error:
+        raise ChannelError(f"{path} unreadable: {type(error).__name__}") from None
+    if len(lines) != 2:
+        raise ChannelError(f"{path} must hold the chat id and the token")
+    return TelegramCredential(chat_id=lines[0], token=lines[1])
+
+
+def read_credential() -> TelegramCredential:
+    """The owner's credential from this system's store."""
+    if sys.platform == "win32":
+        return read_windows_credential()
+    return read_file_credential()
 
 
 def _text(event: Event) -> str:
@@ -426,6 +468,6 @@ def owner_channel(
 ) -> tuple[TelegramSink, ChannelTests]:
     """The owner's real channel: the stored credential, the network and the
     wall clock. Used by the owner-run scripts only, never by tests."""
-    sink = TelegramSink(read_windows_credential(), urllib_transport, local)
+    sink = TelegramSink(read_credential(), urllib_transport, local)
     ledger.parent.mkdir(parents=True, exist_ok=True)
     return sink, ChannelTests(ledger, sink, lambda: datetime.now(UTC))

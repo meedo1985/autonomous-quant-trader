@@ -8,7 +8,9 @@ Reads only the exploration archives through the Task 14 manifest builder,
 trades only against the simulator, and writes the run report, the operations
 log and the incident log under `--out/<run_id>/`. With `--telegram`, CRITICAL
 events also go to the owner's Telegram bot and the run needs a weekly test
-acknowledged within 7 days (Task 28; `scripts/alert_channel.py`). Exit code
+acknowledged within 7 days (Task 28; `scripts/alert_channel.py`). With
+`--deployment-record`, the run starts only from the owner's approved commit
+(Task 30; `scripts/deployment.py`, `deploy/RUNBOOK.md`). Exit code
 0 on a completed run, 2 on REFUSE_START.
 """
 
@@ -18,16 +20,19 @@ import argparse
 import json
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from aqt.app.paper_loop import load_config, run_paper
+from aqt.core.deployment import DeploymentError, approved_code
 from aqt.data.klines import EXPLORATION, build_exploration_manifest
 from aqt.execution.safety import IncidentLog
-from aqt.monitoring.alerts import LedgerSink, Sink, StreamSink
-from aqt.monitoring.events import Severity
+from aqt.monitoring.alerts import AlertRouter, LedgerSink, Sink, StreamSink
+from aqt.monitoring.events import Event, EventKind, Severity
 from aqt.monitoring.telegram import DEFAULT_LEDGER, ChannelError, owner_channel
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+REFUSALS = "deployment_refusals.jsonl"  # under --out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -40,10 +45,46 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="also alert the owner's Telegram bot (needs a tested channel)",
     )
+    parser.add_argument(
+        "--deployment-record",
+        type=Path,
+        help="the server's deployment record; refuse unless this is its commit",
+    )
     args = parser.parse_args(argv)
 
+    if args.deployment_record is not None:
+        # Before the configuration, any data, network or channel: a server
+        # start from code the owner did not approve stops here, logged to a
+        # fixed file (S30-4, S30-8).
+        try:
+            approved_code(args.deployment_record, REPOSITORY_ROOT)
+        except DeploymentError as error:
+            reason = f"deployment: {error}"
+            try:
+                args.out.mkdir(parents=True, exist_ok=True)
+                AlertRouter(
+                    [
+                        StreamSink(sys.stdout, Severity.WARNING),
+                        LedgerSink(args.out / REFUSALS, Severity.INFO),
+                    ]
+                ).emit(
+                    Event(
+                        EventKind.STARTUP,
+                        Severity.CRITICAL,
+                        datetime.now(UTC),
+                        {"decision": "REFUSE_START", "reason": reason},
+                    )
+                )
+            except Exception as failure:  # noqa: BLE001 - still a refusal (S30-9)
+                try:
+                    print(
+                        f"Refused, not logged ({type(failure).__name__}): {reason}",
+                        file=sys.stderr,
+                    )
+                except Exception:  # noqa: BLE001, S110 - nowhere left to say it
+                    pass
+            return 2  # a refusal, whatever happened above: never retried
     config = load_config(args.config)
-    build = build_exploration_manifest(EXPLORATION, config.symbol, args.raw)
     out = args.out / config.run_id
     out.mkdir(parents=True, exist_ok=True)
     operations = out / "operations.jsonl"
@@ -51,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         StreamSink(sys.stdout, Severity.WARNING),
         LedgerSink(operations, Severity.INFO),
     ]
+    build = build_exploration_manifest(EXPLORATION, config.symbol, args.raw)
     channel = None
     if args.telegram:
         try:
@@ -69,6 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         environ=os.environ,
         repository_root=REPOSITORY_ROOT,
         channel=channel,
+        deployment=args.deployment_record,
     )
     text = json.dumps(report.as_mapping(), indent=2, sort_keys=True)
     (out / "report.json").write_text(text + "\n", encoding="utf-8")
