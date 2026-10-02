@@ -349,3 +349,28 @@ Python 3.14.7, Windows 11, exit 0 each): `pytest -q` 1704 passed, 4 skipped;
 frozen verification (Python port of `review/task6/verify_frozen.ps1`; PowerShell
 7 not installed) PASS; no file under `docs/`, `protocols/`, `schemas/`,
 `specs/` or the hash manifest changed against `main`. Not yet re-reviewed.
+
+Task 25 drills (T27-12) rerun at `c3c4f4e` on the PC:
+`python scripts/run_drills.py --config configs/paper_trading.example.toml --out <scratch>`
+exit 0, and `diff -r <scratch> review/task25/drills` reports no difference.
+
+## Astra re-review of `c3c4f4e` and repairs
+
+Record: `ASTRA_REREVIEW_C3C4F4E.md` (prompt `ASTRA_PROMPT_C3C4F4E.md`), run on
+a PC with read-only commands; its pytest was blocked by the sandbox (no
+temporary directory), so it reproduced in memory. A27-20 and A27-21 correct;
+A27-17 and A27-22 incomplete via A27-24. Verdict FIX. Its reviewer notes
+also qualify the A27-20 wording: a *failed* override enters FREEZE, where
+`fire()` suppresses LOSS_STOP as already accepted (T27-13), so "refused or
+failed override fires" means a refused one fires and a failed one leaves the
+hour to FREEZE's rule. Agreed; no code change.
+
+| ID | Astra severity | Decision | Evidence and disposition | Validation |
+| --- | --- | --- | --- | --- |
+| A27-24 | NON-BLOCKING | AGREE — repaired | Startup subtracted a count of LOSS_STOP incidents logged after the snapshot from the replayed firings. With bars given only from a later hour, a logged firing the replay cannot see hid a different, unlogged one. Every LOSS_STOP detail now carries a `[decision hour <iso>]` tag (live firings and startup's missed ones alike); startup skips only replayed hours whose tag the log already holds after the snapshot. No journal predates this change in use (forward paper, Task 29, is not authorized). | `test_a_logged_firing_does_not_hide_a_different_missed_one` (fails before: 1 incident, expected 2; passes after) |
+
+Validation after this repair (2026-10-02, Python 3.14.7, Windows 11, exit 0
+each): `pytest -q` 1705 passed, 4 skipped; `ruff check .`, `ruff format
+--check .`, `mypy src scripts` (56 files), `lint-imports` (6 kept),
+`git diff --check` clean; no frozen file changed; Task 25 drills rerun,
+identical to `review/task25/drills`. Not yet re-reviewed.

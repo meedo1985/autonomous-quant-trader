@@ -721,22 +721,25 @@ def run_paper(
         # is a risk increase all the same (A27-2).
         last_increase = _last_increase(decision.report, last_increase)
         # A firing the incident log holds after the snapshot happened before
-        # the crash; only the rest are missed (A27-20). In order, so the
-        # first ones are those.
-        logged = sum(
-            1
+        # the crash (A27-20); only the hours without one are missed. Matched
+        # by decision hour, not counted: the bars given may not reach back
+        # to the hour a logged firing was for (A27-24).
+        logged = [
+            str(entry.payload.get("detail", ""))
             for entry in read_entries(incidents.path)[resumed.incidents_seen :]
             if entry.record_type == IncidentLog.OPEN
             and entry.payload.get("kind") == str(Trigger.LOSS_STOP)
-        )
-        for hour in missed[logged:]:
+        ]
+        for hour in missed:
+            if any(_fired_for(hour) in detail for detail in logged):
+                continue
             # A breach in an hour the process was down still alerts, opens
             # its incident and, from RUNNING, sells (S-4), now: one each, as
             # the running loop would have (A27-22).
             controller.trigger(
                 Trigger.LOSS_STOP,
                 ready,
-                f"missed at {hour.isoformat()} while the process was down",
+                f"{_fired_for(hour)} missed while the process was down",
             )
             # The latch stays as the replay left it: a later missed hour
             # back above the line re-armed it (A27-14).
@@ -794,10 +797,12 @@ def run_paper(
         except Exception:  # noqa: BLE001 - no bar for this hour
             return None
 
-    def value(hour: datetime, mark: Decimal | None) -> tuple[Decimal, bool] | None:
+    def value(
+        hour: datetime, mark: Decimal | None
+    ) -> tuple[datetime, Decimal, bool] | None:
         """L-03 bookkeeping for `hour`, once, in every hour with a bar, as a
-        restart replays it (A27-17): the equity and whether it is below the
-        line. Nothing for an hour already valued (one a HALT override reset
+        restart replays it (A27-17): the hour, the equity and whether it is
+        below the line. Nothing for an hour already valued (one a HALT override reset
         covers, A27-16) or while orders are unresolved (A27-18)."""
         nonlocal peak, stop_armed, valued
         if mark is None or (valued is not None and hour <= valued):
@@ -811,9 +816,9 @@ def run_paper(
         breached = equity < peak * (1 - config.loss_stop_fraction)
         if not breached:
             stop_armed = True
-        return equity, breached
+        return hour, equity, breached
 
-    def fire(result: tuple[Decimal, bool] | None, at: datetime) -> None:
+    def fire(result: tuple[datetime, Decimal, bool] | None, at: datetime) -> None:
         """The L-03 stop for a valued hour. Every breach alerts and opens an
         incident (deployment draft section 5). It sells only from RUNNING:
         in HALT the owner's HALT wins (OWNER_ANSWERS_2026-09-28.md, F24-1,
@@ -821,12 +826,15 @@ def run_paper(
         until reconciled (T27-13). Even a holding too small to sell alerts
         (A2324-2)."""
         nonlocal stop_armed
-        if result is None or not result[1] or not stop_armed:
+        if result is None or not result[2] or not stop_armed:
             return
         if controller.mode is Mode.FREEZE:
             return
         keep = 1 - config.loss_stop_fraction
-        detail = f"equity {result[0]:.2f} below {keep} x peak {peak:.2f}"
+        detail = (
+            f"{_fired_for(result[0])} equity {result[1]:.2f} below {keep}"
+            f" x peak {peak:.2f}"
+        )
         controller.trigger(Trigger.LOSS_STOP, at, detail)
         stop_armed = False
 
@@ -1270,6 +1278,12 @@ def _replay(
             armed = False
         hour += HOUR
     return peak, armed, valued, missed
+
+
+def _fired_for(hour: datetime) -> str:
+    """The tag naming the decision hour a LOSS_STOP incident is for, so a
+    restart can tell which replayed firings the log already holds (A27-24)."""
+    return f"[decision hour {hour.isoformat()}]"
 
 
 def _last_increase(

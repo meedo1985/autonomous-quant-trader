@@ -824,6 +824,36 @@ def test_every_missed_firing_is_recorded(tmp_path: Path) -> None:
     assert (_losses(continuous), _losses(restarted)) == (2, 2)
 
 
+def test_a_logged_firing_does_not_hide_a_different_missed_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A27-24 (the reviewer's scenario): the fall at START is logged, then
+    the process dies before saving. The restart is given bars from START on
+    only, so its replay sees just the later fall at START + 2h; that one is
+    still recorded, matched by decision hour rather than by count."""
+    series = _priced({START - HOUR: 70.0, START: 100.0, START + HOUR: 70.0})
+    account = AccountDir(tmp_path / "a")
+    _seed(account, START - HOUR, Mode.HALT, ONE_BTC, "100")
+    real = StateJournal.save
+
+    def kill(self: StateJournal, state: AccountState, at: datetime) -> None:
+        if state.valued_through == START:
+            raise _Killed
+        real(self, state, at)
+
+    with monkeypatch.context() as patch, pytest.raises(_Killed):
+        patch.setattr(StateJournal, "save", kill)
+        _hours_run(account, series, START, START + HOUR)
+    assert _losses(account) == 1
+    loop.refuse_marker_path(account.incident_log()).unlink()
+    shorter = BarSeries(
+        symbol=series.symbol,
+        bars=tuple(b for b in series.bars if b.open_time >= START),
+    )
+    _hours_run(account, shorter, START + 3 * HOUR, START + 4 * HOUR)
+    assert _losses(account) == 2
+
+
 def test_a_fall_in_a_health_breach_hour_fires_but_trades_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
