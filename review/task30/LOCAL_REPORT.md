@@ -215,3 +215,14 @@ the real service on a broken tracked configuration logged CRITICAL
 `REFUSE_START`, exit 2, no restart).
 
 LOCAL GATE: PASS. Next: Sol High re-review of `ca68eee..1c90663`.
+
+## Sol High fourth re-review of `1c90663`: ACCEPT
+
+Record: `SOL_REREVIEW_1C90663.md`. S30-8, S30-9, S30-10 CORRECT; no earlier
+finding reopened; no new finding; T30-01..T30-06 hold. Final state of every
+finding: S30-1, S30-3, S30-4, S30-5, S30-7, S30-8, S30-9, S30-10 repaired
+and accepted; S30-2 point 1 not repaired (the service always passes the
+record; reason accepted); S30-6 not repaired (package-only source hash,
+unlocked dependency versions: disclosed, for before real money).
+
+Remaining before merge (section 16): the owner's walkthrough.
