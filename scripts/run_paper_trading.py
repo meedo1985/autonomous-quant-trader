@@ -32,6 +32,7 @@ from aqt.monitoring.events import Event, EventKind, Severity
 from aqt.monitoring.telegram import DEFAULT_LEDGER, ChannelError, owner_channel
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+REFUSALS = "deployment_refusals.jsonl"  # under --out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,21 +52,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    config = load_config(args.config)
-    out = args.out / config.run_id
-    out.mkdir(parents=True, exist_ok=True)
-    operations = out / "operations.jsonl"
-    sinks: list[Sink] = [
-        StreamSink(sys.stdout, Severity.WARNING),
-        LedgerSink(operations, Severity.INFO),
-    ]
     if args.deployment_record is not None:
-        # Before any data, network or channel: a server start from code the
-        # owner did not approve stops here, logged (S30-4).
+        # Before the configuration, any data, network or channel: a server
+        # start from code the owner did not approve stops here, logged to a
+        # fixed file (S30-4, S30-8).
         try:
             approved_code(args.deployment_record, REPOSITORY_ROOT)
         except DeploymentError as error:
-            AlertRouter(sinks).emit(
+            args.out.mkdir(parents=True, exist_ok=True)
+            AlertRouter(
+                [
+                    StreamSink(sys.stdout, Severity.WARNING),
+                    LedgerSink(args.out / REFUSALS, Severity.INFO),
+                ]
+            ).emit(
                 Event(
                     EventKind.STARTUP,
                     Severity.CRITICAL,
@@ -74,6 +74,14 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return 2
+    config = load_config(args.config)
+    out = args.out / config.run_id
+    out.mkdir(parents=True, exist_ok=True)
+    operations = out / "operations.jsonl"
+    sinks: list[Sink] = [
+        StreamSink(sys.stdout, Severity.WARNING),
+        LedgerSink(operations, Severity.INFO),
+    ]
     build = build_exploration_manifest(EXPLORATION, config.symbol, args.raw)
     channel = None
     if args.telegram:

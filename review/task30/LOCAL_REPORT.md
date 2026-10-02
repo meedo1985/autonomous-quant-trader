@@ -123,3 +123,19 @@ then the real service started on a modified checkout logged a CRITICAL
 scripts/run_paper_trading.py']", with exit status 2 and no restart.
 
 LOCAL GATE: PASS. Next: Sol High re-review of `3c41f70..57a3b40`.
+
+## Sol High re-review of `57a3b40` and repairs
+
+Record: `SOL_REREVIEW_57A3B40.md` (prompt `SOL_PROMPT_57A3B40.md`). Verdict
+FIX: S30-1, S30-3, S30-5 CORRECT; S30-2, S30-6 DISPOSITION HOLDS; S30-4
+INCOMPLETE; new S30-7, S30-8 BLOCKER.
+
+| ID | Sol severity | Decision | Repair | Validation |
+| --- | --- | --- | --- | --- |
+| S30-7 | BLOCKER | AGREE — repaired | `approve` sets the record to mode 644 after appending, whatever the caller's umask; `approved_code` refuses, on Linux, a record that group or others can write. The lock sidecar is created with mode 644 (masked, never wider). CI now checks after approval that `aqt` can append to neither the record nor its lock. | `test_a_record_others_can_write_refuses` (Linux, in CI); CI step 3. |
+| S30-8 | BLOCKER | AGREE — repaired | With `--deployment-record` the runner checks the approval before reading the configuration; a refusal is logged to the fixed file `<out>/deployment_refusals.jsonl` (and the screen) and exits 2. CI now breaks the tracked configuration instead of appending a comment to the runner, and requires exit 2, no restart and the logged refusal there. | `test_the_server_run_refuses_before_reading_any_data` (valid and unparseable configuration); CI step 5. |
+| S30-4 | — | Closed with S30-8 | As above. | As above. |
+
+T30-01 holds again with S30-7 repaired; T30-04 with S30-8. Each new runner
+test fails at `dc2db31` (2 failed) and passes after; the S30-7 test runs on
+Linux only.

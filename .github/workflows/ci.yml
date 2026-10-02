@@ -52,12 +52,16 @@ jobs:
           cd /tmp
           sudo /opt/aqt/app/.venv/bin/python -B /opt/aqt/app/scripts/deployment.py approve "$COMMIT" --by "CI dry run" --statement "runbook dry run"
           sudo -u aqt /opt/aqt/app/.venv/bin/python /opt/aqt/app/scripts/deployment.py check
+          for target in /etc/aqt/deployments.jsonl /etc/aqt/deployments.jsonl.lock; do
+            if sudo -u aqt sh -c ": >> '$target'"; then echo "aqt can write $target"; exit 1; fi
+          done
       - name: The service file is valid
         run: sudo systemd-analyze verify /etc/systemd/system/aqt-paper.service
       - name: Step 5 on a modified checkout is refused, logged, not retried
         run: |
           cd /tmp
-          echo "# changed" | sudo tee -a /opt/aqt/app/scripts/run_paper_trading.py
+          # a broken tracked config, which must not crash before the check
+          echo "[[[ changed" | sudo tee -a /opt/aqt/app/configs/paper_trading.example.toml
           sudo systemctl start aqt-paper
           for _ in $(seq 60); do
             systemctl is-active --quiet aqt-paper || break
@@ -65,4 +69,4 @@ jobs:
           done
           test "$(systemctl show aqt-paper -p ExecMainStatus --value)" = 2
           test "$(systemctl show aqt-paper -p NRestarts --value)" = 0
-          sudo grep -h REFUSE_START /var/lib/aqt/data/processed/paper/*/operations.jsonl | grep "checkout differs"
+          sudo grep REFUSE_START /var/lib/aqt/data/processed/paper/deployment_refusals.jsonl | grep "checkout differs"

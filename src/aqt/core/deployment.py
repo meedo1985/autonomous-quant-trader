@@ -15,6 +15,7 @@ a cryptographic signature: the file's permissions protect it.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from datetime import datetime
@@ -49,6 +50,7 @@ def approve(
         payload={"approved_by": approved_by, "commit": commit, "statement": statement},
         recorded_at_utc=at,
     )
+    os.chmod(record, 0o644)  # whatever the caller's umask (S30-7)
 
 
 def _git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -62,6 +64,9 @@ def _git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
 
 def approved_code(record: Path, root: Path) -> SourceBundle:
     """The checkout's source identity, if it may run; else `DeploymentError`."""
+    if os.name == "posix" and record.exists() and record.stat().st_mode & 0o022:
+        # Only its owner, root on the server, may write it (S30-7).
+        raise DeploymentError(f"{record} is writable by others")
     try:
         verify_ledger(record).require_intact()
         entries = read_entries(record)

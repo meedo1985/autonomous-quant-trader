@@ -189,8 +189,12 @@ def test_a_linked_credential_file_is_refused(tmp_path: Path) -> None:
     assert "123:abc" not in str(caught.value)
 
 
-def test_the_server_run_refuses_before_reading_any_data(tmp_path: Path) -> None:
-    """S30-4: the runner checks the approval first, logs the refusal and
+@pytest.mark.parametrize("config_text", [None, "[[[ not toml"])
+def test_the_server_run_refuses_before_reading_any_data(
+    tmp_path: Path, config_text: str | None
+) -> None:
+    """S30-4, S30-8: the runner checks the approval first, even before a
+    configuration it could not parse, logs the refusal to a fixed file and
     exits 2, before data, network or channel."""
     path = Path(__file__).parents[2] / "scripts" / "run_paper_trading.py"
     spec = importlib.util.spec_from_file_location("run_paper_trading", path)
@@ -200,11 +204,27 @@ def test_the_server_run_refuses_before_reading_any_data(tmp_path: Path) -> None:
     record = tmp_path / "deployments.jsonl"
     approve(record, commit="0" * 40, approved_by="Owner", statement="ok", at=NOW)
     config = Path(__file__).parents[2] / "configs" / "paper_trading.example.toml"
+    if config_text is not None:
+        config = tmp_path / "broken.toml"
+        config.write_text(config_text)
     code = runner.main(
         ["--config", str(config), "--raw", str(tmp_path / "no-data"),
          "--out", str(tmp_path / "out"), "--deployment-record", str(record),
          "--telegram"]
     )  # fmt: skip
     assert code == 2
-    (log,) = (tmp_path / "out").glob("*/operations.jsonl")
-    assert "REFUSE_START" in log.read_text() and "deployment: " in log.read_text()
+    log = (tmp_path / "out" / "deployment_refusals.jsonl").read_text()
+    assert "REFUSE_START" in log and "deployment: " in log
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
+def test_a_record_others_can_write_refuses(
+    server: tuple[Path, Path, str],
+) -> None:
+    """S30-7: approving leaves the record writable by its owner only, and a
+    record others can write is refused."""
+    root, record, _ = server
+    assert record.stat().st_mode & 0o777 == 0o644
+    os.chmod(record, 0o666)
+    with pytest.raises(DeploymentError, match="writable by others"):
+        approved_code(record, root)

@@ -84,8 +84,10 @@ refuses by itself while an earlier error is unresolved (Task 27).
 ## 6. Logs
 
 - Screen output: `journalctl -u aqt-paper`.
-- Run report, operations log and incidents (a refused start too):
+- Run report, operations log and incidents:
   `/var/lib/aqt/data/processed/paper/<run id>/`.
+- A start refused because the code is not the approved commit:
+  `/var/lib/aqt/data/processed/paper/deployment_refusals.jsonl`.
 - Telegram tests: `/var/lib/aqt/data/processed/alerts/`.
 - Approvals: `/etc/aqt/deployments.jsonl`.
 
