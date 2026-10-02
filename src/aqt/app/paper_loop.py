@@ -930,16 +930,17 @@ def run_paper(
     def check_channel(at: datetime) -> None:
         """Q28-2: send a due test; alert while the test is overdue. At most
         once per wall-clock hour; never changes the mode, and nothing it
-        meets stops the loop (A28-4). A clock set back starts a new hour at
-        once (A28-6)."""
+        meets stops the loop (A28-4), not even a bad clock, which is then
+        reported every decision hour (A28-11). A clock set back starts a new
+        hour at once (A28-6)."""
         nonlocal reminded
         if channel is None:
             return
-        now = channel.now()
-        if reminded is not None and reminded <= now < reminded + HOUR:
-            return
-        reminded = now
         try:
+            now = channel.now()
+            if reminded is not None and reminded <= now < reminded + HOUR:
+                return
+            reminded = now
             if channel.due():
                 channel.send_test()
             problem = channel.problem()

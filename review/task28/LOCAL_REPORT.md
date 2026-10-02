@@ -37,7 +37,7 @@ message was sent to Telegram by this AI or by any test.
 | ID | Severity | Finding | Disposition |
 | --- | --- | --- | --- |
 | T28-01 | NON-BLOCKING | The credential reader's success path (a stored entry) is not exercised by any test: testing it would write to the owner's credential store. | Disclosed. The owner's first `alert_channel.py test` exercises it; a wrong decoding shows as a refused send (HTTP 401/404), reported locally. |
-| T28-02 | NON-BLOCKING | The weekly test is due exactly 7 days after the last one, so every week there is an overdue window (hourly reminders) until the owner types the code. | As answered in Q28-2. Sending earlier (say at 6 days) would avoid it; an owner choice if the reminders are a nuisance. |
+| T28-02 | NON-BLOCKING | A new weekly test becomes due once more than 7 days have passed since the last one (corrected after Astra's re-review), so every week there is an overdue window (hourly reminders) until the owner types the code. | As answered in Q28-2. Sending earlier (say at 6 days) would avoid it; an owner choice if the reminders are a nuisance. |
 | T28-03 | NON-BLOCKING | The code is 6 digits stored as its SHA-256: anyone who can read the ledger can recover it by trying a million values. | Whoever can read the ledger is on the app's machine and could acknowledge anyway; the hash only keeps the code out of plain view. |
 | T28-04 | NON-BLOCKING | A send blocks the loop while it runs; the 10 s timeout bounds each socket operation, not the whole call (corrected after Astra). | Acceptable for an hourly loop; CRITICAL events are rare. |
 | T28-05 | NON-BLOCKING | The local failure event is written to the local sinks directly, so the loop's event count in the run report does not include it. | It is in the operations log; the count is informational. |
@@ -95,4 +95,53 @@ each): `pytest -q` 1738 passed, 4 skipped; `ruff check .`, `ruff format
 --check .`, `mypy src scripts` (58 files), `lint-imports` (6 kept),
 `git diff --check` clean; no file under `docs/`, `protocols/`,
 `schemas/`, `specs/` or the manifest differs from `main`; Task 25 drills
-rerun, identical to `review/task25/drills`. Not yet re-reviewed.
+rerun, identical to `review/task25/drills`. Re-reviewed below.
+
+## Astra re-review of `816cd26` and repairs
+
+Record: `ASTRA_REREVIEW_816CD26.md` (prompt `ASTRA_PROMPT_816CD26.md`;
+attempt 1, cut off by the usage limit with no verdict, is
+`ASTRA_REREVIEW_816CD26_ATTEMPT_1.md`). Verdict ACCEPT: A28-1..A28-7 and
+A28-9 CORRECT, A28-8 INCOMPLETE (its remainder is A28-10), four new
+NON-BLOCKING findings. The owner asked for all four to be repaired.
+
+| ID | Astra severity | Decision | Repair | Validation |
+| --- | --- | --- | --- | --- |
+| A28-10 | NON-BLOCKING | AGREE — repaired | A ledger that records a send with a code hash already sent is refused ("issues a code twice"), so an old code cannot acknowledge a newer test. This also closes the rest of A28-8. | `test_a_code_sent_twice_in_the_ledger_refuses` |
+| A28-11 | NON-BLOCKING | AGREE — repaired | `problem()` reads the clock inside its handler and returns a refusal for any error ("channel test unreadable: <type>"); the loop's hourly check reads the clock inside its handler, so a bad clock is reported every decision hour and the loop runs on. | `test_a_bad_clock_is_reported_not_raised` |
+| A28-12 | NON-BLOCKING | AGREE — repaired | The transport reads one byte past the 64 KiB bound; a reply longer than the bound is never parsed and counts as not accepted. | `test_a_reply_past_the_bound_is_not_a_success` (through `urllib_transport` with a fake opener, and through the sink) |
+| A28-13 | NON-BLOCKING | AGREE — repaired | `alert_channel.py` refuses a `--ledger` named `alert_channel_log.jsonl` (any letter case), before anything is sent or written. The log keeps its name, so the owner's existing log stays where it is. | `test_the_test_ledger_cannot_share_the_failure_log` (two runs, no request, no file) |
+
+The T28-02 wording is corrected above (due after 7 days, not at 7 days).
+The other T28 dispositions stand, the reviewer agreeing.
+
+Each of the four new tests fails at `816cd26` (4 failed, 32 passed) and
+passes after.
+
+Validation after these repairs (2026-10-02, Python 3.14.7, Windows 11, exit 0
+each): `pytest -q -p no:cacheprovider` 1742 passed, 4 skipped; `ruff check .`
+all passed; `ruff format --check .` 111 files formatted; `mypy src scripts`
+no issues in 58 files; `lint-imports` 6 kept, 0 broken; `git diff --check`
+clean; frozen verification (Python port of `review/task6/verify_frozen.ps1`)
+28/28 trusted bytes and inventory, 14/14 sidecars, Constitution self-hash,
+7/7 manifest and protocol bindings, nested bindings; no file under `docs/`,
+`protocols/`, `schemas/`, `specs/` or the manifest differs from `main`; Task
+25 drills rerun, identical to `review/task25/drills`.
+
+LOCAL GATE: PASS. Astra's ACCEPT covers `816cd26`; these four non-blocking
+repairs follow its own suggested corrections and were not sent back for a
+third review. Remaining before merge: the owner's walkthrough (section 16).
+
+## Owner's real-channel test (2026-10-02)
+
+The owner stored the bot credential in Windows Credential Manager entry
+`aqt-telegram`; the token was never shown to this AI, in the chat,
+the repository or a log. The first two `alert_channel.py test` runs were
+refused by Telegram with HTTP 404, because the stored password was not the
+token as given (once repeated, once only the part after the colon). Both
+were reported as local CRITICAL `ALERT_CHANNEL` events reading only
+"HTTP 404, not accepted", with no token; they were diagnosed from the
+stored value's length and shape only, never its content. After the owner
+stored it again, two tests were sent and acknowledged by typing their codes,
+at 12:45Z and 12:51Z. `status` then reported the channel tested; the
+channel is current until 2026-10-09 12:51Z.

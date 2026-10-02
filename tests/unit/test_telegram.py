@@ -5,6 +5,7 @@ synthetic."""
 from __future__ import annotations
 
 import ctypes
+import importlib.util
 import io
 import json
 import re
@@ -15,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from aqt.core.ledger import append_entry, read_entries
-from aqt.monitoring.alerts import AlertRouter, LedgerSink, StreamSink
+from aqt.monitoring.alerts import AlertRouter, LedgerSink, Sink, StreamSink
 from aqt.monitoring.events import Event, EventKind, Severity
 from aqt.monitoring.telegram import (
     TEST_INTERVAL,
@@ -26,6 +27,7 @@ from aqt.monitoring.telegram import (
     TelegramResponse,
     TelegramSink,
     read_windows_credential,
+    urllib_transport,
 )
 from tests.integration.test_paper_loop import _config, _run, _series
 
@@ -468,3 +470,113 @@ def test_the_credential_reader_with_a_fake_store(
     else:
         assert read_windows_credential() == TelegramCredential("42", expected)
     assert len(freed) == 1
+
+
+def test_a_code_sent_twice_in_the_ledger_refuses(tmp_path: Path) -> None:
+    """A28-10: a ledger that issues one code twice is refused, so the old
+    code cannot acknowledge the newer test."""
+    clock, fake = Clock(), Fake()
+    tests = _tests(tmp_path, fake, clock)
+    tests.send_test()
+    (sent,) = read_entries(tests.path)
+    clock.now += timedelta(days=8)
+    append_entry(
+        tests.path,
+        record_type=sent.record_type,
+        payload={**sent.payload, "sent_at": clock.now.isoformat()},
+        recorded_at_utc=clock.now,
+    )
+    assert tests.problem() == "channel test ledger issues a code twice"
+    with pytest.raises(ChannelError, match="twice"):
+        tests.acknowledge(_code(fake))
+
+
+class Naive(Clock):
+    """A wall clock that loses its time zone once `broken` is set, after one
+    more good reading (the start check)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.broken = False
+        self.good = 1
+
+    def __call__(self) -> datetime:
+        if self.broken and not self.good:
+            return self.now.replace(tzinfo=None)
+        if self.broken:
+            self.good -= 1
+        return self.now
+
+
+def test_a_bad_clock_is_reported_not_raised(tmp_path: Path) -> None:
+    """A28-11: `problem` and the hourly check contain a clock error too."""
+    clock = Naive()
+    _, tests = _acknowledged(tmp_path, clock)
+    clock.broken = True
+    report = _run(tmp_path / "run", _config(1), _series(24 * 12), channel=tests)
+    assert report.refused == () and report.final_mode == "RUNNING"
+    log = (tmp_path / "run" / "operations.jsonl").read_text()
+    assert log.count("BarSemanticsError") >= 20  # once per decision hour
+    assert tests.problem() == "channel test unreadable: BarSemanticsError"
+
+
+def test_a_reply_past_the_bound_is_not_a_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A28-12: the transport reads one byte past the bound, and a reply that
+    long is refused even when its head is a valid answer."""
+    body = b'{"ok":true}'.ljust(65536) + b"INVALID"
+    asked: list[int] = []
+
+    class Response:
+        status = 200
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def read(self, size: int) -> bytes:
+            asked.append(size)
+            return body[:size]
+
+    class Opener:
+        def open(self, *_: object, **__: object) -> Response:
+            return Response()
+
+    monkeypatch.setattr("aqt.monitoring.telegram._OPENER", Opener())
+    sink = TelegramSink(
+        CREDENTIAL, urllib_transport, [StreamSink(io.StringIO(), Severity.INFO)]
+    )
+    assert sink.send("hello") == "HTTP 200, not accepted"
+    assert asked == [65537]
+    assert _sink(Fake(TelegramResponse(200, body)), io.StringIO()).send("x") == (
+        "HTTP 200, not accepted"
+    )
+
+
+def test_the_test_ledger_cannot_share_the_failure_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A28-13: `--ledger` named like the CLI's failure log is refused before
+    anything is sent or written."""
+    path = Path(__file__).parents[2] / "scripts" / "alert_channel.py"
+    spec = importlib.util.spec_from_file_location("alert_channel", path)
+    assert spec is not None and spec.loader is not None
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    fake = Fake(TelegramResponse(500, b""), OK)
+
+    def fake_channel(
+        ledger: Path, local: list[Sink]
+    ) -> tuple[TelegramSink, ChannelTests]:
+        sink = TelegramSink(CREDENTIAL, fake, local)
+        return sink, ChannelTests(ledger, sink, Clock())
+
+    monkeypatch.setattr(cli, "owner_channel", fake_channel)
+    ledger = tmp_path / "Alert_Channel_Log.jsonl"
+    for _ in range(2):
+        assert cli.main(["--ledger", str(ledger), "test"]) == 2
+    assert fake.requests == [] and not ledger.exists()
+    assert "may not be named" in capsys.readouterr().err

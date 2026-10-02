@@ -60,7 +60,7 @@ TEST_INTERVAL: Final[timedelta] = timedelta(days=7)  # OWNER-SET D-2
 SENT: Final[str] = "aqt.channel_test.sent.v1"
 ACKNOWLEDGED: Final[str] = "aqt.channel_test.acknowledged.v1"
 _MAX_TEXT: Final[int] = 4000  # Telegram's limit is 4096 characters
-_MAX_REPLY: Final[int] = 65536  # a reply is read and parsed up to this size
+_MAX_REPLY: Final[int] = 65536  # a longer reply is refused, never parsed
 
 
 class ChannelError(RuntimeError):
@@ -107,7 +107,9 @@ def urllib_transport(
     request: TelegramRequest, *, timeout: float = 10.0
 ) -> TelegramResponse:
     """The real network transport. Only the owner-run app uses it. `timeout`
-    bounds each blocking socket operation, not the whole call (T28-04)."""
+    bounds each blocking socket operation, not the whole call (T28-04). One
+    byte past the bound is read, so a cut reply is told from a whole one
+    (A28-12)."""
     req = urllib.request.Request(
         request.url,
         data=request.body,
@@ -116,9 +118,9 @@ def urllib_transport(
     )
     try:
         with _OPENER.open(req, timeout=timeout) as response:
-            return TelegramResponse(response.status, response.read(_MAX_REPLY))
+            return TelegramResponse(response.status, response.read(_MAX_REPLY + 1))
     except urllib.error.HTTPError as error:
-        return TelegramResponse(error.code, error.read(_MAX_REPLY))
+        return TelegramResponse(error.code, error.read(_MAX_REPLY + 1))
 
 
 def read_windows_credential(target: str = CREDENTIAL_TARGET) -> TelegramCredential:
@@ -211,7 +213,9 @@ class TelegramSink:
         except Exception:  # noqa: BLE001 - any unreadable reply
             return "send failed: unreadable reply"
         try:
-            reply = json.loads(response.body[:_MAX_REPLY])
+            # A reply past the bound may be the head of a longer one (A28-12).
+            ok = len(response.body) <= _MAX_REPLY
+            reply = json.loads(response.body) if ok else None
             ok = isinstance(reply, dict) and reply.get("ok") is True
         except Exception:  # noqa: BLE001 - an unreadable body is no success
             ok = False
@@ -307,6 +311,10 @@ class ChannelTests:
                     raise ChannelError(
                         "channel test ledger acknowledges an unsent test"
                     )
+                if record.kind == SENT and any(
+                    r.code_sha256 == record.code_sha256 for r in records
+                ):  # each code is issued once (A28-10)
+                    raise ChannelError("channel test ledger issues a code twice")
                 records.append(record)
             return records
         except ChannelError:
@@ -383,12 +391,15 @@ class ChannelTests:
         return test.sent_at
 
     def problem(self) -> str | None:
-        """Why the start must be refused, or None. Never raises."""
+        """Why the start must be refused, or None. Never raises: a bad clock
+        is a refusal too (A28-11)."""
         try:
             records = self._records()
+            now = self.now()
         except ChannelError as error:
             return str(error)
-        now = self.now()
+        except Exception as error:  # noqa: BLE001 - e.g. a clock not in UTC
+            return f"channel test unreadable: {type(error).__name__}"
         if (behind := self._behind(records, now)) is not None:
             return behind
         acknowledged = self._mine(records, ACKNOWLEDGED)

@@ -28,6 +28,8 @@ from aqt.monitoring.alerts import LedgerSink, StreamSink
 from aqt.monitoring.events import Severity
 from aqt.monitoring.telegram import DEFAULT_LEDGER, ChannelError, owner_channel
 
+LOG_NAME = "alert_channel_log.jsonl"
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -39,10 +41,11 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("status")
     args = parser.parse_args(argv)
     try:
-        # A failed test send is written here and to the screen (A28-3).
-        log = LedgerSink(
-            args.ledger.with_name("alert_channel_log.jsonl"), Severity.INFO
-        )
+        # A failed test send is written here and to the screen (A28-3), never
+        # into the test ledger itself (A28-13).
+        if args.ledger.name.casefold() == LOG_NAME:
+            raise ChannelError(f"--ledger may not be named {LOG_NAME}")
+        log = LedgerSink(args.ledger.with_name(LOG_NAME), Severity.INFO)
         _, tests = owner_channel(
             args.ledger, [StreamSink(sys.stderr, Severity.CRITICAL), log]
         )
