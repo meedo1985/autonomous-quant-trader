@@ -23,7 +23,7 @@ machine, in `OWNER_ANSWERS.md`. Closes T24-03 and T28-06.
 
 | Criterion | Evidence |
 | --- | --- |
-| A dry run of the runbook on a clean machine | CI job `runbook-dry-run` on a fresh `ubuntu-24.04` runner: `install.sh` (step 2), approve and check (step 3), `systemd-analyze verify` of the unit. Result recorded below once the job has run on GitHub. |
+| A dry run of the runbook on a clean machine | CI job `runbook-dry-run` on a fresh `ubuntu-24.04` runner: `install.sh` (step 2), approve and check (step 3), `systemd-analyze verify` of the unit. Passed on GitHub (see below). |
 | A modified file refuses start | `test_a_modified_checkout_refuses` (changed script, added file, changed `src/aqt` file, masked `skip-worktree` change); `test_the_loop_refuses_an_unapproved_checkout` (logged REFUSE_START, no order); the CI job's last step on the installed server copy. |
 | Only a reviewed commit on `main` | `test_a_commit_not_on_main_refuses`, `test_only_the_newest_approval_counts`, `test_a_missing_or_damaged_record_refuses`, `test_an_approval_needs_a_full_commit_and_a_name`. |
 | Logs say which code ran | `test_the_start_event_names_the_approved_code`. |
@@ -56,7 +56,18 @@ machine, in `OWNER_ANSWERS.md`. Closes T24-03 and T28-06.
   self-hash, 7/7 manifest and protocol bindings, nested bindings.
 - Task 25 drills rerun, identical to `review/task25/drills`.
 
-LOCAL GATE: PASS. The CI dry run's result is recorded once it has run on
-GitHub. Required before merge (section 16: the start check is
+CI on PR #40 at `021f51a` (run 37031449002): `checks` pass, and
+`runbook-dry-run` pass on a fresh `ubuntu-24.04` runner. Its log:
+"Installed 17fdaea...", "Approved 17fdaea...", "May run: 17fdaea...,
+source 0a051a96...", `systemd-analyze verify` without error, then after one
+appended line "Refused: checkout differs from its commit: ['M
+scripts/run_paper_trading.py']". (`17fdaea` is GitHub's merge of the PR
+into `main`.) The first run at `9b6f05f` failed before installing: the
+runner's checkout had one commit only, so the bundle lacked history;
+`021f51a` fetches the full history. Harmless warnings in the log: the
+bundle names no HEAD branch (the script checks out the commit), and
+`sudo -u aqt` cannot read the runner's own git config.
+
+LOCAL GATE: PASS. Required before merge (section 16: the start check is
 protocol-enforcement logic): independent different-model review, then the
 owner's walkthrough.
