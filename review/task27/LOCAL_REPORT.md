@@ -341,3 +341,11 @@ each): `ruff check .`, `ruff format --check .`, `mypy src scripts`,
 `test_account_state.py`, `test_safety.py`) pass. The full `pytest -q` was
 not rerun after these repairs (owner asked to save for another laptop; see
 `review/handoff/RESUME_2026-10-01.md`). Not yet re-reviewed.
+
+Full gate after these repairs, at `6dc73ef` on a PC (2026-10-02,
+Python 3.14.7, Windows 11, exit 0 each): `pytest -q` 1704 passed, 4 skipped;
+`ruff check .`, `ruff format --check .`, `mypy src scripts` (56 files),
+`lint-imports` (6 kept, 0 broken), `git diff --check ad24b7d HEAD` clean;
+frozen verification (Python port of `review/task6/verify_frozen.ps1`; PowerShell
+7 not installed) PASS; no file under `docs/`, `protocols/`, `schemas/`,
+`specs/` or the hash manifest changed against `main`. Not yet re-reviewed.
