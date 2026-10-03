@@ -1,4 +1,4 @@
-# D-14, D-15 proposal (revision 6): the random-exposure null and the delay gates
+# D-14, D-15 proposal (revision 7): the random-exposure null and the delay gates
 
 **Status:** `NON-BINDING AI PROPOSAL — NO ROW DECIDED — NOT ACTIVE`
 **Date:** 2026-10-03
@@ -17,7 +17,12 @@ time". D-rows are decided only by the owner, after two different-model reviews
   Adjudication: `ADJUDICATION_83FC993.md`.
 - Revision 5 (`0c16c35`): focused checks FN5 and SN5 both NOT READY. Adjudication
   `ADJUDICATION_0C16C35.md`.
-- Revision 6 applies every disposition. Nothing has been put to the owner yet.
+- Revision 6 (`4c8648f`): the focused checks FN6 and SN6 both returned NOT READY.
+  Adjudication: `ADJUDICATION_4C8648F.md`.
+- Revision 7 applies every disposition **without a further check** [AI default].
+  The core construction has been stable since revision 3. What remains are
+  owner choices, which are now stated as questions. Going without a further
+  check is weaker than another check, and it is recorded as such.
 
 **Authority:** both rows are `STAT` then `§4`. Two proposed new rows:
 - **N-3:** the stress semantics of G-5.
@@ -73,59 +78,72 @@ This keeps the trial's `σ̂` alignment for any frozen estimator and vol target
 (FN3, SN3, exact), **for signals that do not depend on volatility**. It does not
 keep volatility alignment that sits inside `s` (§1.3).
 
-**Three classes of trial (FN5-1, SN5-1).** The class is fixed mechanically at
-declaration from the hashed interface:
-- **signal-timed:** `s` is not constant. The null shifts `s` and re-runs the
-  overlay on each draw's own path.
-- **timing-free:** `s` is constant and there is **no** overlay.
-- **overlay-timed:** `s` is constant and an overlay reads prices, P&L or
-  path state.
+**What G-11 can and cannot test (FN6-1).** The null shifts only `s`. The
+overlay is re-run on each draw's own path, but its timing comes from the same
+price path in every draw, so it cancels out. **G-11 therefore never tests
+overlay timing, in any class.** It is not possible to force the gate to bite
+on overlays by classifying trials. If a trial times entries with its overlay
+and declares any non-constant `s`, however small, it is ranked only on that
+`s`, and the rank does not change as `s` shrinks to zero (FN6 E1, exact).
 
-Shifting a constant `s` changes nothing. So for an overlay-timed trial every
-draw equals the candidate (FN5 E1, exact), and the null cannot test its timing.
-Rev 5 wrongly said that overlays offered "no `N/A` route", and that a
-constant-`s` trial "makes no timing claim at all". Both claims are withdrawn.
+**Declared class (SN6-1).** Every hypothesis declares a field
+`g11_class ∈ {signal_timed, constant_signal}` as part of the hashed
+interface.
+- **Check.** The engine checks in **every** run that a `constant_signal`
+  trial's `s` is identical at every hour.
+- **Mismatch.** If it is not, the gate is `UNAVAILABLE`, with the reason
+  `CLASS_MISMATCH`.
+- **Signal-timed trial with constant `s`.** A `signal_timed` trial whose `s`
+  turns out constant gives 500 tied draws. An all-tie result is `FAIL`
+  **whatever rule Q9 picks**, overriding type-7's pass on ties (FN6-2).
 
-**Signal-timed trials with an overlay (Q1b).**
+**Overlays (FN6-8) [AI default].** An overlay may only keep the target that
+comes from `s·τ/σ̂`, or set it to 0 (stop, take-profit, hysteresis exit).
+It may not set or rescale the size. Re-entry follows `s`.
 
-| Option | Effect |
-|---|---|
-| **(a) re-run the overlay on each draw** [recommended] | The trial is tested on the timing of its signal. The overlay acts on each draw's own path. |
-| (b) preregistered `N/A` for any trial with an overlay | **Promotion would then be possible without G-11 evidence, and any trial could opt out by declaring a stop that never fires.** |
-| (c) restrict C2 eligibility to mappings without overlays | This needs amendment wording. |
+**Q1b. Overlays on signal-timed trials.**
+- **(a) Re-run the overlay on each draw** [recommended]. This tests the
+  signal's timing given the overlay.
+- **(b) Preregistered `N/A` for any trial with an overlay.** **Such trials
+  could then be promoted without G-11 evidence.**
+- **(c) Restrict C2 eligibility to overlay-free mappings**, by amendment.
 
-**Timing-free trials (Q2):**
-- **(a) preregistered `N/A`** [recommended]. Constitution §12 l.119 calls vol
-  management "de-risking, not alpha". This option changes G-11's
-  `na: "never"` and uses the P18-7 `N/A` exception (FN3-11). It applies only
-  when `s` is constant **and** there is no overlay, so no timing exists to
-  test.
-- **(b) always fail.** Under the rank rules all draws tie, which closes the
-  vol family.
-- **(c) a different null later.**
+**Q2b. Overlay timing: one decision that covers every class (FN6-1).**
 
-**Overlay-timed trials (Q2b):**
+| Option | Rule | Consequence |
+|---|---|---|
+| **(A) Accept and disclose** [recommended] | G-11 tests signal timing only. Every `constant_signal` trial (with or without an overlay) gets a preregistered `N/A`. | **Overlay timing is never tested by G-11.** A trial whose edge lies in its stop or take-profit timing can be promoted without that timing being tested against a null. D-18's false-promotion bound still holds, because it comes from the DSR (P18-7), and the other gates still apply. |
+| (B) Fail-closed for market-reading overlays | Any trial whose overlay reads prices, P&L or path state cannot pass G-11 until a separate overlay null (for example, random entry days) is designed and decided. | No such trial can be promoted until that null exists. This includes the owner's recorded rule. |
+| (C) Materiality test | Overlays are tested only above some "materiality" level. | Not defined, so it cannot be chosen now. |
 
-| Option | Effect |
-|---|---|
-| **(a) fail** [recommended] | All draws tie, so the rank rules fail. This is fail-closed, and **such a trial can never be promoted** unless it declares a non-constant entry signal `s`. |
-| (b) preregistered `N/A` | **Promotion without G-11 evidence.** Any trial could move its timing into an overlay to opt out. |
-| (c) a different null that perturbs overlay timing (for example, random entry days) | Not designed yet. Until it exists, (a) applies. |
-| (α) limit overlays to the run's own position and its entry-relative P&L | All market-data timing must then sit in `s`. The trial is still overlay-timed if `s` is constant, so this does not change its outcome; it only narrows what an overlay may be. |
+Rev 6's recommendation to fail overlay-timed trials only *looked*
+fail-closed (FN6-1), so it is withdrawn.
 
-**The owner's recorded rule** (`TRADING_RULE_2026-09-27.md`) is a fixed
-10% entry when flat, with a −0.5% stop and a +10% take-profit, and no
-entry signal:
-- **Sizing.** A fixed 10% cannot be written as `s·τ/σ̂` with the restricted
-  `σ̂` and a frozen `τ` unless volatility enters `s`, and that would mis-size
-  every draw (FN5 E2). Whether a fixed-size rule fits the frozen
-  `vol_target` parameter point (l.126–128, 182) is a separate,
-  hypothesis-registration question and is **not** settled here.
-- **Timing.** Read as declared, with constant `s`, the rule is overlay-timed.
-  Under Q2b(a) it **fails G-11**, and so cannot be promoted. Under Q2b(b) it
-  would skip G-11.
+**Q2. Constant-signal trials without an overlay** (pure sizing):
+- **(a) preregistered `N/A`** [recommended]. The null keeps `σ̂` aligned, so it
+  cannot test `σ̂` timing (FN6-4), and Constitution §12 l.119 calls vol
+  management "de-risking, not alpha". This changes G-11's `na: "never"` and
+  uses the P18-7 `N/A` exception (FN3-11).
+- **(b) always fail.** This closes the vol family.
 
-The owner should know this before answering Q2b.
+Under Q2b(A), Q2(a) and the constant-signal-with-overlay case get the same
+treatment.
+
+**The owner's recorded rule** (`TRADING_RULE_2026-09-27.md`; FN6-3,
+SN6-1). The record fixes the size (10%), the stop (−0.5%) and the
+take-profit (+10%), and notes that "a profit needs a real entry signal". It
+does not say what triggers entry, so every mapping below is **a reading**.
+- **Sizing comes first.** A fixed 10% is not expressible as `s·τ/σ̂` with
+  the restricted `σ̂` and a frozen `τ`, and an overlay may not set the size
+  (above). Whether a fixed-size rule can be registered at all is a
+  hypothesis-registration question for C1/C2, **not** decided here. Until it
+  is decided, the outcomes below are conditional.
+- **With no entry signal** (always enter when flat): the trial is
+  `constant_signal` with an overlay. Under Q2b(A) it gets `N/A` at G-11;
+  under (B) it cannot be promoted.
+- **With an entry signal:** the trial is `signal_timed`. G-11 ranks the
+  timing of that entry signal; the stop and take-profit timing goes untested
+  under (A), and under (B) the trial cannot be promoted.
 
 ### 1.3 Variance timing inside the signal (Q3)
 
@@ -253,54 +271,64 @@ the hour (FN5 E3). The rule:
 - **The clock is set only at the fill of an order that actually raised held
   exposure.** Because of the clamp, only 00:00 increase orders can do that.
 
-**Clock anchor (Q10).**
-- **(b) the decision time of that order** [recommended]. Stress then isolates
-  the one-bar delay.
-- **(a) the fill time.** Under execution stress the next 00:00 is then 23 h
-  later, so increases are possible only every other day, and G-7 becomes a
-  48 h-hold test.
-- **(c) amend l.57.**
+**Clock anchor (Q10; SN6-2).** The two choices are mutually exclusive.
+- **(a) Fill time, as frozen** (l.57: "24h since last risk increase"; l.113).
+  Under execution stress a 00:00 increase fills at 01:00, so the next 00:00
+  is 23 h later and is blocked. Increases then happen at most every other day,
+  and G-7 becomes in effect a 48-hour-hold test.
+- **(b) Decision time** [recommended]. The clock is anchored at the 00:00
+  decision of an order whose fill actually raised exposure. **This amends
+  l.57 and l.113**, and the same 24 h clause in BACKTESTER_SPEC l.9 and
+  CANONICAL_BENCHMARKS l.11 (FN6-7). Under stress it permits a new increase
+  23 h after the actual fill. In return, the stress then isolates the one-hour
+  delay.
 
-**Disclosure (FN4-3, FN5-2).** Under (b), with the clamp, every clock anchor is
-a 00:00 decision, so the 24 h test never binds in baseline or stressed runs:
-the gaps are 24 h, 48 h and so on. In practice that drops l.57's 24 h clause
-(and l.113 `minimum_holding_hours_for_risk_increase`) for daily decisions.
-Under (a) the clause binds under stress.
+**Disclosure (FN4-3, FN6-7).**
+- **Under (b), with the clamp:** every anchor is a 00:00 decision, so the
+  24 h test never binds; the gaps are 24 h, 48 h and so on. In effect this
+  drops the 24 h clause for daily decisions.
+- **Under (a):** the clause binds under stress.
 
-### 2.2 Feature delay (SN4-4, FN4-6, FN5-3, FN5-4)
+### 2.2 Feature delay (SN4-4, FN4-6, FN5-3, FN5-4, FN6-6, SN6-3, SN6-4)
 
-**Lagged inputs.** At decision instant `t`, every **market-data input of the
-strategy** takes the last value emitted at or before `t − 1h`, under that
-input's declared emission schedule. No partial aggregate is ever built. The
-inputs are:
-
+**Inputs that are lagged.** At decision instant `t`, every **market-data
+input of the strategy** is lagged:
+- the **direct market-data inputs of `s`**: prices, returns and any series
+  `s` reads without going through the model;
 - the model's input features;
-- `σ̂`;
-- every price or return the overlay reads, including its stop and take-profit
-  triggers [AI default];
-- the target used in the band test, computed from the lagged `s` and `σ̂`.
+- the inputs of `σ̂`;
+- every price or return the overlay reads, including stop and take-profit
+  triggers.
 
-For the hourly trailing features of `FEATURE_FACTORY_v1` (l.5, l.20), this is
-exactly a one-bar lag.
+**How lagged values are used.** `s`, `σ̂`, the model outputs and the overlay
+outputs are then **recomputed from the lagged inputs**, rather than taken as
+earlier emitted values. The order target and the band-test target are formed
+from those recomputed values.
 
-**Model outputs (FN5-3).** Model outputs are **not** lagged separately. The
-model is re-inferred at its own declared emission times on the lagged features.
-The decision then uses the last output emitted at or before `t`. So a daily
-model output carries only the one-bar lag of its inputs.
+**What "lagged" means (Q11; SN6-4).**
 
-A **market-data feature** emitted less often than hourly is taken at its last
-emission at or before `t − 1h`, so it can be up to one of its own periods old.
-This applies `feature_delay_stress_bars: 1` (l.267) to features as "one bar for
-hourly inputs, one emission for coarser ones". **It is a reading of l.267,
-labelled as such.**
+| Option | Each input takes | Consequence |
+|---|---|---|
+| **(a) one-clock-hour cutoff** [recommended] | its value as of `t − 1h`, meaning the last emission at or before `t − 1h` | This is literally "1 bar" on the 1h bar interval (l.53, l.267). For hourly inputs (FEATURE_FACTORY_v1 l.5, l.20) it is exactly a one-bar lag. **For an input emitted less often, the delay depends on phase:** a daily input emitted at 00:00 and read at 12:00 gets **no** extra delay, but read at 00:00 it gets the previous day's value. |
+| (b) the immediately preceding emission | the emission before the one the baseline uses | A uniform one-emission delay for every input: one hour for hourly inputs, one day for daily inputs. This departs from "1 bar" for coarser inputs, and is a reading of l.267. |
 
-**Unchanged.** Model refits and training data, labels, decision times,
-execution, and the slippage inputs do not change. Held exposure, the clock and
-the overlay's own position state also do not change. Held exposure is position
-accounting at the current price; it is not a strategy input.
+**Model outputs.** These are re-inferred on the lagged inputs at the model's
+own emission times. The decision uses the last output at or before `t`. A
+model output therefore inherits the lag of its inputs. It is one bar only
+when every input of the model is hourly; with coarse inputs it is as the table
+above describes (FN6-6).
 
-A missing or non-finite lagged input makes the gate `UNAVAILABLE`. Q11 asks
-whether to accept this rule.
+**Unchanged.** The following are not lagged:
+- model refits and training data;
+- labels;
+- decision times;
+- execution;
+- slippage inputs;
+- held exposure (position accounting at the current price);
+- the clock;
+- the overlay's own position state.
+
+A missing or non-finite lagged input makes the gate `UNAVAILABLE`.
 
 ### 2.3 Benchmark and ETH under each stress (SN4-6, FN4-10, FN4-11)
 
@@ -311,7 +339,7 @@ drawdown at 1x cost.
 | Q | Gate | BTC benchmark leg | ETH legs |
 |---|---|---|---|
 | Q12 | G-5, 2x cost (N-3) | (i) at 2x [rec] / (ii) unchanged | — |
-| Q13 | G-5 ETH (N-3) | — | (a) the ETH point estimate (candidate and benchmark, following Q12) at 2x, with the drawdown at 1x [rec]. This reads `_at_1x_cost` (l.43, l.279) as binding the drawdown only. **It is a reading.** / (b) the whole ETH sanity rule at 1x, reading the suffix as binding the whole rule. |
+| Q13 | G-5 ETH (N-3) | — | (a) [rec]: **ETH candidate** at 2x for the point estimate; **ETH benchmark** at 2x under Q12(i), at 1x under Q12(ii); **ETH drawdown** at 1x as frozen. This reads `_at_1x_cost` (l.43, l.279) as binding the drawdown only, **which is a reading**. / (b): the whole ETH sanity rule at 1x, reading the suffix as binding the whole rule. |
 | Q14 | G-7, execution delay | (i) delayed [rec] / (ii) unchanged | — |
 | Q15 | G-7 ETH | — | (a) the ETH candidate is delayed, the ETH benchmark follows Q14, and the drawdown is measured on the delayed path [rec] / (b) **ETH entirely at baseline**: both ETH legs and the drawdown are unstressed, which **overrides Q14 for ETH** |
 | Q16 | G-6, feature delay | (i) `σ̂` lagged / (ii) unchanged [rec] | — |
@@ -341,8 +369,8 @@ The drawdown parts follow O-7.
 
 | Gate | BTC | ETH |
 |---|---|---|
-| G-11 | 500 null runs (the candidate and benchmark base runs are cached). A timing-free `N/A` trial needs 0; an overlay-timed trial still runs its 500 identical draws, or the engine may short-circuit them as ties. | 0 |
-| G-5 | 1 | 1 |
+| G-11 | 500 null runs (the candidate and benchmark base runs are cached). A `constant_signal` trial with a preregistered `N/A` needs 0. | 0 |
+| G-5 | 1 | 1 under Q13(a), 0 under (b) |
 | G-7 | 1 | 1 under Q15(a), 0 under (b) |
 | G-6 | 1, plus model re-inference on lagged features in every fold | 1 under Q17(a), 0 under (b) |
 
@@ -365,18 +393,18 @@ cells × replications.
   cannot inflate the DSR bound. They can lower power and add `U_proc`.
 - **C-2 What G-11 tests.** G-11 tests the timing of the declared signal, given
   the trial's own sizing and overlay. It credits variance timing in `s` (Q3).
-  It cannot test timing that lives only in an overlay (Q2b).
+  **It never tests overlay timing, in any class** (Q2b).
 - **C-3 Wording and new rows.** These need §4 wording:
   - the three-layer declaration and the restricted `σ̂`;
   - the overlay re-run;
-  - the three trial classes, the timing-free `N/A` with the G-11 `na` field, and the overlay-timed rule (Q2b);
+  - the declared `g11_class` field and its check; the overlay limits; the constant-signal `N/A` with the G-11 `na` field (Q2/Q2b);
   - the l.137 rewording;
   - the event contract;
   - N-4 (held exposure and exits; this amends l.60, BACKTESTER_SPEC l.10 and
     CANONICAL_BENCHMARKS l.12 under (iii));
-  - the direction clamp and the clock anchor (the 24 h clause in effect becomes
-    inert, l.57 and l.113);
-  - the l.267 reading for coarser features.
+  - the direction clamp; under Q10(b), the amendment of l.57, l.113,
+    BACKTESTER_SPEC l.9 and CANONICAL_BENCHMARKS l.11;
+  - the l.267 readings (Q11).
   - N-3.
 - **C-4 Review.** No statistician has reviewed this (R19-2).
 
@@ -386,8 +414,8 @@ cells × replications.
 |---|---|---|
 | Q1 | G-11 construction (§1.2) | accept |
 | Q1b | signal-timed trials with an overlay | re-run the overlay on each draw |
-| Q2 | timing-free trials (constant `s`, no overlay) | preregistered `N/A` |
-| Q2b | overlay-timed trials (constant `s` with a market-reading overlay) | fail |
+| Q2 | constant-signal trials without an overlay | preregistered `N/A` |
+| Q2b | overlay timing (all classes) | (A) accept and disclose: untested; constant-signal trials `N/A` |
 | Q3 | variance timing in `s` | credit it |
 | Q4 | "match" | report-only rewording |
 | Q5 | warm-up on gap days | yes |
@@ -395,8 +423,8 @@ cells × replications.
 | Q7 | shift draws | seeded random |
 | Q8 | G-11 statistic | `E-IMPROV` |
 | Q9 | pass rule | at least 476 |
-| Q10 | clock anchor | decision time of an increase that actually raised exposure at fill |
-| Q11 | feature-lag rule (§2.2) | accept |
+| Q10 | clock anchor | (b) decision time, which amends l.57/l.113 (alternative (a) is the frozen fill time) |
+| Q11 | feature lag | (a) one-clock-hour cutoff |
 | Q12–Q17 | benchmark and ETH legs per stress | as in §2.3 |
 | Q18 | delay statistic | survival |
 | Q19 | event contract (§2.1) | accept |
