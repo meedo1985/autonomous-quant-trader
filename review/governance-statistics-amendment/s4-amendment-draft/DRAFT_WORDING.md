@@ -1,7 +1,7 @@
 # Constitution §4 amendment — draft wording for C2 (DSR and selection)
 
 **Status:** `AI WORDING PROPOSAL — NOT AN AMENDMENT — NOT AUTHORED — NOT SIGNED — NOT ACTIVE`
-**Date:** 2026-10-03, revision 3
+**Date:** 2026-10-03, revision 4
 **Drafted by:** Claude Opus 5.5 (`claude-opus-5-5`). Constitution §4 line 50:
 an AI "may propose but not author/merge/activate/self-approve amendments".
 This file only proposes wording; the amendment exists only if the owner
@@ -12,10 +12,13 @@ design rev. 3 `a3d2c59`); scope D-18 O18-5, O18-7 and design §7.
 **History:** rev. 1 `e44146e` — Fable FA1 SOUND WITH FIXES, Sol SA1 UNSOUND
 (`2ecf18f`), adjudication `ff3c7f8`. Rev. 2 `afed53e` — focused checks Fable
 FA2 NOT READY (`b38204b`), Sol SA2 NOT READY (`9f67598`), adjudication
-`ADJUDICATION_AFED53E.md`. Rev. 3 applies every disposition there.
+`ADJUDICATION_AFED53E.md`. Rev. 3 `fcc0cf2` — focused checks Fable FA3 NOT
+READY (`5ba2c05`), Sol SA3 NOT READY (`5f09df9`), adjudication
+`ADJUDICATION_FCC0CF2.md`. Rev. 4 applies every disposition there.
 **Labels:** `[AI default]` = drafting choice, not an owner decision.
 `[derived]` = follows from decided rules. `<<OWNER O-n>>` = owner decision
-still needed (§7). `<<D19: x>>` = value only the D-19 calibration can supply.
+still needed (§7). `<<OPEN N-n>>` = clause governed by a proposed new
+decision row (§4). `<<D19: x>>` = value only the D-19 calibration can supply.
 `<<DECLARATION: x>>` = value computed at C2's declaration. `<<OPEN D-nn>>` =
 clause governed by an open decision row. **The amendment cannot be signed
 while any `<<…>>` marker remains.**
@@ -32,7 +35,7 @@ cycle C2 (§2–§4), and two annexes that the protocol binds by hash:
 
 **Precedence** (FA2-1, FA2-12, SA2-1), highest first:
 1. Constitution v1.1.
-2. The reading and override clauses R-1..R-8 in §2.0.
+2. The reading and override clauses R-1..R-9 in §2.0.
 3. The annex text.
 4. The other protocol v1.1 clauses.
 
@@ -53,7 +56,7 @@ changes no existing entry.
 |---|---|---|
 | header l.2, 5, 8 | `Research Constitution v1.0`; effective 2026-09-11; content hash | `v1.1`; effective = activation date; content hash recomputed per `HASH_CANONICALIZATION_v1.md` |
 | §0 new, after l.19 | — | "Eligible confirmation window = a confirmation segment meeting at least conditions (i)–(v) of the eligibility rule in the selection-rule annex frozen with the C2 protocol (never mounted in the sandbox and never evaluated before declaration; no overlap with any exposed segment; separated from all mounted or evaluated data by the gap embargo; for post-v1 data, declared before its first observation; at least `T_min` days). A cycle may nominate and promote only on an eligible window. A later protocol may add conditions but not remove these." (FA2-9) |
-| §5 l.61 | "Every cycle protocol must define family-budget exhaustion, calendar/time limit, and candidate-promotion termination. Otherwise invalid." | unchanged, plus: "When the protocol has a single nomination look, budget exhaustion means completion of the declared plan, and the calendar limit includes the post-nomination window." |
+| §5 l.61 | "Every cycle protocol must define family-budget exhaustion, calendar/time limit, and candidate-promotion termination. Otherwise invalid." | unchanged, plus: "When the protocol has a single nomination look, budget exhaustion means completion of the declared plan, termination follows the protocol's post-nomination procedure, and the calendar limit includes the post-nomination window." (FA3-7) |
 | §5 l.63 | "Outcomes: `CANDIDATE_PROMOTED`, `NO_EDGE_FOUND`, `PROTOCOL_REVISION`, `INVALIDATED`." | "Outcomes: `CANDIDATE_PROMOTED`, `NO_EDGE_FOUND`, `RESEARCH_ONLY` (no eligible window; no nomination possible), `NO_RESULT` (eligible cycle with no result in every declared family: the family is unavailable, a mandatory gate of its nominee is unavailable or technically invalid, or its lockbox read failed technically), `PROTOCOL_REVISION`, `INVALIDATED`." [AI default: the label names] Whether `RESEARCH_ONLY` or `NO_RESULT` opens the deployable-baseline path (§0 l.17, §11): `<<OWNER O-4>>` (FA2-11) |
 | §5 l.67 | "Prior-cycle results are not pooled into later DSR/PBO matrices; lifetime trial counts persist." | "... lifetime trial counts persist: they are recorded and reported with every result, and do not enter the DSR score." (B-2) |
 | §7 new, after l.81 | — | "An exposed segment rolled into confirmation is never part of an eligible confirmation window." |
@@ -73,21 +76,24 @@ amendment, before C3, that fixes the assignment rule before the data exist.
 `protocol_version: "1.1"`, `cycle_id: "C2"`, `constitution_version: "1.1"`,
 every bound hash recomputed. **Every v1.0 key path and leaf shape is kept**
 (`{value, justification}` objects stay objects, booleans stay booleans;
-SA2-4). New meaning goes into `justification` or into new keys. Lines not
+SA2-4), with two named exceptions: `validation.dsr.minimum` and
+`promotion.dsr_minimum` change from the number `0.95` to text naming the
+z-test (FA3-4; no code reads them). New meaning goes into `justification` or into new keys. Lines not
 listed carry over unchanged, except the clauses marked in §4.
 
 ### 2.0 Reading and override clauses (prevail over the annex text)
 
 ```yaml
 annex_reading:
-  R-1: "Line numbers in the annexes refer to docs/RESEARCH_CONSTITUTION.md and protocols/protocol_v1.yaml v1.0 at their frozen hashes. Finding ids (FR-n, SR-n, FB-n, SB-n), file citations, code paths, the status header, and the labels 'Proposed', 'AI default' and 'to be bound/confirmed in the amendment' are informative, not normative."   # FA2-6
+  R-1: "Line numbers in the annexes refer to docs/RESEARCH_CONSTITUTION.md and protocols/protocol_v1.yaml v1.0 at their frozen hashes. Finding ids (FR-n, SR-n, FB-n, SB-n), file citations, code paths, the status header, and the labels 'Proposed', 'AI default' and 'to be bound/confirmed in the amendment' are informative, not normative, except the code references that R-8 binds."   # FA2-6, SA3-4
   R-2: "Where Annex A says something is 'to be bound in the amendment', this protocol's explicit clause binds it; where none exists, the matter is unbound and blocks the cycle."
-  R-3: "For C2, 'its first embargo dropped' in P18-0 means: the first gap_embargo.value_days days of the v1 confirmation partition are excluded, so the eligible window starts at partitions.confirmation.start.value."   # SA2-1
+  R-3: "For C2, 'its first embargo dropped' in P18-0 means: the first gap_embargo.value_days days of the v1 confirmation partition are excluded, so the eligible window starts at partitions.confirmation.start."   # SA2-1, SA3-1, FA3-5
   R-4: "P18-0's text on windows created after v1 has no effect under this protocol; no post-v1 window is eligible until a later amendment."   # FA2-6
   R-5: "P18-1's 'to be confirmed in the amendment' on budget scope is resolved as per cycle (trial_accounting below)."   # derived
   R-6: "P18-2(a) 'the cycle ends only when (b)-(d) complete' is subject to the calendar limit cycle_termination.calendar_days_elapsed and to calendar_cap_rule below."   # FA2-1, SA2-1, SA2-3
   R-7: "In Annex B §2.4, the family seed is fixed at declaration, before the first evaluation and before any stream use; the sentence 'Seeds are fixed before any data exists ... cannot be gamed' is informative and does not hold for C2 (see seed_disclosure)."   # SA2-2, FA2-7
   R-8: "Annex B's references to existing code (bootstrap_indices, the replicate-seed construction, the Politis-White routine) bind to that code at a hash fixed under <<OPEN D-20>>."   # FA1-2 residue
+  R-9: "In P18-0 (iii), the embargo used for the gap is gap_embargo.value_days, computed by gap_embargo.rule; 'data outside the window' is replaced by 'data mounted in the sandbox or evaluated before declaration'. No confirmation or lockbox data not already so mounted or evaluated may be used."   # SA3-2
 seed_disclosure: <<OWNER O-6>>
 ```
 
@@ -106,6 +112,7 @@ selection_rule:
 gap_embargo:
   rule: "ceiling, in whole days, of the maximum over declared horizons of max(label_horizon, target_autocorr_cutoff), computed once before declaration from data mounted in the sandbox or evaluated before declaration"   # FA2-10
   value_days: <<DECLARATION: computed value>>
+  excluded_days_status: "the first value_days days of the v1 confirmation partition are not exploration, are never mounted in the sandbox, are reachable only through the engine, and are never part of the eligible window"   # [AI default] FA3-11
 ```
 
 `validation.embargo` (v1.0 lines 205–214) is unchanged and still governs folds.
@@ -150,7 +157,7 @@ cycle_termination:
   recorded_times: ["declaration","plan_exhaustion","nomination_look","each_gate_and_lockbox_read","outcome"]
 post_nomination_procedure:
   order: "trend nominee, then volatility nominee; a promotion of one never stops processing of the other"
-  per_nominee: "every gate in §3 is computed; only a nominee that is ELIGIBLE (Constitution §13) requests a lockbox read; then attestation with the 72 h cooling-off (line 300)"
+  per_nominee: "every gate in promotion.gates with stage pre_lockbox is computed; only a nominee that is ELIGIBLE (Constitution §13) requests a lockbox read; then attestation with the 72 h cooling-off (line 300)"
   lockbox_cooldown_days: 30                    # line 75, applied between the two families' reads [AI default]
   calendar_cap_rule: <<OWNER O-2>>
   revision_or_invalidation_after_look: <<OWNER O-3>>
@@ -176,7 +183,7 @@ error_budget:
   eligible_cycle_index_m: 1                    # if C2 is eligible; Constitution v1.1 §9
   alpha_whole_cycle: 0.05
   alpha_per_family: 0.025
-  procedure_no_result: "U_proc <= 0.01, Annex A P18-7, over the gates of §3; allocation <<D19: joint cells or per-family split>>"
+  procedure_no_result: "U_proc <= 0.01, Annex A P18-7, over promotion.gates; allocation <<D19: joint cells or per-family split>>"
 promotion:
   dsr_minimum: "Annex A P18-6"                 # was 0.95
 ```
@@ -184,37 +191,55 @@ promotion:
 The support classifier is not protocol text. It belongs to the D-19
 preregistration that certifies `z_crit` (A-B7).
 
-## 3. Gate list (D-18 O18-5)
+## 3. Gate list (D-18 O18-5) — protocol text
 
-Each nominee's mandatory pre-lockbox gates. "Technically invalid" and "not
-computed" both mean `UNAVAILABLE` (P18-3, P18-7). A gate marked `<<OPEN>>`
-has no operative definition yet (§4).
+This block is part of `protocol_v1.1.yaml` (FA3-3). It defines the `U_proc`
+domain, which is each nominee's mandatory pre-lockbox gates
+(`stage: pre_lockbox`). For every gate, "technically invalid" and "not
+computed" both mean `UNAVAILABLE` (P18-3, P18-7). A gate with an `<<OPEN …>>`
+or `<<OWNER …>>` status has no operative definition yet (§4).
 
-| # | Gate (v1.0 line) | PASS / FAIL | N/A (frozen) | Status |
-|---|---|---|---|---|
-| G-1 | BTC paired 90% CI lower bound > 0 (274–275) | lower bound > 0 | never | `<<OPEN D-03>>` |
-| G-2 | BTC drawdown constraint (276–278) | MDD no worse than benchmark by > 0.05 | never | defined |
-| G-3 | ETH sanity (42–44, 279) | point estimate > 0 and drawdown holds at 1x | never | `<<OPEN D-02>>` |
-| G-4 | Paired fold win rate ≥ 0.60 (280–282) | as written | never | `<<OPEN D-06, D-07>>` |
-| G-5 | Survive 2x cost (283) | as written | never | `<<OPEN D-02>>` |
-| G-6, G-7 | Feature- and execution-delay hard gates (267–268, 284–285) | no statistic | never | `<<OPEN D-15>>` |
-| G-8 | Parameter plateau (263–265, 286) | as written | no ordered numeric tunable dimension (line 264) | `<<OPEN D-04, D-05>>` |
-| G-9 | DSR (287) | Annex A P18-6 | never | defined (values from D-19) |
-| G-10 | PBO ≤ 0.30 (234–241, 288) | as written | family trials < 20 (line 235) | `<<OPEN D-08, D-09, D-10>>` |
-| G-11 | Random-exposure null (134–140, 289) | no event | never | `<<OPEN D-14>>` |
-| G-12 | Minimum effective decisions ≥ 120 (242–244, 290) | as written | never | defined |
-| G-13 | Benchmark hash matches (291) | as written | never | defined |
-| — | OOS/IS ratio (245–249) | no frozen threshold: reported, not a gate | rule-based models (line 249) | informative |
-| — | Trial budget hard stop (292) | enforcement: a violation invalidates the cycle | — | defined |
+```yaml
+promotion:
+  gates:
+    G-1:  {lines: "274-275", pass: "BTC paired 90% CI lower bound > 0", na: "never", stage: pre_lockbox, status: "<<OPEN D-03>>"}
+    G-2:  {lines: "276-278", pass: "confirmation OOS MDD no worse than benchmark by > 0.05", na: "never", stage: pre_lockbox, status: "<<OWNER O-7>>"}
+    G-3:  {lines: "42-44, 279", pass: "ETH point estimate > 0 and drawdown holds at 1x", na: "never", stage: pre_lockbox, status: "<<OPEN D-02>>"}
+    G-4:  {lines: "280-282", pass: "paired fold win rate >= 0.60", na: "never", stage: pre_lockbox, status: "<<OPEN D-06, D-07>>"}
+    G-5:  {lines: "283", pass: "survive 2x cost", na: "never", stage: pre_lockbox, status: "<<OPEN D-02>>"}
+    G-6:  {lines: "267, 284", pass: "feature-delay hard gate (no statistic)", na: "never", stage: pre_lockbox, status: "<<OPEN D-15>>"}
+    G-7:  {lines: "268, 285", pass: "execution-delay hard gate (no statistic)", na: "never", stage: pre_lockbox, status: "<<OPEN D-15>>"}
+    G-8:  {lines: "263-265, 286", pass: "parameter plateau", na: "no ordered numeric tunable dimension (line 264)", stage: pre_lockbox, status: "<<OPEN D-04, D-05>>"}
+    G-9:  {lines: "287", pass: "Annex A P18-6", na: "never", stage: pre_lockbox, status: "<<D19 values>>; code binding <<OPEN D-20>>"}
+    G-10: {lines: "234-241, 288", pass: "PBO <= 0.30", na: "family trials < 20 (line 235)", stage: pre_lockbox, status: "<<OPEN D-08, D-09, D-10>>"}
+    G-11: {lines: "134-140, 289", pass: "random-exposure null (no event defined)", na: "never", stage: pre_lockbox, status: "<<OPEN D-14>>"}
+    G-12: {lines: "242-244, 290", pass: "effective decisions >= 120", na: "never", stage: pre_lockbox, status: "<<OPEN N-1>>"}
+    G-13: {lines: "291", pass: "benchmark hash matches", na: "never", stage: pre_lockbox, status: "defined"}
+    G-14: {lines: "141-145, 289", pass: "shuffled-labels null on the OOS Spearman IC (no event defined)", na: "<<OPEN N-2>>", stage: pre_lockbox, status: "<<OPEN N-2>>"}
+    L-1:  {lines: "83-91", pass: "BTC lockbox delta-Sharpe >= 5th percentile of the prediction distribution", na: "never", stage: lockbox, status: "<<OPEN D-11>>"}
+    L-2:  {lines: "91", pass: "BTC lockbox delta-Sharpe > 0", na: "never", stage: lockbox, status: "<<OPEN D-11>>"}
+    L-3:  {lines: "91", pass: "BTC drawdown constraint holds on the lockbox", na: "never", stage: lockbox, status: "<<OPEN D-11>>"}
+    L-4:  {lines: "91", pass: "ETH sanity gate passes on the lockbox", na: "never", stage: lockbox, status: "<<OPEN D-11, D-02>>"}
+  informative:
+    oos_is_ratio: {lines: "245-249", note: "no frozen threshold: reported, not a gate; N/A for rule-based models (line 249)"}
+  enforcement:
+    trial_budget_hard_stop: {lines: "292", rule: "a violation invalidates the cycle"}   # [AI default] FA3-10
+```
 
-The lockbox stage (lines 83–92) comes after eligibility and is not part of
-`U_proc` (P18-7). Its technical failure is a `NO_RESULT` cause (§1).
+Changes from revision 3: G-2 depends on owner item O-7; G-12 depends on
+proposed row N-1 (FA3-1); G-14 is new, under proposed row N-2 (FA3-2); G-9
+also depends on D-20 (FA3-6); the lockbox components L-1..L-4 are listed
+(FA3-9, SA3-3). Lockbox gates (`stage: lockbox`) are read only after
+eligibility (line 295) and are outside `U_proc`. A technically failed
+lockbox read is a `NO_RESULT` cause (§1).
 
 ## 4. Clauses carried over but still blocked
 
 These lines carry over with the marker shown and are not operative until the
-row is decided and its wording inserted. **No clause is both bound and
-marked** (SA2-5). Lines 75, 76, 80–82, 294–296 and 300 stay in force.
+row is decided and its wording inserted. A marked clause is not operative;
+the only clauses bound in §2 that also carry a marker are the D-20 code
+binding and its reference vectors (R-8, the seed and purpose keys), which
+are bound in text and pending review (SA2-5, FA3-6). Lines 75, 76, 80–82, 294–296 and 300 stay in force.
 
 | v1.0 lines | Clause | Marker |
 |---|---|---|
@@ -228,9 +253,11 @@ marked** (SA2-5). Lines 75, 76, 80–82, 294–296 and 300 stay in force.
 | 267–268, 284–285 | delay hard gates | `<<OPEN D-15>>` |
 | 42–44, 279, 283 | ETH sanity and 2x-cost estimand | `<<OPEN D-02>>` (no decision record found) |
 | 274–275 | paired CI estimand | `<<OPEN D-03>>` (no decision record found) |
+| 242–244, 290 | ESS series, kernel, bandwidth, fallback trigger; minimum effective decisions | `<<OPEN N-1>>` proposed new row (FA3-1; decision packet R3: never compare with 120 before approval) |
+| 141–145, 289 | shuffled-labels null: does line 289 apply, and with which event | `<<OPEN N-2>>` proposed new row (FA3-2) |
 | §2.0 R-8; §2.4 `added_purposes`, family seed | reference vectors for bootstrap-backed clauses | `<<OPEN D-20>>` (matrix line 80 is stale) |
 
-**No "keep blocked" option for gates G-1..G-13** (FA2-3). Under P18-5 and
+**No "keep blocked" option for gates G-1..G-14** (FA2-3). Under P18-5 and
 P18-7, a mandatory gate that cannot be computed makes every nominee
 unavailable. D-19 could then never certify the 1% target, and running C2
 would use up the only eligible window for both families with no chance of
@@ -260,8 +287,12 @@ blocked.
 
 ## 6. §4 and §16 checklist (owner steps, in order)
 
-1. Fill every `<<…>>` marker: D-19 preregistered, run and accepted; every row
-   in §4 decided; owner items O-1..O-6 answered.
+1. Fill every `<<…>>` marker, in this order (FA3-12): first every row that
+   governs a gate's availability (D-02..D-10, D-14, D-15, N-1, N-2) and owner
+   items O-1..O-7; only then preregister, run and accept D-19, so that its
+   frozen qualification object covers the final gates; then D-11..D-13, D-20.
+   N-1 and N-2 are proposed for the decision matrix; adding them is the
+   owner's act.
 2. Two different-model reviews of the final wording, records committed
    (R19-2). If the owner edits the reviewed text or an annex materially, it
    is re-reviewed.
@@ -306,11 +337,21 @@ blocked.
   no; only `NO_EDGE_FOUND` does.
 - **O-5** Safety classification. Recommendation: treat as safety-relevant
   (72 hours, incident check).
-- **O-6** Family seed for C2 (FA2-7). Someone could try many declarations
-  against private replays of public data and pick a favourable seed (effect
-  about 0.03 standard deviations on `z`). Recommendation: disclose it as a
-  weakness (done in §5), and also require every declaration attempt to be
-  logged, so that only the first hashed declaration of C2 is valid.
+- **O-6** Family seed for C2 (FA2-7, FA3-8, SA3-5). The seed is a hash of
+  values a declarer can search offline, so someone could privately try many
+  declarations and keep the most favourable seed. A single seed moves `z` by
+  about 0.03 (one standard deviation). The best of 10, 100 or 1000 tries
+  moves it by about 0.05, 0.08 or 0.10 (normal approximation, unverified).
+  Logging declaration attempts does **not** prevent this, because the search
+  can be done privately. Recommendation: keep the disclosure (§5), and take
+  the family seed from public randomness published **after** the declaration
+  is hashed (for example, a named future value of a public randomness
+  beacon), so that no declarer can know it in advance.
+- **O-7** Whether gate G-2 (drawdown, lines 276–278) is operative as written.
+  An earlier decision packet (R6) says never to evaluate it before review,
+  and its sign and scale must be confirmed (FA3-1). Recommendation: confirm
+  it only after a reviewer has checked the sign convention against a worked
+  example.
 
 ## 8. Next
 
