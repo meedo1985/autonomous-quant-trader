@@ -1,124 +1,178 @@
-# D-02, D-03, D-04 proposal (revision 1): which estimand the paired gates use
+# D-01..D-04 proposal (revision 2): which estimand the paired gates use
 
 **Status:** `NON-BINDING AI PROPOSAL — NO ROW DECIDED — NOT ACTIVE`
 **Date:** 2026-10-03
 **Author:** Claude Opus 5.5 (`claude-opus-5-5`). This is design and drafting work,
-done under the owner's instruction "let agent do the answers all the time".
-D-rows are decided only by the owner, after two different-model reviews (R19-2).
+under the owner's instruction "let agent do the answers all the time". D-rows
+are decided only by the owner, after two different-model reviews (R19-2).
+**History:** revision 1 `5e28376`. Reviews: Fable `FABLE_REVIEW_5E28376.md`
+(FE1, SOUND WITH FIXES) and Sol `SOL_REVIEW_5E28376.md` (SE1, SOUND WITH
+FIXES); both endorse the recommendation and require fixes to its reasons and
+disclosures. Adjudication: `ADJUDICATION_5E28376.md`. Revision 2 applies every
+disposition **without a further check** [AI default]; this is weaker than a
+further check, and is recorded as such.
 **Why now:** under the §4 draft (`../s4-amendment-draft/DRAFT_WORDING.md` rev 4,
 §6 step 1, FA3-12), the rows that govern gate availability must be decided
-before D-19 is frozen. D-02, D-03 and D-04 govern gates G-1, G-3, G-5 and G-8.
+before D-19 is frozen. D-02..D-04 govern gates G-1, G-3, G-5 and G-8, and,
+through D-02, the lockbox ETH check L-4 (FE1-6).
 
 ## 1. The question in plain terms
 
 Several frozen gates test a "paired delta-Sharpe" between the candidate and
-the benchmark `VOL_TARGET_BUY_AND_HOLD`. There are two different numbers with
-that name (`../external-review-packet/TECHNICAL_APPENDIX.md` §1–§3):
+the benchmark `VOL_TARGET_BUY_AND_HOLD`. Two different numbers carry that name
+(`../external-review-packet/TECHNICAL_APPENDIX.md` §1–§3):
 
-- **`E-IMPROV`** = Sharpe(candidate) − Sharpe(benchmark): "is the candidate's
-  risk-adjusted return better?"
-- **`E-DIFF`** = Sharpe(candidate − benchmark), the Sharpe of the daily
-  difference series: "does the candidate add return over the benchmark,
-  relative to how noisy that addition is?"
+- **`E-IMPROV`** = Sharpe(candidate) − Sharpe(benchmark). It asks whether
+  the candidate's risk-adjusted return is better.
+- **`E-DIFF`** = Sharpe(candidate − benchmark). This is the risk-adjusted
+  return of the active-return stream: does the candidate add return over the
+  benchmark, relative to how noisy that addition is? It is a Sharpe ratio,
+  not raw added return (SE1-6).
 
-Neither can be computed from the other (appendix §2, §2.1). They can disagree
-in sign on the same data. A candidate that gives up a little return for much
-less volatility (a "de-risker") has `E-IMPROV > 0` but `E-DIFF < 0` (appendix
-§3).
+Neither can be computed from the other (appendix §2, §2.1), and they can
+disagree in sign on the same data (appendix §3, reproduced exactly by FE1). A
+"de-risker", which gives up a little return for much less volatility, has
+`E-IMPROV > 0` and `E-DIFF < 0`. An "exposure tilt", which holds a fixed multiple
+`k·b` of the benchmark's position, has `E-IMPROV = 0` and `E-DIFF = S(b) > 0`
+(exact, FE1-8).
 
-| Row | Gate(s) | Frozen text |
+| Row | Gate(s) decided here | Frozen text |
 |---|---|---|
-| D-02 | G-3 ETH sanity (protocol l.42–44, 279); G-5 survive 2x cost (l.283) | `paired_delta_sharpe_point_estimate > 0` |
+| D-01 | none: a naming act only (register both names) | — |
+| D-02 | G-3 ETH sanity (l.42–44, 279); G-5 survive 2x cost (l.283); lockbox L-4 ETH sanity (l.91) | `paired_delta_sharpe_point_estimate > 0` |
 | D-03 | G-1 BTC paired 90% CI, lower bound > 0 (l.274–275) | `btc_min_sharpe_delta_ci_lower_bound: 0.0` |
 | D-04 | G-8 parameter plateau (l.263–265) | "median available-neighbor BTC OOS paired-delta-Sharpe >= 0.5 * selected-point value" |
 
+**Not decided here** (FE1-10): G-11 random-exposure null (l.137–140, D-14);
+CPCV diagnostic (l.221, D-13); `oos_is_ratio` (l.247, frozen on the
+difference series); lockbox L-1, L-2 and the D-12 sign field (D-11); PBO
+(l.240, already `E-DIFF` under D-18 §2, l.187–188; FE1-12).
+
 ## 2. What changed since the matrix recommendation
 
-`HUMAN_DECISION_MATRIX.md` recommended `E-IMPROV` for all three rows before
-D-18 existed. Since then:
+`HUMAN_DECISION_MATRIX.md` recommended `E-IMPROV` for D-02..D-04 before D-18
+existed. D-18 (decided) now nominates each family's trial with the highest
+`E-DIFF` Sharpe and tests it with the `E-DIFF` DSR (P18-4, P18-6), and D-18 §2
+requires D-08 (PBO) to adopt `E-DIFF`. The question is whether the remaining
+paired gates follow `E-DIFF`, or test `E-IMPROV` as a second, different claim.
 
-- **D-18 (decided)** nominates each family's trial with the highest `E-DIFF`
-  Sharpe and tests it with the `E-DIFF` DSR (P18-4, P18-6).
-- **D-18 O18-6** requires D-08 (PBO) to adopt `E-DIFF`.
+## 3. Recommendation: `E-IMPROV` for D-02, D-03 and D-04 (and D-01 (a))
 
-So the selection rule and the DSR already use `E-DIFF`. The question is
-whether the remaining paired gates should follow it, or keep testing
-`E-IMPROV`.
+Both reviewers endorse this conclusion. The reasons, as corrected:
 
-## 3. Recommendation: `E-IMPROV` for D-02, D-03 and D-04
+1. **The words, read in context.** "delta-Sharpe" in the gate clauses most
+   naturally reads as a difference of two Sharpe ratios. **Frozen usage is
+   mixed** (FE1-1): l.240 (`ranking_metric: "paired_delta_sharpe"` on a
+   difference matrix) and l.85 ("delta-Sharpe per path" on difference paths)
+   can only mean `E-DIFF`. So either choice reads some frozen uses against
+   their context. Choosing `E-IMPROV` gives the token `paired_delta_sharpe`
+   two meanings in the protocol, and every report must label which one
+   (D-01).
+2. **The project's purpose, both sides** (FE1-2). For `E-IMPROV`: l.93–95
+   removed the net-return tolerance because "a de-risker may legitimately
+   trail on absolute return while improving risk-adjusted behavior". For
+   `E-DIFF`: l.229 ("incremental evidence rather than BTC beta"), l.239 ("same
+   incremental objective as DSR") and l.247 ("incremental OOS evidence").
+   Constitution §1 is neutral between them. The purpose text does not settle it.
+3. **It filters exposure tilts** (FE1-8). Nomination and the DSR use
+   `E-DIFF`, which can favour a trial that simply holds more of the benchmark
+   (`E-DIFF = S(b) > 0`, `E-IMPROV = 0`) whenever the vol-target benchmark runs
+   below full exposure. `E-IMPROV` gates reject such a trial; `E-DIFF` gates
+   would not. This is the strongest reason.
+4. **It tests a different claim from the DSR.** Under `E-DIFF`, G-1 would test
+   the same series and the same direction as the DSR, so it would add little
+   information. Whether it would often be redundant is **an untested
+   hypothesis**: G-1 uses its own block-bootstrap dispersion and percentile
+   endpoints, which can be materially wider than the DSR's scale under serial
+   dependence (SE1-1, FE1-3). It is not assumed here, and D-19 may report
+   how often the two disagree.
+5. **What it does to the error bound** (SE1-2, FE1-4). With D-18's nomination
+   fixed, no gate's estimand can change `P_0(E_f)` or its upper bound,
+   because `E_f = A_f ∩ {z_f* >= z_crit}` contains no other gate. A gate can
+   change the actual false-promotion probability `P_0(F_f)` (always ≤ the
+   bound), power, mixed-null behaviour, and availability. **The 2.5% / 5%
+   bound covers only the `E-DIFF` claim. The `E-IMPROV` gates are filters with
+   no calibrated error rate of their own**: computed after selection on a
+   correlated statistic, G-1 has no nominal 90% coverage for the nominee
+   (D-18 §3), and the all-zero-mean `E-DIFF` null does not fix `E-IMPROV`.
 
-1. **The frozen words.** "delta-Sharpe" (l.43, 275, 279, 283, 264) most
-   naturally reads as a difference of two Sharpe ratios. Choosing `E-IMPROV`
-   changes no frozen word. Choosing `E-DIFF` means reading the words against
-   their plain sense.
-2. **The project's stated purpose.** Constitution §12: vol management is
-   "de-risking, not alpha". Protocol l.93–95 removed the net-return tolerance
-   because "a de-risker may legitimately trail on absolute return while
-   improving risk-adjusted behavior". `E-IMPROV` is the quantity those clauses
-   describe.
-3. **An estimator already exists.** `paired_sharpe_improvement_interval`
-   (`src/aqt/metrics/statistics.py:591`) targets `E-IMPROV`, with block length
-   from the improvement influence function (l.325). It is inactive, and it
-   would need its own D-20 review before use.
-4. **`E-DIFF` would make G-1 nearly redundant.** A DSR pass already needs
-   `S − S0 >= z_crit·sd`, with `S0 > 0` the expected null maximum. A 90% CI on
-   the nominee's `E-DIFF` Sharpe whose lower bound must be > 0 needs only
-   `S >= 1.645·sd`, roughly. For a family with `K >= 2` and `z_crit` near 2,
-   the DSR bound is the tighter of the two, so G-1 would almost never decide
-   anything (heuristic, `UNVERIFIED`; D-19 can measure how often the two
-   disagree). Under `E-IMPROV`, G-1 tests a different claim.
-5. **It does not loosen the error bound.** D-18 defines the false-promotion
-   event by the DSR pass alone (`E_f = A_f ∩ {z_f* >= z_crit}`). Every other
-   gate is an extra filter, so its estimand cannot raise `P_0(E_f)`. What it
-   can change is availability (`U_proc`) and power (§4).
+## 4. Costs and consequences
 
-## 4. Costs and consequences the owner should know
-
-- **C-1 Promotion requires both kinds of edge.** Under D-18 plus this
-  proposal, a nominee must have the best `E-DIFF` in its family, pass the
-  `E-DIFF` DSR, **and** pass the `E-IMPROV` gates. A pure de-risker
-  (`E-IMPROV > 0`, `E-DIFF <= 0`) still cannot be promoted: it fails the DSR.
-  That is a consequence of D-18, not of this row. It is disclosed here because
-  it narrows what the project can find. Choosing `E-DIFF` here would not
-  change it.
-- **C-2 Availability.** `E-IMPROV` needs both legs, each with a finite,
-  positive-variance Sharpe. The benchmark leg is the same for every trial, so a
-  degenerate benchmark makes every nominee unavailable. D-19 must report the
-  availability of G-1 (the interval and its block length) for each nominee
-  (P18-7, `U_proc`).
-- **C-3 Two estimands, one report.** Results must label every paired number
-  as `E-IMPROV` or `E-DIFF` (D-01 option (a), naming only). This proposal
-  assumes D-01 (a). D-01 is itself a `STAT` row and is listed for the owner
-  together with these rows.
-- **C-4 Plateau sign defect.** Under `E-IMPROV`, the plateau rule still
-  inverts when the selected value is ≤ 0 (appendix §3). That is D-05, which
-  stays open and blocks G-8.
-- **C-5 Rows that follow.** D-07 (fold statistic) follows D-02 once D-06
-  defines the fold unit. The lockbox components L-2 and L-4 and the D-12
-  sign field depend on D-11, whose frozen construction stores only the
-  difference series, so it can produce only `E-DIFF` (appendix §7). If
-  pre-lockbox ETH sanity (G-3) uses `E-IMPROV` while lockbox ETH sanity (L-4)
-  can use only `E-DIFF`, the two checks of the same idea disagree in meaning.
-  D-11 must either supply both legs or record the difference explicitly.
+- **C-1 Two objectives, no fallback** (SE1-4, FE1-4). A nominee is chosen by
+  `E-DIFF` alone (P18-4). If it then fails an `E-IMPROV` gate, the family has
+  no promotable trial this cycle, even if another declared trial would have
+  passed, because D-18 forbids fallback (P18-5). This costs power. D-19 power
+  and mixed-null cells must report failures gate by gate. A pure de-risker
+  still cannot be promoted, because it fails the `E-DIFF` DSR; that is a
+  consequence of D-18, not of this row.
+- **C-2 Availability is a qualification target, not a report** (SE1-3,
+  FE1-5). Under P18-7 every gate is computed for every nominee, and the
+  whole-cycle `U_proc` must have an upper bound ≤ 1%, or the method does not
+  qualify. G-1 under `E-IMPROV` is `UNAVAILABLE` if either leg has zero
+  variance, if block selection fails (fewer than 16 observations), or if any
+  of the 2000 replicates is invalid (`statistics.py:644–645`); its frozen
+  N/A is "never". Also:
+  - (a) Annex B simulates only the difference matrix, so D-19 must also
+    simulate a benchmark-leg law. That is an extra nuisance input in the
+    frozen qualification object.
+  - (b) Both families share the benchmark, so their failures are correlated,
+    which matters for the joint cells.
+  - (c) `E-DIFF` has its own requirement (a difference series with usable
+    variance). Neither availability profile is automatically better.
+- **C-3 Two names, one report.** Every paired number is labelled `E-IMPROV`
+  or `E-DIFF` (D-01 (a), naming only, binds no gate).
+- **C-4 Plateau sign defect is live under `E-IMPROV`** (FE1-7). Under
+  `E-DIFF`, a DSR pass forces the plateau's selected value above zero, so the
+  D-05 inversion could not affect a promotable nominee (it could still affect
+  `U_proc`). Under `E-IMPROV`, the selected value can be ≤ 0 and the inversion
+  is live. D-05 stays open and blocks G-8 either way.
+- **C-5 Lockbox** (FE1-6, SE1-5). Only L-1's frozen bootstrap construction
+  (l.85) is limited to `E-DIFF` (appendix §7). L-4 is the ETH sanity rule
+  applied to lockbox data, where both legs exist, so it follows D-02. L-2 and
+  the D-12 sign field need explicit D-11 bindings. Line 91 uses
+  "delta-Sharpe" twice in one rule (L-1 and L-2); D-11 must say whether both
+  uses mean the same thing.
+- **C-6 Rows that follow.** D-07 follows D-02 once D-06 defines the fold
+  unit. G-8 stays blocked by D-05, and G-4 by D-06. The intervals need D-20
+  review under either choice.
 
 ## 5. The alternative: `E-DIFF` everywhere
 
-Its strength is one estimand throughout, matching D-18 and D-08. Its costs:
-it reads "delta-Sharpe" against its plain sense; it makes G-1 nearly redundant
-(§3 point 4); it discards the existing estimator, and a CI would have to come
-from the Annex B bootstrap, which needs its own review; and it measures
-additive return rather than the de-risking the Constitution names. It is a
-coherent choice, not a wrong one.
+**Benefits** (SE1-6): one estimand throughout, aligned with nomination, the
+DSR and PBO; no mismatch between how the nominee is chosen and how it is
+tested (C-1 does not arise); the plateau inversion cannot affect a promotable
+nominee (C-4); D-19 needs no benchmark-leg model.
 
-## 6. Proposed owner question (after the reviews)
+**Costs:** it reads the gate clauses' "delta-Sharpe" as the Sharpe of the
+difference; it lets exposure tilts through every gate (§3 point 3); G-1 adds
+little information beyond the DSR (§3 point 4).
 
-"D-01 to D-04: name the two estimands separately (D-01), and use `E-IMPROV`
-(Sharpe of candidate minus Sharpe of benchmark) for the ETH sanity, 2x cost,
-BTC confidence-interval and plateau gates (D-02, D-03, D-04)? The DSR and the
-choice of nominee keep using `E-DIFF` as you decided in D-18. Nothing is
-activated."
+**Implementation is symmetric** (FE1-9). Both point estimators already exist
+(`paired_sharpe_statistics`, `statistics.py:218–233`). Both interval routes
+need D-20 review: `E-IMPROV` through the inactive Task 12 interval (l.591),
+and `E-DIFF` through the same machinery with single-series influence (l.311)
+or the Annex B bootstrap. It is a coherent choice, not a wrong one.
+
+## 6. Proposed owner questions (neutral, separate; SE1-7, FE1-11)
+
+1. **D-01:** "Register `E-IMPROV` and `E-DIFF` as two separately named
+   measures? This is naming only and binds no gate." Recommendation: yes.
+2. **D-02, D-03, D-04:** "For the ETH sanity and 2x-cost checks (D-02), the
+   BTC confidence interval (D-03) and the plateau check (D-04): `E-IMPROV`,
+   `E-DIFF`, or keep blocked?" Recommendation: `E-IMPROV` for all three,
+   because one common choice keeps them coherent. The owner should know:
+   - the phrase "delta-Sharpe" then carries two meanings in the protocol;
+   - your 5% bound covers only the `E-DIFF` claim, and the `E-IMPROV` checks
+     carry no guarantee of their own;
+   - a nominee that fails an `E-IMPROV` check cannot be replaced (power cost);
+   - D-19 must also simulate the benchmark;
+   - G-8 stays blocked by D-05, G-4 by D-06, and the intervals need D-20
+     review.
+
+   The alternative (`E-DIFF`) aligns with nomination and the DSR, but lets
+   exposure tilts through. Nothing is activated either way.
 
 ## 7. Next
 
-[AI default] Two different-model reviews of this proposal (Fable 5.1 and Codex
-`gpt-5.6-sol` high), then adjudication, then the owner's question.
+The owner's answers, then `OWNER_DECISION_D01_D04.md`. D-05 (plateau sign)
+is the natural next proposal, because C-4 makes it live under `E-IMPROV`.
