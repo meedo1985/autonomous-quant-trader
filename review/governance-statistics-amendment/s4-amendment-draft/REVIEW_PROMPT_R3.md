@@ -25,7 +25,7 @@ use the network, or read confirmation or lockbox data.
    override clauses R-1..R-8; the O18-5 gate list G-1..G-13 and its N/A
    cases; removing the "keep blocked" option; the separate calendar keys; the
    restored v1.0 leaf shapes; owner items O-1..O-6 and their recommendations.
-3. Is revision 2 a sound starting text that the owner may author once every
+3. Is revision 3 a sound starting text that the owner may author once every
    marker is filled? Answer READY or NOT READY. If NOT READY, name only the
    blocking defects.
 
