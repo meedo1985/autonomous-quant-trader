@@ -1,4 +1,4 @@
-# D-18 proposal (revision 6): selection rule and primary error event
+# D-18 proposal (revision 7): selection rule and primary error event
 
 **Date:** 2026-10-03
 **Author:** Claude Opus 5.5 (`claude-opus-5-5`). AI proposal only; closes no
@@ -12,7 +12,10 @@ adjudication `ADJUDICATION_8FF7316.md`. Revision 4 (`10bb125`): Fable
 `FABLE_REVIEW_10BB125.md` SOUND WITH FIXES, Sol `SOL_REVIEW_10BB125.md`
 UNSOUND, adjudication `ADJUDICATION_10BB125.md`. Revision 5 (`0da82d3`),
 focused check: Fable `FABLE_REVIEW_0DA82D3.md` NOT READY (FR5-1), Sol
-`SOL_REVIEW_0DA82D3.md` NOT READY (SR5-1..SR5-3). Revision 1's selection rule was
+`SOL_REVIEW_0DA82D3.md` NOT READY (SR5-1..SR5-3). Revision 6 (`52ef945`),
+focused check: Fable `FABLE_REVIEW_52EF945.md` NOT READY (FR6-1), Sol
+`SOL_REVIEW_52EF945.md` READY. Revision 7 applies both reviewers' proposed
+dispositions without a further check (AI default, round 7). Revision 1's selection rule was
 chosen on an incorrect description by the author (FR-4) and was re-asked.
 
 ## 0. Owner directions (2026-10-03)
@@ -125,13 +128,14 @@ uses up the unseen window for the other family too (FR5-6).
 
 ### Round 6 — AI defaults, not owner decisions
 
-On 2026-10-03 the owner declined to answer the round-6 questions and said:
+On 2026-10-03 the owner was shown the round-6 questions, rejected the
+question form without answering (asking to clarify), and then said:
 "let agent do the answers all the time". The author (Claude Opus 5.5) therefore
 adopted the recommended option of each question below as an **AI default**.
 These are drafting directions only, checked by the two reviewers; they are
 **not** owner decisions. The D-18 decision itself, the §4 amendment and any
-§16 review remain the owner's. Questions and options as drafted (not shown to
-the owner):
+§16 review remain the owner's. Questions and options as drafted (the owner
+saw them but chose none):
 
 1. C2 on the 2022–2025 confirmation data (public history known to the
    declarers; Sol SR5-1 BLOCKER, Fable FR5-2 owner-accept). **Default: "Use
@@ -143,13 +147,29 @@ the owner):
    choice and records the weakness. **The owner must confirm this knowingly
    when deciding D-18** (FR5-2).
 2. Re-run room. **Default: "Declare at most 80"** per family, keeping one
-   slot for the automatic re-run. Alternative: "No reserved slot".
+   slot for the automatic re-run. Alternative: "No reserved slot". Cost:
+   it removes the protocol line-186 design of three full 27-trial grids
+   (3×27 = 81) per family (FR6-3).
 3. One-family cycles. **Default: "Both families on unseen data"** — opting
    out of a family is allowed only in a cycle with no eligible window.
-   Alternative: "Keep opt-out, accept loss".
+   Alternative: "Keep opt-out, accept loss". This **reverses the owner's
+   round-5 Q3 choice** ("Yes, allow it — avoids token strategies") for
+   cycles with an eligible window, and brings back the filler-strategy
+   incentive he rejected there (FR6-3).
 4. Finishing. **Default: "One more quick check, then decide"** — both
    reviewers check only the revision 6 changes, then the owner decides D-18.
    Alternative: "Decide directly".
+
+### Round 7 — AI defaults, not owner decisions
+
+After the revision 6 checks (Fable NOT READY on one phrase, Sol READY), the
+author applied both reviewers' own proposed dispositions as revision 7
+without a further review round (AI default). This is weaker than a third
+check of the changed text and is recorded as such. One design choice, FR6-2,
+was adopted as an AI default: windows after v1 must be declared before their
+first observation (P18-0 (iv)), so later cycles do not inherit C2's
+public-history weakness. **All round-6 and round-7 defaults are for the owner
+to confirm or reject when deciding D-18** (FR6-3).
 
 ## 1. Problem (DEC-02)
 
@@ -178,7 +198,11 @@ adopt E-DIFF for the PBO alignment in O18-6. (FR2-7, FR2-8, FR3-8)
   207) after the last observation mounted in the sandbox or evaluated by any
   process (cycle or exploration job, line 70), so luck selected at the end of
   seen data cannot carry into it; a window created after v1 is assigned at
-  ingest to a partition never mounted in the sandbox. The v1 confirmation
+  ingest to a partition never mounted in the sandbox; and (iv) for a window
+  created after v1, the declaration timestamp precedes the window's first
+  observation, so its data did not exist when the trial set was chosen (AI
+  default, round 7; FR6-2). The `embargo` used for the gap is one value fixed
+  before declaration from data outside the window (FR6-5). The v1 confirmation
   partition, on which no cycle has evaluated (C1 never started), is eligible
   for the first amended cycle (C2) with its first `embargo` dropped under
   (iii) (AI default, round 6 Q1; owner direction round 4 Q1); later cycles
@@ -193,7 +217,7 @@ adopt E-DIFF for the PBO alignment in O18-6. (FR2-7, FR2-8, FR3-8)
   not unknown; the per-cycle bound for C2 therefore assumes selection
   independent of that window, which cannot be verified. This departs from
   `ADJUDICATION_10BB125.md` line 18 ("data that did not yet exist at
-  declaration"), which applies only to windows after v1. (FR4-1, SR4-3,
+  declaration") for the v1 window only; windows after v1 meet it by (iv). (FR4-1, SR4-3,
   SR5-1, FR5-2, FR5-4) A cycle with no eligible window may research but has no
   pick and cannot promote. The frozen text governs how new data enters
   (Constitution §0 line 20 "Lockbox = future data", §7 lines 81 and 83,
@@ -208,8 +232,10 @@ adopt E-DIFF for the PBO alignment in O18-6. (FR2-7, FR2-8, FR3-8)
   cycle **with** an eligible window both families must be declared, because
   the window is used up for both (AI default, round 6 Q3; FR5-6). At least one
   family must be declared. A declared family is valid only if
-  `1 <= |J_f| <= 80` (one slot of the per-cycle family budget of 81, protocol
-  lines 184–189, is reserved for the re-run below; AI default, round 6 Q2;
+  `1 <= |J_f| <= 80` (one slot of the family budget of 81, protocol lines
+  184–189, read as per cycle under Constitution line 12 — to be confirmed in
+  the amendment against lifetime accounting, line 190 (SR6-1, FR6-6) — is
+  reserved for the re-run below; AI default, round 6 Q2;
   FR5-3), trial ids are unique and stable, and every trial carries a complete
   immutable configuration hash and belongs to `f`; this is checked before the
   cycle starts, and an invalid declaration prevents the cycle from starting.
@@ -299,16 +325,16 @@ adopt E-DIFF for the PBO alignment in O18-6. (FR2-7, FR2-8, FR3-8)
   - a one-sided upper bound of `P_0(E_f) <= 0.025` for each family (so
     `P_0(E) <= 0.05` for any dependence between them); and
   - a one-sided upper bound `<= 0.01` on the whole-cycle **procedure
-    no-result** event `U_proc`: any declared family `UNAVAILABLE` because of
-    the method's own computation (P18-3: non-finite `S`, invalid `T`, `D <= 0`,
-    non-finite `z`, unsupported design), or any pre-lockbox mandatory gate of
-    a nominee `UNAVAILABLE` (including PBO when enabled). For `U_proc`,
+    no-result** event `U_proc`, in a simulated replication: any declared
+    family whose `A_f` fails (P18-3), or any pre-lockbox mandatory gate of a
+    nominee `UNAVAILABLE` or technically invalid (frozen `N/A` excepted;
+    including PBO when enabled) (FR6-1). For `U_proc`,
     every pre-lockbox mandatory gate is computed for every nominee regardless
     of the DSR or other gate outcomes, and a gate not computed counts as
     `UNAVAILABLE` (FR5-1). The lockbox is read only after eligibility (line
-    296); its availability is reported in power cells (FR4-15).
+    295; FR6-7); its availability is reported in power cells (FR4-15).
 
-  Two disjoint events are kept apart (SR5-3). `U_proc` above is generated by
+  Two events are kept apart (SR5-3). `U_proc` above is generated by
   the procedure in simulation, is the only event the 1% target applies to,
   and its denominator is simulated eligible cycle replications with at least
   one declared family. `U_ops` — no pick because of a protocol revision or
@@ -316,6 +342,12 @@ adopt E-DIFF for the PBO alignment in O18-6. (FR2-7, FR2-8, FR3-8)
   or any other infrastructure or governance failure — cannot be simulated, is
   not certified, and is counted and reported separately in operation over
   eligible, authorised real cycle attempts; it has no calibrated target. In
+  operation **both** kinds are recorded, each failure with one exclusive cause
+  code by a fixed precedence: infrastructure or governance cause first (then
+  `U_ops`; an infrastructure-caused gate failure is `U_ops` only), otherwise
+  procedure cause (`U_proc`-type, the real-world check on the calibration);
+  a trial unfinished at day 180 is `U_ops` (timeout). The two can co-occur in
+  one real cycle across families. (FR6-4, SR6-3) In
   calibration, crash and infrastructure failure are not modelled, so every
   simulated trial completes. Ineligible (research-only) cycles and undeclared
   families are excluded from both. The whole-cycle bound on `U_proc` needs
@@ -337,7 +369,8 @@ Within an eligible cycle, `J_f` is fixed before any result on that cycle's
 confirmation data exists (P18-0, P18-1) and the pick happens once, so each
 calibration cell is a fixed design; no stopping rule enters `E`. For C2 on the
 v1 window this assumes the declarers' knowledge of public 2022–2025 prices did
-not shape the declared set, which cannot be verified (P18-0, FR5-2). The bound is
+not shape the declared set, which cannot be verified (P18-0, FR5-2); later
+windows avoid this by P18-0 (iv). The bound is
 conditional evidence, at the preregistered confidence, over the named
 simulated generator classes; it covers a realised cycle only if that cycle's
 return law is dominated by some qualifying cell, which cannot be checked at
@@ -404,14 +437,21 @@ with different plateau and interval results. (FR2-5, SR2-6)
   top-`S` nomination if D-08 adopts E-DIFF. (FR-5, FR2-7)
 - **O18-7 Amendment scope.** Owner-authored Constitution §4 amendment for C2
   covering protocol lines 65–67 and 96 (never-seen confirmation windows for
-  later cycles, assigned at ingest), 74, 192–195 (post-pick procedure and
-  redefined budget trigger), 231, 251, 287, 292, 300, Constitution §5 lines 61
+  later cycles, assigned at ingest), 66 (trimming the v1 confirmation start
+  by the fixed embargo), 74, 192–195 (post-pick procedure and redefined budget
+  trigger; termination only after post-pick finalisation, with the time of
+  plan exhaustion recorded separately, SR6-2), 207 (one embargo value for the
+  window gap, fixed before declaration from data outside the window, FR6-5), 231, 251, 287, 292, 300, Constitution §5 lines 61
   and 63 (new outcome labels), §0 line 20 and §7 lines 81 and 83 if their
   data-entry rules change, and the declared-trial-set, rerun, family opt-out,
   shared-pick and eligibility rules (which constrain §8 hypothesis
   registration timing), together with D-16, D-17, D-19 and the other blocking
-  rows. Code implementing it is §16 protected (promotion gate). (FR4-2, FR4-4,
-  FR4-5, SR4-6)
+  rows. It must also define whether the family budget available to a cycle
+  is per cycle (Constitution line 12, current-cycle accounting) or the
+  remaining lifetime budget (protocol line 190), and the crash code as a
+  permitted confirmation-to-sandbox channel beyond §7a line 92 (SR6-1,
+  FR6-6). Code implementing it is §16 protected (promotion gate). (FR4-2,
+  FR4-4, FR4-5, SR4-6)
 - **O18-8 Matrix and order.** `HUMAN_DECISION_MATRIX.md:65` still lists `STAT`
   (superseded by R19-2); "D-18 requires D-16" is at
   `HUMAN_DECISION_MATRIX.md:79`. The definition of `E` does not depend on
@@ -420,10 +460,10 @@ with different plateau and interval results. (FR2-5, SR2-6)
 
 ## 5. Next
 
-A focused check of the revision 5 → 6 changes by both model families (R19-2;
-AI default round 6 Q4), records committed, then the owner's D-18 decision, at
-which the owner also confirms or rejects the round-6 AI defaults, in
-particular C2's use of the v1 window (round 6 Q1). Deciding D-18 fixes the selection rule and error event only; the
+The owner's D-18 decision, at which the owner also confirms or rejects every
+round-6 and round-7 AI default (C2 on the v1 window; the 80 cap; both
+families on unseen data; P18-0 (iv); applying revision 7 without a further
+check). Deciding D-18 fixes the selection rule and error event only; the
 broadened method (O18-2) is the next design task, then the amendment text and
 calibration design (option C, D-19). Nothing is activated before all of these
 and the owner-signed §4 amendment.
