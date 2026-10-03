@@ -307,3 +307,6 @@ Promotion stays blocked.
 A focused check by both model families (R19-2) was done for revision 2;
 revision 3 applies their proposed dispositions without a further check
 [AI default]. Next, the owner decides B-1..B-7.
+
+**Update 2026-10-03:** decided; see `OWNER_DECISION_B.md` (B-5 is halving
+alpha spending, not the report-only AI default in the table above).
