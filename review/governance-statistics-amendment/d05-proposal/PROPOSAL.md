@@ -1,4 +1,4 @@
-# D-05 proposal (revision 1): the plateau rule when the selected value is ≤ 0
+# D-05 proposal (revision 2): the plateau rule when the selected value is ≤ 0
 
 **Status:** `NON-BINDING AI PROPOSAL — NO ROW DECIDED — NOT ACTIVE`
 **Date:** 2026-10-03
@@ -6,93 +6,125 @@
 work, under the owner's instruction "let agent do the answers all the time".
 The D-row is decided only by the owner, after two different-model reviews
 (R19-2).
-**Why now:** D-04 is decided as `E-IMPROV`
-(`../d02-d04-proposal/OWNER_DECISION_D01_D04.md`). Under `E-IMPROV`, the
-nominee chosen by `E-DIFF` can have a selected plateau value ≤ 0, so the
-inversion is live (proposal rev 2, C-4). Gate G-8 is blocked until D-05 is
-decided (§4 draft rev 4, §3).
+**History:** revision 1 `e98adb3`. Reviews: Fable `FABLE_REVIEW_E98ADB3.md`
+(FP1, SOUND WITH FIXES), Sol `SOL_REVIEW_E98ADB3.md` (SP1, SOUND WITH FIXES).
+Both endorse failing an available non-positive value. Adjudication:
+`ADJUDICATION_E98ADB3.md`. Revision 2 applies every disposition **without a
+further check** [AI default]; this is weaker than a further check and is
+recorded as such.
+**Why now:** D-04 is decided as `E-IMPROV`, so the nominee (chosen by
+`E-DIFF`) can have a selected plateau value ≤ 0. Gate G-8 stays blocked until
+D-05 is decided (§4 draft rev 4, §3).
 
-## 1. The defect
+## 1. The defect, stated precisely (FP1-5, SP1-6)
 
-Frozen rule (protocol l.263–265): if there is no ordered numeric tunable
+Frozen rule (protocol l.260–265): if there is no ordered numeric tunable
 dimension, the gate is `N/A`. Otherwise it passes iff "median available-neighbor
 BTC OOS paired-delta-Sharpe >= 0.5 * selected-point value AND selected point is
 not on a boundary of any ordered numeric tunable dimension".
 
-With `v` the selected point's `E-IMPROV` (D-04) and `m` the median of its
-neighbours:
+Let `v` be the selected point's `E-IMPROV` (D-04) and `m` the median of its
+neighbours' values.
 
-- `v > 0`: neighbours must keep at least half of a positive improvement.
-  This is the intended meaning (l.265 "Rejects isolated numeric peaks").
-- `v = 0`: the condition is `m >= 0`.
-- `v < 0`: `0.5·v > v`, so neighbours must be **better** than the selected
-  point (`TECHNICAL_APPENDIX.md` §3). The rule then rewards a selected point
-  that is worse than its neighbours, which is the opposite of its purpose.
+- **`v > 0`:** the median must keep at least half of a positive improvement.
+  This is the intended meaning ("Rejects isolated numeric peaks").
+- **`v = 0`:** the rule becomes `m >= 0`. The idea of "keeping half" no longer
+  means anything.
+- **`v < 0`:** the median must beat the selected point by at least `0.5·|v|`.
+  Worked case (FP1, exact): `v = −2/5`, threshold `−1/5`. A flat plateau
+  (`m = −2/5`) fails. An isolated peak (`m = −1`) fails. A valley
+  (`m = −1/10`) passes. So below zero the rule rewards a selected point that
+  is worse than its neighbours.
 
-## 2. Options (matrix row D-05)
+## 2. Options, one consequence each (FP1-8, SP1-1, SP1-7)
 
-| Option | Rule when `v <= 0` | Effect |
+| Option | Rule when an available `v <= 0` | Consequence |
 |---|---|---|
-| (a) fail | G-8 = `FAIL` | No isolated "peak" exists to protect, and the gate fails closed |
-| (b) unavailable / N/A | G-8 = `UNAVAILABLE` (or `N/A`) | `UNAVAILABLE` counts toward `U_proc` (P18-7), whose bound is 1%; `N/A` would let a non-positive nominee skip the gate |
-| (c) restate on a sign-invariant scale | e.g. `m >= v − 0.5·|v|` | A new rule with a new meaning, which needs its own justification |
-| (d) leave as written | inversion | Incoherent with the rule's own justification |
+| (a) fail | G-8 = `FAIL` | No positive improvement exists to protect, so the gate fails. This changes the rule's meaning and needs §4 wording. It adds no `U_proc` event. |
+| (b1) unavailable | G-8 = `UNAVAILABLE` | Each such nominee is a `U_proc` event (P18-7). How often that happens depends on the null cell (§3 point 3) and could threaten the 1% target. |
+| (b2) not applicable | G-8 = `N/A` | The gate is waived for non-positive nominees. P18-7 excepts frozen `N/A` from `U_proc`, but this would be a **new** `N/A` case, which changes gate applicability. |
+| (c) sign-aware rule | a separately justified rule for `v <= 0` | Needs its own justification and calibration. |
+| (d) leave as written | as §1 | Below zero the gate passes valleys and fails plateaus. |
+| keep blocked | — | G-8, and therefore every promotion, stays blocked. |
 
-## 3. Recommendation: (a) fail when `v <= 0`
+## 3. Recommendation: (a), with an explicit order of evaluation
 
-Proposed wording for the amendment (G-8): "If no ordered numeric tunable
-dimension: `N/A`. Otherwise `PASS` iff the selected-point value `v` (BTC OOS
-`E-IMPROV`) is > 0 AND the median available-neighbour value is >= `0.5·v` AND
-the selected point is not on a boundary of any ordered numeric tunable
-dimension; otherwise `FAIL`."
+**Proposed G-8 wording** (FP1-1, FP1-2, SP1-2, SP1-4, SP1-5), evaluated in order:
+
+1. If there is no ordered numeric tunable dimension: `N/A` (frozen, l.264).
+2. If `v` is not finite, or **any** neighbour present under the frozen
+   inclusion rule (l.260–262: ±1 step in each ordered numeric tunable
+   dimension that exists in the declared grid) lacks a finite `E-IMPROV`:
+   `UNAVAILABLE`. [AI default: "available" means present in the grid; a
+   present neighbour with no finite value is not silently dropped.]
+3. If `v <= 0`: `FAIL`. `v = 0` is included on purpose: a zero improvement has
+   nothing to keep, and `v = 0` can occur structurally, for example when the
+   candidate is a fixed multiple of the benchmark (SP1-5, FP1-7).
+4. Otherwise `PASS` iff `m >= 0.5·v` AND the selected point is not on a
+   boundary of any ordered numeric tunable dimension; else `FAIL`.
+
+`m` is the median over all present neighbours, pooled across dimensions; with
+an even count it is the mean of the two middle values. [AI default; FP1-6.]
+The reference implementation's exact float64 result decides `v > 0` and the
+comparisons, as in P18-4 and P18-6 (FP1-7). Step 2 comes before step 3, so a
+failure that could already be decided never hides an unavailable value
+(SP1-2).
 
 Reasons:
 
-1. **It keeps the rule's stated meaning.** "Rejects isolated numeric peaks"
-   presupposes a positive peak. A non-positive selected value has no
-   improvement for a plateau to protect.
-2. **It changes almost no promotion outcome.** A nominee with `v <= 0` has a
-   point estimate of `E-IMPROV` at or below zero. G-1 requires the lower 5%
-   percentile endpoint of the bootstrap `E-IMPROV` to be > 0
-   (`statistics.py:591–660`). That endpoint lies above a non-positive point
-   estimate only if the bootstrap distribution is shifted well above the
-   estimate, which is unusual but not impossible (bootstrap bias). So under
-   (a), G-8 almost always fails exactly where G-1 already fails.
-   `UNVERIFIED`: D-19 can report how often the two disagree.
-3. **It adds nothing to `U_proc`.** `FAIL` is a result, not unavailability.
-   (b) would add a `U_proc` event for every non-positive nominee. Under the
-   global null, that is close to half of all nominees, which would make the
-   1% target unreachable.
-4. **(c) is not needed.** Any sign-invariant restatement invents a new
-   threshold for negative values, where the gate cannot pass G-1 anyway.
-5. **(d) is incoherent** (§1).
+1. **It keeps the rule's meaning where the meaning exists.** "Rejects isolated
+   numeric peaks" presupposes a positive improvement to protect.
+2. **It is fail-closed without adding `U_proc` events.** `FAIL` is a result,
+   not unavailability. (b1) adds a `U_proc` event per non-positive nominee.
+3. **How often `v <= 0` occurs is unknown.** (Correcting rev 1, FP1-3 and
+   SP1-1.) The D-18 null constrains `E-DIFF`, not `E-IMPROV`. The share of
+   nominees with `v <= 0` depends on the benchmark law and on how it moves with
+   the difference series. FP1 computed that with an independent difference and
+   a positive benchmark mean, `E-IMPROV < 0` for every trial, while a de-risker
+   null can make the share small. The 1% target must hold in every qualifying
+   cell, so (b1) is risky wherever the share is large. D-19 measures it.
+4. **Relation to G-1 is an untested hypothesis** (FP1-4, SP1-3). G-1 needs
+   the lower 5% bootstrap endpoint of `E-IMPROV` above 0, which takes at least
+   1,900 of 2,000 replicates above 0 (FP1, exact). Nothing in the code forces
+   that endpoint below a non-positive point estimate
+   (`statistics.py:591–651`), and the condition holds only if G-1 and G-8 use
+   the same BTC OOS series. So G-1 may often fail where `v <= 0`, but this is
+   not assumed. **Where G-1 passes with `v <= 0`, option (a) newly blocks
+   promotion, and P18-5 allows no replacement.**
 
-## 4. Costs and consequences
+## 4. Consequences
 
-- **C-1 It is a change of rule meaning**, so it needs §4 amendment wording.
-  The draft gate list G-8 would carry the wording above.
-- **C-2 `v = 0` exactly** fails under (a). That boundary has probability near
-  zero for continuous returns.
-- **C-3 The other half of the rule is unchanged.** The boundary condition and
-  the frozen `N/A` case (no ordered numeric tunable dimension, l.264) stay as
-  written. So does the neighbour inclusion rule (l.260–262).
-- **C-4 Neighbour values can be unavailable.** If a neighbour's `E-IMPROV` is
-  not finite, the median over "available" neighbours uses the rest. If none
-  is available and an ordered numeric dimension exists, the gate is
-  `UNAVAILABLE`, and that counts toward `U_proc`. This is not new; it is the
-  frozen "available" wording, and D-19 must measure it.
+- **C-1 It is a change of rule meaning** and needs §4 wording (G-8 in the
+  draft).
+- **C-2 Neighbour availability is a binding, not a frozen fact** (FP1-6,
+  SP1-4). Step 2 reads "available" as "present in the grid". Under the
+  alternative reading ("has a finite value"), invalid neighbours would be
+  dropped and the median would come from partial evidence. The strict reading
+  can raise `U_proc`, for example when a neighbour's candidate leg is constant.
+  D-19 measures it.
+- **C-3 The other parts of the rule are unchanged:** the boundary condition
+  and the frozen `N/A` case (l.264).
+- **C-4 Peak semantics** (FP1-10, inherited from D-04). The nominee is the
+  `E-DIFF` peak, while G-8 measures the `E-IMPROV` surface around it. So the
+  selected point need not be an `E-IMPROV` peak even when `v > 0`, and the
+  gate does not check the surface the selection searched. This follows from
+  D-04 and is disclosed here.
+- **C-5 No statistician** reviewed this (R19-2).
 
-## 5. Proposed owner question (after the reviews)
+## 5. Proposed owner question
 
-"D-05: When the selected strategy's own improvement over the benchmark is
-zero or negative, the plateau check as written turns upside down: it would
-require the neighbouring settings to be better than the selected one.
-Should the check simply fail in that case? (a) fail [recommended]; (b) count it
-as unavailable, which would make your 1% no-result target very hard to meet;
-(c) invent a new rule for negative values; (d) leave as written; or keep it
-blocked. Nothing is activated."
+"D-05: the plateau check compares the neighbouring settings with the selected
+strategy's own Sharpe-ratio improvement over the benchmark (E-IMPROV). When
+that improvement is zero or negative, the rule as written stops making sense:
+it lets 'valleys' pass and fails 'plateaus'. What should happen then?
+- (a) the check fails [recommended]: no improvement to protect; changes the
+  rule's meaning; adds no 'no result' cases;
+- (b1) 'unavailable': each such case counts against your 1% no-result limit;
+- (b2) 'not applicable': the check is skipped for such strategies;
+- (c) a separately justified new rule for negative values;
+- (d) leave as written;
+- keep blocked: the check, and so any promotion, stays blocked.
 
-## 6. Next
-
-[AI default] Two different-model reviews of this proposal (Fable 5.1 and
-Codex `gpt-5.6-sol` high), then adjudication, then the owner's question.
+With (a), a value that cannot be calculated, or a neighbouring setting with
+no usable value, makes the check unavailable (it does not count as a fail).
+No statistician reviewed this. Nothing is activated."
