@@ -1,153 +1,232 @@
-# D-14, D-15 proposal (revision 1): the random-exposure null and the delay gates
+# D-14, D-15 proposal (revision 2): the random-exposure null and the delay gates
 
 **Status:** `NON-BINDING AI PROPOSAL — NO ROW DECIDED — NOT ACTIVE`
 **Date:** 2026-10-03
 **Author:** Claude Opus 5.5 (`claude-opus-5-5`). This is design and drafting
-work, under the owner's instruction "let agent do the answers all the time".
-D-rows are decided only by the owner, after two different-model reviews
+work, done under the owner's instruction "let agent do the answers all the
+time". D-rows are decided only by the owner, after two different-model reviews
 (R19-2).
-**Why now:** gates G-11 (random-exposure null), G-6 and G-7 (feature- and
-execution-delay hard gates) are blocked by D-14 and D-15 (§4 draft rev 4, §3).
-All three are mandatory pre-lockbox gates, and their availability counts
-toward `U_proc` (P18-7), so they must be defined before D-19 (FA3-12).
-**Authority:** the matrix marks both rows `STAT` then `§4`. Each adds a pass
-event that the frozen text lacks.
+**History:** revision 1 (`0f16e97`) was rated UNSOUND by both reviewers:
+Fable `FABLE_REVIEW_0F16E97.md` (FN1) and Sol `SOL_REVIEW_0F16E97.md` (SN1).
+It was withdrawn, and nothing was put to the owner. This revision is a redesign
+that follows the brief in `ADJUDICATION_0F16E97.md`.
+**Why now:** G-6, G-7 and G-11 are mandatory pre-lockbox gates. Their
+availability counts toward `U_proc` (P18-7).
+**Authority:** both rows are `STAT` then `§4` in the matrix. Each one adds
+semantics that the frozen text does not contain.
 
-## 1. What is missing
+## 1. D-14: the random-exposure null (G-11)
 
-- **D-14** (protocol l.134–140, 289): the null "match[es] candidate mean
-  exposure and turnover on BTC; evaluate paired delta-Sharpe versus
-  VOL_TARGET_BUY_AND_HOLD", `samples: 500`, and
-  `promotion.null_minimum_percentile: 0.95`. Missing: **how the 500 random
-  exposure paths are generated**, and the **pass event**.
-- **D-15** (l.267–268, 284–285): `feature_delay_stress_bars: 1`,
-  `execution_delay_stress_bars: 1`, and `feature_delay_hard_gate: true`,
-  `execution_delay_hard_gate: true`. The cost model defines execution delay:
-  "Shift the baseline fill by one additional 1h bar, then apply the same cost
-  model" (`specs/COST_MODEL_v1.md`). Missing: **what statistic passes** each
-  gate, and what "feature delay" does.
+**Frozen text** (l.134–140, 289):
+- construction: "match candidate mean exposure and turnover on BTC; evaluate
+  paired delta-Sharpe versus VOL_TARGET_BUY_AND_HOLD";
+- justification: "Removes beta/time-in-market advantage";
+- `samples: 500`;
+- `null_minimum_percentile: 0.95`.
 
-## 2. D-14 proposal
+### 1.1 Why revision 1 failed, and the design principle
 
-**P14-1 Construction: random circular shifts of the candidate's own
-decision path.** Let `x_t` be the candidate's daily target-exposure decision
-series over the eligible window (`T` days, one value per 00:00 UTC
-decision). Null draw `i` takes a shift `k_i` and uses the decision series
-`x_{(t + k_i) mod T}`. That series is then run through the frozen backtester,
-with all its rules (band reductions, 24h minimum hold, costs at 1x, BTC), and
-compared with `VOL_TARGET_BUY_AND_HOLD`.
+Shifting the candidate's sized exposure moved vol-scaled positions into the
+wrong volatility regimes. The benchmark keeps that alignment, so the null
+draws were penalised for misalignment and not only for losing timing. As a
+result, a vol-targeting candidate with no skill beats its own shifts. FN1
+showed this exactly (Sharpe² 1 vs 25/43). **Principle:** a null draw must break
+only the timing of the candidate's *departures from the benchmark*. It must
+keep the benchmark's volatility alignment.
 
-- **Why shifts.** A circular shift keeps the multiset of exposure decisions,
-  so mean target exposure matches exactly. It also keeps every day-to-day
-  change except the one at the wrap point, so target turnover matches
-  except for one transition. What it destroys is the alignment between the
-  decisions and the prices, which is exactly the timing the null tests.
-  It is deterministic and needs no model of how exposures are generated.
-- **Shift set.** Shifts are drawn without replacement from
-  `{k : g <= k <= T − g}`, where `g = gap_embargo.value_days` (§4 draft §2.1).
-  Shifts close to 0 would nearly reproduce the candidate's timing. If fewer
-  than 500 shifts are allowed (`T < 500 + 2g − 1`), the gate is
-  `UNAVAILABLE`. That cannot happen in C2 (`T` ≈ 1,219).
-- **Seeds.** The shifts are drawn from a stream seeded from the trial's frozen
-  seed (protocol l.266) with purpose `"random_exposure_null"`. This is a new
-  stream purpose under D-20.
-- **Reported match.** Because band reductions depend on prices, the realised
-  exposure of a shifted run can differ slightly from the candidate's. The mean
-  realised exposure and turnover of the draws versus the candidate are
-  reported, not gated. [AI default]
+### 1.2 Proposal: shift the ratio to the benchmark (option A)
 
-**P14-2 Statistic per draw: `E-IMPROV`** versus `VOL_TARGET_BUY_AND_HOLD`,
-over the eligible window, at 1x cost. This follows D-02/D-03 (decided);
-"paired delta-Sharpe" in l.137 reads as in those gates.
+Let `a_h` be the candidate's hourly target exposure and `b_h` the benchmark's
+hourly target exposure, over the eligible window's `24T` hours. The benchmark
+is vol-targeted buy-and-hold at a positive target, so `b_h > 0` whenever its
+vol estimate is finite. Define the ratio `r_h = a_h / b_h`.
 
-**P14-3 Pass event.** `null_minimum_percentile: 0.95` is read as "the
-candidate's percentile within the null distribution is at least 0.95":
-`PASS` iff at least 475 of the 500 null values are **strictly below** the
-candidate's `E-IMPROV`. Ties count as not below. Reasons:
-- this is the literal meaning of a percentile;
-- it is an exact integer count, with no interpolation;
-- it is slightly stricter than the type-7 quantile rule of
-  `METHOD_CANDIDATE.md` §6.2, which interpolates between the 475th and 476th
-  ordered values.
+Null draw `i`, with day shift `k_i`, uses this target path:
 
-**P14-4 Availability.** If the candidate's `E-IMPROV` or any null draw's
-`E-IMPROV` is not finite, the gate is `UNAVAILABLE`. The denominator stays
-500, and no draw is replaced. A shifted path that is all cash for the whole
-window (only if the candidate is) gives a zero-variance leg. That case
-already makes the candidate itself unavailable.
+```
+a'_h = clip( b_h · r_((h + 24·k_i) mod 24T), 0, 1 )
+```
 
-## 3. D-15 proposal
+That is, the candidate's ratio is shifted and then applied to the benchmark's
+own exposure **at each hour**. The path is then run through the frozen
+backtester, with all of its rules (band reductions, 24 h risk-increase rule,
+costs at 1x, BTC), from the same initial state and over the same window as the
+candidate's own run.
 
-**P15-1 What each stress does.**
-- *Execution delay:* every baseline fill is shifted one additional 1h bar
-  later, with the same cost model (`COST_MODEL_v1.md`, "Delay stress").
-- *Feature delay:* every decision at close(t) uses features computed only
-  from data up to close(t − 1 bar), one extra 1h bar of feature lag. The
-  decision times and the execution are unchanged. [AI default reading of
-  `feature_delay_stress_bars: 1`.]
+- **What it keeps:**
+  - the benchmark's volatility alignment;
+  - the multiset of hourly ratios, so the candidate's pattern of departures
+    from the benchmark is preserved;
+  - all serial structure of the ratio, except at one wrap point.
+- **What it breaks:** only *when* those departures happen relative to prices.
+- **Edge cases:**
+  - A candidate identical to the benchmark has `r ≡ 1`. Every draw then
+    equals the candidate, all 500 tie, and the gate **fails** under the tie
+    rule (§1.5). That is correct for a candidate with no timing.
+  - The same holds for any candidate that is a constant multiple of the
+    benchmark (the "exposure tilt" of D-01..D-04).
+- **Both families.** For a vol-family trial, `r_h` is the ratio of its sized
+  exposure to the benchmark's, and this is where its estimator and vol target
+  differ from the benchmark. The null therefore asks whether *when* the trial
+  deviates from the benchmark adds value, which answers FN1-1's question for
+  that family. [AI default]
+- **"Match" (SN1-1).** The draws keep the candidate's ratio distribution. They
+  do **not** exactly reproduce its realised mean exposure or turnover, because
+  clipping, bands and the minimum hold interact with prices. So the frozen word
+  "match" would be read as "preserve the candidate's exposure pattern relative
+  to the benchmark", with realised mean exposure and turnover reported for every
+  draw. **This is an amendment to the wording of l.136, and the owner decides
+  it.**
 
-Each stress is one deterministic re-run of the nominee, BTC and ETH, at 1x
-cost.
+**Alternatives for the owner:**
 
-**P15-2 Pass statistic: the same test as the 2x-cost stress.** Each delay
-gate passes iff, on its stressed run, at 1x cost:
-- BTC `E-IMPROV` point estimate > 0;
-- BTC candidate net return > 0;
-- the BTC drawdown constraint holds;
-- the ETH sanity rule holds.
+| Option | Shifted object | Problem |
+|---|---|---|
+| **A ratio to the benchmark** [recommended] | `r_h` | "match" must be reworded, and realised exposure differs slightly |
+| B pre-sizing signal | each hypothesis must declare its mapping as signal × sizing | a vol-family trial with a constant signal gets 500 identical draws and always fails; the hypothesis schema must change |
+| C full sized exposure (rev 1) | `a_h` | penalises vol misalignment, so a no-skill candidate passes (FN1-1) |
 
-This mirrors the frozen `survive_2x_cost_rule` (l.283), the only existing
-frozen precedent for a robustness stress in the promotion block.
-`E-IMPROV` is the D-02 measure.
+### 1.3 The shifts (SN1-2, FN1-10, FN1-14)
 
-Alternatives considered:
-- a degradation ratio (stressed `E-IMPROV` ≥ half the unstressed value, like
-  the plateau rule). It inherits the sign problems of D-05 and has no frozen
-  precedent;
-- `E-IMPROV > 0` alone. It is weaker than the 2x-cost precedent, with no
-  reason to treat delay more leniently than cost.
+There are 500 **deterministic, evenly spaced** day shifts, so no random-number
+stream is needed and D-20 has no new stream for this gate:
 
-**P15-3 Availability.** If any statistic of a stressed run is not finite, that
-gate is `UNAVAILABLE`, which counts toward `U_proc`.
+```
+k_i = m + floor( i · (T − 2m) / 499 ),   i = 0 … 499
+m   = max(g, 30)   [AI default: 30 days so that slow signals are not nearly reproduced]
+```
+
+Here `g = gap_embargo.value_days` and `T` is the eligible window length in
+days, both known at declaration. The shifts are distinct and avoid both the
+identity and near-identity iff `T − 2m >= 499`. Otherwise the gate is
+`UNAVAILABLE`. D-19 can rule that out by setting `T_min >= 499 + 2m`; with
+`m <= 30` and N-1's `T >= 840` that already holds.
+
+### 1.4 Statistic (fresh choice; SN1-3, FN1-11)
+
+The proposal is `E-IMPROV` of each draw and of the candidate against
+`VOL_TARGET_BUY_AND_HOLD`, over the eligible window, at 1x cost. This is a new
+choice for row 12: D-02/D-03 do not bind it. The reason is coherence with the
+other paired filters (D-02..D-07). The alternative is `E-DIFF`, which matches
+the DSR.
+
+### 1.5 Pass rule (SN1-4, FN1-3, FN1-4)
+
+| Rule | Pass iff | Level under ideal exchangeability |
+|---|---|---|
+| **plus-one rank** [recommended] | at least **476** of 500 null values are strictly below the candidate | 25/501 ≈ 4.99% |
+| rank 475 | at least 475 strictly below | 26/501 ≈ 5.19% |
+| type-7 | candidate ≥ the type-7 0.95 quantile of the 500 | not nested with the rank rules (FN1) |
+
+Under every rule, ties count as not below. The plus-one rule is the one N-2
+already uses (decided), which keeps the two nulls consistent. No error rate is
+claimed, because shift-exchangeability is not established (SN1-8).
+
+### 1.6 Availability
+
+If the candidate's or any draw's `E-IMPROV` is not finite, or if `T − 2m <
+499`, the gate is `UNAVAILABLE`. Nothing is replaced. If the benchmark's
+`b_h = 0` or is not finite at some hour, the ratio is undefined and the gate is
+`UNAVAILABLE`.
+
+## 2. D-15: the delay gates (G-6, G-7)
+
+### 2.1 Execution delay (G-7): temporal contract (SN1-5, FN1-7)
+
+- **Baseline:** a decision at close(t) is filled at open(t+1) (backtester
+  spec item 2).
+- **Stressed:** every fill is executed one additional 1 h bar later, at
+  open(t+2), at that bar's price, with the same cost model (`COST_MODEL_v1.md`,
+  "Delay stress"). This covers scheduled 00:00 changes and intraday band
+  reductions alike.
+- **Pending orders:** at most one target is pending. A newer decision
+  replaces a pending one, and the latest target wins.
+- **Risk-increase clock:** the 24 h rule (l.57) is measured from **decision**
+  times, not fill times, so the stress does not by itself block daily
+  increases. [AI default]
+- **Window end:** a fill that would fall after the window end is not
+  executed. Returns use the exposure actually held.
+
+### 2.2 Feature delay (G-6): temporal contract (FN1-6)
+
+- **At decision time t,** every strategy input computed from market data is
+  replaced by its value computed one 1 h bar earlier. This covers model
+  features at inference, the sizing volatility estimate, and the hourly
+  band-evaluation inputs.
+- **Unchanged:** model training (same fitted models; only the inference inputs
+  lag), labels, decision times, execution timing, and the cost model's
+  slippage inputs, which belong to the market at execution, not to the
+  strategy. [AI default: inference-only lag, which tests latency robustness
+  without retraining.]
+
+### 2.3 Benchmark under stress: one §10 decision for G-5, G-6, G-7 (FN1-5)
+
+Constitution §10 l.111 requires benchmarks to be "evaluated under identical bar
+semantics, comparison benchmark, cost model, execution baseline, and applicable
+band/min-hold rules".
+
+| Option | Benchmark leg in each stress | Consequence |
+|---|---|---|
+| **(i) stressed identically** [recommended] | 2x cost (G-5), delayed fills (G-7), and lagged vol inputs (G-6) apply to the benchmark too | follows §10; each gate measures *relative* robustness |
+| (ii) unstressed | the benchmark keeps 1x cost and baseline timing | harsher on the candidate; departs from §10's "identical" |
+
+This also fixes the open stress semantics of the already-decided G-5. D-02
+decided its estimand, not this. ETH legs are treated the same way as BTC legs.
+
+### 2.4 Pass statistic (SN1-6)
+
+| Option | Each delay gate passes iff, on its stressed run | Consequence |
+|---|---|---|
+| **survival** [recommended] | BTC `E-IMPROV` > 0, BTC candidate net return > 0, the BTC drawdown constraint holds, and the ETH sanity rule holds (mirrors the frozen 2x-cost rule, l.283) | Frozen precedent. **A large degradation can still pass** if the result stays positive. |
+| bounded degradation | survival AND stressed BTC `E-IMPROV` ≥ 0.5 × unstressed | Also limits damage. New rule, with no frozen precedent. |
+
+The BTC drawdown constraint depends on owner item O-7 (G-2) (FN1-12). If any
+stressed statistic is not finite, the gate is `UNAVAILABLE`.
+
+## 3. Workload and D-19 (SN1-8, FN1-8)
+
+Per nominee, per evaluation:
+
+| Gate | Runs |
+|---|---|
+| G-11 | 500 BTC backtests of null paths, plus the candidate's run |
+| G-6, G-7 | 2 stresses × 2 assets × 2 legs = 8 backtests under (i) |
+| G-5 | 2 assets × 2 legs = 4 backtests under (i) |
+| G-14 (decided N-2) | 500 model refits for trials with a target model |
+
+In D-19, each simulated eligible cycle has up to two nominees, so these counts
+multiply by 2 × cells × replications. As recorded in
+`../n1-n2-proposal/PROPOSAL.md` §3, D-19 must either compute every gate in every
+replication or have the §4 amendment authorise a certification route. These
+gates are the main cost driver.
 
 ## 4. Consequences
 
-- **C-1 These are filters, not error-controlled tests.** The D-18 bound covers
-  only the DSR event. Under no edge, the null-percentile gate passes with
-  probability about 5% for one nominee before selection, but the nominee is
-  chosen by `E-DIFF` and the null tests `E-IMPROV`, so no rate is claimed.
-  They cannot inflate the DSR bound.
-- **C-2 Compute.** D-14 needs 500 backtests per nominee, and D-15 needs 2 per
-  nominee. In D-19, every simulated nominee needs them too, because P18-7
-  computes every gate. That is about 500 backtests × replications, a
-  material cost that the D-19 compute plan must include.
-- **C-3 The shift null keeps the candidate's own exposure pattern.** It tests
-  timing, not the choice of exposure levels. A candidate whose edge is simply
-  holding less BTC than the benchmark, at a good average level, can pass the
-  shift null without timing skill. The `E-IMPROV` gates do not catch that
-  either. This is a limit of the frozen design ("Removes beta/time-in-market
-  advantage", l.138), not of the shift method.
-- **C-4 Feature delay is a reading.** If the owner reads
-  `feature_delay_stress_bars` differently (for example, lagging only some
-  features), P15-1 changes.
-- **C-5 No statistician** reviewed this (R19-2).
+- **C-1** These are filters with no calibrated error rate of their own. They
+  cannot inflate the DSR bound, and they can lower power and add `U_proc`
+  events.
+- **C-2** The ratio null tests the timing of departures from the benchmark,
+  given the candidate's own pattern of departures. It does not test whether
+  that pattern of exposure levels is a good choice (SN1-7).
+- **C-3** Dependencies:
+  - the l.136 wording ("match") is amended;
+  - the §10 benchmark decision also fixes G-5;
+  - O-7 governs the drawdown part of D-15;
+  - N-2 and D-14 share the plus-one rule.
+- **C-4** No statistician reviewed this (R19-2).
 
-## 5. Proposed owner questions (after the reviews)
+## 5. Proposed owner questions (separate; SN1-9, FN1-13)
 
-1. "D-14, random-timing check: the strategy's own daily exposure plan is
-   slid in time to 500 random start points (keeping its average exposure and
-   trading pattern, but breaking its timing). It passes if it beats at least
-   475 of the 500 slid copies on Sharpe improvement. If any copy can't be
-   calculated, the check is unavailable. Accept / revise / keep blocked?"
-2. "D-15, delay checks: re-run the strategy with fills one hour later, and
-   separately with its inputs one hour older. Each must still pass the same
-   test as the 2x-cost check (better Sharpe than the benchmark, positive
-   return, drawdown limit, ETH sanity). Accept / revise / keep blocked?"
-
-Both are filters with no error guarantee of their own. No statistician
-reviewed this. Nothing is activated.
+1. Null object: ratio to the benchmark (rewording "match") [rec] / pre-sizing
+   signal / full exposure / keep blocked.
+2. D-14 statistic: `E-IMPROV` [rec] / `E-DIFF` / keep blocked.
+3. D-14 pass rule: ≥ 476 of 500 [rec] / ≥ 475 / type-7 / keep blocked.
+4. Delay contracts §2.1–§2.2: accept [rec] / revise / keep blocked.
+5. Benchmark under stress for G-5, G-6, G-7: stressed identically, per §10
+   [rec] / unstressed / keep blocked.
+6. D-15 statistic: survival [rec] / bounded degradation / keep blocked.
 
 ## 6. Next
 
-[AI default] Two different-model reviews, adjudication, then the owner's
+[AI default] Two different-model reviews, then adjudication, then the owner's
 questions.
