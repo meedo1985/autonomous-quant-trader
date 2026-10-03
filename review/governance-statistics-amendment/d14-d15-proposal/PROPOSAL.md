@@ -1,4 +1,4 @@
-# D-14, D-15 proposal (revision 3): the random-exposure null and the delay gates
+# D-14, D-15 proposal (revision 4): the random-exposure null and the delay gates
 
 **Status:** `NON-BINDING AI PROPOSAL — NO ROW DECIDED — NOT ACTIVE`
 **Date:** 2026-10-03
@@ -8,17 +8,16 @@ time". D-rows are decided only by the owner, after two different-model reviews
 (R19-2).
 
 **History:**
-- Revision 1 (`0f16e97`) and revision 2 (`c872066`) were each rated UNSOUND
-  by both reviewers. Revision 1: Fable FN1 and Sol SN1, adjudication
-  `ADJUDICATION_0F16E97.md`. Revision 2: Fable FN2 and Sol SN2, adjudication
-  `ADJUDICATION_C872066.md`.
-- Nothing has been put to the owner.
-- Revision 3 adopts the construction that both revision-2 reviewers
-  suggested: shift the declared **pre-sizing signal**, and size each draw with
-  the trial's **own** volatility estimate at the real date. It also makes the
-  open choices explicit questions for the owner.
+- Revisions 1 (`0f16e97`) and 2 (`c872066`) were each rated UNSOUND by both
+  reviewers and were withdrawn.
+- Revision 3 (`540e773`) adopted the signal-shift construction suggested in
+  SN2-1. Fable FN3 and Sol SN3 both rated it SOUND WITH FIXES and both
+  verified the core construction exactly.
+- Adjudication: `ADJUDICATION_540E773.md`.
+- Revision 4 applies every disposition. Nothing has been put to the owner yet.
 
-**Authority:** both rows are `STAT` then `§4` in the matrix.
+**Authority:** both rows are `STAT` then `§4`. The G-5 stress question in
+§2.3 belongs to a proposed new row, **N-3** (FN3-12).
 
 ## 1. D-14: the random-exposure null (G-11)
 
@@ -29,227 +28,273 @@ time". D-rows are decided only by the owner, after two different-model reviews
 - `samples: 500`;
 - `null_minimum_percentile: 0.95`.
 
-### 1.1 What failed before
+### 1.1 Notation
 
-- **Revision 1 shifted the sized exposure.** That moves volatility-scaled
-  positions into the wrong volatility regimes (FN1-1).
-- **Revision 2 shifted the ratio to the benchmark.** That still breaks a
-  trial's *own* estimator alignment whenever its estimator or clipping differs
-  from the benchmark's (FN2-1, SN2-1, exact).
-
-In both cases a trial with no skill beats its own shifted copies, so the gate
-becomes inert.
+- **`T`**: the number of complete UTC days in the eligible window. Days are
+  indexed `d = 0 … T−1`, and hours are indexed `h = 0 … 24T − 1`.
+- **`g`**: `gap_embargo.value_days` (§4 draft §2.1).
+- **Scope:** BTC only, at 1x cost, over the eligible window (FN3-6, SN3-2).
 
 ### 1.2 Construction: shift the declared signal, keep the trial's own sizing
 
-**Declaration requirement.** Every hypothesis declares its exposure mapping
-(Constitution §8 field) in this form:
+**Applicability contract** (SN3-1, FN3-3). A trial is **G-11-testable** if its
+preregistered exposure mapping (Constitution §8) has this form:
 
 ```
-a_h = clip( s_d(h) · τ / σ̂_h , 0, 1 )
+a_h = clip( s_h · τ / σ̂_h , 0, 1 )
 ```
 
-- `s_d >= 0` is the trial's **daily pre-sizing signal**, decided at 00:00
-  UTC for day `d`.
-- `τ` is its vol target.
-- `σ̂_h` is its **own** declared sizing estimator, evaluated each hour.
+- `s_h >= 0` is a signal computed only from market data and the trial's
+  declared model outputs, so never from the trial's own position, P&L or path.
+  It may be evaluated hourly (l.55).
+- `τ ∈ {0.40, 0.60, 0.80}` is the trial's vol target (l.127).
+- `σ̂_h` is its own declared sizing estimator, evaluated at hour `h`.
 
-A hypothesis whose mapping cannot be written in this form cannot be declared
-in C2. [AI default; this changes §8 practice and needs §4 wording.]
+The interface (signal, units, timing, estimator) is part of the hashed
+declaration.
 
-**Null draw `i`** with day shift `k_i`:
+A trial outside this class gets a **preregistered `N/A`** at G-11 (SN3-8),
+fixed at declaration. Examples:
+- rules with stops, take-profits or hysteresis, which depend on the trial's
+  own path;
+- the owner's recorded rule (`review/owner-input/TRADING_RULE_2026-09-27.md`),
+  which falls outside the class.
+
+The alternative, admitting only testable trials into C2, would restrict
+hypothesis eligibility by amendment (owner question Q1b).
+
+**Null draw `i`**, with day shift `k_i`:
 
 ```
-a'_h = clip( s_((d(h) + k_i) mod T) · τ / σ̂_h , 0, 1 )
+a'_h = clip( s_((h + 24·k_i) mod 24T) · τ / σ̂_h , 0, 1 )
 ```
 
-Only the signal's dates move. Each draw is sized by the trial's own estimator
-at the real hour, so it keeps the trial's own volatility alignment, whatever
-estimator or target the trial uses.
+The signal is shifted by whole days, so its time of day is kept. Each draw is
+sized by the trial's own estimator at the real hour. Both reviewers verified
+with exact examples that this keeps the trial's **σ̂** alignment for any
+estimator and vol target (FN3 C1, SN3). It does **not** keep volatility
+alignment that sits inside `s` (FN3-4; see §1.3).
 
-A trend trial identical to the benchmark has `s ≡ 1`, `τ = 0.60` and
-EWMA_168h. Its draws then equal the candidate, all 500 tie, and the gate
-**fails** under the tie rule (§1.6). That is correct for a trial with no
-timing.
+**Pure-sizing trials.** A trial whose declared `s` is constant has 500 draws
+equal to itself.
 
-**Pure-sizing trials (owner choice, FN2-1).** A trial whose declared signal
-is constant (`s ≡ c`), as in many vol-family trials, has 500 draws identical
-to itself and **always fails** G-11. Its claim is better risk sizing, not
-timing, and Constitution §12 l.119 says vol management is "de-risking, not
-alpha".
-
-| Option | Pure-sizing trials at G-11 | Consequence |
+| Option (Q2) | Pure-sizing trials at G-11 | Consequence |
 |---|---|---|
-| **(a) frozen `N/A`** [recommended] | `N/A`, fixed at declaration from the declared constant signal | the timing null tests only trials that make timing claims; a pure-sizing trial must still pass every other gate |
-| (b) always fail | as computed | no pure-sizing trial can ever be promoted, so the vol family is effectively closed |
-| (c) a different null for sizing | to be designed | more work, and nothing proposed yet |
-| keep blocked | — | the amendment cannot be signed |
+| **(a) preregistered `N/A`** [recommended] | `N/A`, fixed at declaration | Constitution §12 l.119 says vol management is "de-risking, not alpha". G-11 then tests only timing claims. This needs the S4 gate list's G-11 `na: "never"` changed, and the P18-7 `N/A` exception applied, as for G-14 (FN3-11). |
+| (b) always fail | under the rank rules, ties fail (but see §1.6 for type-7) | no pure-sizing trial can be promoted, so the vol family is effectively closed |
+| (c) a different null later | — | nothing is designed yet |
 
-**"Match" (l.137; SN2-2, FN2-4).** This construction holds the trial's signal
-distribution and sizing rule fixed. It does **not** reproduce realised mean
-exposure or turnover: shifting moves the signal against different volatility,
-and clipping, bands and the minimum hold interact with prices. Proposed
-amendment wording for l.137: "shift the declared daily pre-sizing signal by
-whole days, re-size with the trial's own estimator at each hour; realised mean
-exposure and turnover of every draw are reported, not matched." The
-alternative, matching within a tolerance and rejecting draws outside it, is
-offered to the owner. It changes the draw population and needs a tolerance
-value.
+### 1.3 Variance timing inside the signal (FN3-4; Q3)
 
-### 1.3 Numerical domain and state (SN2-3)
+A signal that reacts only to volatility, with no directional information, can
+beat its shifted copies (FN3 C2, exact: 6 of 7 below, 1 tie). The same
+economic content placed in `σ̂` would be pure sizing, and so `N/A` under Q2(a).
 
-`UNAVAILABLE`, with a reason code, is returned if:
-- any `s_d` is not finite or is negative;
-- any `σ̂_h` is not finite or is ≤ 0;
-- any pre-clip product is not finite.
-
-Every null run, like the candidate's own run, starts at the window start with
-exposure 0, no pending order and an unset risk-increase clock. Its
-estimator and feature warm-up uses data before the window, from the sources
-permitted by R-9 (§4 draft). [AI default]
-
-The wrap (day `T` followed by day 1 of the shifted signal) is an ordinary day
-boundary in the null path. It is reported.
-
-### 1.4 Shifts (FN2-7, SN2-4)
-
-| Option | Shifts | Note |
-|---|---|---|
-| **seeded random** [recommended] | 500 distinct shifts drawn without replacement from `{m, …, T − m}`, using a stream seeded from the trial seed (l.266), purpose `"random_exposure_null"` | consistent with the frozen names "random_exposure" and "samples" (l.135, 139), the seed policy, and N-2's seeded shifts; a D-20 stream |
-| deterministic, evenly spaced | `k_i = m + floor(i·(T − 2m)/499)` | needs no stream; departs from those names |
-
-In both cases `m = max(g, 30)`. The 30 days is an AI default with no
-persistence basis: slow signals have near-identical shifts close to `m`, which
-costs power. The draws are available iff `T − 2m >= 499`. N-1 does not fix `T`;
-D-19 must set `T_min >= 499 + 2m` (that is, ≥ 559 when `g <= 30`) (FN2-8).
-
-### 1.5 Statistic (FN2-6)
-
-| Option | Ranks by | Note |
-|---|---|---|
-| **`E-IMPROV`** [recommended] | candidate minus benchmark Sharpe | All draws share one benchmark leg, so this **ranks exactly by the trial's own Sharpe** (Lemma L-1). The test is "does my Sharpe beat shifted copies of me?" |
-| `E-DIFF` | Sharpe of candidate minus benchmark | ranks the departure P&L, and is aligned with the DSR |
-
-### 1.6 Pass rule
-
-| Rule | Pass iff |
+| Option (Q3) | Effect |
 |---|---|
-| **plus-one** [recommended] | at least 476 of 500 strictly below; matches N-2 (decided) |
-| rank 475 | at least 475 strictly below |
-| type-7 | candidate ≥ type-7 0.95 quantile; this was the matrix's PROPOSED option (a), l.56 |
+| **(a) credit it** [recommended] | no special case: variance timing carried in `s` counts as timing |
+| (b) treat as sizing | a trial whose declared signal inputs are all volatility features gets a preregistered `N/A`, like pure sizing |
 
-Ties count as not below. Under genuine exchangeability, the plus-one rule's
-level is 25/501. This shift design is **not** shown to be exchangeable, so no
-rate is claimed (SN2-4).
+The recommendation is (a) because the classification in (b) is hard to fix at
+declaration and is open to gaming. The consequence is disclosed: G-11 can be
+passed through volatility timing alone.
+
+### 1.4 "Match" (l.137; Q4)
+
+The construction keeps the trial's signal distribution and sizing rule. It
+does not reproduce realised mean exposure or turnover.
+- **(a)** [recommended] Reword l.137: "shift the declared signal by whole
+  days and re-size with the trial's own estimator at each hour; realised mean
+  exposure and turnover of every draw are reported, not matched."
+- **(b)** Match within a tolerance and reject draws outside it. This changes
+  the population of draws and needs a tolerance value.
+
+### 1.5 Domain, state and shifts (SN3-2, FN3-6, FN3-10, SN3-4)
+
+**`UNAVAILABLE`, with a reason code, and no replacement**, if any of these
+holds:
+- any `s_h` is not finite or is < 0;
+- any `σ̂_h` is not finite or is ≤ 0;
+- any pre-clip product is not finite;
+- a day in the window is not a complete UTC day (Task 12 conventions);
+- **the candidate's or any draw's statistic is unavailable**, for example
+  through zero variance or insufficient observations (`statistics.py:173–200`).
+  In that case the denominator stays 500.
+
+**State.** Every run, including the candidate's own, starts at the window start
+with exposure 0, no pending order and an unset clock.
+
+**Warm-up.** Estimators and features need data from before the window. The
+question is whether that warm-up may read the `g` excluded gap days. Those days
+are "reachable only through the engine" under the `excluded_days_status` clause
+(§4 draft §2.1), not under R-9 (FN3-10). Warm-up is engine computation, not
+evaluation output.
+- **(a)** [recommended] yes;
+- **(b)** no, in which case estimator state at the window start is `g` days
+  stale (Q5).
+
+**Wrap.** Day `T−1` of the shifted signal is followed by day 0. This is an
+ordinary day boundary, and it is reported.
+
+**Shift set.** `{m, …, T − m}` with `m = max(g, f)`, where `f` is a floor
+(Q6). [rec: `f` = 30 days, an AI default with no basis in persistence. Near
+shifts of slow signals cost power.] 500 distinct shifts exist iff
+`T − 2m >= 499`. D-19 must set `T_min` so that this holds.
+
+**How the shifts are drawn (Q7):**
+- **(a)** [recommended] seeded random: 500 shifts without replacement, from
+  a stream seeded from the trial seed (l.266), purpose
+  `"random_exposure_null"`. This is consistent with "random_exposure",
+  "samples" and N-2. The sampling mechanics are a D-20 matter.
+- **(b)** deterministic: `k_i = m + floor(i·(T − 2m)/499)`,
+  `i = 0 … 499`.
+
+### 1.6 Statistic (Q8) and pass rule (Q9)
+
+**Statistic (Q8).**
+- **`E-IMPROV`** [recommended]. Because every draw shares one benchmark leg,
+  this ranks exactly by the trial's own Sharpe (Lemma L-1).
+- **`E-DIFF`**. This ranks the departure P&L, in line with the DSR.
+
+**Pass rule (Q9).** Each rule gives a different consequence when all draws tie
+(FN3-5, SN3-3):
+
+| Rule | Pass iff | All 500 draws tie the candidate |
+|---|---|---|
+| **plus-one** [recommended] | ≥ 476 of 500 strictly below. This matches N-2. | fails |
+| rank 475 | ≥ 475 strictly below | fails |
+| type-7 (the matrix's PROPOSED (a), l.56) | candidate ≥ type-7 0.95 quantile | **passes**. A benchmark clone would pass, so a strict `>` or an explicit tie rejection would be needed. |
+
+Under genuine exchangeability, the plus-one rule's level is 25/501. This design
+is not shown to be exchangeable, so no rate is claimed.
 
 ## 2. D-15: the delay gates (G-6, G-7)
 
-### 2.1 Event contract, which applies to baseline and stressed runs alike (FN2-2, SN2-5)
+### 2.1 Event contract, for the baseline and stressed runs alike (FN3-1, FN3-2, FN3-7, FN3-8, SN3-5)
 
-At every hourly timestamp the engine runs these steps in order:
-1. Execute every fill that is due, at that bar's open price, with the
-   frozen cost model.
-2. Update the held exposure. The risk-increase clock is set **only when a
-   risk increase is actually filled**; this is the frozen "last risk
-   increase" (l.57). A cancelled order never sets the clock.
-3. Evaluate the decision rule against the **held** exposure:
-   - at 00:00 UTC, an increase is allowed if 24 h have passed since the
-     last filled increase;
+**Time and state.**
+- Timestamps are **instants**: close(t) = open(t+1).
+- An order stores an **absolute target exposure**.
+- Held exposure is position value divided by equity, and it **drifts with
+  price** between fills [AI default, FN3-8].
+- The risk-increase clock starts **unset**. An unset clock permits the first
+  increase.
+
+**At each hourly instant, in order:**
+1. Execute every fill that is due at this instant, at the open(t+1) price, at
+   the frozen cost.
+2. Update the held exposure and the clock (the anchor is Q10).
+3. Evaluate the decision against the held exposure:
+   - at 00:00 UTC, a change is allowed if `|target − held| >= 0.10`. This is
+     l.112 `rebalance_band_absolute`, applied to increases as well
+     [AI default, FN3-7];
+   - an increase also requires the clock to show **≥ 24 h**;
    - at any hour, a reduction is allowed if the target is at least 0.10
-     below the held exposure (l.57, 60).
-4. Only a decision that passes step 3 creates an order. An order replaces a
-   pending one only if it was created in step 3 at this timestamp.
-5. The order is due after the delay. In the baseline that is the next open;
-   under execution stress it is one 1 h bar later.
+     below held (l.60).
+4. A decision that passes step 3 creates an order.
+5. **Baseline:** the order fills **at this same instant**, at the open(t+1)
+   price.
+   **Execution stress:** the order is due at the next instant, open(t+2).
+   Because step 1 runs first at that instant, a pending order is always
+   filled before any new decision, so no order is ever replaced.
+6. At the window end, unfilled orders are dropped.
 
-At the window start there is no pending order. At the window end, unfilled
-orders are dropped. Because fills come first (step 1), an hourly evaluation can
-never cancel a due daily increase.
+**Clock anchor (Q10; FN3-1).** Under execution stress, a 00:00 increase fills
+at 01:00. If the clock counts from the fill, the next 00:00 is 23 h later, so
+increases are possible only every other day. G-7 would then test a 48 h hold,
+not a one-hour delay.
 
-### 2.2 Feature delay (SN2-6, FN2-12)
-
-At decision timestamp `t`, every strategy input that depends on market data
-takes **the value the baseline engine had at `t − 1h`**: the last value
-emitted at or before `t − 1h`. This covers:
-- model features at inference;
-- the sizing estimator `σ̂`;
-- the hourly band inputs.
-
-A feature built on daily aggregates keeps its last emitted value, which can be
-up to 25 h old.
-
-The following are unchanged:
-- model refit times and training data;
-- labels;
-- decision times;
-- execution timing;
-- held exposure and the clock, which are non-market state;
-- the cost model's slippage inputs, which belong to the market at execution.
-
-Warm-up uses the same pre-window data as §1.3. A lagged input that is missing
-or not finite makes the gate `UNAVAILABLE`. [AI default: inference-only lag.]
-
-### 2.3 Benchmark and ETH under each stress (separate questions; SN2-7, FN2-3)
-
-Constitution §10 l.111 requires benchmarks to be evaluated under "identical
-bar semantics, comparison benchmark, cost model, execution baseline, and
-applicable band/min-hold rules". It is evidence for these questions, but it
-does not settle them. Protocol l.42 and l.279 fix ETH sanity at
-`drawdown_constraint_holds_at_1x_cost`, and l.283 imports it into G-5.
-
-| Gate | Question | Options |
+| Option | Clock measured from | Consequence |
 |---|---|---|
-| G-5 (2x cost) | Is the benchmark leg also at 2x? | (i) yes, which compares relative cost robustness and fits §10's "cost model" / (ii) no, which degrades against a fixed baseline. The ETH drawdown part stays at 1x as frozen (l.279); changing that would be an amendment. |
-| G-7 (execution delay) | Is the benchmark leg also delayed? | (i) yes, which fits §10's "execution baseline" read as shared semantics / (ii) no, with "execution baseline" read as the fixed baseline |
-| G-6 (feature delay) | Is the benchmark's `σ̂` also lagged? | (i) yes, which makes the comparator also latency-stressed / (ii) no, so the comparator is unchanged. §10 does not list features. |
-| G-6, G-7 ETH legs | Is ETH stressed, or kept at 1x baseline? | stressed / baseline |
+| **(b) decision time of an increase that was later filled** [recommended] | the 00:00 decision, counted only once its fill happens; cancelled orders never count | stress isolates the one-bar delay |
+| (a) fill time | the fill | 23 h block, so G-7 tests a 48 h hold |
+| (c) amend l.57 | — | owner wording |
 
-### 2.4 Pass statistic (SN2-9)
+### 2.2 Feature delay (Q11; FN3-9)
+
+At decision instant `t`, every strategy input that depends on market data
+(model features at inference, `σ̂`, the hourly band inputs) is lagged by one
+bar. There are two readings:
+- **(a) recompute with cutoff `t − 1h`** [recommended]. Each input is computed
+  exactly as the baseline would compute it at `t − 1h`. A daily aggregate is
+  then built from data up to 23:00, which is a true one-bar delay.
+- **(b) last emitted.** Take the last value the baseline pipeline emitted at or
+  before `t − 1h`. A daily feature emitted at 00:00 is then up to **24 h**
+  old (FN3 C5), so G-6 becomes a one-day delay for trials built on daily
+  features.
+
+The following are unchanged: model refit times and training data, labels,
+decision times, execution timing, held exposure and the clock (non-market
+state), and the cost model's slippage inputs. Warm-up follows Q5. A missing or
+non-finite lagged input makes the gate `UNAVAILABLE`.
+
+### 2.3 Benchmark and ETH under each stress (separate questions; SN3-6, FN3-12, FN3-15)
+
+Constitution §10 l.111 is evidence here, not a decision. Protocol l.42–43 and
+l.279 fix the ETH sanity drawdown at 1x cost, and l.283 imports that into G-5.
+
+| Q | Gate and leg | Options |
+|---|---|---|
+| Q12 (N-3) | G-5 BTC benchmark at 2x? | (i) yes, relative cost robustness [rec] / (ii) no |
+| Q13 (N-3) | G-5 ETH point estimate: candidate and benchmark at 2x? | (i) both at 2x [rec] / (ii) candidate only. The ETH drawdown part stays at 1x as frozen; changing it is an amendment. |
+| Q14 | G-7 BTC benchmark delayed? | (i) yes [rec] / (ii) no |
+| Q15 | G-7 ETH: candidate and benchmark delayed, drawdown on the delayed path? | (i) all stressed [rec] / (ii) ETH kept at baseline |
+| Q16 | G-6 BTC benchmark `σ̂` lagged? | (i) yes / (ii) no [rec: §10 does not list features; leaving the comparator unchanged isolates the candidate's latency] |
+| Q17 | G-6 ETH: candidate inputs lagged, benchmark as Q16, drawdown on the lagged path? | (i) yes [rec] / (ii) ETH kept at baseline |
+
+### 2.4 Pass statistic (Q18; SN3-7)
 
 | Option | Each delay gate passes iff, on its stressed run |
 |---|---|
-| **survival** [recommended] | BTC `E-IMPROV` > 0, BTC candidate net return > 0, the BTC drawdown constraint holds, and the ETH sanity rule holds. This mirrors l.283. A large degradation can still pass. |
-| bounded degradation | survival AND stressed BTC `E-IMPROV` ≥ θ × unstressed. θ is a separate choice; l.264's 0.5 is a partial precedent. |
+| **survival** [recommended] | BTC `E-IMPROV` > 0, BTC candidate net return > 0, the BTC drawdown constraint holds, and the ETH sanity rule holds (mirrors l.283). A large degradation can still pass. |
+| bounded degradation | survival AND stressed BTC `E-IMPROV` ≥ θ × unstressed, with `0 ≤ θ ≤ 1` chosen separately (l.264's 0.5 is a partial precedent). If the unstressed statistic is unavailable, the gate is `UNAVAILABLE`. |
 
-The drawdown parts take whatever O-7 decides for G-2. A stressed statistic that
-is not finite makes the gate `UNAVAILABLE`.
+The drawdown parts follow O-7 (G-2). A stressed statistic that is not finite
+makes the gate `UNAVAILABLE`.
 
-## 3. Workload (gross runs per nominee, before caching; SN2-8, FN2-10)
+## 3. Workload (gross runs per nominee, before caching; FN3-13)
 
 | Gate | Gross runs |
 |---|---|
-| G-11 | 500 null backtests + candidate + benchmark = 502; the marginal count is 500 if the base runs are cached |
-| G-7 | 2 assets × 2 legs = 4 under (i), 2 under (ii) |
-| G-6 | the same counts, **plus** model re-inference on lagged features in every fold |
-| G-5 | 4 under (i), 2 under (ii) |
+| G-11 | 502: 500 null runs, the candidate and the benchmark. The marginal count is 500. A trial with a preregistered `N/A` needs 0. |
+| G-7 | 4, or 2 if the benchmark is not delayed. Add 0, 2 or 4 ETH runs depending on Q15. |
+| G-6 | as G-7, plus model re-inference on lagged features in every fold |
+| G-5 | 4, or 2 if the benchmark is not stressed |
 | G-14 (N-2) | 500 model refits for target-model trials |
 
-D-19 multiplies these by nominees × cells × replications. See the N-1/N-2
-decision on how D-19 computes or certifies the gates.
+D-19 multiplies these by nominees × cells × replications.
 
 ## 4. Consequences
 
-- **C-1** These are filters, with no calibrated error rate of their own. They
-  cannot inflate the DSR bound, and they can lower power and add `U_proc`
-  events.
-- **C-2** G-11 tests the timing of the trial's declared signal, given its own
-  sizing. It does not test whether the sizing rule is good.
-- **C-3** The declaration form in §1.2 changes how hypotheses are written (§8)
-  and needs §4 wording.
+- **C-1** These are filters with no calibrated error rate. They cannot inflate
+  the DSR bound, and they can lower power and add `U_proc` events.
+- **C-2** G-11 tests the timing of the declared signal, given the trial's own
+  sizing. It credits variance timing that sits in `s` (Q3), and it does not
+  judge the sizing rule.
+- **C-3** The following need §4 wording:
+  - the applicability contract;
+  - the preregistered `N/A` cases, with the G-11 `na` field;
+  - the l.137 rewording;
+  - the l.112 reading;
+  - the clock anchor;
+  - new row N-3.
 - **C-4** No statistician reviewed this (R19-2).
 
-## 5. Owner questions (each with revise or keep-blocked)
+## 5. Owner questions (each also allows revise or keep blocked)
 
-1. G-11 construction: shift the declared signal with the trial's own sizing
-   [rec] / keep blocked.
-2. Pure-sizing trials at G-11: frozen `N/A` [rec] / always fail / a different
-   null later.
-3. "Match" (l.137): report-only rewording [rec] / match within a tolerance.
-4. Shifts: seeded random [rec] / deterministic.
-5. G-11 statistic: `E-IMPROV` [rec] / `E-DIFF`.
-6. G-11 pass rule: ≥ 476 [rec] / ≥ 475 / type-7.
-7. The execution-delay contract (§2.1).
-8. The feature-delay contract (§2.2).
-9. The benchmark leg under G-5 / G-7 / G-6, and the ETH legs (§2.3), as
-   separate answers.
-10. Delay statistic: survival [rec] / bounded degradation (with θ).
+| Q | Topic | Recommended |
+|---|---|---|
+| Q1 | G-11 construction (§1.2) | accept |
+| Q1b | non-testable trials | preregistered `N/A` (not a C2 eligibility restriction) |
+| Q2 | pure-sizing trials | preregistered `N/A` |
+| Q3 | variance timing in `s` | credit it |
+| Q4 | "match" | report-only rewording |
+| Q5 | warm-up on gap days | yes |
+| Q6 | minimum shift floor | 30 days |
+| Q7 | shift draws | seeded random |
+| Q8 | G-11 statistic | `E-IMPROV` |
+| Q9 | pass rule | ≥ 476 |
+| Q10 | clock anchor | decision time of a filled increase |
+| Q11 | feature lag | recompute with cutoff `t − 1h` |
+| Q12–Q17 | benchmark and ETH legs per stress | as in §2.3 |
+| Q18 | delay statistic | survival |
