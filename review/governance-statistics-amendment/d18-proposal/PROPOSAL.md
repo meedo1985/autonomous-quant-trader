@@ -1,4 +1,4 @@
-# D-18 proposal (revision 4): selection rule and primary error event
+# D-18 proposal (revision 5): selection rule and primary error event
 
 **Date:** 2026-10-03
 **Author:** Claude Opus 5.5 (`claude-opus-5-5`). AI proposal only; closes no
@@ -8,7 +8,9 @@ adjudication `ADJUDICATION_690FA97.md`. Revision 2 (`ffbedad`): Fable
 `FABLE_REVIEW_FFBEDAD.md` UNSOUND, Sol `SOL_REVIEW_FFBEDAD.md` SOUND WITH
 FIXES, adjudication `ADJUDICATION_FFBEDAD.md`. Revision 3 (`8ff7316`): Fable
 `FABLE_REVIEW_8FF7316.md` UNSOUND, Sol `SOL_REVIEW_8FF7316.md` UNSOUND,
-adjudication `ADJUDICATION_8FF7316.md`. Revision 1's selection rule was
+adjudication `ADJUDICATION_8FF7316.md`. Revision 4 (`10bb125`): Fable
+`FABLE_REVIEW_10BB125.md` SOUND WITH FIXES, Sol `SOL_REVIEW_10BB125.md`
+UNSOUND, adjudication `ADJUDICATION_10BB125.md`. Revision 1's selection rule was
 chosen on an incorrect description by the author (FR-4) and was re-asked.
 
 ## 0. Owner directions (2026-10-03)
@@ -61,8 +63,10 @@ strategies: ~4.25%" understated the worst case (two near-identical strategies
 reach ~5.07% at 0.95; a 2.5% cap needs `z_crit` of about 1.972 before margins,
 FR3-4). In question 4, the 1% limit was proposed in DEC-02 only for 16 simple
 Gaussian equal-count cells; realistic cells are refused by the current method
-(FR3-2). Round 4 re-asked both consequences. Revision 3 also wrote the pick
-trigger differently from the round-3 answer (SR3-1); round 4 re-asked it.
+(FR3-2). Round 4 Q2 re-asked the question-4 consequence; the question-3
+correction (worst cell, `z_crit` about 1.972 for the current candidate) was
+recorded but not re-asked (FR4-10). Revision 3 also wrote the pick trigger
+differently from the round-3 answer (SR3-1); round 4 re-asked it.
 
 ### Round 4 (after the revision 3 reviews)
 
@@ -81,6 +85,32 @@ trigger differently from the round-3 answer (SR3-1); round 4 re-asked it.
    - **"Whole cycle"** — "At most 1% chance that either family gives no result (cycles ending before the pick also count as 'no result'). Matches your whole-cycle 5% choice."
    - "Per family" — "1% each, so up to ~2% chance per cycle that one family gives no result."
 
+Round-4 corrections found by the reviewers: question 1 gave no scale — for a
+168-hour-horizon strategy the fallback effective-decision minimum alone needs
+about 27.6 months of new data, and every failed family consumes a window
+(FR4-3; shown to the owner before round 5). Question 2's "the guarantee would
+then cover real data" overstates: broadening enlarges the set of simulated
+cases covered; a real cycle is covered only if one of those cases dominates it
+(FR4-11, SR4-7). Question 4's 1% can be certified only for no-results the
+method itself produces, not for real-world crashes or cancelled cycles (FR4-8,
+SR4-2).
+
+### Round 5 (after the revision 4 reviews)
+
+1. "How should we finish D-18?"
+   - **"Fix, quick check, then decide"** — "I write revision 5 with the accepted fixes; both reviewers do a short check of only the changed parts (cheaper than a full round); then you decide D-18. Method, amendment and calibration stay separate later steps."
+   - "Fix, then decide now" — "Revision 5 without another review; you decide D-18 on the current reviews. Recorded openly as weaker than your two-review rule."
+   - "Full rounds until both say sound" — "Keep doing complete two-reviewer rounds. Most thorough; each round costs ~250-400k tokens and finds issues that belong to later steps."
+2. "If a test crashes before anyone has seen any of its results, may it be re-run once?"
+   - **"Allow one re-run"** — "Same strategy, same settings, same seed, only if no output was seen and the budget allows. Adds no risk (same result); without it, one crash among 162 tests can void a whole family."
+   - "Never re-run" — "Any crash makes that family 'no result' for the cycle. Simplest, but with even 1-in-1000 crash odds, ~15% of cycles would fail the 1% target."
+3. "May a cycle research only one family (e.g. trend only), leaving the other undeclared?"
+   - **"Yes, allow it"** — "An undeclared family simply has no pick and doesn't count toward 'no result'. Avoids token strategies added just to start a cycle."
+   - "No, both must declare" — "Every cycle tests both families. Invites filler strategies, which raise the attempt count and lower your odds."
+4. "Under 'only unseen data can promote', counting every attempt ever made no longer adds safety, it only lowers your chance of finding an edge. Revisit your D-16/D-17 count choice?"
+   - **"Revisit during method design"** — "Reconsider the count when the broadened method is designed (the next task), with both reviewers. Nothing changes now."
+   - "Keep lifetime count" — "Keep counting every attempt ever; accept the lower power as a safety margin."
+
 ## 1. Problem (DEC-02)
 
 `HUMAN_DECISION_MATRIX.md:65` marks D-18 BLOCKING with no candidate: the
@@ -98,37 +128,71 @@ Estimand: E-DIFF, the BTC candidate-minus-benchmark paired OOS return series;
 adopt E-DIFF for the PBO alignment in O18-6. (FR2-7, FR2-8, FR3-8)
 
 - **P18-0 Promotion eligibility (unseen data).** A cycle may nominate and
-  promote only if its confirmation data has never been seen by any earlier
-  cycle: no per-trial confirmation metric over any part of that window was
-  returned to research before this cycle's declaration (§7a line 92), and no
-  exposed lockbox data rolled into it (protocol line 96, Constitution §7
-  line 81). A cycle on already-seen data may research but has no pick and
-  cannot promote. Because frozen partitions are fixed (protocol lines 65–67),
-  promotion after the first cycle needs a new, never-seen confirmation window,
-  defined by amendment. (FR3-1)
+  promote only if its confirmation window is **eligible**: (i) the window has
+  never been mounted in the research sandbox (§7a line 88), and no evaluation
+  output of any kind (per-trial or family-level, §7a line 92) on any part of
+  it existed before this cycle's declaration; (ii) it does not overlap any
+  segment exposed to an earlier cycle, including exposed lockbox data rolled
+  forward (protocol line 96, Constitution §7 line 81); and (iii) a window
+  created after v1 (new market data) starts at least
+  `max(label_horizon, embargo)` (protocol line 207) after the last observation
+  any earlier cycle evaluated, so luck selected at the end of seen data cannot
+  carry into it, and is assigned at ingest to a partition never mounted in the
+  sandbox. The v1 confirmation partition, on which no cycle has evaluated
+  (C1 never started), is eligible for the first amended cycle; later cycles
+  need a new window, which may take years to accrue (FR4-3). The window id,
+  its data manifest, its non-overlap with every exposed segment and the
+  declaration timestamp are recorded in the hashed declaration. Residual,
+  disclosed: market prices are public, so "unseen" means unseen by the
+  research process through the engine and its outputs, not unknown to anyone
+  (FR4-1, SR4-3). A cycle with no eligible window may research but has no
+  pick and cannot promote. The frozen text governs how new data enters
+  (Constitution §0 line 20 "Lockbox = future data", §7 lines 81 and 83,
+  protocol lines 65–67, 96); assigning post-v1 data to an eligible
+  confirmation window needs the amendment. (FR3-1, FR4-1, FR4-2, FR4-12,
+  SR4-3)
 - **P18-1 Declared trial set.** Before the first evaluation of the cycle, each
   family `f` (trend, volatility) declares its complete trial set `J_f` (every
-  hypothesis and grid point), frozen by hash. The declaration is valid only if
-  `1 <= |J_f| <= 81`, trial ids are unique and stable, and every trial carries
-  a complete immutable configuration hash and belongs to `f`; this is checked
-  before the cycle starts, and an invalid declaration prevents the cycle from
-  starting. No trial may be added, removed, replaced or rerun later; an
-  evaluation must match its declared hash or it is a technical failure. A
-  declared trial counts from `EVALUATION_STARTED` (Constitution §0 line 13,
-  §9 line 102); a declared trial crashed or never started by the pick makes
-  `A_f` fail. (FR2-1, FR2-9, SR3-3, FR3-7)
-- **P18-2 One shared pick.** There is exactly one nomination look per cycle,
-  for both families together, at the earlier of: every declared trial of both
-  families has finished evaluation, or day 180. No promotion is possible
-  before it. The amendment must define the window after the pick for the
-  nominees' gates, lockbox read and attestation (protocol line 300), the order
-  in which two nominees are processed, and cycle termination once both are
-  processed, resolving the conflict with `cycle_termination` lines 192–195. If
-  the cycle ends before the pick (protocol revision, invalidation), there is
-  no pick and no promotion, and that cycle counts as **no result** against
-  the availability target (P18-7). (SR2-1, FR-1, SR3-1, SR3-2, FR3-6)
-- **P18-3 Availability.** `A_f` = for every trial in `J_f`: finite `S`, valid
+  hypothesis and grid point), frozen by hash, or declares the family **not
+  researched** this cycle (`|J_f| = 0`: no pick, `E_f = ∅`, excluded from the
+  no-result target). At least one family must be declared. A declared family
+  is valid only if `1 <= |J_f| <= 81`, trial ids are unique and stable, and
+  every trial carries a complete immutable configuration hash and belongs to
+  `f`; this is checked before the cycle starts, and an invalid declaration
+  prevents the cycle from starting. No trial may be added, removed or replaced
+  later. **One rerun** of a crashed trial is allowed, only if no output of the
+  crashed attempt was returned or seen, with the same declared hash and the
+  deterministic seed (protocol line 266), and within the family budget; the
+  rerun is a further attempt and counts (§9 line 102, protocol line 292). A
+  declared trial counts from `EVALUATION_STARTED` (Constitution §0 line 13).
+  (FR2-1, FR2-9, SR3-3, FR3-7, FR4-6, FR4-14)
+- **P18-2 One shared pick and post-pick procedure.** There is exactly one
+  nomination look per cycle, for all declared families together, at the
+  earlier of: every declared trial has finished evaluation (completed, or
+  crashed with its one rerun used or unavailable), or day 180. No promotion is
+  possible before it. Proposed procedure after the pick, to be bound in the
+  amendment: (a) the research phase ends at the pick; the cycle ends only when
+  (b)–(d) complete, replacing the day-180 and `candidate_promoted` triggers of
+  `cycle_termination` (lines 192–195); `all_family_trial_budgets_exhausted`
+  is redefined as completion of the declared plan, because counting from
+  `EVALUATION_STARTED` would fire it when the last trial starts (Constitution
+  §5 line 61 forbids simply removing it); (b) every nominee is processed
+  through every gate, lockbox read and attestation (protocol line 300) in a
+  fixed order, trend then volatility, and a promotion of one never stops
+  processing of the other; (c) the post-pick window length is a fixed value
+  set in the amendment; (d) the cycle outcome is recorded once, after all
+  nominees are processed. Cycles with no eligible window, or with no result
+  in every declared family, need outcome labels other than `NO_EDGE_FOUND`
+  (Constitution §5 line 63, protocol line 195, §11 lines 113–116), which
+  changes §5. If the cycle ends before the pick (protocol revision,
+  invalidation), there is no pick and no promotion. (SR2-1, FR-1, SR3-1,
+  SR3-2, FR3-6, FR4-4, FR4-5, SR4-6)
+- **P18-3 Availability.** `A_f` = every trial in `J_f` was started and has
+  exactly one completed evaluation (original or its one rerun) whose
+  configuration hash matches the declaration, and for each: finite `S`, valid
   `T`, finite positive `D`, and (with a finite shared `S0`) finite pre-Φ `z`.
+  A hash mismatch or a trial without a completed evaluation fails `A_f`; no
+  such trial enters `V`. (FR4-7)
   The value `Φ(z)` is never used as an availability test. If `A_f` fails,
   nothing is nominated from `f` (family result `UNAVAILABLE`); one unavailable
   non-nominee blocks the family, which matches DEC-02 and is a deliberate cost
@@ -151,10 +215,17 @@ adopt E-DIFF for the PBO alignment in O18-6. (FR2-7, FR2-8, FR3-8)
   string to the nearest binary64; implementation and reference must agree on
   this pass/fail decision exactly. `z_crit` is fixed before qualification,
   analytically or from development replications only, then certified on
-  held-out replications at that frozen value; if certification fails, there
-  is no re-tuning against the same held-out set. It replaces
-  `dsr.minimum: 0.95` (protocol lines 231, 287) by amendment. Known lower
-  bound: about 1.972 before margins (FR3-4). (SR2-2, FR2-2, FR3-3, FR3-5, SR3-4)
+  held-out replications at that frozen value. Before any held-out replication
+  is generated, the whole qualification object is frozen: method, generator,
+  cell classifier, support boundary, confidence family, acceptance rule and
+  `z_crit`. Any access to held-out results burns that seed namespace: any
+  change to the object afterwards needs fresh held-out replications, and
+  certification failure is never followed by re-tuning against the same set.
+  It replaces `dsr.minimum: 0.95` (protocol lines 231, 287) by amendment. For
+  the **current** method candidate in the large-T Gaussian model, the worst
+  known cell needs `z_crit` of about 1.972 before margins; under the
+  broadened method this figure must be recomputed (FR3-4, FR4-9). (SR2-2,
+  FR2-2, FR3-3, FR3-5, SR3-4, SR4-5)
 - **P18-7 Error and availability targets.** Under the all-zero-mean global
   null, `E_f = A_f ∩ {z_f* >= z_crit}` and `E = E_trend ∪ E_vol`. The
   calibration must show, in **every** preregistered qualifying cell, at a
@@ -163,12 +234,22 @@ adopt E-DIFF for the PBO alignment in O18-6. (FR2-7, FR2-8, FR3-8)
   - a one-sided upper bound of `P_0(E_f) <= 0.025` for each family (so
     `P_0(E) <= 0.05` for any dependence between them); and
   - a one-sided upper bound `<= 0.01` on the **whole-cycle** no-result rate:
-    either family `UNAVAILABLE`, or no pick (P18-2).
+    any declared family `UNAVAILABLE` (P18-3), or any mandatory gate of a
+    nominee `UNAVAILABLE` or technically invalid (including PBO when enabled),
+    or no pick (P18-2).
 
-  A method failing either does not qualify; error control cannot pass on
-  unavailability. No-result replications stay in the denominator as
-  non-events; `P_0(E_f | A_f)` and the reach-pick rate are also reported.
-  (FR2-2, FR2-3, FR2-4, SR2-3, SR2-7, SR3-2, SR3-5)
+  The denominator is eligible, authorised cycle attempts with at least one
+  declared family; ineligible (research-only) cycles and undeclared families
+  are excluded. The calibration certifies only no-results generated by the
+  procedure itself; cancellations by protocol revision, invalidation or real
+  infrastructure failure cannot be simulated, are not certified, and are
+  monitored and reported separately in operation. The whole-cycle bound needs
+  joint (two-family) cells or a per-family allocation summing to at most 1%,
+  chosen in D-19. A method failing either target does not qualify; error
+  control cannot pass on unavailability. No-result replications stay in the
+  denominator as non-events; `P_0(E_f | A_f)`, the reach-pick rate, and
+  availability in power and mixed-null cells are also reported. (FR2-2,
+  FR2-3, FR2-4, SR2-3, SR2-7, SR3-2, SR3-5, FR4-8, FR4-15, SR4-1, SR4-2)
 
 ## 3. Why this bounds false promotion
 
@@ -180,9 +261,12 @@ promotion is false, so
 Within an eligible cycle, `J_f` is fixed before any result on that cycle's
 confirmation data exists (P18-0, P18-1) and the pick happens once, so each
 calibration cell is a fixed design; no stopping rule enters `E`. The bound is
-a statement, at the preregistered confidence, over the qualifying cells; it
-covers a realised cycle only if that cycle's design is dominated by some
-qualifying cell, which cannot be fully checked at declaration. (FR3-1, FR3-10)
+conditional evidence, at the preregistered confidence, over the named
+simulated generator classes; it covers a realised cycle only if that cycle's
+return law is dominated by some qualifying cell, which cannot be checked at
+declaration. It is not a verified 5% error guarantee for real markets; a
+declared design outside every qualifying cell is refused. (FR3-1, FR3-10,
+SR4-7)
 
 The bound comes from requiring the nominee to pass DSR, not from the
 no-fallback rule (FR-4). No fallback and no replacement limit discretionary
@@ -212,10 +296,17 @@ with different plateau and interval results. (FR2-5, SR2-6)
   specification change (D-16/D-17, AS-3, P-7: `K=1`, `V=0`, `K<N`), proposed
   and reviewed separately; calibration cannot be designed until it exists.
   The DEC-02 qualifying/challenge classification must be revised to match.
-  (FR-7, SR2-3, FR3-2)
+  Until the broadened method is specified and reviewed (equation, count and
+  dispersion, small-count branches, assumptions, availability rules, reason
+  precedence, support classifier, method id), `S0`, `A_f` and the cell
+  classifier are not fixed and no D-19 qualification may begin. (FR-7, SR2-3,
+  FR3-2, SR4-4)
 - **O18-3 Lifetime.** `E` is per eligible cycle. P18-0 removes reuse of seen
   confirmation data; no bound over the number of eligible cycles is shown
-  (Astra `../d16-d17-proposal/ASTRA_REVIEW_597DDC8.md:208`).
+  (Astra `../d16-d17-proposal/ASTRA_REVIEW_597DDC8.md:208`). Under P18-0 the
+  lifetime count adds no error control to the per-cycle claim and costs
+  power (`z` falls as `N` rises); the owner chose to revisit the D-16/D-17
+  count during the broadened-method design (round 5 Q4). (FR4-13)
 - **O18-4 Calibration grid (D-19).** The qualifying cells must include
   one-trial and two-trial families, high within-family correlation (e.g. grid
   siblings differing only in `vol_target`; the worst known cell is two
@@ -235,11 +326,15 @@ with different plateau and interval results. (FR2-5, SR2-6)
 - **O18-6 PBO.** PBO ranks by `paired_delta_sharpe` (line 240), consistent with
   top-`S` nomination if D-08 adopts E-DIFF. (FR-5, FR2-7)
 - **O18-7 Amendment scope.** Owner-authored Constitution §4 amendment for C2
-  covering protocol lines 65–67 (a never-seen confirmation window for later
-  cycles), 74, 192–195, 231, 251, 287, 300 and the declared-trial-set,
+  covering protocol lines 65–67 and 96 (never-seen confirmation windows for
+  later cycles, assigned at ingest), 74, 192–195 (post-pick procedure and
+  redefined budget trigger), 231, 251, 287, 292, 300, Constitution §5 lines 61
+  and 63 (new outcome labels), §0 line 20 and §7 lines 81 and 83 if their
+  data-entry rules change, and the declared-trial-set, rerun, family opt-out,
   shared-pick and eligibility rules (which constrain §8 hypothesis
   registration timing), together with D-16, D-17, D-19 and the other blocking
-  rows. Code implementing it is §16 protected (promotion gate).
+  rows. Code implementing it is §16 protected (promotion gate). (FR4-2, FR4-4,
+  FR4-5, SR4-6)
 - **O18-8 Matrix and order.** `HUMAN_DECISION_MATRIX.md:65` still lists `STAT`
   (superseded by R19-2); "D-18 requires D-16" is at
   `HUMAN_DECISION_MATRIX.md:79`. The definition of `E` does not depend on
@@ -248,6 +343,9 @@ with different plateau and interval results. (FR2-5, SR2-6)
 
 ## 5. Next
 
-Re-review of revision 4 by the two model families (R19-2), records committed,
-then the owner's D-18 decision. The broadened method (O18-2) is the next
-design task; calibration design (option C, D-19) follows it.
+Per the owner's round-5 choice: a focused check of the revision 4 → 5 changes
+by both model families (R19-2), records committed, then the owner's D-18
+decision. Deciding D-18 fixes the selection rule and error event only; the
+broadened method (O18-2) is the next design task, then the amendment text and
+calibration design (option C, D-19). Nothing is activated before all of these
+and the owner-signed §4 amendment.
