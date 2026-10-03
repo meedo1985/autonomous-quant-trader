@@ -14,7 +14,7 @@ or read confirmation or lockbox data. Small in-memory Python calculations with
 - Read `FABLE_REVIEW_83FC993.md`, `SOL_REVIEW_83FC993.md` and `ADJUDICATION_83FC993.md`
   in that folder.
 - Open frozen files only at the lines the changed text cites. Do not read the other
-  reviewer's review of revision 4.
+  reviewer's review of revision 5.
 
 ## Questions
 
