@@ -1,7 +1,7 @@
 # Constitution §4 amendment — draft wording for C2 (DSR and selection)
 
 **Status:** `AI WORDING PROPOSAL — NOT AN AMENDMENT — NOT AUTHORED — NOT SIGNED — NOT ACTIVE`
-**Date:** 2026-10-04, revision 7
+**Date:** 2026-10-04, revision 8
 **Drafted by:** Claude Opus 5.5 (`claude-opus-5-5`). Constitution §4 line 50:
 an AI "may propose but not author/merge/activate/self-approve amendments".
 This file only proposes wording; the amendment exists only if the owner
@@ -25,10 +25,11 @@ Annex C; Fable FA5 and Sol SA5 both rated it SOUND WITH FIXES
 (`883eec5`, `404b8e5`). Rev. 6 applies every disposition in
 `ADJUDICATION_AB9AD3F.md` without a further check. Rev. 7 folds in
 REG (A), O-8 (a), O-9 (a) and FR1-7 (`ADJUDICATION_370C50C.md`), not yet
-reviewed.
+reviewed. Rev. 8 folds in O-6a (A) (`../o6a-channel/OWNER_DECISION_O6A.md`),
+not yet reviewed in place.
 **Labels:** `[AI default]` = drafting choice, not an owner decision.
-`[derived]` = follows from decided rules. `<<OWNER x>>` (O-6a) = owner
-decision still needed (§7). `<<OPEN D-19 route>>` = a
+`[derived]` = follows from decided rules. `<<OWNER x>>` = owner decision still
+needed (none remain; §7). `<<OPEN D-19 route>>` = a
 certification route still to be drafted with the D-19 preregistration (§4). `<<D19: x>>` = value only the D-19 calibration can supply.
 `<<DECLARATION: x>>` = value computed at C2's declaration. `<<OPEN D-nn>>` =
 clause governed by an open decision row. **The amendment cannot be signed
@@ -38,13 +39,14 @@ while any `<<…>>` marker remains.**
 
 The amendment consists of Constitution v1.1 changes (§1), specification and
 protocol line changes (§1a), protocol v1.1 for cycle C2 (§2–§4), and three
-annexes that the protocol binds by hash:
+annexes plus the O-6a channel specification, which the protocol binds by hash:
 
 | Annex | Content | SHA-256 (LF, as committed) |
 |---|---|---|
 | `ANNEX_A_SELECTION_RULE.md` | D-18 rev. 7 §2 (P18-0..P18-7) verbatim, plus clause A-B7 (owner decision B-7) | `836adec7a40c8d0b494352e71116752ea577dd3403d59b0c8769a2445d388480` |
 | `ANNEX_B_DSR_METHOD.md` | broadened method rev. 3 §2.1–§2.6 verbatim | `80ad6b785de337568e806d6feda9168f2ec9b07aed2d8e1e5c14c955ff2b25d0` |
 | `ANNEX_C_GATE_DEFINITIONS.md` | operative definitions of gates G-1..G-8, G-10..G-12 and G-14 and the event contract, consolidated from the decided rows (not verbatim; see its fidelity rule) | computed at signing: the annex still carries `<<…>>` markers |
+| `o6a-channel/SPEC.md` (rev 5, `84fca9c`) | the declaration-hash channel: Bitcoin post, archive timestamp `T`, acceptance, deadline (O-6a (A)) | computed at signing, with the `<<SIGNING>>` values filled |
 
 **Precedence** (FA2-1, FA2-12, SA2-1), highest first:
 1. Constitution v1.1.
@@ -145,14 +147,14 @@ seed_disclosure:                               # O-6
   value: "The C2 family seeds are derived from public randomness published after the declaration is committed."
   procedure:                                   # [AI default] mechanics; FA5-1, SA5-3, FA5-4
     declaration_bytes: "the Annex B canonical-JSON C2 declaration; declaration_sha256 is its SHA-256"
-    channel: "<<OWNER O-6a>>: one identity named in this protocol and dedicated to C2 that (1) authenticates its poster, (2) is append-only, with no edit or deletion, (3) carries a third-party timestamp, and (4) is captured by an independent archive at posting time. A declaration cannot choose the channel."
-    message: "exactly 'AQT C2 DECLARATION SHA256 <64 lowercase hex>'"
-    first_post_rule: "every message posted at that identity during C2 counts as a C2 post; the first governs. A second post, or a first post whose hash does not match the declaration presented, invalidates the cycle."
+    channel: "the Bitcoin mainnet address, bound coin and deadline height <<SIGNING: address A, outpoint F, amount, height, D>>, per O-6a SPEC (o6a-channel/SPEC.md rev 5, 84fca9c) §3-§5, bound to this protocol by hash at signing. A declaration cannot choose the channel."   # O-6a (A), OWNER_DECISION_O6A.md
+    message: "one zero-value OP_RETURN output with scriptPubKey exactly 6a25 4151544332 followed by the 32-byte declaration_sha256"
+    first_post_rule: "as in SPEC §3: posts are main-chain spends from A after signing and before C2 ends; the first governs; a post is accepted at 6 confirmations, and the record frozen at acceptance governs (SPEC §5). A first post that is not well-formed or whose hash does not match the declaration presented, or any later post, invalidates the cycle."
     beacon: "one drand League of Entropy mainnet chain, fixed in this protocol by chain hash and public key at signing <<SIGNING: chain hash, public key>>; the declaration cannot choose it"
-    round: "the first round of that chain whose scheduled time is at least 24 hours after the post's third-party timestamp"
+    round: "the first round of that chain whose scheduled time is at least T + 24h, where T is the 14-digit UTC CDX timestamp of the earliest qualifying Internet Archive capture listed at the freeze point (SPEC §5)"
     verification: "the round's randomness is valid only if its signature verifies against the fixed public key; the round number, signature and randomness are recorded for Constitution §27"
     derivation: "family_seed_f = SHA256(annexB_family_seed_f || round || beacon_randomness); byte encoding <<OPEN D-20>>"
-    failure: "no fallback chain or source. If no verifying output for the round exists within 7 days of its scheduled time, the cycle is INVALIDATED before any evaluation."
+    failure: "no fallback chain or source. If no verifying output for the round exists within 7 days of its scheduled time, the cycle is INVALIDATED before any evaluation. The cycle is also INVALIDATED if: no qualifying capture is listed at the freeze point; the frozen acceptance record changes; no post is included by height D; or an earlier qualifying capture giving a different round is shown before the evaluation is final (SPEC §5, §7)."
     invalidation_after_post: "a cycle invalidated after its post increments m (Constitution v1.1 §9, O-1). It does not make the eligible window ineligible (O-9 (a))."   # FA5-3, SA5-3
   disclosure: "kept as in §5"
 ```
@@ -328,8 +330,7 @@ and 300 stay in force. (Restored per FA5-9.)
 | 77–79 | lockbox attestation coarse fields | `<<OPEN D-12>>` |
 | 83–92 | lockbox prediction interval and pass rule (L-1..L-4) | `<<OPEN D-11>>` |
 | §2.0 R-8, seed derivation; §2.4 `added_purposes`; Annex C C-0 (Sharpe, `max_drawdown`), C-1, C-6 (band routine), C-10 (1) (`s_inputs` mapping and enforcement), C-10 (3), C-11, C-12 (5) | code bindings, stream conventions and reference vectors | `<<OPEN D-20>>` |
-| §2.0 seed channel | the public identity | `<<OWNER O-6a>>` |
-| §2.0 beacon | the drand chain hash and public key | `<<SIGNING>>` |
+| §2.0 beacon; §2.0 channel | the drand chain hash and public key; address A, outpoint F, amount, funding height, deadline height D | `<<SIGNING>>` |
 | §2.1, §2.4, G-9 | `T_min`, `family_block_rule`, `z_crit`, `U_proc` allocation | `<<D19>>` |
 | §2.1 start, gap | values fixed at declaration | `<<DECLARATION>>` |
 
@@ -378,15 +379,15 @@ blocked. (Restored per FA5-9.)
 
 1. Fill every `<<…>>` marker (FA3-12).
    - **Done (owner choices):** D-01..D-10, D-14, D-15, N-1..N-4,
-     O-1..O-7, REG (A), O-8 and O-9. The owner's answers added N-1..N-4 as decision rows; the
+     O-1..O-7, REG (A), O-8, O-9 and O-6a (A). The owner's answers added N-1..N-4 as decision rows; the
      `HUMAN_DECISION_MATRIX.md` file itself is not yet edited.
    - **Remaining, in this order:**
-     1. O-6a, after its own specification and review;
-     2. the D-19 preregistration, including the certification route, run
+     1. the D-19 preregistration, including the certification route, run
         and accepted, so that its frozen qualification object covers the
         final gates;
-     3. D-11..D-13 and D-20;
-     4. the `<<SIGNING>>` beacon values.
+     2. D-11..D-13 and D-20;
+     3. the `<<SIGNING>>` values: the beacon, and the channel's address,
+        bound coin and deadline height.
 2. Two different-model reviews of the final wording, with records committed
    (R19-2). These include a fidelity check of Annex C against the owner
    records. If the owner materially edits the reviewed text or an annex, it
@@ -437,21 +438,20 @@ blocked. (Restored per FA5-9.)
 - **O-9 (a):** a cycle invalidated after its declaration post does not
   consume the eligible window.
 
-**Still open:**
-- **O-6a** Which public identity carries the single declaration-hash post?
-  It must meet the four §2.0 channel requirements. The post is a bare hash
-  and reveals nothing about the strategies. If the owner wants no public
-  post, O-6 is re-asked with a trusted third party instead.
-  O-6a is deferred to its own specification and review before it is asked
-  (`../reg-o8-proposal/PROPOSAL.md` §4).
+**Decided 2026-10-04** (`../o6a-channel/OWNER_DECISION_O6A.md`):
+- **O-6a (A):** the declaration hash is posted as one Bitcoin transaction
+  from a dedicated address, per `../o6a-channel/SPEC.md` rev 5 (`84fca9c`),
+  reviewed by Fable (OF1..OF4) and Sol (OS1..OS4, READY at rev 5). The
+  owner takes the steps only when C2 is declared.
+
+**Still open:** no owner item. The remaining work is in §6 step 1.
 
 ## 8. Next
 
 [AI default]
-1. Have this revision's fold-in of REG (A), O-8 (a), O-9 (a) and FR1-7
-   checked for fidelity against the owner record.
-2. Write the O-6a channel specification, have it reviewed, and ask the
-   owner.
-3. Run the D-19 calibration preregistration, which supplies the `<<D19>>`
+1. Run the D-19 calibration preregistration, which supplies the `<<D19>>`
    values and the certification route.
-4. Run the two-model review of the final wording, including Annex C fidelity.
+2. Draft D-11..D-13 and D-20.
+3. Run the two-model review of the final wording. It includes Annex C
+   fidelity and the fold-ins of REG (A), O-8 (a), O-9 (a), FR1-7 and O-6a
+   (A), none of which has been reviewed in place yet.
