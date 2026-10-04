@@ -1,4 +1,4 @@
-# D-19 calibration preregistration for C2 (revision 6 accepted; budget version rev 7d proposed in §13)
+# D-19 calibration preregistration for C2 (revision 6 accepted; budget version rev 7e proposed in §13)
 
 **Status:** `ACCEPTED BY THE OWNER (rev 6, OWNER_DECISION_D19_ACCEPT.md, ec35a29) — NOT YET COMPLETE (keys record pending) — NO CALIBRATION RUN`
 
@@ -19,7 +19,8 @@
 | 7 | `af03d00` | draft §13, computational equivalence | Sol DS7 UNSOUND (`77f9593`); **withdrawn** (`PILOT_FINDINGS_3.md`). The text below is rev 6 again. |
 | 7b | `c09337f` | §13 budget version (owner direction 3, `30757e8`), with method V (D-20 partial, `b58d1c3`); BF1 UNSOUND `7c7cf49` | BS1 UNSOUND `769f966` |
 | 7c | `09b0fb9` | §13 repaired per BF1 and BS1 (`ADJUDICATION_C09337F.md`); run on the owner's server; BF2 SOUND WITH FIXES | BS2 UNSOUND (`aa6caa7`) |
-| 7d | this revision | §13 repaired per BF2 and BS2 (`ADJUDICATION_09B0FB9.md`) | not yet reviewed; §1–§12 remain the accepted rev 6 text until the owner accepts §13 |
+| 7d | `9762781` | §13 repaired per BF2 and BS2 (`ADJUDICATION_09B0FB9.md`); BF3 SOUND WITH FIXES (`ff9eb3a`) | BS3 SOUND WITH FIXES (`564ebea`) |
+| 7e | this revision | §13 repaired per BF3 and BS3 (`ADJUDICATION_9762781.md`) | fixes checked by narrow re-review; §1–§12 remain the accepted rev 6 text until the owner accepts §13 |
 
 The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md`, `ADJUDICATION_59F5F6C.md` and `ADJUDICATION_A841FB3.md`. The owner decision is U-1, recorded in `OWNER_DECISION_UPROC_SCOPE.md` (`8e04dd8`).
 
@@ -458,7 +459,7 @@ seed = SHA256(cj({"anchor": <hex>, "cell_id": <str>, "ns": <str>, "rep": <int>})
 
 Nothing here starts a cycle, reads confirmation or lockbox data, or authorizes trading.
 
-## 13. Budget version (rev 7d, proposed; overrides the sections it names)
+## 13. Budget version (rev 7e, proposed; overrides the sections it names)
 
 **Why.** The owner can spend at most $3–10 a month (owner direction 3, `30757e8`). The laptop must be switched off, so the calibration runs on the owner's small rented server, the one that also runs forward paper (about €6 a month, no extra cost). The full plan is about 12,000 core-hours. This version aims at about 4,500. Method V computes the replicate Sharpes (A-V1, owner decision D-20 partial).
 
@@ -483,7 +484,11 @@ Nothing here starts a cycle, reads confirmation or lockbox data, or authorizes t
      - The coverage rule (§3.2) then decides whether the method still qualifies.
      - The mapping (§3.6) and the classifier thresholds (§3.5) use only the final qualifying cells, so a declared design that matches only demoted cells is refused at declaration.
      - Demotion happens before the freeze, and held-out runs in its own namespace on the final cells only, so it does not bias the certified claim.
-   - **Demotion risk, disclosed.** The probability that a cell is demoted by chance, at true `U_G` rates p = 2·10⁻⁵, 5·10⁻⁵, 10⁻⁴ and 2·10⁻⁴, is 0.002, 0.023, 0.12 and 0.43. Without the escape it would be 0.21, 0.45, 0.70 and 0.91. Some coverage categories have only 2–3 cells (QJ, Q1 unequal clusters, Q2m), so the re-pilot measures `U_G` rates in those cells before the full run.
+   - **Demotion risk, disclosed (BS3-2).**
+     - **Per `U_G` test.** The probability that one `U_G` test demotes its cell by chance (3 or more development events) is 0.002, 0.023, 0.12 and 0.43 at true rates p = 2·10⁻⁵, 5·10⁻⁵, 10⁻⁴ and 2·10⁻⁴. Without the escape it would be 0.21, 0.45, 0.70 and 0.91.
+     - **QJ.** A QJ cell has two family `U_G` tests, so its chance is between one and two times the per-test value; at p = 5·10⁻⁵ that is 0.023–0.046.
+     - **DSR availability.** This is a separate demotion route (more than 9 development events), and is not in these numbers.
+     - **Re-pilot.** Some coverage categories have only 2–3 cells (QJ, Q1 unequal clusters, Q2m). The re-pilot therefore measures `U_G` and DSR-availability rates in those cells before the full run.
    - **Targets.** τ is computed by the frozen script with each test's `N_i` as run, from the actual manifest. Values at `M ≈ 322–340`, checked independently by both reviewers and by the drafter:
 
      | Test | `N` | Critical count | τ |
@@ -521,12 +526,19 @@ Nothing here starts a cycle, reads confirmation or lockbox data, or authorizes t
    - **Pinned runtime (§4 "pinned runtime" overridden).**
      - The calibration runs inside one container image, pinned by digest. The image holds the whole userland: libc and libm, Python, NumPy and OpenBLAS. Nothing inside the image is updated during the run.
      - The host may install security updates. Automatic reboots are switched off for the run.
-     - The image digest and the host's CPU model and CPU dispatch features go into the runtime identity.
-     - A known-answer canary for `pow`, `exp` and `log` is added to the BLAS canary. Both canaries are recorded on the server at the freeze; the laptop's `V_CANARY` is not reused.
+     - **Runtime identity, two parts (BF3-2, BS3-1).**
+       - The **gating identity** consists of the decided A-V1 identity (interpreter, NumPy and OpenBLAS binaries, platform, CPU dispatch features, environment), the image digest, and the results of both canaries and the reference-vector suite. Chunk acceptance and A-V1's "frozen runtime" compare this part, and only this part.
+       - **Host provenance** is the CPU model and microcode. It is recorded in every chunk and disclosed, and never compared.
+     - **Canaries.** A known-answer canary for `pow`, `exp` and `log` is added to the BLAS canary. The laptop's `V_CANARY` is not reused.
      - The runtime can be rebuilt only on a machine with the same CPU dispatch features. **Disclosed to the owner:** C2's real evaluation must run in the same image on such a machine (A-V1). If none is available, the qualification is void and must be redone.
    - **Two hashes, in order (BS2-1).**
-     - **Run-definition hash.** Before the threshold run, the run definition is committed: this preregistration, the engine commit, the generator code, the cell manifest, the seed specification, the image digest and the exploration-data manifest. Its SHA-256 is the run-definition hash. Threshold and development chunks are bound to it.
-     - **Qualification-object hash.** At the freeze, the qualification object adds the final chain head of every threshold and development chain, and their reduced results. Held-out chunks are bound to `qualification_object_sha256`.
+     - **Run-definition hash.** Before the threshold run, the run definition is committed. Its SHA-256 is the run-definition hash. Threshold and development chunks are bound to it. The run definition contains:
+       - this preregistration and the engine commit;
+       - the generator code, the cell manifest and the seed specification;
+       - the image digest and the exploration-data manifest;
+       - the gating identity, with both canaries' expected values and the reference-vector expected outputs, all recorded on the server before the threshold run (BF3-1).
+     - **Qualification-object hash.** At the freeze, the qualification object carries the run definition's runtime values unchanged. That is how they are "recorded at the D-19 freeze" in A-V1's sense. It adds the final chain head of every threshold and development chain, and their reduced results. Held-out chunks are bound to `qualification_object_sha256`.
+     - **Changes.** Any later change to the runtime values voids every chunk bound to the run definition.
    - **Chunks.**
      - Work is cut into fixed chunks of 500 replications, one chain per (namespace, cell).
      - A chunk takes about 45 minutes, and about 90 minutes in QJ.
@@ -534,7 +546,7 @@ Nothing here starts a cycle, reads confirmation or lockbox data, or authorizes t
    - **Chunk file.** Each finished chunk is one file, written to a temporary name and then renamed. It records:
      - the binding hash (run-definition or qualification-object);
      - the namespace, the cell id and the replication range;
-     - the runtime identity;
+     - the gating identity and the host provenance;
      - the hash of its own content;
      - the hash of the previous chunk in its chain.
 
@@ -542,21 +554,23 @@ Nothing here starts a cycle, reads confirmation or lockbox data, or authorizes t
    - **Integrity.**
      - A missing, duplicated, out-of-range or broken-chain chunk stops that chain.
      - On restart, an incomplete or corrupt chunk is deleted unread and recomputed from its seeds.
-     - A chunk is accepted only if its recorded runtime identity equals the frozen one.
-   - **Start and resume.** On every start and resume, `v_runtime_check`, both canaries and the full frozen reference-vector suite (A-V1) must pass before any chunk runs. A mismatch stops the run.
-     - **After a host change.** If the CPU model changes but the dispatch features and every check still pass, the chunks count, and the change is recorded and disclosed. If the dispatch features change, the run stops. It resumes only on a matching machine, and the chunks already finished still count.
+     - A chunk is accepted only if its recorded gating identity equals the one in the run definition.
+   - **Start and resume.** On every start and resume, `v_runtime_check`, both canaries and the full reference-vector suite must pass against the values in the run definition before any chunk runs. A mismatch stops the run.
+     - **After a host change.** A change of host provenance only (CPU model or microcode) is recorded and disclosed. The chunks count if the gating identity still matches.
+     - If any part of the gating identity changes, the run stops. It resumes only on a machine whose gating identity matches. The chunks already accepted still count.
    - **Held-out visibility (P18-6).** "Access" means any display, export or aggregation of held-out event content before the final reduction. The following are not access: showing progress counts (chunks done per cell); hash-chain verification, which reads bytes but reports only pass or fail; a resume; and deleting and recomputing a corrupt chunk unread.
    - **Before the full run,** a test shows that an interrupted and resumed cell gives byte-identical results to a clean run. The re-pilot, on the server with forward paper running, measures:
      - the speed per replication;
      - the memory with 2 workers;
      - the threshold-run cost;
      - the `U_G` rates in the thin categories (item 3).
-   - **Estimate (not yet measured on the server).**
-     - About 104 cells × 32,000 replications × about 4.5 s is about 4,200 laptop-core-hours.
-     - QJ's double cost, the threshold run, the reported-only runs and any 40k escapes add about 300.
-     - A shared server core is assumed about 1.2× slower.
-     - That is about **5,400 server-core-hours, about 3½–4 months on 2 vCPU**, if forward paper leaves both vCPUs nearly free.
-     - A 4-vCPU server would halve that. Its price is checked before it is offered to the owner.
+   - **Estimate (not yet measured on the server; BF3-3, BS3-3).** In laptop-core-hours:
+     - **Base.** About 104 cells × 32,000 replications × about 4.5 s, about 4,200.
+     - **Fixed extras,** about 300 in total: QJ's double cost (about 80), the reported-only runs (about 100), and the threshold run, which is to be measured (about 100 assumed).
+     - **Escapes.** About 25 for each ordinary escaped cell and 50 for each QJ cell. The expected number of escaped cells, out of 104, is about 22 at a `U_G` rate of p = 2·10⁻⁵, about 45 at 5·10⁻⁵ and about 60 at 10⁻⁴. That adds about 550, 1,100 or 1,500.
+     - **Conversion.** A shared server core is assumed about 1.2× slower, and the run uses 2 vCPU that forward paper leaves nearly free. The total is therefore about **5,400–7,200 server-core-hours, about 3½–5 months**.
+     - **Before the full run.** The re-pilot's measured rates replace these assumptions before the full-run go-ahead.
+     - A 4-vCPU server would halve the time. Its price is checked before it is offered to the owner.
 7. **The cell count** is about 104, taken from the frozen manifest. Of these, Q5 and QJ use exploration-partition data only.
 8. **Proposed §11 wording.** The last sentence of the §11 text becomes: "The declared |J_f| must be one of 1, 2, 5 or 20, and the qualification covers C2 only."
 
