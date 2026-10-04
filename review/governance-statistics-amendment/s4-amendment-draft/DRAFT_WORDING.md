@@ -43,7 +43,7 @@ annexes plus the O-6a channel specification, which the protocol binds by hash:
 
 | Annex | Content | SHA-256 (LF, as committed) |
 |---|---|---|
-| `ANNEX_A_SELECTION_RULE.md` | D-18 rev. 7 §2 (P18-0..P18-7) verbatim, plus clause A-B7 (owner decision B-7) | `836adec7a40c8d0b494352e71116752ea577dd3403d59b0c8769a2445d388480` |
+| `ANNEX_A_SELECTION_RULE.md` | D-18 rev. 7 §2 (P18-0..P18-7) verbatim, plus clauses A-B7, A-U1 and A-V1 (owner decisions B-7, U-1, D-20 partial) | `3b3f2d260aa7a25cc981b90000cf7e269732e89cbb837f1ffb6486be4621980f` |
 | `ANNEX_B_DSR_METHOD.md` | broadened method rev. 3 §2.1–§2.6 verbatim | `80ad6b785de337568e806d6feda9168f2ec9b07aed2d8e1e5c14c955ff2b25d0` |
 | `ANNEX_C_GATE_DEFINITIONS.md` | operative definitions of gates G-1..G-8, G-10..G-12 and G-14 and the event contract, consolidated from the decided rows (not verbatim; see its fidelity rule) | computed at signing: the annex still carries `<<…>>` markers |
 | `o6a-channel/SPEC.md` (rev 5, `84fca9c`) | the declaration-hash channel: Bitcoin post, archive timestamp `T`, acceptance, deadline (O-6a (A)) | computed at signing, with the `<<SIGNING>>` values filled |
@@ -140,9 +140,10 @@ annex_reading:
   R-5: "P18-1's 'to be confirmed in the amendment' on budget scope is resolved as per cycle (trial_accounting below)."   # derived
   R-6: "P18-2(a) 'the cycle ends only when (b)-(d) complete' is subject to the calendar limit cycle_termination.calendar_days_elapsed and to calendar_cap_rule below."   # FA2-1, SA2-1, SA2-3
   R-7: "Annex B §2.4's family seed is extended, not replaced: family_seed_f = SHA256(annexB_family_seed_f || round || beacon_randomness), per seed_disclosure. The seed is fixed after the declaration post and before the first evaluation and any stream use. The sentence 'Seeds are fixed before any data exists ... cannot be gamed' is informative and does not hold for C2."   # SA2-2, FA2-7, FA5-5
-  R-8: "The references in Annexes B and C to existing code (bootstrap_indices, the replicate-seed construction, the Politis-White routine, the paired-CI routine, max_drawdown, the Task 12 Sharpe and ESS code) bind to that code at a hash fixed under <<OPEN D-20>>."   # FA1-2 residue, FA5-10
+  R-8: "The references in Annexes B and C to existing code (bootstrap_indices, the replicate-seed construction, the Politis-White routine, the paired-CI routine, max_drawdown, the Task 12 Sharpe and ESS code) bind to that code at a hash fixed under <<OPEN D-20>>, except that the DSR replicate Sharpes S*_{b,j} and S°_{b,j} of Annex B §2.3 are computed by method V at the code hash and on the runtime identity recorded in d20-proposal/OWNER_DECISION_D20_V.md and the D-19 qualification object (Annex A A-V1)."   # FA1-2 residue, FA5-10
   R-9: "In P18-0 (iii), the embargo used for the gap is gap_embargo.value_days, computed by gap_embargo.rule; 'data outside the window' is replaced by 'data mounted in the sandbox or evaluated before declaration'. No confirmation or lockbox data not already so mounted or evaluated may be used."   # SA3-2
   R-10: "Annex C defines gates G-1..G-8, G-10..G-12 and G-14, and the event contract; G-9 is defined by Annex A P18-6 and G-13 in promotion.gates. Annex A P18-7's availability and cause-code rules apply to Annex C's UNAVAILABLE results."   # derived, SA5-7
+  R-11: "Annex B §2.3's sentence 'Means and variances are computed with math.fsum and the two-pass algorithm, in replicate index order' governs S0 and var_b, the statistics across replicates; the replicate Sharpes S*_{b,j} and S°_{b,j} are computed by method V (R-8, A-V1)."   # owner decision D-20 (partial), clarification of decided text
 seed_disclosure:                               # O-6
   value: "The C2 family seeds are derived from public randomness published after the declaration is committed."
   procedure:                                   # [AI default] mechanics; FA5-1, SA5-3, FA5-4
@@ -179,7 +180,7 @@ partitions:                                    # keys unchanged
     start: <<DECLARATION: exact UTC timestamp = 2022-01-01T00:00:00Z + gap_embargo.value_days>>
     end: "2025-05-31T23:59:59Z"
 selection_rule:
-  value: {annex: "ANNEX_A_SELECTION_RULE.md", sha256: "836adec7a40c8d0b494352e71116752ea577dd3403d59b0c8769a2445d388480"}
+  value: {annex: "ANNEX_A_SELECTION_RULE.md", sha256: "3b3f2d260aa7a25cc981b90000cf7e269732e89cbb837f1ffb6486be4621980f"}
   justification: "D-18 rev. 7 and B-7; read with annex_reading."
   c2_window: "v1 confirmation partition, eligible only if the job log shows it was never mounted in the sandbox and never evaluated (P18-0)"
   t_min_days: <<D19: T_min>>                   # A-B7: eligibility, checked before computation
@@ -257,7 +258,7 @@ error_budget:
   eligible_cycle_index_m: 1                    # if C2 is eligible; Constitution v1.1 §9
   alpha_whole_cycle: 0.05
   alpha_per_family: 0.025
-  procedure_no_result: "U_proc <= 0.01, Annex A P18-7, over promotion.gates; allocation <<D19: joint cells or per-family split>>"
+  procedure_no_result: "U_proc^R <= 0.01 per cycle (Annex A P18-7 as amended by A-U1); per-family split 0.005 each, plus joint two-family cells (D-19 preregistration rev 6 §6-§7)"
 promotion:
   dsr_minimum: "Annex A P18-6"                 # was 0.95
 ```
@@ -341,8 +342,10 @@ and 300 stay in force. (Restored per FA5-9.)
 - this amendment explicitly authorises a certification route for named
   gates, for example a deterministic availability argument such as G-12's.
 
-The second route needs clause wording here, drafted with the D-19
-preregistration. `<<OPEN D-19 route>>`
+The route is decided: owner decision U-1 (Annex A A-U1) and the accepted
+D-19 preregistration (rev 6, `e1e4e7e`, §11 wording) certify `U_proc^R` by
+simulation and written deterministic arguments, and govern the remaining gates
+by a fail-closed pre-declaration screen.
 
 **There is no "keep blocked" option for the gates** (FA2-3). Under P18-5 and
 P18-7, a mandatory gate that cannot be computed makes every nominee
