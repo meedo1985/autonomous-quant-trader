@@ -1,4 +1,4 @@
-# D-19 calibration preregistration for C2 (revision 6 accepted; budget version rev 7g proposed in §13)
+# D-19 calibration preregistration for C2 (revision 6 accepted, with the §13 budget version rev 7g accepted)
 
 **Status:** `ACCEPTED BY THE OWNER (rev 6, OWNER_DECISION_D19_ACCEPT.md, ec35a29) — NOT YET COMPLETE (keys record pending) — NO CALIBRATION RUN`
 
@@ -22,7 +22,7 @@
 | 7d | `9762781` | §13 repaired per BF2 and BS2 (`ADJUDICATION_09B0FB9.md`); BF3 SOUND WITH FIXES (`ff9eb3a`) | BS3 SOUND WITH FIXES (`564ebea`) |
 | 7e | `9d811e6` | §13 repaired per BF3 and BS3 (`ADJUDICATION_9762781.md`); BF4 READY WITH FIXES (`23ce5f4`) | BS4 READY WITH FIXES (`026a23a`) |
 | 7f | `02c14e5` | §13 repaired per BF4 and BS4 (`ADJUDICATION_9D811E6.md`); BF5 READY WITH FIXES (`d69fe25`) | BS5 READY WITH FIXES (`d46c870`) |
-| 7g | this revision | §13 wording fixes per BF5 and BS5 (`ADJUDICATION_02C14E5.md`) | no further review planned: both fix-checks were READY WITH FIXES, minor only; §1–§12 remain the accepted rev 6 text until the owner accepts §13 |
+| 7g | this revision | §13 wording fixes per BF5 and BS5 (`ADJUDICATION_02C14E5.md`) | no further review: both fix-checks were READY WITH FIXES, minor only; **accepted by the owner with O18-4-T** (`OWNER_DECISION_S13_ACCEPT.md`) |
 
 The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md`, `ADJUDICATION_59F5F6C.md` and `ADJUDICATION_A841FB3.md`. The owner decision is U-1, recorded in `OWNER_DECISION_UPROC_SCOPE.md` (`8e04dd8`).
 
