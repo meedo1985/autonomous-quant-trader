@@ -1,4 +1,4 @@
-# D-19 calibration preregistration for C2 (revision 6)
+# D-19 calibration preregistration for C2 (revision 7)
 
 **Status:** `AI PROPOSAL — NOT AN OWNER DECISION — NOT FROZEN — NOTHING BUILT OR RUN`
 
@@ -15,7 +15,8 @@
 | 3 | `59f5f6c` | DF3 `2c2b11b` | DS3 `807ee4a` |
 | 4 | `a841fb3` | DF4 `c26e59e` | DS4 `c518e94` |
 | 5 | `327aa3d` | DF5 `df65001` | DS5 (see `SOL_REVIEW_327AA3D.md`) |
-| 6 | this revision | DF5/DS5 wording fixes applied (`ADJUDICATION_327AA3D.md`) | narrow re-check pending |
+| 6 | `e1e4e7e` | DF5 wording fixes applied (`ADJUDICATION_327AA3D.md`) | DS6 READY `0ac488d`; **accepted by the owner** (`ec35a29`) |
+| 7 | this revision | adds §13, computational equivalence (pilot findings 1–2; owner direction `OWNER_DIRECTION_PILOT.md`) | not yet reviewed; rev 6 stands until rev 7 is accepted |
 
 The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md`, `ADJUDICATION_59F5F6C.md` and `ADJUDICATION_A841FB3.md`. The owner decision is U-1, recorded in `OWNER_DECISION_UPROC_SCOPE.md` (`8e04dd8`).
 
@@ -63,7 +64,7 @@ The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md`, `ADJ
 1. **Market and legs.** Generate one market and its legs (§3.1). Every column of `X` has population mean exactly 0. In QJ, both families share this one market.
 2. **Annex B rules 1–4.** Apply Annex B §2.5 rules 1–4.
 3. **Window classifier.** Apply it (§3.5). A refusal is a `U_proc^R` event.
-4. **The rest of Annex B.** Apply rules 5–6, then compute `S0`, `D_j`, `z_j`, the nominee (P18-4) and `E_f`, with `B = 2000`. Store `z_f*`.
+4. **The rest of Annex B.** Apply rules 5–6, then compute `S0`, `D_j`, `z_j`, the nominee (P18-4) and `E_f`, with `B = 2000`. Store `z_f*`. The quantities may be computed by the equivalent fast implementation of §13.
 5. **`U_G` gates.** Evaluate G-1, G-2, G-4 and G-12 (for each `H` ∈ {24, 72, 168}) on the nominee. Evaluate G-10 over the whole family matrix. This happens whatever the outcomes above (P18-7).
 6. **Record.** Record the events, cause codes, `L`, `L/T` and the diagnostics.
 
@@ -453,3 +454,35 @@ seed = SHA256(cj({"anchor": <hex>, "cell_id": <str>, "ns": <str>, "rep": <int>})
 4. **Accept or reject the certification result.** A failure leaves promotion blocked.
 
 Nothing here starts a cycle, reads confirmation or lockbox data, or authorizes trading.
+
+## 13. Computational equivalence (rev 7)
+
+**Why.** The measured pilot (`PILOT_FINDINGS_1.md` `efdee6c`, `PILOT_FINDINGS_2.md` `3bd0f10`) shows the cost of the exact Annex B numerics, which use `math.fsum` with two passes per replicate and column:
+- at `K = 80` and `T = 1247`, the Sharpe part alone takes about 114 s per replication;
+- the full grid would need tens of thousands of core-hours.
+
+**What may differ, and what may not.** The calibration may compute the same quantities with a faster implementation `F`, on these conditions:
+
+1. **Scope.** `F` may differ from the exact reference `R` only in floating-point evaluation order and vectorisation. The affected computations are:
+   - the counts-times-matrix sums of the replicate Sharpes, on mean-centred columns;
+   - a vectorised stationary-bootstrap index generator, which must reproduce the production Mersenne-Twister draws **exactly**;
+   - a vectorised Politis–White block length;
+   - a vectorised G-1 replicate loop.
+
+   The **algorithm and every decision rule are unchanged**: Annex B §2.5 order, the nominee rule, `z ≥ z_crit`, and the `U_G` reasons.
+2. **Exact recomputation near the threshold.** A replication is recomputed with `R` if the `z_f*` it obtained from `F` lies within `10⁻⁹·max(1, |z|)` of a decision value. The decision values are `z_crit`, and the provisional `z = 1.96` in §5 step 1. The `R` result is the one used.
+3. **Exact audit.** In every cell and every phase (development and held-out), the replications with `int(SHA256(cj({"anchor": <hex>, "audit": true, "cell_id": <str>, "rep": <int>})), 16) mod 100 = 0` are recomputed with `R`. That is 1%, chosen deterministically, so nobody picks which replications are audited. Each audited replication is compared on every event:
+   - the `A_f` reason;
+   - the nominee;
+   - `E_f`;
+   - the `U_G` reason;
+   - the classifier decision;
+   - the index sequences.
+4. **Any disagreement**, and the action it triggers:
+   - **in development:** the engine is fixed, re-reviewed under §16, and development is re-run in a new development namespace;
+   - **in a held-out attempt:** that attempt **fails**. Its namespace is burned, P18-6 applies, and a further attempt needs a recorded change (§4).
+5. **Reporting.** Every audit count, every near-threshold recomputation and every disagreement is reported.
+6. **Production is unchanged.** The real evaluation of a cycle uses `R` only (P18-6, exact agreement).
+
+**Cost.** The exact audit adds about 1% of replications at `R` cost, a few hundred core-hours at most (estimated). The pilot re-measures it.
+
