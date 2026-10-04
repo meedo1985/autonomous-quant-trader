@@ -3,7 +3,8 @@
 
 The Task 24 loop runs on the live bar store (Task 26) and the wall clock,
 with fills simulated and the account's state in its journal (Task 27).
-Nothing here trades real money or reads a credential.
+Nothing here trades real money or reads an exchange credential (the
+optional Telegram alert channel reads only its own token, D-8).
 
 One step processes every decision hour whose fill bar has closed: an hour
 `h` fills at the open of bar `h`, which the store holds only once that bar
@@ -13,6 +14,15 @@ replay of that window. An hour that comes due more than one hour before the
 step, because the process was down, is reported as a `LOOP_LAG` breach
 naming the missed hours, never skipped in silence; it is then run exactly
 as a replay would run it.
+
+A step that saved state and then crashed cannot be run again: the loop
+refuses a start not after its last save, and resumes after it (Task 27). So
+each completed step appends a cursor (`forward_cursor.jsonl`), and a journal
+saved beyond the cursor means a step was interrupted: its hours are reported
+as a CRITICAL `LOOP_LAG` breach before the step goes on (S29-1).
+
+Every journal read happens after the alert router exists: a damaged or
+unreadable journal is a logged CRITICAL `REFUSE_START` (S29-2).
 
 The simulated venue is rebuilt from the journal for every step: the
 reconciled balances plus every order since, which the venue holds again.
@@ -33,10 +43,11 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import Final
 
 from aqt.app.paper_loop import Observation, PaperConfig, RunReport, run_paper
-from aqt.app.state import AccountDir, AccountState, StateJournal
-from aqt.core.ledger import read_entries
+from aqt.app.state import AccountDir, AccountState, StateError, StateJournal
+from aqt.core.ledger import LedgerError, append_entry, read_entries
 from aqt.data.bars import BarSeries
 from aqt.execution.reconcile import LocalRecord, expected_balances
 from aqt.execution.simulator import SimulatedExchange, SymbolFilters
@@ -51,6 +62,7 @@ __all__ = [
     "ForwardError",
     "daily_equity_returns",
     "effective_decisions",
+    "completed_through",
     "l02_count",
     "missed_hours_event",
     "observation",
@@ -62,6 +74,8 @@ __all__ = [
 
 HOUR = timedelta(hours=1)
 DAY = timedelta(days=1)
+CURSOR = "forward_cursor.jsonl"
+CURSOR_RECORD: Final[str] = "aqt.app.forward_cursor.v1"
 DECISION_HORIZON_HOURS = 24
 """The baseline decides at 00:00 UTC: one decision per day (N-1 reading)."""
 
@@ -176,14 +190,17 @@ def daily_equity_returns(
 ) -> list[float]:
     """Simple returns of equity between consecutive 00:00 UTC valuations.
 
-    At each midnight after the first snapshot, the balances are those of the
+    At each midnight at or after the first snapshot, the balances are those of the
     last snapshot saved at or before it, valued at the close of the bar that
     closes then (`closes` is keyed by close time). Valuation stops at the
     first midnight with no close: a gap is never bridged."""
     if not saved:
         return []
     ordered = sorted(saved, key=lambda pair: pair[0])
-    midnight = _floor_hour(ordered[0][0]).replace(hour=0) + DAY
+    first = ordered[0][0]
+    midnight = _floor_hour(first).replace(hour=0)
+    if midnight < first:
+        midnight += DAY  # the first midnight at or after the first snapshot
     values: list[Decimal] = []
     i = 0
     while midnight in closes:
@@ -241,15 +258,13 @@ def run_step(
     when no hour is ready. `config.start` is the account's first decision
     hour; its `end` is not used. Each step gets its own run id, so order ids
     never repeat across steps."""
-    window = pending_window(account.journal, series, config.start)
-    if window is None:
-        return None
-    start, end = window
     router = AlertRouter(list(sinks))
-    late = missed_hours_event(start, end, now)
-    if late is not None:
-        router.emit(late)
     try:
+        window = pending_window(account.journal, series, config.start)
+        if window is None:
+            return None
+        start, end = window
+        cursor = completed_through(account)
         venue = resumed_venue(
             account.journal,
             config.symbol,
@@ -257,11 +272,29 @@ def run_step(
             config.filters,
             config.starting_balances,
         )
-    except ForwardError as error:
-        refusal = {"decision": "REFUSE_START", "reason": str(error)}
+    except (ForwardError, LedgerError, StateError, OSError, ValueError) as error:
+        refusal = {"decision": "REFUSE_START", "reason": f"forward: {error}"}
         router.emit(Event(EventKind.STARTUP, Severity.CRITICAL, now, refusal))
-        raise
-    return run_paper(
+        raise ForwardError(str(error)) from error
+    resumed_from = config.start if cursor is None else cursor
+    if account.journal.path.exists() and resumed_from < start:
+        router.emit(
+            Event(
+                EventKind.LOOP_LAG,
+                Severity.CRITICAL,
+                now,
+                {
+                    "interrupted_from": resumed_from.isoformat(),
+                    "resumed_at": start.isoformat(),
+                    "note": "a step saved state and stopped before completing; "
+                    "decisions not made in these hours are lost",
+                },
+            )
+        )
+    late = missed_hours_event(start, end, now)
+    if late is not None:
+        router.emit(late)
+    report = run_paper(
         replace(
             config, run_id=f"{config.run_id}-{start:%Y%m%dT%H%MZ}", start=start, end=end
         ),
@@ -278,6 +311,28 @@ def run_step(
         channel=channel,
         deployment=deployment,
     )
+    if not report.refused:
+        after = pending_window(account.journal, series, config.start)
+        done = end if after is None else max(end, after[0])
+        append_entry(
+            account.root / CURSOR,
+            record_type=CURSOR_RECORD,
+            payload={"completed_through": done.isoformat()},
+            recorded_at_utc=now,
+        )
+    return report
+
+
+def completed_through(account: AccountDir) -> datetime | None:
+    """The hour forward paper completed up to, from the cursor (`None`
+    before the first completed step)."""
+    entries = read_entries(account.root / CURSOR)
+    if not entries:
+        return None
+    last = entries[-1]
+    if last.record_type != CURSOR_RECORD:
+        raise ValueError(f"unexpected cursor record {last.record_type!r}")
+    return datetime.fromisoformat(str(last.payload["completed_through"]))
 
 
 def l02_count(journal: StateJournal, series: BarSeries) -> EffectiveDecisions:

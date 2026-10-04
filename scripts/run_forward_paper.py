@@ -10,8 +10,9 @@ the paper loop (baseline only, simulator only) over every decision hour whose
 fill bar has closed, resuming the account from its journal
 (`aqt.app.forward`). Without `--once` it steps a minute after every hour until
 stopped. The configuration's `start` is the account's first decision hour; its
-`end` is not used. Reads no credential and refuses to run while any Binance
-key variable is set; no real money is involved (owner answer Q-C, 2026-10-04).
+`end` is not used. Reads no exchange credential and refuses to run while any
+Binance key variable is set; with `--telegram` it reads only the owner's
+Telegram token (D-8). No real money is involved (owner answer Q-C, 2026-10-04).
 
 Each step that runs appends one line to `<account>/forward_reports.jsonl`: the
 loop's report and the `L-02` effective-decision count with its method.
@@ -152,7 +153,11 @@ def main(argv: list[str] | None = None) -> int:
         try:
             telegram, channel = owner_channel(DEFAULT_LEDGER, list(sinks))
         except ChannelError as error:
-            print(f"Refused: {error}", file=sys.stderr)
+            refusal = {"decision": "REFUSE_START", "reason": f"telegram: {error}"}
+            event = Event(
+                EventKind.STARTUP, Severity.CRITICAL, datetime.now(UTC), refusal
+            )
+            AlertRouter(sinks).emit(event)
             return 2
         sinks.append(telegram)
     while True:

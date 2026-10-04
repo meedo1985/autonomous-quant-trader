@@ -89,6 +89,47 @@ def test_hourly_forward_steps_end_where_one_replay_ends(tmp_path: Path) -> None:
     forward, replay = account.journal.load(), replayed.journal.load()
     assert forward is not None and replay is not None
     assert (forward.peak, forward.mode) == (replay.peak, replay.mode)
+    assert _lags(account) == []  # on time and never interrupted: no breach
+
+
+def _lags(account: AccountDir) -> list[dict[str, object]]:
+    return [
+        e.payload["fields"]
+        for e in read_entries(account.operations_path)
+        if e.payload.get("kind") == "LOOP_LAG"
+    ]
+
+
+def test_a_step_interrupted_after_a_save_is_reported(tmp_path: Path) -> None:
+    """S29-1: a crash after the start-of-run save at START + 2h, before the
+    step completed: the next step reports the hours from the cursor (none
+    yet: the first hour) up to where the loop resumes."""
+    account = AccountDir(tmp_path / "a")
+    balances = {"USDT": Decimal("10000"), "BTC": Decimal("0")}
+    _seed(account, START + 2 * HOUR, Mode.RUNNING, balances, "10000")
+    report = _step(account, _series(24 * 14), START + 5 * HOUR)
+    assert report is not None and report.refused == ()
+    interrupted = [lag for lag in _lags(account) if "interrupted_from" in lag]
+    assert [(i["interrupted_from"], i["resumed_at"]) for i in interrupted] == [
+        (START.isoformat(), (START + 3 * HOUR).isoformat())
+    ]
+    again = _step(account, _series(24 * 14), START + 6 * HOUR)
+    assert again is not None
+    assert len([lag for lag in _lags(account) if "interrupted_from" in lag]) == 1
+
+
+def test_a_damaged_journal_is_a_logged_refusal(tmp_path: Path) -> None:
+    """S29-2."""
+    account = AccountDir(tmp_path / "a")
+    account.journal.path.write_text("not a ledger", encoding="utf-8")
+    with pytest.raises(ForwardError):
+        _step(account, _series(24 * 14), START + 2 * HOUR)
+    starts = [
+        e.payload["fields"]
+        for e in read_entries(account.operations_path)
+        if e.payload.get("kind") == "STARTUP"
+    ]
+    assert starts[-1]["decision"] == "REFUSE_START"
 
 
 def test_missed_hours_are_a_breach_then_run_as_a_replay(tmp_path: Path) -> None:
@@ -99,11 +140,7 @@ def test_missed_hours_are_a_breach_then_run_as_a_replay(tmp_path: Path) -> None:
     report = _step(account, series, START + HOURS * HOUR)  # down for 26 hours
     assert report is not None and report.refused == ()
     assert report.final_balances == whole.final_balances
-    lags = [
-        e.payload["fields"]
-        for e in read_entries(account.operations_path)
-        if e.payload.get("kind") == "LOOP_LAG"
-    ]
+    lags = _lags(account)
     assert lags[0]["missed_hours"] == 2  # the first step also started late
     assert lags[1:] == [
         {
@@ -146,5 +183,8 @@ def test_l02_counts_a_hand_computed_example() -> None:
     assert returns == pytest.approx([0.10, -0.10])
     count = effective_decisions(returns)
     assert (count.raw_decisions, count.value, count.method) == (2, 2.0, "NEWEY_WEST")
+    # S29-4: a first snapshot exactly at midnight values that midnight too.
+    aligned = [(midnight, saved[0][1])]
+    assert daily_equity_returns(aligned, closes, "BTC") == [0.0, 0.0]
     flat = effective_decisions([0.0, 0.0, 0.0])
     assert (flat.value, flat.method) == (3.0, "HORIZON_FALLBACK")
