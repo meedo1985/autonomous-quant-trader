@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 import aqt.app.paper_loop as loop
+from aqt.app.forward import unfinished_hours
 from aqt.app.paper_loop import OwnerOverride, RunReport, nonce_for
 from aqt.app.state import AccountDir, AccountState, StateJournal
 from aqt.backtest.costs import Side as TradeSide
@@ -882,3 +883,73 @@ def test_a_fall_in_a_health_breach_hour_fires_but_trades_nothing(
     )
     assert report.final_mode == "FLATTEN" and report.orders_sent == 0
     assert report.health_breach_hours == 1 and _losses(account) == 1
+
+
+def _delayed_by_two_hours(failing: bool) -> object:
+    real = loop.reconcile
+
+    def delayed(*args: object, **kwargs: object) -> object:
+        report = real(*args, **kwargs)  # type: ignore[arg-type]
+        if failing:
+            report = replace(report, passed=False, differences=("forced mismatch",))
+        return replace(report, at=report.at + 2 * HOUR)
+
+    return delayed
+
+
+@pytest.mark.parametrize("failing", [False, True])
+def test_a_kill_after_an_override_save_names_only_the_skipped_hours(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: bool
+) -> None:
+    """S29R3-1: the override's reconciliation at hour 1 ends at 03:00,
+    passed or failed, and its save ends hour 1. Killed right after it, hours
+    2 and 3 were not run; hour 1 was finished, so it is not named."""
+    series = _series(24 * 14)
+    account, venue = AccountDir(tmp_path / "a"), _venue(series)
+    _account(account, venue, series, START, START + HOUR, {START: Trigger.OWNER_HALT})
+    at = START + HOUR
+    original = StateJournal.save
+
+    def save(self: StateJournal, state: AccountState, when: datetime) -> None:
+        original(self, state, when)
+        if when >= at + 2 * HOUR:
+            raise _Killed
+
+    with monkeypatch.context() as patch, pytest.raises(_Killed):
+        patch.setattr(loop, "reconcile", _delayed_by_two_hours(failing))
+        patch.setattr(StateJournal, "save", save)
+        _run(
+            account.root,
+            _config(1, start=at, end=at + 6 * HOUR),
+            series,
+            incidents=account.incident_log(),
+            journal=account.journal,
+            venue=venue,
+            overrides={at: _override(account.incident_log().open_incidents(), at)},
+        )
+    state = account.journal.load()
+    assert state is not None
+    assert state.mode is (Mode.FREEZE if failing else Mode.RUNNING)
+    assert unfinished_hours(account.journal) == (at + HOUR, at + 3 * HOUR)
+
+
+def test_a_freeze_exit_save_ends_its_hour(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S29R3-1: the save of a passed FREEZE_EXIT is the end of its hour, and
+    the HALT override refused for that hour is logged before it."""
+    saves: list[AccountState] = []
+    original = StateJournal.save
+
+    def save(self: StateJournal, state: AccountState, when: datetime) -> None:
+        saves.append(state)
+        original(self, state, when)
+
+    monkeypatch.setattr(StateJournal, "save", save)
+    account = AccountDir(tmp_path / "a")
+    commands = _exits(6)
+    _frozen_run(account, _series(24 * 14), commands)
+    exit_save = next(s for s in saves if s.mode is Mode.HALT)
+    hour = exit_save.entered_at.replace(minute=0, second=0, microsecond=0)
+    assert hour in commands
+    assert exit_save.unfinished_from == hour + HOUR

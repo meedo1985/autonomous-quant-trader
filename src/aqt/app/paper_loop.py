@@ -784,8 +784,11 @@ def run_paper(
     """The first decision hour not yet finished, saved with the state so a
     restart knows which hours a crash cut short (S29R2-1)."""
 
-    def save(at: datetime, record: LocalRecord | None = None) -> None:
-        """Append the account's state to the journal, if there is one."""
+    def save(
+        at: datetime, record: LocalRecord | None = None, ended: datetime | None = None
+    ) -> None:
+        """Append the account's state to the journal, if there is one.
+        `ended`: the decision hour this save finishes (S29R3-1)."""
         if journal is None:
             return
         seen = len(read_entries(incidents.path)) if incidents.path.exists() else 0
@@ -803,7 +806,7 @@ def run_paper(
                 valued_through=valued,
                 zero_fills=zero_fills,
                 incidents_seen=seen,
-                unfinished_from=unfinished,
+                unfinished_from=unfinished if ended is None else ended + HOUR,
             ),
             at,
         )
@@ -882,6 +885,8 @@ def run_paper(
         confirmed holdings, as a restart would (A27-18)."""
         nonlocal peak, stop_armed, valued
         _, check = recover(hour)
+        if hour in ends:
+            refuse_command(Trigger.HALT_OVERRIDE, busy_until, "FREEZE_EXIT this hour")
         try:
             controller.exit_freeze(check, check.at)
         except SafetyError as error:
@@ -897,12 +902,21 @@ def run_paper(
             config.loss_stop_fraction,
             fires=False,
         )
-        save(check.at)
+        save(check.at, ended=hour)
 
-    def end_halt(hour: datetime, mark: Decimal) -> bool:
+    def end_halt(
+        hour: datetime,
+        mark: Decimal,
+        valuation: tuple[datetime, Decimal, bool] | None,
+    ) -> bool:
         """The owner's section 14 override at `hour`. True when it was tried
-        (a reconciliation ran), whether HALT ended or not; False when it was
-        refused at once because the account is not in HALT."""
+        (a reconciliation ran), whether HALT ended or not; the hour then ends
+        here. False when it was refused at once because the account is not in
+        HALT. The hour ends with its override attempt, ended or not: nothing
+        after it may be stamped before its reconciliation ended (A27-8). A
+        refused override authorizes nothing, so the hour's breach is still
+        recorded, when it ended (A27-20), before the save that ends the hour
+        (S29R3-1); an accepted one reset the line (Q27-1, Q27-2)."""
         nonlocal peak, stop_armed, valued
         if controller.mode is not Mode.HALT:
             refuse_command(
@@ -917,7 +931,8 @@ def run_paper(
             controller.trigger(
                 Trigger.RECONCILIATION_FAILED, check.at, "; ".join(check.differences)
             )
-            save(check.at)
+            fire(valuation, busy_until)
+            save(check.at, ended=hour)
             return True
         wanted = ends[hour]
         override = HaltOverride(
@@ -932,6 +947,7 @@ def run_paper(
             controller.override_halt(override, check.at)
         except SafetyError as error:
             refuse_command(Trigger.HALT_OVERRIDE, check.at, str(error))
+            fire(valuation, busy_until)
             return True
         recovered(check)
         # Q27-1, Q27-2: ending a HALT re-arms the loss stop from the equity
@@ -948,7 +964,7 @@ def run_paper(
         # The reset is the valuation of the hour it took effect in: no hour
         # up to it is valued again, now or on a restart (A27-16).
         valued = max(hour, closed + HOUR)
-        save(check.at)
+        save(check.at, ended=hour)
         return True
 
     reminded: datetime | None = None
@@ -1049,24 +1065,13 @@ def run_paper(
             if owner.get(decision_time) is Trigger.FREEZE_EXIT:
                 if controller.mode is Mode.FREEZE:
                     leave_freeze(decision_time)
-                    if decision_time in ends:
-                        refuse_command(
-                            Trigger.HALT_OVERRIDE, busy_until, "FREEZE_EXIT this hour"
-                        )
                     continue
                 refuse_command(
                     Trigger.FREEZE_EXIT,
                     decision_time,
                     f"not in FREEZE ({controller.mode})",
                 )
-            if decision_time in ends and end_halt(decision_time, mark):
-                # The hour ends with its override attempt, ended or not:
-                # nothing after it may be stamped before its reconciliation
-                # ended (A27-8). A refused override authorizes nothing, so
-                # the hour's breach is still recorded, when it ended (A27-20);
-                # an accepted one reset the line (Q27-1, Q27-2).
-                if controller.mode is not Mode.RUNNING:
-                    fire(valuation, busy_until)
+            if decision_time in ends and end_halt(decision_time, mark, valuation):
                 continue
             fire(valuation, decision_time)
             if controller.mode is Mode.FLATTEN:
