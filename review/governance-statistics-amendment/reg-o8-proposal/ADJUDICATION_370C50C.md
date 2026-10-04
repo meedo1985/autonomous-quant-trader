@@ -87,3 +87,17 @@ Fable FR4 (`6b7a5f2`) returned NOT READY. Every finding is accepted.
 | FR4-3 | Q1 (C) now says the drawdown checks become easy to pass at 10%. |
 | FR4-4 | Q1 (A) now states the lost `ewma_vol_168h` input and the need for new code. |
 | FR4-5 | Q1 (B) now says a plain version tends to fail G-11. |
+
+## Addendum 4: SR4 narrow check of rev 4 (`70cd0fa`)
+
+Sol SR4 (`SOL_REVIEW_70CD0FA.md`) returned NOT READY with one finding. It
+found SR3-1..SR3-4 resolved and the three owner questions ready as written.
+
+| Finding | Disposition |
+|---|---|
+| SR4-1 | Accepted. The relay limit is now attributed to a client version, the script-versus-payload ambiguity is stated, and no conclusion about message fit is drawn. This also corrects addendum 2's word "verified" and its "too long" conclusion. Both are superseded. |
+
+Rev 5 applies FR4 and SR4. Its question changes are the additions FR4 asked
+for. They are applied **without a further check**, which is recorded as
+weaker. Both families found the questions ready, subject to those
+additions.

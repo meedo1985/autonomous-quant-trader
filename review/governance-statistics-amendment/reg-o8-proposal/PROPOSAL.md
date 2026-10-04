@@ -187,10 +187,14 @@ this batch and stays `<<OWNER O-6a>>` in the draft.
   when O-6a is specified (FR4-2).
   - Null-data outputs are standard, "relayed and mined by default", and
     "provably unspendable".
-  - That guide gives a default relay limit of **83 bytes**, and the DRAFT
-    §2.0 message text is about 90 bytes. A reviewer recalls that later
-    Bitcoin Core versions raised the default; this is unverified. Either
-    way, a short prefix plus the raw 32-byte hash is the safe design.
+  - That guide's version table gives a Bitcoin Core relay default of 83 bytes
+    for versions 0.12.0 and later. It does not say whether that counts script
+    size or payload size, and relay policy varies with client and version. A
+    reviewer recalls that later Bitcoin Core versions raised the default;
+    this is unverified. **No conclusion is drawn here about whether the DRAFT
+    §2.0 message fits** (SR4-1). The exact client, version and byte
+    accounting belong to the O-6a specification. A short prefix plus the raw
+    32-byte hash is the conservative design.
 
 **Before O-6a is asked, the specification must define** (SR3-2):
 - the fixed key or script, and which spend counts as a post. Bitcoin has
