@@ -11,6 +11,8 @@ __pycache__/
 data/raw/
 data/processed/
 data/lockbox/
+data/live/
+data/forward/
 userdata/
 *.db
 build/
