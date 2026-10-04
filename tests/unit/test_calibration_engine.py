@@ -189,3 +189,23 @@ def test_method_v_refuses_overflowing_inputs() -> None:
     x[::2, 0] = -1e308
     x[0, 0] = 1e308
     assert dsr._replicates_v(x, [list(range(20))]) == (None, None)  # noqa: SLF001
+
+
+def test_method_v_rule_5_holds_when_distinct_values_merge_after_centring() -> None:
+    """VS3-2 / VF2-2: two raw values 1 ulp apart merge in Y = X - mu when mu
+    is far away; V must still find the replicate valid, as Task 12 does."""
+    t = 40
+    a = 1.0
+    b = float(np.nextafter(a, 2.0))
+    x = np.empty((t, 1))
+    x[: t // 2, 0] = -2000.0
+    x[t // 2 :, 0] = [a, b] * (t // 4)
+    near = list(range(t // 2, t))
+    draws = [(near * 2)[:t]]
+    mu = sum(x[:, 0].tolist()) / t
+    assert (x[t // 2, 0] - mu) == (x[t // 2 + 1, 0] - mu)  # merged after centring
+    from calibration import fast
+
+    assert fast.mean_var(x[np.asarray(draws[0]), 0])[1] > 0  # Task 12: valid
+    star, null = dsr._replicates_v(x, draws)  # noqa: SLF001
+    assert star is not None and np.isfinite(star[0][0])

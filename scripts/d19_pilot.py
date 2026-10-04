@@ -69,8 +69,10 @@ def one(cell: Cell, rep: int, numerics: str) -> dict[str, float | str]:
 
 def main() -> int:
     fast.self_check()
-    dsr.v_runtime_check(
-        dsr.runtime_identity()
+    identity = dsr.runtime_identity()  # pilot: this runtime; qualification runs
+    dsr.v_runtime_check(identity)  # pass the frozen identity from the object
+    print(
+        json.dumps({"runtime_identity": identity}), flush=True
     )  # pilot: this runtime; runs pass the frozen one
     parser = argparse.ArgumentParser()
     parser.add_argument("--reps", type=int, default=3)
