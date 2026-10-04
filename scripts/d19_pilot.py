@@ -46,7 +46,7 @@ def one(cell: Cell, rep: int, numerics: str) -> dict[str, float | str]:
 
     def classify(x, ls):  # time the diagnostics; accept (thresholds not fitted)
         lengths.extend(ls)
-        diagnostics(x, ls)
+        diagnostics(x)
         return True
 
     result = dsr.evaluate(

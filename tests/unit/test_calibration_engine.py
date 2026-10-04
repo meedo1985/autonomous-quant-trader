@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from aqt.metrics import statistics as st
-from calibration import dsr
+from calibration import classifier, dsr
 from calibration.generator import Cell, generate, sigma_matrix
 from calibration.seeds import family_seed, outer_seed, stream
 
@@ -209,3 +209,19 @@ def test_method_v_rule_5_holds_when_distinct_values_merge_after_centring() -> No
     assert fast.mean_var(x[np.asarray(draws[0]), 0])[1] > 0  # Task 12: valid
     star, null = dsr._replicates_v(x, draws)  # noqa: SLF001
     assert star is not None and np.isfinite(star[0][0])
+
+
+def test_classifier_ranks_tails_and_exact_checks() -> None:
+    """§13 rev 7g item 4: integer ranks, eight tails without L/T, ties
+    accepted, K and T exact."""
+    assert classifier.ranks(300_000) == (299_997, 4)
+    _, legs = _legs(5, 400)
+    names = set(classifier.diagnostics(legs.x))
+    assert names == {"K", "T", *classifier.UPPER, *classifier.LOWER}
+    draws = [{"K": 5.0, "T": 400.0, "max_skewness": float(i)} for i in range(10)]
+    upper, lower = classifier.fit_thresholds(draws)
+    assert upper == {"K": 5.0, "T": 400.0, "max_skewness": 9.0}
+    assert lower == {"K": 5.0, "T": 400.0}
+    tie = {"K": 5.0, "T": 400.0, "max_skewness": 9.0}
+    assert classifier.within(tie, upper, lower)
+    assert not classifier.within({**tie, "T": 401.0}, upper, lower)

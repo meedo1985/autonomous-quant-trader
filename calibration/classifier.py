@@ -1,11 +1,25 @@
-"""Diagnostic vector of the supported-law classifier (prereg rev 6 §3.5)."""
+"""Supported-law classifier (prereg rev 6 §3.5, as overridden by §13 rev 7g item 4).
+
+L_j/T is dropped. The stochastic tails are exactly the eight in `UPPER` and
+`LOWER` (six at K = 1); K and T are exact checks, which `fit_thresholds`
+gets for free because they are constant across a cell's draws."""
 
 from __future__ import annotations
 
 import numpy as np
 
+UPPER = (
+    "max_excess_kurtosis",
+    "max_skewness",
+    "max_gph_d",
+    "max_cusum_squares",
+    "max_zero_share",
+    "max_correlation",
+)
+LOWER = ("min_skewness", "min_correlation")
 
-def diagnostics(x: np.ndarray, lengths: list[float]) -> dict[str, float]:
+
+def diagnostics(x: np.ndarray) -> dict[str, float]:
     """Every component, one value each; non-finite means refusal."""
     t, k = x.shape
     c = x - x.mean(axis=0)
@@ -15,7 +29,6 @@ def diagnostics(x: np.ndarray, lengths: list[float]) -> dict[str, float]:
     out = {
         "K": float(k),
         "T": float(t),
-        "max_length_ratio": max(lengths) / t,
         "max_excess_kurtosis": float(g2.max()),
         "min_skewness": float(g1.min()),
         "max_skewness": float(g1.max()),
@@ -62,3 +75,27 @@ def within(
         if name in lower and v < lower[name]:
             return False
     return True
+
+
+def ranks(n: int) -> tuple[int, int]:
+    """1-based order-statistic ranks (upper, lower) in integer arithmetic:
+    n - q and q + 1, q = floor(n / 100000); 299,997 and 4 at n = 300,000."""
+    q = n // 100000
+    return n - q, q + 1
+
+
+def fit_thresholds(
+    draws: list[dict[str, float]],
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Per-cell (upper, lower) thresholds from the threshold run's draws.
+    K and T get upper = lower = their constant value (an exact check)."""
+    up, lo = ranks(len(draws))
+    upper: dict[str, float] = {}
+    lower: dict[str, float] = {}
+    for name in draws[0]:
+        v = np.sort([d[name] for d in draws])
+        if name in UPPER or name in ("K", "T"):
+            upper[name] = float(v[up - 1])
+        if name in LOWER or name in ("K", "T"):
+            lower[name] = float(v[lo - 1])
+    return upper, lower
