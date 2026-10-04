@@ -114,6 +114,25 @@ def step(
     return 2 if report.refused else 0
 
 
+def refuse(sinks: list[Sink], reason: str) -> int:
+    """Log a CRITICAL `REFUSE_START`; exit code 2 even when it cannot be
+    logged, so the service never retries a refusal (S30-9)."""
+    refusal = {"decision": "REFUSE_START", "reason": reason}
+    try:
+        AlertRouter(sinks).emit(
+            Event(EventKind.STARTUP, Severity.CRITICAL, datetime.now(UTC), refusal)
+        )
+    except Exception as failure:  # noqa: BLE001 - still a refusal
+        try:
+            print(
+                f"Refused, not logged ({type(failure).__name__}): {reason}",
+                file=sys.stderr,
+            )
+        except Exception:  # noqa: BLE001, S110 - nowhere left to say it
+            pass
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Forward paper trading (Task 29)")
     parser.add_argument("--config", type=Path, required=True)
@@ -130,21 +149,17 @@ def main(argv: list[str] | None = None) -> int:
         try:
             approved_code(args.deployment_record, REPOSITORY_ROOT)
         except DeploymentError as error:
-            refusal = {"decision": "REFUSE_START", "reason": f"deployment: {error}"}
-            REFUSALS.parent.mkdir(parents=True, exist_ok=True)
-            AlertRouter(
-                [
-                    StreamSink(sys.stdout, Severity.WARNING),
-                    LedgerSink(REFUSALS, Severity.INFO),
-                ]
-            ).emit(
-                Event(EventKind.STARTUP, Severity.CRITICAL, datetime.now(UTC), refusal)
-            )
-            return 2
+            sinks: list[Sink] = [StreamSink(sys.stdout, Severity.WARNING)]
+            try:
+                REFUSALS.parent.mkdir(parents=True, exist_ok=True)
+                sinks.append(LedgerSink(REFUSALS, Severity.INFO))
+            except OSError:
+                pass  # still a refusal; said on stdout or stderr
+            return refuse(sinks, f"deployment: {error}")
     config = load_config(args.config)
     store = LiveBarStore(args.store, config.symbol)
     account = AccountDir(args.account)
-    sinks: list[Sink] = [
+    sinks = [
         StreamSink(sys.stdout, Severity.WARNING),
         LedgerSink(account.operations_path, Severity.INFO),
     ]
@@ -153,12 +168,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             telegram, channel = owner_channel(DEFAULT_LEDGER, list(sinks))
         except ChannelError as error:
-            refusal = {"decision": "REFUSE_START", "reason": f"telegram: {error}"}
-            event = Event(
-                EventKind.STARTUP, Severity.CRITICAL, datetime.now(UTC), refusal
-            )
-            AlertRouter(sinks).emit(event)
-            return 2
+            return refuse(sinks, f"telegram: {error}")
         sinks.append(telegram)
     while True:
         code = step(config, store, account, sinks, channel, args.deployment_record)

@@ -61,7 +61,7 @@ jobs:
         run: |
           cd /tmp
           # a broken tracked config, which must not crash before the check
-          echo "[[[ changed" | sudo tee -a /opt/aqt/app/configs/paper_trading.example.toml
+          echo "[[[ changed" | sudo tee -a /opt/aqt/app/configs/forward_paper.example.toml
           sudo systemctl start aqt-paper
           for _ in $(seq 60); do
             systemctl is-active --quiet aqt-paper || break
@@ -69,4 +69,4 @@ jobs:
           done
           test "$(systemctl show aqt-paper -p ExecMainStatus --value)" = 2
           test "$(systemctl show aqt-paper -p NRestarts --value)" = 0
-          sudo grep REFUSE_START /var/lib/aqt/data/processed/paper/deployment_refusals.jsonl | grep "checkout differs"
+          sudo grep REFUSE_START /var/lib/aqt/data/forward/deployment_refusals.jsonl | grep "checkout differs"

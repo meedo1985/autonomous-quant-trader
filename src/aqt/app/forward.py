@@ -17,9 +17,14 @@ as a replay would run it.
 
 A step that saved state and then crashed cannot be run again: the loop
 refuses a start not after its last save, and resumes after it (Task 27). So
-each completed step appends a cursor (`forward_cursor.jsonl`), and a journal
-saved beyond the cursor means a step was interrupted: its hours are reported
-as a CRITICAL `LOOP_LAG` breach before the step goes on (S29-1).
+each step appends `START` to a cursor (`forward_cursor.jsonl`) before it runs
+and `END` after, refused or not. A `START` with no `END` means the process
+stopped during that step: the next step reports it as a CRITICAL `LOOP_LAG`
+breach naming the hour of the last save, which may not have finished, before
+anything else, even a refusal (S29-1, S29R-1). Every hour before that one had
+finished when the loop saved after it. A reconciliation still running at a
+step's end makes the loop save after `end`; the hours up to that save are
+skipped as a replay skips them, and reported (S29R-1).
 
 Every journal read happens after the alert router exists: a damaged or
 unreadable journal is a logged CRITICAL `REFUSE_START` (S29-2).
@@ -43,7 +48,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Final
+from typing import Final, NoReturn
 
 from aqt.app.paper_loop import Observation, PaperConfig, RunReport, run_paper
 from aqt.app.state import AccountDir, AccountState, StateError, StateJournal
@@ -62,13 +67,14 @@ __all__ = [
     "ForwardError",
     "daily_equity_returns",
     "effective_decisions",
-    "completed_through",
+    "interrupted_step",
     "l02_count",
     "missed_hours_event",
     "observation",
     "pending_window",
     "resumed_venue",
     "run_step",
+    "skipped_while_busy_event",
     "snapshots",
 ]
 
@@ -122,6 +128,29 @@ def missed_hours_event(start: datetime, end: datetime, now: datetime) -> Event |
             "first_missed": start.isoformat(),
             "last_missed": (end - 2 * HOUR).isoformat(),
             "note": "run late, as a replay would run them",
+        },
+    )
+
+
+def skipped_while_busy_event(
+    end: datetime, resumes: datetime, now: datetime
+) -> Event | None:
+    """A `LOOP_LAG` warning for the hours `[end, resumes)` a reconciliation
+    still running at the step's end made the loop skip (it saved after
+    them); `None` when there are none."""
+    skipped = int((resumes - end) / HOUR)
+    if skipped <= 0:
+        return None
+    return Event(
+        EventKind.LOOP_LAG,
+        Severity.WARNING,
+        now,
+        {
+            "skipped_hours": skipped,
+            "first_skipped": end.isoformat(),
+            "last_skipped": (resumes - HOUR).isoformat(),
+            "note": "a reconciliation was running; as in a replay, no decision "
+            "is made in these hours",
         },
     )
 
@@ -264,7 +293,10 @@ def run_step(
         if window is None:
             return None
         start, end = window
-        cursor = completed_through(account)
+        interrupted = interrupted_step(account)
+        if interrupted is not None:
+            # Before the venue: a pre-send save refuses there (S29R-1).
+            router.emit(_interruption(interrupted, account.journal, start, now))
         venue = resumed_venue(
             account.journal,
             config.symbol,
@@ -273,27 +305,11 @@ def run_step(
             config.starting_balances,
         )
     except (ForwardError, LedgerError, StateError, OSError, ValueError) as error:
-        refusal = {"decision": "REFUSE_START", "reason": f"forward: {error}"}
-        router.emit(Event(EventKind.STARTUP, Severity.CRITICAL, now, refusal))
-        raise ForwardError(str(error)) from error
-    resumed_from = config.start if cursor is None else cursor
-    if account.journal.path.exists() and resumed_from < start:
-        router.emit(
-            Event(
-                EventKind.LOOP_LAG,
-                Severity.CRITICAL,
-                now,
-                {
-                    "interrupted_from": resumed_from.isoformat(),
-                    "resumed_at": start.isoformat(),
-                    "note": "a step saved state and stopped before completing; "
-                    "decisions not made in these hours are lost",
-                },
-            )
-        )
+        _refuse(router, now, error)
     late = missed_hours_event(start, end, now)
     if late is not None:
         router.emit(late)
+    _cursor(account, now, step="START", start=start, end=end)
     report = run_paper(
         replace(
             config, run_id=f"{config.run_id}-{start:%Y%m%dT%H%MZ}", start=start, end=end
@@ -311,28 +327,84 @@ def run_step(
         channel=channel,
         deployment=deployment,
     )
+    after = pending_window(account.journal, series, config.start)
+    resumes = end if after is None else max(end, after[0])
     if not report.refused:
-        after = pending_window(account.journal, series, config.start)
-        done = end if after is None else max(end, after[0])
-        append_entry(
-            account.root / CURSOR,
-            record_type=CURSOR_RECORD,
-            payload={"completed_through": done.isoformat()},
-            recorded_at_utc=now,
-        )
+        busy = skipped_while_busy_event(end, resumes, now)
+        if busy is not None:
+            router.emit(busy)
+    _cursor(account, now, step="END", refused=bool(report.refused), resumes=resumes)
     return report
 
 
-def completed_through(account: AccountDir) -> datetime | None:
-    """The hour forward paper completed up to, from the cursor (`None`
-    before the first completed step)."""
+def _refuse(router: AlertRouter, now: datetime, error: Exception) -> NoReturn:
+    """A logged CRITICAL `REFUSE_START`, then `ForwardError`, even when the
+    refusal cannot be logged (S30-9)."""
+    refusal = {"decision": "REFUSE_START", "reason": f"forward: {error}"}
+    try:
+        router.emit(Event(EventKind.STARTUP, Severity.CRITICAL, now, refusal))
+    except Exception as failure:  # noqa: BLE001 - still a refusal
+        raise ForwardError(f"{error}; refusal not logged: {failure}") from error
+    raise ForwardError(str(error)) from error
+
+
+def _cursor(account: AccountDir, now: datetime, **fields: object) -> None:
+    payload = {
+        k: v.isoformat() if isinstance(v, datetime) else v for k, v in fields.items()
+    }
+    append_entry(
+        account.root / CURSOR,
+        record_type=CURSOR_RECORD,
+        payload=payload,
+        recorded_at_utc=now,
+    )
+
+
+def interrupted_step(account: AccountDir) -> Mapping[str, object] | None:
+    """The cursor's last `START` when no `END` followed it: the process
+    stopped during that step. A journal with no cursor at all is an
+    interruption of an unknown step (`{}`). `None` otherwise."""
     entries = read_entries(account.root / CURSOR)
     if not entries:
-        return None
+        return {} if account.journal.path.exists() else None
     last = entries[-1]
     if last.record_type != CURSOR_RECORD:
         raise ValueError(f"unexpected cursor record {last.record_type!r}")
-    return datetime.fromisoformat(str(last.payload["completed_through"]))
+    return last.payload if last.payload.get("step") == "START" else None
+
+
+def _interruption(
+    step: Mapping[str, object], journal: StateJournal, start: datetime, now: datetime
+) -> Event:
+    """The CRITICAL report of an interrupted step. Its last save was made
+    either at the end of an hour or within the hour of the save (owner
+    command, pre-send, FREEZE or HALT); only that hour may not have
+    finished. A save before the step began means it saved nothing."""
+    saved = journal.load_saved()
+    last_save = None if saved is None else saved[1]
+    began = step.get("start")
+    cut = (
+        _floor_hour(last_save)
+        if last_save is not None
+        and (began is None or last_save >= datetime.fromisoformat(str(began)))
+        else None
+    )
+    return Event(
+        EventKind.LOOP_LAG,
+        Severity.CRITICAL,
+        now,
+        {
+            "interrupted_step": None
+            if began is None
+            else f"{began} to {step.get('end')}",
+            "last_save": None if last_save is None else last_save.isoformat(),
+            "hour_maybe_cut_short": None if cut is None else cut.isoformat(),
+            "resumed_at": start.isoformat(),
+            "note": "the process stopped during a step; the hour of its last "
+            "save may not have finished (the startup check resolves any order "
+            "sent then); every earlier hour finished",
+        },
+    )
 
 
 def l02_count(journal: StateJournal, series: BarSeries) -> EffectiveDecisions:
