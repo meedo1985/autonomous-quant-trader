@@ -1,4 +1,4 @@
-# O-6a: the public channel for the C2 declaration-hash post (specification, revision 4)
+# O-6a: the public channel for the C2 declaration-hash post (specification, revision 5)
 
 **Status:** `AI PROPOSAL — NOT AN OWNER DECISION — NOT ACTIVE`
 **Date:** 2026-10-04
@@ -9,7 +9,8 @@
 - Rev 1 `8f0405f`: Fable OF1 READY WITH FIXES (`cc136ba`); Sol OS1 NOT READY (`a7dcd6b`).
 - Rev 2 `9ffcb4a`: Fable OF2 READY WITH FIXES (`0cc0f8e`); Sol OS2 NOT READY (`bb10c3a`).
 - Rev 3 `89ecead`: Fable OF3 NOT READY (`f7d32ff`); Sol OS3 READY WITH FIXES (`784516d`).
-- Rev 4 applies `ADJUDICATION_89ECEAD.md`. It is not yet re-checked.
+- Rev 4 `c8c0721`: Fable OF4 READY WITH FIXES (`aed61ba`); Sol narrow re-check stopped by the system for low memory, with no output.
+- Rev 5 applies OF4-1 and OF4-2 as the reviewer proposed (two wording additions, §3 and §5, plus §8). It is not yet re-checked.
 
 ## 1. What the channel must do (DRAFT_WORDING §2.0)
 
@@ -32,7 +33,7 @@ The post is a confirmed Bitcoin mainnet transaction that spends one bound coin o
 - **Key `K` and address `A`.** `K` is one secp256k1 key, generated offline by the owner for C2 only. `A` is its P2WPKH address. Only `A` and the public key become public. `K` never enters the repository, a log, a prompt or an artifact.
 - **Bound coin `F`.** Before signing, the owner pays one amount to `A`, and the payment confirms. Its outpoint `txid:vout`, amount and block height are fixed in the protocol at signing: `<<SIGNING: address A, outpoint F, amount, height>>`.
 - **Check at signing (OF1-3).** At signing it is checked and recorded that `A` has never been spent from and holds only `F`.
-- **Post deadline height `D` (OF3-2).** `D` is a block height fixed in the protocol at signing (`<<SIGNING: D>>`). The owner chooses it to fall roughly when he plans to post, plus 4,320 blocks, which is about 30 days.
+- **Post deadline height `D` (OF3-2).** `D` is a block height fixed in the protocol at signing (`<<SIGNING: D>>`). The owner chooses it to fall roughly when he plans to post, plus 4,320 blocks, which is about 30 days. `D` must be above the signing height, and block `D` must be expected before C2's evaluation starts. Both are checked and recorded at signing (OF4-2).
 - **Post.** A post is any main-chain transaction, confirmed after signing and before C2 ends, that spends any output locked to `A`. That includes `F`, and any payment someone else sends to `A`. An inbound payment is not a post.
 - **Well-formed post (OF1-5).** A well-formed post:
   - spends `F`;
@@ -111,6 +112,7 @@ The post is a confirmed Bitcoin mainnet transaction that spends one bound coin o
 - **Round.** The round is the first round of the fixed drand chain whose scheduled time is at least `T + 24h`, as in DRAFT §2.0.
   - Every qualifying capture is made in real time after acceptance. The round that follows it is unpublished at that time.
   - The declarer cannot remove other parties' earlier captures. Making later captures does not change the earliest one.
+  - **Trust assumption (OF4-1).** This rests on the Internet Archive not removing captures at the declarer's request before the freeze read. Procedurally, the owner requests no removal, and makes exactly one Save Page Now request per URL. Closing the gap entirely would need a freeze read within 24 hours of the first capture, which would give up the 7-day tolerance for archive outages; it is not taken [AI default].
   - So no capture timing gives a choice of beacon outcome.
 
 ## 6. Relay policy and node commands (checked 2026-10-04)
@@ -169,6 +171,7 @@ The release notes for **Bitcoin Core 30.0**, released 2025-10-10, are at <https:
     - A lost or stolen key, or a mistake in the transaction, cancels or blocks the cycle.
     - If the Internet Archive is unreachable for a week after the post, the cycle is cancelled.
     - If an earlier archive copy than the recorded one turns up later and changes the draw, the cycle is cancelled.
+    - The design trusts the Internet Archive not to delete archive copies on request; you must never ask it to.
     - The post must be in a block by a deadline set when you sign (about 30 days after your planned posting date).
     - The address may be linkable to you, depending on where the money comes from.
     - The record is public forever.
