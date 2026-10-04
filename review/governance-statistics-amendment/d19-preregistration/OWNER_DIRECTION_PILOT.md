@@ -38,3 +38,24 @@ Rev 7 keeps the **1%** exact cross-check that was shown to the owner. It adds an
 One point is stricter than the question's wording ("voids the run"), and it is put to the owner when rev 7 is reviewed:
 - a mismatch found in a **held-out** run counts as a **failed attempt** (P18-6), so no free retry is possible;
 - in development, a mismatch means the engine is fixed and development is re-run.
+
+## Second direction (2026-10-04, after finding 3, `37680d0`)
+
+### Question (verbatim)
+
+> "The calibration pilot has found the real cost. Keeping the exact original arithmetic is impossible here (tens of thousands of CPU-hours). The clean fix: define the inside-the-bootstrap Sharpe calculation as ONE fast, fixed method used identically in the calibration AND in every real evaluation (so there is no 'fast vs exact' doubt that Sol objected to). Even then the full calibration is about 8,000-12,000 CPU-hours: roughly 2-3 months on this laptop, or about a week on rented computers (likely a few hundred US dollars, not yet quoted). How do you want to proceed?"
+
+### Options shown
+
+- "Fast method, then decide compute (Recommended)": "I draft the binding (D-20) for the one fast method, get it reviewed by Fable and Sol, re-measure, then ask you laptop-months vs rented-week. No money spent until you choose."
+- "Shrink the test"
+- "Pause D-19"
+
+### Answer
+
+**"Fast method, then decide compute (Recommended)"**
+
+### What this authorizes
+
+- **Authorized now:** drafting the D-20 binding of the DSR replicate Sharpe to one deterministic vectorised method `V`, with the matching wording change to draft R-8; its two reviews; building `V` into the engine; re-measuring.
+- **Not authorized yet:** the D-20 decision itself (owner), and any compute run or spending (owner).
