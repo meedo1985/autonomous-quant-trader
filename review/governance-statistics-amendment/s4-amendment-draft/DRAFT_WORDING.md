@@ -1,7 +1,7 @@
 # Constitution §4 amendment — draft wording for C2 (DSR and selection)
 
 **Status:** `AI WORDING PROPOSAL — NOT AN AMENDMENT — NOT AUTHORED — NOT SIGNED — NOT ACTIVE`
-**Date:** 2026-10-04, revision 5
+**Date:** 2026-10-04, revision 6
 **Drafted by:** Claude Opus 5.5 (`claude-opus-5-5`). Constitution §4 line 50:
 an AI "may propose but not author/merge/activate/self-approve amendments".
 This file only proposes wording; the amendment exists only if the owner
@@ -18,24 +18,28 @@ FA2 NOT READY (`b38204b`), Sol SA2 NOT READY (`9f67598`), adjudication
 READY (`5ba2c05`), Sol SA3 NOT READY (`5f09df9`), adjudication
 `ADJUDICATION_FCC0CF2.md`. Rev. 4 `fb3be96` applied every disposition there
 (not reviewed). Rev. 5 folds in every decision listed under Basis and adds
-Annex C; it has not been reviewed.
+Annex C; Fable FA5 and Sol SA5 both rated it SOUND WITH FIXES
+(`883eec5`, `404b8e5`). Rev. 6 applies every disposition in
+`ADJUDICATION_AB9AD3F.md` without a further check.
 **Labels:** `[AI default]` = drafting choice, not an owner decision.
-`[derived]` = follows from decided rules. `<<OWNER REG-n>>` = owner decision
-still needed (§7). `<<D19: x>>` = value only the D-19 calibration can supply.
+`[derived]` = follows from decided rules. `<<OWNER x>>` (REG-1, REG-2, O-6a,
+O-8, O-9) = owner decision still needed (§7). `<<OPEN D-19 route>>` = a
+certification route still to be drafted with the D-19 preregistration (§4). `<<D19: x>>` = value only the D-19 calibration can supply.
 `<<DECLARATION: x>>` = value computed at C2's declaration. `<<OPEN D-nn>>` =
 clause governed by an open decision row. **The amendment cannot be signed
 while any `<<…>>` marker remains.**
 
 ## 0. Structure, precedence and activation
 
-The amendment consists of Constitution v1.1 changes (§1), protocol v1.1 for
-cycle C2 (§2–§4), and two annexes that the protocol binds by hash:
+The amendment consists of Constitution v1.1 changes (§1), specification and
+protocol line changes (§1a), protocol v1.1 for cycle C2 (§2–§4), and three
+annexes that the protocol binds by hash:
 
 | Annex | Content | SHA-256 (LF, as committed) |
 |---|---|---|
 | `ANNEX_A_SELECTION_RULE.md` | D-18 rev. 7 §2 (P18-0..P18-7) verbatim, plus clause A-B7 (owner decision B-7) | `836adec7a40c8d0b494352e71116752ea577dd3403d59b0c8769a2445d388480` |
 | `ANNEX_B_DSR_METHOD.md` | broadened method rev. 3 §2.1–§2.6 verbatim | `80ad6b785de337568e806d6feda9168f2ec9b07aed2d8e1e5c14c955ff2b25d0` |
-| `ANNEX_C_GATE_DEFINITIONS.md` | operative definitions of gates G-1..G-14 and the event contract, consolidated from the decided rows (not verbatim; see its fidelity rule) | computed at signing: the annex still carries `<<…>>` markers |
+| `ANNEX_C_GATE_DEFINITIONS.md` | operative definitions of gates G-1..G-8, G-10..G-12 and G-14 and the event contract, consolidated from the decided rows (not verbatim; see its fidelity rule) | computed at signing: the annex still carries `<<…>>` markers |
 
 **Precedence** (FA2-1, FA2-12, SA2-1), highest first:
 1. Constitution v1.1.
@@ -78,24 +82,32 @@ Not changed in v1.1: §0 l.20, §7 l.81 and l.83. C2 uses only the v1
 confirmation partition. Admitting post-v1 data to confirmation needs a later
 amendment, before C3, that fixes the assignment rule before the data exist.
 
-## 1a. Frozen specification and protocol lines changed by the event contract (D-15, N-4)
+## 1a. Frozen specification and protocol lines changed (D-15, N-4, D-14, D-08)
 
-Annex C §C-6 governs every run. It requires these v1.1 texts:
+These v1.1 texts are required by Annex C (C-6, C-9, C-10). Leaf shapes are
+kept (§2).
 
 | File, line | v1.0 text (abridged) | v1.1 text |
 |---|---|---|
-| protocol l.57 | `only_at_00_00_UTC_and_only_if_24h_since_last_risk_increase` | `only_at_00_00_UTC_and_only_if_24h_since_the_decision_time_of_the_last_filled_risk_increase` (Annex C C-6 (5)) |
+| protocol l.8, l.133 | `benchmark_set_hash: "b1baffd3…"` (SHA-256 of `CANONICAL_BENCHMARKS_v1.md`) | the SHA-256 of `CANONICAL_BENCHMARKS_v1.1.md` [derived] |
+| protocol l.57 | `only_at_00_00_UTC_and_only_if_24h_since_last_risk_increase` | `only_at_00_00_UTC_and_only_if_24h_since_the_decision_time_of_the_last_filled_risk_increase_or_no_prior_increase` (Annex C C-6 (5)); the l.58 justification adds: "the 24h is measured from decision time (D-15 Q10 (b)); minimum_holding_hours_for_risk_increase keeps its value 24 with this meaning" |
 | protocol l.60 | `only_reduce_exposure_if_target_is_at_least_0.10_below_current` | `only_reduce_exposure_if_target_is_at_least_0.10_below_held_exposure_or_target_is_0` (N-4) |
-| protocol l.113 | `minimum_holding_hours_for_risk_increase: 24` | unchanged value; meaning per new l.57 (justification key added) |
+| protocol l.113 | `minimum_holding_hours_for_risk_increase: 24` | unchanged; it stays a scalar and its meaning is given at l.57–58 (SA5-4, FA5-7) |
 | protocol l.137 | "match candidate mean exposure and turnover on BTC; ..." | "shift the declared signal by whole days, re-size with the trial's own estimator and re-run its overlay; realised mean exposure and turnover of every draw are reported, not matched; evaluate per Annex C C-10" (D-14 Q4) |
 | protocol l.240 | `ranking_metric: "paired_delta_sharpe"` | `ranking_metric: "E-DIFF"` (D-08) |
 | `BACKTESTER_SPEC` l.9 | "... subject to the 24h minimum-hold rule." | "... subject to the 24h minimum-hold rule, measured from the decision time of the last filled risk increase." |
 | `BACKTESTER_SPEC` l.10 | "Intraday hourly actions are allowed only for exposure reductions when the 10pp band is crossed." | "... when the 10pp band is crossed, or to exit to zero exposure, which the band never blocks." |
 | `CANONICAL_BENCHMARKS` l.11 | "Risk increases respect the 24h minimum-holding rule." | "... measured from the decision time of the last filled risk increase." |
 | `CANONICAL_BENCHMARKS` l.12 | "Intraday band-triggered actions are allowed only to reduce exposure." | "... only to reduce exposure; an exit to zero is never blocked by the band." |
+| `CANONICAL_BENCHMARKS` l.3, l.38 | "Cycle-1 canonical benchmark specification"; "not tunable in Cycle 1" | "Canonical benchmark specification v1.1 (cycle C2 onward)"; "not tunable within a cycle" [AI default] |
+| `BACKTESTER_SPEC` l.3 | "Status: pre-implementation specification." | "Status: specification v1.1 (cycle C2 onward)." [AI default] |
+| `FROZEN_HASHES.json` | `benchmark_set_sha256` (v1.0) | unchanged; a new key `benchmark_set_v1_1_sha256` is appended, along with keys for every new v1.1 file (§0) |
 
 The canonical benchmarks change too, so every benchmark hash is recomputed,
-and G-13 compares against the v1.1 hash. [derived]
+and G-13 compares against the v1.1 hash. [derived] The baseline and benchmark
+effect of the full contract beyond N-4 and Q10 is `<<OWNER O-8>>` (Annex C
+C-6). The rows above for l.57, BACKTESTER l.9 and CANONICAL l.11 are already
+decided, because Q10 governs all runs.
 
 ## 2. Protocol v1.1 (cycle C2) — clause changes
 
@@ -117,27 +129,37 @@ annex_reading:
   R-4: "P18-0's text on windows created after v1 has no effect under this protocol; no post-v1 window is eligible until a later amendment."   # FA2-6
   R-5: "P18-1's 'to be confirmed in the amendment' on budget scope is resolved as per cycle (trial_accounting below)."   # derived
   R-6: "P18-2(a) 'the cycle ends only when (b)-(d) complete' is subject to the calendar limit cycle_termination.calendar_days_elapsed and to calendar_cap_rule below."   # FA2-1, SA2-1, SA2-3
-  R-7: "In Annex B §2.4, the family seed is fixed by seed_disclosure.procedure, after the declaration is committed and before the first evaluation and any stream use; the sentence 'Seeds are fixed before any data exists ... cannot be gamed' is informative and does not hold for C2 (see seed_disclosure)."   # SA2-2, FA2-7
-  R-8: "Annex B's references to existing code (bootstrap_indices, the replicate-seed construction, the Politis-White routine) bind to that code at a hash fixed under <<OPEN D-20>>."   # FA1-2 residue
+  R-7: "Annex B §2.4's family seed is extended, not replaced: family_seed_f = SHA256(annexB_family_seed_f || round || beacon_randomness), per seed_disclosure. The seed is fixed after the declaration post and before the first evaluation and any stream use. The sentence 'Seeds are fixed before any data exists ... cannot be gamed' is informative and does not hold for C2."   # SA2-2, FA2-7, FA5-5
+  R-8: "The references in Annexes B and C to existing code (bootstrap_indices, the replicate-seed construction, the Politis-White routine, the paired-CI routine, max_drawdown, the Task 12 Sharpe and ESS code) bind to that code at a hash fixed under <<OPEN D-20>>."   # FA1-2 residue, FA5-10
   R-9: "In P18-0 (iii), the embargo used for the gap is gap_embargo.value_days, computed by gap_embargo.rule; 'data outside the window' is replaced by 'data mounted in the sandbox or evaluated before declaration'. No confirmation or lockbox data not already so mounted or evaluated may be used."   # SA3-2
-  R-10: "Annex C defines every promotion gate in promotion.gates and the event contract for all runs. Where an Annex A or B clause and Annex C both bear on a gate, Annex A P18-7's availability and cause-code rules apply to Annex C's UNAVAILABLE results."   # derived
+  R-10: "Annex C defines gates G-1..G-8, G-10..G-12 and G-14, and the event contract; G-9 is defined by Annex A P18-6 and G-13 in promotion.gates. Annex A P18-7's availability and cause-code rules apply to Annex C's UNAVAILABLE results."   # derived, SA5-7
 seed_disclosure:                               # O-6
   value: "The C2 family seeds are derived from public randomness published after the declaration is committed."
-  procedure:                                   # [AI default] mechanics, to be reviewed (§6 step 2)
-    commit: "The SHA-256 of the C2 declaration, and nothing else, is posted once in a public channel with a server-assigned timestamp, fixed in this protocol before signing <<OWNER O-6a: channel>>; a declaration cannot choose it, or one hash per channel would reopen the search. The first such post for C2 governs; a second post for C2 invalidates the cycle."
-    beacon: "A drand League of Entropy mainnet chain, named in the declaration by its chain hash."
-    round: "The first round of that chain whose scheduled time is at least 24 hours after the post's server timestamp."
-    derivation: "family_seed_f = SHA256(declaration_sha256 || beacon_randomness || family_id), reduced to Annex B's seed width; byte encoding <<OPEN D-20>>."
-    unavailable_beacon: "If the round is not published within 7 days of its scheduled time, the cycle is INVALIDATED before any evaluation."
+  procedure:                                   # [AI default] mechanics; FA5-1, SA5-3, FA5-4
+    declaration_bytes: "the Annex B canonical-JSON C2 declaration; declaration_sha256 is its SHA-256"
+    channel: "<<OWNER O-6a>>: one identity named in this protocol and dedicated to C2 that (1) authenticates its poster, (2) is append-only, with no edit or deletion, (3) carries a third-party timestamp, and (4) is captured by an independent archive at posting time. A declaration cannot choose the channel."
+    message: "exactly 'AQT C2 DECLARATION SHA256 <64 lowercase hex>'"
+    first_post_rule: "every message posted at that identity during C2 counts as a C2 post; the first governs. A second post, or a first post whose hash does not match the declaration presented, invalidates the cycle."
+    beacon: "one drand League of Entropy mainnet chain, fixed in this protocol by chain hash and public key at signing <<SIGNING: chain hash, public key>>; the declaration cannot choose it"
+    round: "the first round of that chain whose scheduled time is at least 24 hours after the post's third-party timestamp"
+    verification: "the round's randomness is valid only if its signature verifies against the fixed public key; the round number, signature and randomness are recorded for Constitution §27"
+    derivation: "family_seed_f = SHA256(annexB_family_seed_f || round || beacon_randomness); byte encoding <<OPEN D-20>>"
+    failure: "no fallback chain or source. If no verifying output for the round exists within 7 days of its scheduled time, the cycle is INVALIDATED before any evaluation."
+    invalidation_after_post: "a cycle invalidated after its post increments m (Constitution v1.1 §9, O-1). Whether it also makes the window ineligible: <<OWNER O-9>>"   # FA5-3, SA5-3
   disclosure: "kept as in §5"
 ```
 
 The public post reveals only a hash, not the declaration. A private
-commitment alone cannot stop someone from trying many declarations and
-choosing among them after the beacon is published, because private
-commitments can be multiplied. Only a single public post closes that route.
-If the owner does not want any public post, the alternative is a trusted
-third party who receives the hash. In that case O-6 is re-asked.
+commitment cannot stop someone trying many declarations and choosing one
+after the beacon, because private commitments can be multiplied. One
+authenticated, append-only public identity closes that route. If the owner
+wants no public post, the alternative is a trusted third party who receives
+the hash, and O-6 is then re-asked.
+
+**Residual (FA5-3).** After seeing the beacon, a declarer can still compute
+the outcome offline from public prices and abort. Each abort costs one
+halving of the allowance (`m` increments). Under O-9's recommended answer,
+the window stays usable.
 
 ### 2.1 Partitions and gap embargo (v1.0 lines 64–67; lines 205–214 unchanged)
 
@@ -211,7 +233,7 @@ post_nomination_procedure:
 ```yaml
 validation:
   bootstrap:                                   # type, block_method, iterations unchanged
-    added_purposes: ["dsr_family_max_null"]    # existing purposes, incl. the lockbox interval (line 85), unchanged
+    added_purposes: ["dsr_family_max_null","random_exposure_null","shuffled_labels_null"]    # existing purposes, incl. the lockbox interval (line 85), unchanged
   dsr:
     series: {value: "BTC candidate_minus_VOL_TARGET_BUY_AND_HOLD paired OOS return series (E-DIFF), complete UTC days", justification: "unchanged"}
     minimum: "z-test, Annex A P18-6"           # was 0.95
@@ -230,6 +252,13 @@ promotion:
   dsr_minimum: "Annex A P18-6"                 # was 0.95
 ```
 
+### 2.5 Model classes (v1.0 lines 154–155)
+
+```yaml
+models:
+  allowed_classes_cycle_1: <unchanged v1.0 value>   # [AI default] applies to C2 unchanged; the key name is kept (leaf shape); FA5-15
+```
+
 The support classifier is not protocol text. It belongs to the D-19
 preregistration that certifies `z_crit` (A-B7).
 
@@ -244,11 +273,11 @@ each gate is the Annex C section named in `def`.
 ```yaml
 promotion:
   gates:
-    G-1:  {lines: "274-275", def: "Annex C C-1", na: "never", stage: pre_lockbox, status: "decided D-03"}
+    G-1:  {lines: "274-275", def: "Annex C C-1", na: "never", stage: pre_lockbox, status: "decided D-03; code binding <<OPEN D-20>>"}
     G-2:  {lines: "276-278", def: "Annex C C-2", na: "never", stage: pre_lockbox, status: "decided O-7"}
     G-3:  {lines: "42-44, 279", def: "Annex C C-3", na: "never", stage: pre_lockbox, status: "decided D-02, N-3"}
     G-4:  {lines: "201-204, 280-282", def: "Annex C C-4", na: "never", stage: pre_lockbox, status: "decided D-06, D-07"}
-    G-5:  {lines: "283", def: "Annex C C-5", na: "never", stage: pre_lockbox, status: "decided D-02, N-3"}
+    G-5:  {lines: "283", def: "Annex C C-5", na: "never", stage: pre_lockbox, status: "decided D-02, N-3; survival event D-15 Q18"}
     G-6:  {lines: "267, 284", def: "Annex C C-7", na: "never", stage: pre_lockbox, status: "decided D-15"}
     G-7:  {lines: "268, 285", def: "Annex C C-7", na: "never", stage: pre_lockbox, status: "decided D-15"}
     G-8:  {lines: "260-265, 286", def: "Annex C C-8", na: "no ordered numeric tunable dimension (line 264)", stage: pre_lockbox, status: "decided D-04, D-05"}
@@ -281,31 +310,38 @@ cause (§1).
 
 ## 4. Clauses still blocked
 
-These lines carry over with the marker shown. They are not operative until
-the item is decided and its wording inserted.
+These lines carry over with the marker shown, and are not operative until
+the item is decided and its wording inserted. Lines 75, 76, 80–82, 294–296
+and 300 stay in force. (Restored per FA5-9.)
 
 | v1.0 lines / place | Clause | Marker |
 |---|---|---|
 | 215–222 | CPCV diagnostic report (its ESS input is Annex C C-11) | `<<OPEN D-13>>` |
 | 77–79 | lockbox attestation coarse fields | `<<OPEN D-12>>` |
 | 83–92 | lockbox prediction interval and pass rule (L-1..L-4) | `<<OPEN D-11>>` |
-| §2.0 R-8; §2.0 seed derivation; §2.4 `added_purposes`; Annex C C-1, C-10 (3), C-12 (5) | code bindings, stream conventions and reference vectors | `<<OPEN D-20>>` |
+| §2.0 R-8, seed derivation; §2.4 `added_purposes`; Annex C C-0 (Sharpe, `max_drawdown`), C-1, C-10 (3), C-11, C-12 (5) | code bindings, stream conventions and reference vectors | `<<OPEN D-20>>` |
 | Annex C C-10 (1) | whether a fixed-size rule can be registered; whether `s` may depend on `σ̂` | `<<OWNER REG-1>>`, `<<OWNER REG-2>>` |
+| Annex C C-6 scope; §1a | the full event contract applied to baseline and benchmark runs | `<<OWNER O-8>>` |
+| §2.0 seed channel; invalidation after post | the public identity; whether invalidation consumes the window | `<<OWNER O-6a>>`, `<<OWNER O-9>>` |
+| §2.0 beacon | the drand chain hash and public key | `<<SIGNING>>` |
 | §2.1, §2.4, G-9 | `T_min`, `family_block_rule`, `z_crit`, `U_proc` allocation | `<<D19>>` |
-| §2.0 seed channel | the public channel for the declaration hash | `<<OWNER O-6a>>` |
 | §2.1 start, gap | values fixed at declaration | `<<DECLARATION>>` |
 
 **D-19 also has to settle how each gate enters the `U_proc` certification**
-(N-2 proposal §3). Either D-19 computes every gate in every replication, at
-price, position and model level, or this amendment explicitly authorises a
-certification route for named gates. Candidates are deterministic
-availability arguments, such as the one for G-12. Such a route needs clause
-wording here, and that wording is drafted with the D-19 preregistration.
-`<<OPEN D-19 route>>`
+(N-2 proposal §3). There are two routes:
+- D-19 computes every gate in every replication, at price, position and
+  model level; or
+- this amendment explicitly authorises a certification route for named
+  gates, for example a deterministic availability argument such as G-12's.
+
+The second route needs clause wording here, drafted with the D-19
+preregistration. `<<OPEN D-19 route>>`
 
 **There is no "keep blocked" option for the gates** (FA2-3). Under P18-5 and
 P18-7, a mandatory gate that cannot be computed makes every nominee
 unavailable. Each remaining marker must therefore be filled before signing.
+A gate may become `N/A` only by an explicit decision, never by being left
+blocked. (Restored per FA5-9.)
 
 ## 5. Rationale, as §4 requires (the owner writes the final words)
 
@@ -316,34 +352,38 @@ unavailable. Each remaining marker must therefore be filled before signing.
 > before may promote. A bootstrap of the family's own returns replaces the
 > count-based penalty. The target is that, when no strategy has an edge, a
 > false promotion happens in at most 5% of first eligible cycles, halving in
-> each later one. It also gives every promotion gate an operative definition
-> (Annex C) and fixes how orders, fills and exits work in every run.
+> each later one. The amendment also gives every promotion gate an operative
+> definition (Annex C), and it fixes how orders, fills and exits work.
 >
 > These are calibration targets under simulated conditions, not guarantees.
-> They are checked only under the all-no-edge null and assume the data come
-> from the supported kind of return series. The other gates are filters with
-> no error rate of their own. The family seed comes from public randomness
-> published after the declaration is committed, but the strategies were
-> still chosen by people who lived through 2022–2025 prices, and that cannot
-> be verified. Infrastructure failures are counted, not certified. No human
-> statistician reviewed this; two different AI model families did. The
-> review history is in the records listed above.
+> They are checked only under the all-no-edge null, and they assume the data
+> come from the supported kind of return series. The other gates are filters
+> with no error rate of their own. The family seed comes from public
+> randomness published after the declaration is committed. Even so, a
+> declarer could still see the seed, compute the outcome offline from
+> public prices, and abort; each abort costs one halving of the allowance.
+> The streams for the other gates use trial seeds that the beacon does not
+> protect. The strategies were chosen by people who lived through 2022–2025
+> prices, and that cannot be verified. Infrastructure failures are counted,
+> not certified. No human statistician reviewed this; two different AI model
+> families did. The review history is in the records listed above.
 
 ## 6. §4 and §16 checklist (owner steps, in order)
 
-1. Fill every `<<…>>` marker (FA3-12). **Done:** every row that governs a
-   gate's availability (D-01..D-10, D-14, D-15, N-1..N-4) and O-1..O-7.
-   **Remaining, in this order:**
-   - REG-1, REG-2 and O-6a;
-   - the D-19 preregistration, including the certification route, run and
-     accepted, so that its frozen qualification object covers the final gates;
-   - then D-11..D-13 and D-20.
-
-   N-1..N-4 are proposed for the decision matrix; adding them is the owner's
-   act.
-2. Two different-model reviews of the final wording, records committed
+1. Fill every `<<…>>` marker (FA3-12).
+   - **Done (owner choices):** D-01..D-10, D-14, D-15, N-1..N-4 and
+     O-1..O-7. The owner's answers added N-1..N-4 as decision rows; the
+     `HUMAN_DECISION_MATRIX.md` file itself is not yet edited.
+   - **Remaining, in this order:**
+     1. REG-1, REG-2, O-6a, O-8 and O-9;
+     2. the D-19 preregistration, including the certification route, run
+        and accepted, so that its frozen qualification object covers the
+        final gates;
+     3. D-11..D-13 and D-20;
+     4. the `<<SIGNING>>` beacon values.
+2. Two different-model reviews of the final wording, with records committed
    (R19-2). These include a fidelity check of Annex C against the owner
-   records. If the owner edits the reviewed text or an annex materially, it
+   records. If the owner materially edits the reviewed text or an annex, it
    is re-reviewed.
 3. **Safety-relevant (O-5).** No open incident or post-HALT cooling-off
    (§4 l.56), and the 72-hour minimum activation delay (§4 l.52).
@@ -357,10 +397,12 @@ unavailable. Each remaining marker must therefore be filled before signing.
    owner's PR review. That covers:
    - the DSR/promotion gate;
    - protocol enforcement: declaration hash, budget stop, automatic re-run,
-     eligibility and `T_min`, crash-code channel, the seed beacon;
+     eligibility and `T_min`, crash-code channel, and seed-beacon
+     verification;
    - lockbox access tooling (one read per family);
    - the validation engine;
-   - the backtester event contract (Annex C C-6).
+   - the backtester event contract (Annex C C-6);
+   - the canonical benchmark module `src/aqt/benchmarks/canonical.py`.
 8. Activation happens before C2's declaration, following the §0 steps.
 9. No retroactive effect on open promotions (§4 l.48): confirm that none is
    open.
@@ -369,33 +411,43 @@ unavailable. Each remaining marker must therefore be filled before signing.
 
 **Decided 2026-10-04** (`OWNER_DECISION_O1_O7.md`):
 - **O-1:** every eligible cycle counts.
-- **O-2:** 75 days, cap at day 255, expiry means no promotion.
+- **O-2:** 75 days, a cap at day 255, and expiry means no promotion.
 - **O-3:** reading (a), stop unless attested.
 - **O-4:** only `NO_EDGE_FOUND` opens the baseline path.
 - **O-5:** safety-relevant.
-- **O-6:** public beacon after hashing. The mechanics in §2.0 are an AI
+- **O-6:** a public beacon after hashing; the mechanics in §2.0 are an AI
   default.
-- **O-7:** G-2 absolute, 5 points.
+- **O-7:** G-2 is absolute, 5 points.
 
-**Still open** (left open by the D-14/D-15 addendum, FC7-3):
+**Still open:**
 - **REG-1** Can a fixed-size rule be registered for C2, for example the
-  owner's fixed 10%, which `s·τ/σ̂` with the restricted `σ̂` cannot express?
-  If yes, Annex C C-10 needs a class and a G-11 treatment for it.
+  owner's fixed 10%? In the C-10 form a fixed size is written
+  `s = 0.10·σ̂/τ`, so it depends on REG-2. Left open by the D-14/D-15
+  addendum (FC7-3).
 - **REG-2** May the signal `s` depend on `σ̂`? This bears on whether the
-  sizing restriction in C-10 (1) can be bypassed.
-- **O-6a** Which public channel carries the single declaration-hash post
-  (§2.0). It posts a bare hash and reveals nothing about the strategies. If
-  the owner wants no public post at all, O-6 is re-asked (trusted third
-  party).
+  sizing restriction in C-10 (1) can be bypassed. Left open by the addendum.
+- **O-6a** Which public identity carries the single declaration-hash post?
+  It must meet the four §2.0 channel requirements. The post is a bare hash
+  and reveals nothing about the strategies. If the owner wants no public
+  post, O-6 is re-asked with a trusted third party instead.
+- **O-8** Does the full event contract (C-6) govern baseline and benchmark
+  runs too, or only gate, stressed and null runs? N-4 and Q10 already govern
+  all runs. This consequence was "recorded, not presented" (FA5-2, SA5-1).
+  The concrete baseline effects are to be shown when asking.
+- **O-9** Does a cycle invalidated after its declaration post also make the
+  eligible window ineligible? Recommendation: no. C2's window is the only
+  eligible one, so consuming it ends promotion for both families. The
+  allowance halving already prices each abort (FA5-3).
 
-A proposal with two-model review comes first; then both items go to the
-owner together.
+A proposal for REG-1, REG-2 and O-8, with a two-model review, comes first.
+Then all five items go to the owner together.
 
 ## 8. Next
 
 [AI default]
-1. Write the REG-1/REG-2 proposal and have it reviewed; O-6a goes with them.
-2. Ask the owner.
+1. Write the REG-1/REG-2/O-8 proposal, including the concrete baseline
+   effects of O-8, and have it reviewed.
+2. Ask the owner REG-1, REG-2, O-6a, O-8 and O-9.
 3. Run the D-19 calibration preregistration, which supplies the `<<D19>>`
    values and the certification route.
 4. Run the two-model review of the final wording, including Annex C fidelity.

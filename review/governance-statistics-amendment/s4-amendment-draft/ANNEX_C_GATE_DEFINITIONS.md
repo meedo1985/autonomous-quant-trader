@@ -1,7 +1,7 @@
 # Annex C — promotion gate definitions for cycle C2
 
 **Status:** `AI WORDING PROPOSAL — NOT AN AMENDMENT — NOT SIGNED — NOT ACTIVE`
-**Date:** 2026-10-04, revision 1
+**Date:** 2026-10-04, revision 2 (applies `ADJUDICATION_AB9AD3F.md`)
 **Drafted by:** Claude Opus 5.5 (`claude-opus-5-5`). This annex restates
 owner-decided rows as operative text. It decides nothing.
 
@@ -10,7 +10,10 @@ decided texts contain no alternatives. The decided gate proposals are
 different: each one sets out options alongside the chosen one. Copying them
 verbatim would need a key saying which option was chosen for every
 question. This annex states only the chosen options instead. Each clause
-cites its source; the citations are informative.
+cites its source. Two kinds of reference are used:
+- Bracketed source tags (`[D-xx]`, `[O-n]`, `[Qn]`) are informative.
+- In-text line references (`l.n` and named spec lines) are **normative**. They
+  are read against the v1.0 files at their frozen hashes. (FA5-11)
 
 **Fidelity rule.** Before signing, any difference between this annex and a
 cited owner decision record is a drafting defect, to be corrected here. It is
@@ -34,14 +37,18 @@ is named.
 
 ## C-0 Common definitions
 
-- **Window.** The eligible confirmation window is `[s, e)`. `s` is
-  `partitions.confirmation.start` at 00:00 UTC, and `e` is the first excluded
-  day at 00:00 UTC; for C2, `e` = 2025-06-01T00:00Z. "Day" means a complete
+- **Window.** The eligible confirmation window is `[w0, w1)`. `w0` is
+  `partitions.confirmation.start` at 00:00 UTC, and `w1` is the first excluded
+  day at 00:00 UTC; for C2, `w1` = 2025-06-01T00:00Z. (The D-06 record calls
+  these `s` and `e`. They are renamed here because `s` is the signal in C-10;
+  FA5-12.) "Day" means a complete
   UTC day. [D-06 P6-2]
 - **Legs.** The candidate leg is the trial. The benchmark leg is
   `VOL_TARGET_BUY_AND_HOLD` on the same symbol, cost multiplier and day index.
   Unless stated otherwise, a run is the baseline run at 1x cost under the
   event contract C-6.
+- **Code bindings.** The code paths named in this annex bind to that code at a
+  hash fixed under `<<OPEN D-20>>`, as DRAFT §2.0 R-8 says. (FA5-10)
 - **Sharpe.** Sharpe is the scaled Sharpe of a daily return series, with the
   n−1 variance convention, as in `review/task12/IMPLEMENTATION_CONVENTIONS.md`.
   The code binding is `<<OPEN D-20>>`. A series with zero variance or fewer
@@ -62,14 +69,22 @@ is named.
     cause code is assigned under Annex A P18-7.
   - Nothing is dropped, repaired or imputed (Constitution §6).
 - **Numerics.** The exact float64 result of the reference implementation
-  decides every comparison. [D-05; D-07 P7-2; D-10]
+  decides every comparison. [D-05; D-07 P7-2; D-10; D-18. The extension to
+  the other gates is an AI default (SA5-6).]
 
 ## C-1 G-1: BTC paired confidence interval (l.274–275) [D-03]
 
 `PASS` iff the lower bound of the two-sided 90% paired block-bootstrap
 confidence interval of BTC `E-IMPROV` is `> 0`, computed by the existing
-paired-CI routine (`statistics.py:591–651`; binding `<<OPEN D-20>>`). If
-either leg has no Sharpe on the window: `UNAVAILABLE`.
+paired-CI routine (`statistics.py:591–651`; binding `<<OPEN D-20>>`). The
+result is `UNAVAILABLE` if the routine returns any unavailability reason,
+including these:
+- either leg has no Sharpe on the window;
+- block-length selection fails, for example with fewer than 16
+  observations;
+- any of the 2,000 replicates is invalid.
+
+[derived; FA5-13, SA5-5]
 
 ## C-2 G-2: BTC drawdown (l.276–278) [O-7]
 
@@ -83,10 +98,10 @@ on the ETH baseline run at 1x cost. The whole rule is at 1x.
 ## C-4 G-4: paired fold win rate (l.201–204, 280–282) [D-06, D-07]
 
 1. **Blocks.** Block `k` is `[B_k, B_{k+1})`. `B_k` is the date `3k`
-   calendar months after `s`, computed from `s` directly and never chained.
+   calendar months after `w0`, computed from `w0` directly and never chained.
    A day that does not exist in the target month is clipped to that month's
    last day. Every boundary is at 00:00 UTC.
-2. **Complete blocks.** A block is complete iff `B_{k+1} ≤ e`. The final
+2. **Complete blocks.** A block is complete iff `B_{k+1} ≤ w1`. The final
    partial block, if any, is excluded from the rate. Its statistic is
    reported only (Constitution §7a); if it cannot be computed, the report says
    so.
@@ -111,7 +126,17 @@ On a re-run in which the BTC candidate and the **BTC benchmark both run at
 - G-3 passes, with the ETH rule evaluated entirely at 1x. **ETH is not run
   at 2x.** This keeps the 2026-09-15 decision.
 
-## C-6 Event contract (governs every run: baseline, stressed and null) [D-15 Q19, Q10 (b); N-4 Q20 (iii)]
+## C-6 Event contract [D-15 Q19, Q10 (b); N-4 Q20 (iii)]
+
+**Scope.** The contract governs gate, stressed and null runs.
+- N-4 (exits to 0, held exposure drifting) and Q10 (the clock anchor) were
+  decided for every run, baseline and benchmark included.
+- Applying the **rest** of this contract to baseline and benchmark runs was
+  recorded but never presented to the owner (addendum).
+  - It covers same-instant fills, atomic fills, the 00:00 band tested against
+    drifted exposure, decision-time direction, the clamp, and the unset-clock
+    rule.
+  - That application is `<<OWNER O-8>>` (FA5-2, SA5-1).
 
 1. **Time.** Timestamps are instants, and close(t) = open(t+1). An order
    stores an absolute target exposure.
@@ -122,12 +147,13 @@ On a re-run in which the BTC candidate and the **BTC benchmark both run at
 4. **At each hourly instant, in order:**
    1. Execute due fills at the open(t+1) price.
    2. Evaluate the decision against held exposure:
-      - At 00:00 UTC, a change requires `|target − held| ≥` the declared band
-        (l.97, l.112).
+      - At 00:00 UTC, a change requires `|target − held| ≥` the declared band.
+        The declared band is the l.112 value, 0.10 (l.97). [AI default; FA5-16]
       - The direction of the order is classified now, at decision time, by
         comparing target with held exposure.
-      - An increase is allowed only at 00:00 and only if the clock shows at
-        least 24 h.
+      - An increase is allowed only at 00:00, and only if the clock shows at
+        least 24 h or is unset. An unset clock permits the first increase.
+        [AI default; FA5-16]
       - At any hour, a reduction requires the target to be at least the band
         below held exposure.
       - **A reduction to target 0 is never blocked by the band, at any
@@ -144,7 +170,7 @@ On a re-run in which the BTC candidate and the **BTC benchmark both run at
    - The clock is set only at the fill of an order that actually raised held
      exposure, and it is **anchored at that order's 00:00 decision time**.
      [Q10 (b)]
-6. **Amended frozen text.** This contract amends l.57, l.60 and l.113, plus
+6. **Amended frozen text.** This contract amends l.57 and l.60 (l.113 keeps its scalar value; its meaning follows l.57), plus
    `specs/BACKTESTER_SPEC_v1.md` l.9–l.10 and
    `specs/CANONICAL_BENCHMARKS_v1.md` l.11–l.12 (DRAFT_WORDING §1a).
    Disclosed consequence: with decision-time anchoring and the clamp, the
@@ -189,6 +215,9 @@ On a re-run in which the BTC candidate and the **BTC benchmark both run at
    No limit on degradation is applied.
 
 ## C-8 G-8: parameter plateau (l.260–265, 286) [D-04, D-05]
+
+**Dimensions.** The ordered numeric tunable dimensions are those defined by
+the frozen inclusion rule, l.254–262. [derived; FA5-14]
 
 `v` is the selected trial's BTC `E-IMPROV`. A neighbour is a point at ±1 step
 in an ordered numeric tunable dimension that is **present in the declared
@@ -237,8 +266,10 @@ Evaluate in order:
    - the overlay may only keep the target or set it to 0. It may not set or
      rescale size, and re-entry follows `s`.
    - Whether `s` may depend on `σ̂`: `<<OWNER REG-2>>`.
-   - Whether a fixed-size rule that this form cannot express (for example
-     the owner's fixed 10%) can be registered: `<<OWNER REG-1>>`.
+   - Whether a fixed-size rule can be registered, for example the owner's
+     fixed 10%: `<<OWNER REG-1>>`. In this form a fixed size is written
+     `s_h = 0.10·σ̂_h/τ`, so it is expressible only if REG-2 allows `s` to
+     depend on `σ̂`. (SA5-2, correcting rev 1)
    - Both questions were left open by the D-14/D-15 addendum.
 2. **Class.** Each trial declares `g11_class ∈ {signal_timed,
    constant_signal}`.
@@ -256,7 +287,7 @@ Evaluate in order:
    - Use `s_((h + 24·k_i) mod 24T)` in place of `s_h`.
    - Re-size with the trial's own `σ̂_h` at the real hour.
    - Re-run the declared overlay on the draw's own path, under C-6.
-   - Every run starts at `s` with exposure 0, no pending order, an unset clock
+   - Every run starts at `w0` with exposure 0, no pending order, an unset clock
      and a fresh overlay state.
    - Warm-up may read the `g` gap days. The wrap is an ordinary day boundary,
      and it is reported.
@@ -319,8 +350,7 @@ Evaluate in order:
      IC. Ties count as not below.
    - A constant prediction or a constant target, for the nominee or any draw:
      `UNAVAILABLE`.
-8. **Model classes.** The l.154–155 `allowed_classes_cycle_1` apply to C2
-   unchanged. [AI default]
+8. **Model classes.** These are set in DRAFT §2.5 (FA5-15).
 9. **No error rate is claimed.**
 
 ## C-13 Accepted consequences (informative)
@@ -337,4 +367,8 @@ Evaluate in order:
   amendment must authorise a certification route (DRAFT_WORDING §4).
   - G-11 needs 500 re-runs per nominee.
   - G-14 needs 500 refits per nominee.
+- **Seeds.** The G-1 bootstrap, the G-11 shifts and the G-14 offsets use
+  streams from the l.266 trial seed, which the public beacon does not
+  protect. A declarer could vary that seed with cosmetic hypothesis edits
+  before the post, and check the effect offline. (FA5-6)
 - **Review.** No statistician reviewed any of this.

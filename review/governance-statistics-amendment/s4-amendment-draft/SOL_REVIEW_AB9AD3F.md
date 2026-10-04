@@ -2,7 +2,7 @@
 
 Date: 2026-10-04. This is the OpenAI-family review for R19-2. It used prompt `REVIEW_PROMPT_R5.md` (`fc0a44b`) with prefix SA5, and ran in parallel with the Fable review FA5 without sight of it.
 
-It was run with `codex exec -s read-only -m gpt-5.6-sol -c model_reasoning_effort=high` (Codex v0.157.1). The CLI header shows `model: gpt-5.6-sol`, `reasoning effort: high` and session `01a10566-a794-7031-8192-4f0a6c64e9cb`. The final message is recorded verbatim below. Its local file links are left as written.
+It was run with `codex exec -s read-only -m gpt-5.6-sol -c model_reasoning_effort=high` (Codex v0.157.1). The CLI header shows `model: gpt-5.6-sol`, `reasoning effort: high` and session `01a10566-a794-7031-8192-4f0a6c64e9cb`. The final message is recorded verbatim below. Its local file links are shortened from absolute paths to repo-relative ones; nothing else is changed.
 
 ---
 
