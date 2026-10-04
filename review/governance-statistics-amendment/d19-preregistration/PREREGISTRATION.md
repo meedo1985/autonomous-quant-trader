@@ -1,4 +1,4 @@
-# D-19 calibration preregistration for C2 (revision 6 accepted; budget version rev 7c proposed in §13)
+# D-19 calibration preregistration for C2 (revision 6 accepted; budget version rev 7d proposed in §13)
 
 **Status:** `ACCEPTED BY THE OWNER (rev 6, OWNER_DECISION_D19_ACCEPT.md, ec35a29) — NOT YET COMPLETE (keys record pending) — NO CALIBRATION RUN`
 
@@ -18,7 +18,8 @@
 | 6 | `e1e4e7e` | DF5 wording fixes applied (`ADJUDICATION_327AA3D.md`) | DS6 READY `0ac488d`; **accepted by the owner** (`ec35a29`) |
 | 7 | `af03d00` | draft §13, computational equivalence | Sol DS7 UNSOUND (`77f9593`); **withdrawn** (`PILOT_FINDINGS_3.md`). The text below is rev 6 again. |
 | 7b | `c09337f` | §13 budget version (owner direction 3, `30757e8`), with method V (D-20 partial, `b58d1c3`); BF1 UNSOUND `7c7cf49` | BS1 UNSOUND `769f966` |
-| 7c | this revision | §13 repaired per BF1 and BS1 (`ADJUDICATION_C09337F.md`); run on the owner's server | not yet reviewed; §1–§12 remain the accepted rev 6 text until the owner accepts §13 |
+| 7c | `09b0fb9` | §13 repaired per BF1 and BS1 (`ADJUDICATION_C09337F.md`); run on the owner's server; BF2 SOUND WITH FIXES | BS2 UNSOUND (`aa6caa7`) |
+| 7d | this revision | §13 repaired per BF2 and BS2 (`ADJUDICATION_09B0FB9.md`) | not yet reviewed; §1–§12 remain the accepted rev 6 text until the owner accepts §13 |
 
 The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md`, `ADJUDICATION_59F5F6C.md` and `ADJUDICATION_A841FB3.md`. The owner decision is U-1, recorded in `OWNER_DECISION_UPROC_SCOPE.md` (`8e04dd8`).
 
@@ -457,64 +458,113 @@ seed = SHA256(cj({"anchor": <hex>, "cell_id": <str>, "ns": <str>, "rep": <int>})
 
 Nothing here starts a cycle, reads confirmation or lockbox data, or authorizes trading.
 
-## 13. Budget version (rev 7c, proposed; overrides the sections it names)
+## 13. Budget version (rev 7d, proposed; overrides the sections it names)
 
 **Why.** The owner can spend at most $3–10 a month (owner direction 3, `30757e8`). The laptop must be switched off, so the calibration runs on the owner's small rented server, the one that also runs forward paper (about €6 a month, no extra cost). The full plan is about 12,000 core-hours. This version aims at about 4,500. Method V computes the replicate Sharpes (A-V1, owner decision D-20 partial).
 
+**Overridden sections:** §1, §3.2, §3.3, §3.5, §3.6, §4, §5, §6, §9, §10, §11 and §12, as stated item by item below. Everything else is the accepted rev 6 text.
+
 **Overrides:**
 
-1. **Family sizes (§1, §3.2, §9, §11).** The declarable `|J_f|` is one of {1, 2, 5, 20}. Every group runs at the `K` values of {1, 2, 5, 20} where its law is defined. QJ runs each family at `K` ∈ {2, 20}.
-2. **One length (§3.2, §5 step 2, §11; A-B7) (BF1-2, BS1-3).**
+1. **Family sizes (§1, §3.2, §9, §10, §11).** The declarable `|J_f|` is one of {1, 2, 5, 20}. Every group runs at the `K` values of {1, 2, 5, 20} where its law is defined. QJ runs each family at `K` ∈ {2, 20}. The §10 screen and pilot items read "up to 20 trials" and "a 20-trial set" in place of 80.
+2. **One length; C2 only (§1, §3.2, §5 step 2, §12; A-B7) (BF1-2, BS1-3, BF2-3, BS2-3).**
    - Every qualifying cell has `T = T_C2`. The `T_min` candidates are {`T_C2`}, so `T_min = T_C2`.
-   - **What this covers.** The certification holds for a window of **exactly** `T_C2` days and nothing else. Every other window length needs a new qualification.
-   - **Eligibility.** A-B7 reads `T_min` as a floor (`T ≥ T_min`). For this qualification object it is narrowed to an equality: a window with `T ≠ T_C2` is **ineligible**. It is not evaluated, and it is not a `U_proc^R` event.
-   - **Owner questions at acceptance:**
-     - `<<OWNER O18-4-T>>`: drop decided O18-4's "unequal `T`" category. The coverage table then has no "unequal `T`" row.
-     - `<<OWNER A-B7-EQ>>`: the equality reading of `T_min` above.
-3. **Replications (§5, §6) (BF1-1, BS1-1, BF1-8).**
-   - Development: **12,000** per cell. Held-out: **20,000** per cell, in every cell. The 20k/40k rule and every "10k" branch are deleted.
-   - **§5 step 2 is restated.** A cell passes development availability when its 90% UCB of DSR availability is at most τ_DSR(20k) and its 90% UCB of `U_G` is at most τ_G(20k). At 12,000 replications, zero `U_G` events give a UCB of 1.92·10⁻⁴, which passes, and **one** event gives 3.24·10⁻⁴, which fails.
-   - **A cell that fails** development availability is **demoted to a challenge cell**, as the cap rule does. It is reported, not certified. The coverage rule (§3.2) then decides whether the method still qualifies. The mapping (§3.6) and the classifier thresholds (§3.5) use only the final qualifying cells, so a declared design that matches only demoted cells is refused at declaration.
-   - **Targets.** τ is computed by the frozen script with each test's `N_i = 20,000`, as run. Values at `M ≈ 322–340`, checked independently by both reviewers and by the drafter:
+   - **What this covers.** This qualification object certifies **C2 only**. Every later cycle needs a new qualification.
+   - **Why A-B7 needs no change.** C2's `T` cannot exceed `T_C2`, because a different `g` already makes the declaration invalid (§1). A C2 window with missing complete days has `T < T_C2 = T_min` and is ineligible under A-B7 as decided. So A-B7's floor reading stands unchanged, and rev 7c's `<<OWNER A-B7-EQ>>` is withdrawn.
+   - **Owner question (§12 overridden).** Acceptance of §13 needs, besides `<<OWNER Q-1>>`, a separately recorded owner answer to `<<OWNER O18-4-T>>`: drop decided O18-4's "unequal `T`" category from the coverage table. Without an affirmative recorded answer, §13 is not accepted.
+3. **Replications (§5, §6) (BF1-1, BS1-1, BF1-8, BF2-1).**
+   - **Development:** 12,000 per cell.
+   - **Held-out:** 20,000 per cell, or 40,000 where the escape below applies.
+   - **§5 step 2 is restated.** A cell passes development availability when its 90% UCB of DSR availability is at most τ_DSR(20k), and its 90% UCB of `U_G` is at most τ_G(20k) or, as an escape, at most τ_G(40k).
+     - Where only the escape is met, that cell runs 40,000 held-out replications, and all its tests use `N_i = 40,000`.
+     - At 12,000 development replications, the 90% UCB of `U_G` is 1.92·10⁻⁴ at 0 events, 3.24·10⁻⁴ at 1 and 4.43·10⁻⁴ at 2. Against τ_G(20k) ≈ 2.02·10⁻⁴ and τ_G(40k) ≈ 4.51·10⁻⁴ (both at `M ≈ 322–340`), 0 events need 20k, 1–2 events need 40k, and 3 or more fail.
+   - **A cell that fails** development availability is **demoted to a challenge cell**, like a cap-demoted cell (§1 and §3.3 overridden: a challenge cell is a cap-demoted or availability-demoted cell).
+     - A demoted cell is reported from its development replications and the §9 runs only, and is not certified.
+     - The coverage rule (§3.2) then decides whether the method still qualifies.
+     - The mapping (§3.6) and the classifier thresholds (§3.5) use only the final qualifying cells, so a declared design that matches only demoted cells is refused at declaration.
+     - Demotion happens before the freeze, and held-out runs in its own namespace on the final cells only, so it does not bias the certified claim.
+   - **Demotion risk, disclosed.** The probability that a cell is demoted by chance, at true `U_G` rates p = 2·10⁻⁵, 5·10⁻⁵, 10⁻⁴ and 2·10⁻⁴, is 0.002, 0.023, 0.12 and 0.43. Without the escape it would be 0.21, 0.45, 0.70 and 0.91. Some coverage categories have only 2–3 cells (QJ, Q1 unequal clusters, Q2m), so the re-pilot measures `U_G` rates in those cells before the full run.
+   - **Targets.** τ is computed by the frozen script with each test's `N_i` as run, from the actual manifest. Values at `M ≈ 322–340`, checked independently by both reviewers and by the drafter:
 
-     | Test | Critical count at 20k | τ |
-     |---|---|---|
-     | error | 418 (417 at `M = 340`) | 0.01796 (0.01791) |
-     | DSR availability | 40 | 0.00120 |
-     | `U_G` | 11 | 0.000202 |
+     | Test | `N` | Critical count | τ |
+     |---|---|---|---|
+     | error | 20k | 418 (417 at `M = 340`) | 0.01796 (0.01791) |
+     | DSR availability | 20k | 40 | 0.00120 |
+     | `U_G` | 20k | 11 | 0.000202 |
+     | `U_G` | 40k | 32 | 0.000451 |
 
-   - **Disclosed effect.** `z_crit` is chosen so that the 90% UCB of `P_0(E_f)` at 12,000 development replications is at most τ_err. That UCB is wider than the full plan's at 22,000, so `z_crit` comes out a little higher, and the test has a little less power to pass a real edge. The validity of the false-pass bound is unchanged. One development `U_G` event demotes a cell.
-4. **Classifier (§3.5, §3.6) (BF1-3, BS1-2, BF1-7).**
+   - **Disclosed effect.** `z_crit` is chosen so that the 90% UCB of `P_0(E_f)` at 12,000 development replications is at most τ_err. That UCB is wider than the full plan's at 22,000, so `z_crit` comes out a little higher, and the test has a little less power to pass a real edge. The validity of the false-pass bound is unchanged.
+4. **Classifier (§3.5, §3.6) (BF1-3, BS1-2, BF1-7, BF2-6, BS2-5).**
    - **`L_j/T` is dropped** from the diagnostics, in the window classifier (§3.5) and in the declaration-time mapping (§3.6). Fitting its thresholds would need the PW routine on every column of every threshold draw, about 1,000–1,500 core-hours, which the budget cannot carry. The `BLOCK_LENGTH_CAPPED` rule (Annex B §2.5) still refuses capped samples, and GPH `d̂` remains.
-   - **Tails.** The stochastic tails are exactly eight: maximum `g2`; minimum and maximum `g1`; maximum GPH `d̂`; maximum CUSUM-of-squares; maximum zero-day share; minimum and maximum pairwise correlation (the last two only when `K ≥ 2`). `K` and `T` are exact checks.
-   - **Threshold run.** 300,000 generator draws per cell, in its own namespace. The upper tail is the order statistic of rank `ceil(0.99999·n)` = 299,997, and the lower tail is rank `floor(0.00001·n) + 1` = 4. A window value **equal** to a threshold is accepted.
-   - **Refusal rate.** The expected exceedance is 4/300,001 ≈ 1.33·10⁻⁵ per tail, so about 1.07·10⁻⁴ over eight tails. This is an expected rate, not a bound, and it is within the classifier's 2·10⁻⁴ allocation. A non-finite diagnostic is a refusal, and its rate is measured in development and held-out with the rest of DSR availability.
+   - **Tails.** The stochastic tails are exactly eight: maximum `g2`; minimum and maximum `g1`; maximum GPH `d̂`; maximum CUSUM-of-squares; maximum zero-day share; minimum and maximum pairwise correlation. At `K = 1` there are six, because the two correlation tails apply only when `K ≥ 2`. `K` and `T` are exact checks.
+   - **Threshold run (§3.5 overridden: 300,000 draws, not 10⁶).** 300,000 generator draws per cell, in its own namespace.
+     - The ranks are bound in integer arithmetic, with `q = floor(n / 100000)`: the upper tail is the order statistic of rank `n − q` = 299,997, and the lower tail is rank `q + 1` = 4.
+     - A window value **equal** to a threshold is accepted.
+   - **Refusal rate (§3.5 and §3.6 values overridden).**
+     - Per tail, the marginal expected exceedance is at most 4/300,001 ≈ 1.33·10⁻⁵, with equality for continuous diagnostics. Over eight tails the expectation is at most about 1.07·10⁻⁴. This is an expected rate, not a bound, and it is within the classifier's 2·10⁻⁴ allocation.
+     - The §3.6 sentence about a design whose law is exactly some cell's law now reads "accepted with probability at least about 1 − 1.07·10⁻⁴".
+     - Held-out refusal can exceed development refusal by up to about 1.07·10⁻⁴ per cell.
+     - A non-finite diagnostic is a refusal. Its rate is measured in development and held-out with the rest of DSR availability.
    - **Cost.** The threshold run's cost is measured in the re-pilot, including the Q5 and QJ generators. It is not assumed.
-5. **Reported-only runs (§3.3, §3.4, §9) (BF1-4, BF1-6).** Each runs **2,000** replications per cell, once, at `T_C2` and `K` ∈ {1, 2, 5, 20}:
-   - §9 power cells at a true annualised Sharpe of 1.0 only, at `K` ∈ {1, 20}, under Q1-independent and, at `K = 20`, Q3;
+5. **Reported-only runs (§3.3, §3.4, §9) (BF1-4, BF1-6, BF2-7).** Each runs **2,000** replications per cell, once, at `T_C2`:
+   - §9 power cells at a true annualised Sharpe of 0.5, 1.0 and 2.0, at `K` ∈ {1, 20}, under Q1-independent and, at `K = 20`, Q3;
    - §9 mixed nulls at `K` ∈ {2, 20};
-   - §3.3 challenge cells, with `K = 80` removed;
+   - §3.3 challenge cells, at `K` ∈ {2, 5, 20} where they need `K` (80 removed), plus every availability- or cap-demoted cell;
    - the §3.4 sensitivity rerun with mean blocks of 60, on the Q5 and QJ cells.
 
-   These certify nothing, so fewer replications only widen their reported intervals.
-6. **Running on the server (§10) (BF1-4, BF1-5, BS1-4, BS1-5). These are preregistered run rules.**
-   - **Machine.** The owner's rented server (2 shared vCPU, 4 GB RAM), with 2 workers. The owner starts and stops the run. The AI never logs in.
-   - **Pinned runtime.** The calibration runs from a self-contained directory: a pinned standalone Python and pinned NumPy wheels, listed by hash in a lock file in the repository, so the same runtime can be rebuilt on another machine (A-V1). Its runtime identity, under method V, is the frozen runtime. Automatic reboots are switched off for the run. Security updates may install, because the check below catches any change.
-   - **Chunks.** Work is cut into fixed chunks of 500 replications of one cell, so an interruption loses at most one chunk per worker (about 40 minutes). Seeds are per replication (§8), so a resumed run gives the same bytes as an uninterrupted one.
-   - **Checkpoint file.** Each finished chunk is one file, written to a temporary name and then renamed. It records the qualification-object hash, the namespace (development, held-out or threshold), the cell id, the replication range, the runtime identity and the hash of the previous chunk of that cell. A chunk that is missing, duplicated, out of range or has a broken hash chain stops the run. Reduction reads the chunks in replication order.
-   - **On every start and resume,** `v_runtime_check` and the canary run before any chunk. A mismatch stops the run. Only chunks whose recorded runtime identity equals the frozen one count.
-   - **Held-out visibility (P18-6).** While the held-out run is going, only progress counts (chunks done per cell) are shown. Chunk contents are read only by the final reduction. A resume is not an access.
-   - **Before the full run,** a test shows that an interrupted and resumed cell gives byte-identical results to a clean run. The re-pilot also measures the server's speed per replication, its memory with 2 workers, and the threshold-run cost.
-   - **Estimate (not yet measured on the server).** About 104 cells × 32,000 replications × about 4.5 s is about 4,200 laptop-core-hours. QJ's double cost, the threshold run and the reported-only runs add about 300. A shared server core is assumed about 1.2× slower. That is about **5,400 server-core-hours, about 3½–4 months on 2 vCPU**. A 4-vCPU server would halve that; its price is checked before it is offered to the owner.
-   - **Risk disclosed.** A cloud host can move the server to different hardware. If the CPU features then change, the runtime check fails, the run stops, and it resumes only on a matching runtime.
+   These certify nothing. At 2,000 replications a rate near 0.025 has a standard error of about 0.0035, so a mixed null cannot show an excess smaller than about 0.007. This resolution is disclosed with the results.
+6. **Running on the server (§4, §10) (BF1-4, BF1-5, BS1-4, BS1-5, BF2-2, BF2-4, BF2-5, BS2-1, BS2-4). These are preregistered run rules.**
+   - **Machine.**
+     - The calibration runs on the owner's rented server (2 shared vCPU, 4 GB RAM), with 2 workers.
+     - The workers run at the lowest CPU priority (`nice 19`) under a memory cap (a systemd `MemoryMax` of 2.5 GB), so the forward-paper process always comes first.
+     - The owner starts and stops the run. The AI never logs in.
+   - **Pinned runtime (§4 "pinned runtime" overridden).**
+     - The calibration runs inside one container image, pinned by digest. The image holds the whole userland: libc and libm, Python, NumPy and OpenBLAS. Nothing inside the image is updated during the run.
+     - The host may install security updates. Automatic reboots are switched off for the run.
+     - The image digest and the host's CPU model and CPU dispatch features go into the runtime identity.
+     - A known-answer canary for `pow`, `exp` and `log` is added to the BLAS canary. Both canaries are recorded on the server at the freeze; the laptop's `V_CANARY` is not reused.
+     - The runtime can be rebuilt only on a machine with the same CPU dispatch features. **Disclosed to the owner:** C2's real evaluation must run in the same image on such a machine (A-V1). If none is available, the qualification is void and must be redone.
+   - **Two hashes, in order (BS2-1).**
+     - **Run-definition hash.** Before the threshold run, the run definition is committed: this preregistration, the engine commit, the generator code, the cell manifest, the seed specification, the image digest and the exploration-data manifest. Its SHA-256 is the run-definition hash. Threshold and development chunks are bound to it.
+     - **Qualification-object hash.** At the freeze, the qualification object adds the final chain head of every threshold and development chain, and their reduced results. Held-out chunks are bound to `qualification_object_sha256`.
+   - **Chunks.**
+     - Work is cut into fixed chunks of 500 replications, one chain per (namespace, cell).
+     - A chunk takes about 45 minutes, and about 90 minutes in QJ.
+     - Seeds are per replication (§8), so a resumed run gives the same bytes as an uninterrupted one.
+   - **Chunk file.** Each finished chunk is one file, written to a temporary name and then renamed. It records:
+     - the binding hash (run-definition or qualification-object);
+     - the namespace, the cell id and the replication range;
+     - the runtime identity;
+     - the hash of its own content;
+     - the hash of the previous chunk in its chain.
+
+     The final chain head of each chain is recorded. Reduction reads the chunks in replication order.
+   - **Integrity.**
+     - A missing, duplicated, out-of-range or broken-chain chunk stops that chain.
+     - On restart, an incomplete or corrupt chunk is deleted unread and recomputed from its seeds.
+     - A chunk is accepted only if its recorded runtime identity equals the frozen one.
+   - **Start and resume.** On every start and resume, `v_runtime_check`, both canaries and the full frozen reference-vector suite (A-V1) must pass before any chunk runs. A mismatch stops the run.
+     - **After a host change.** If the CPU model changes but the dispatch features and every check still pass, the chunks count, and the change is recorded and disclosed. If the dispatch features change, the run stops. It resumes only on a matching machine, and the chunks already finished still count.
+   - **Held-out visibility (P18-6).** "Access" means any display, export or aggregation of held-out event content before the final reduction. The following are not access: showing progress counts (chunks done per cell); hash-chain verification, which reads bytes but reports only pass or fail; a resume; and deleting and recomputing a corrupt chunk unread.
+   - **Before the full run,** a test shows that an interrupted and resumed cell gives byte-identical results to a clean run. The re-pilot, on the server with forward paper running, measures:
+     - the speed per replication;
+     - the memory with 2 workers;
+     - the threshold-run cost;
+     - the `U_G` rates in the thin categories (item 3).
+   - **Estimate (not yet measured on the server).**
+     - About 104 cells × 32,000 replications × about 4.5 s is about 4,200 laptop-core-hours.
+     - QJ's double cost, the threshold run, the reported-only runs and any 40k escapes add about 300.
+     - A shared server core is assumed about 1.2× slower.
+     - That is about **5,400 server-core-hours, about 3½–4 months on 2 vCPU**, if forward paper leaves both vCPUs nearly free.
+     - A 4-vCPU server would halve that. Its price is checked before it is offered to the owner.
 7. **The cell count** is about 104, taken from the frozen manifest. Of these, Q5 and QJ use exploration-partition data only.
-8. **Proposed §11 wording.** The last sentence of the §11 text becomes: "The declared |J_f| must be one of 1, 2, 5 or 20, and the evaluation window must be exactly T_C2 days."
+8. **Proposed §11 wording.** The last sentence of the §11 text becomes: "The declared |J_f| must be one of 1, 2, 5 or 20, and the qualification covers C2 only."
 
 **Unchanged:**
-- the claim (§1), apart from the `K` and `T` it covers;
+- the claim (§1), apart from the `K` and `T` it covers and the challenge-cell definition (item 3);
 - the null and the generators;
 - seeds;
-- the freeze order and the `AQTQ1` commitment;
+- the freeze order and the `AQTQ1` commitment, with the two hashes of item 6;
 - the attempt rules;
 - the screen;
 - the mapping (§3.6), now at `K` ∈ {1, 2, 5, 20} and `T_C2`, without `L_j/T`.
