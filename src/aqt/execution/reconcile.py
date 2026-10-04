@@ -46,6 +46,7 @@ __all__ = [
     "LocalRecord",
     "ReconciliationReport",
     "ReconcilingVenue",
+    "expected_balances",
     "reconcile",
     "settle",
 ]
@@ -129,6 +130,18 @@ class ReconciliationReport:
             separators=(",", ":"),
         )
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def expected_balances(local: LocalRecord) -> dict[str, Decimal]:
+    """The balances a venue should hold for `local`: its reconciled balances
+    plus the effect of every known order since (as `reconcile` expects)."""
+    if any(order is None for order in local.orders.values()):
+        raise ValueError("an order with an unknown outcome has no expected balance")
+    expected = dict(local.balances)
+    for order in local.orders.values():
+        if order is not None:
+            _apply(expected, order)
+    return expected
 
 
 def _apply(balances: dict[str, Decimal], order: Order) -> None:

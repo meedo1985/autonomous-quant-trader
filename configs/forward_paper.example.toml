@@ -1,0 +1,49 @@
+# Forward paper configuration (roadmap 2 Task 29, scripts/run_forward_paper.py).
+# Same keys as the Task 24 paper configuration; every value is required.
+# Values marked OWNER-SET come from recorded owner answers; values marked
+# [OPEN] are examples only and still need the owner's decision.
+
+[run]
+adapter = "simulator"            # anything else is refused at load time
+run_id = "forward-1"             # each step adds its first hour to this id
+symbol = "BTCUSDT"
+# The account's first decision hour on live bars. The first step fetches the
+# baseline's 170-bar warm-up before it. `end` is required but not used.
+start = 2026-10-05T00:00:00Z
+end = 2099-01-01T00:00:00Z
+
+[starting_balances]              # paper money; L-01 keeps real money at 0
+USDT = "10000"
+BTC = "0"
+
+[filters]                        # Binance BTCUSDT as of 2026-09-26 (review/exchange-filters/); re-read before a live stage
+step_size = "0.00001"
+min_qty = "0.00001"
+max_qty = "9000"
+min_notional = "5"
+tick_size = "0.01"
+
+[governor]
+max_slippage_bps = "5"           # OWNER-SET S-1: 0.05% on the simulator; 0.15% once real prices are used
+authorization_ttl_s = 120        # OWNER-SET S-2: 2 minutes
+decision_window_s = 300          # OWNER-SET T21-Q1: 5 minutes
+
+[executor]
+not_found_delay_s = 10           # OWNER-SET T22-Q1
+absence_queries = 2              # OWNER-SET T22-Q1
+
+[flatten]
+max_step_fraction = "0.5"        # OWNER-SET T23-Q1
+max_slippage_bps = "100"         # OWNER-SET T23-Q1
+
+[tolerance]                      # OWNER-SET T23-Q2: exact on the simulator
+USDT = "0"
+BTC = "0"
+
+[loss_stop]                      # ADOPTED L-03: 20% below peak; S-4: sell all, then HALT
+fraction = "0.20"
+
+[health]                         # OWNER-SET S-5
+max_data_age_s = 7200
+max_clock_skew_s = 5
+max_loop_lag_s = 300

@@ -160,6 +160,9 @@ class Observation:
     local_now: datetime
     reference_now: datetime
     started: datetime
+    scheduled: datetime | None = None
+    """When the work was due, if not at the decision time: forward paper
+    (Task 29) processes an hour once its fill bar has closed."""
 
 
 def bar_clock_observation(decision_time: datetime) -> Observation:
@@ -183,7 +186,7 @@ def health_breaches(
             severity=Severity.CRITICAL,
         ),
         check_loop_lag(
-            scheduled=scheduled,
+            scheduled=scheduled if seen.scheduled is None else seen.scheduled,
             started=seen.started,
             max_lag=limits.max_loop_lag,
             severity=Severity.CRITICAL,
