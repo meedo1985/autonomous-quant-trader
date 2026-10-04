@@ -1,105 +1,131 @@
-# D-20 (partial): binding the DSR replicate Sharpes to method V (proposal, revision 1)
+# D-20 (partial): binding the DSR replicate Sharpes to method V (proposal, revision 2)
 
 **Status:** `AI PROPOSAL — NOT AN OWNER DECISION — NOT ACTIVE`
 **Date:** 2026-10-04
 **Drafted by:** Claude Opus 5.5 (`claude-opus-5-5`)
 
-**Why:** The D-19 measured pilot found that the Task 12 Sharpe numerics are too slow to calibrate inside the DSR bootstrap:
-- findings 1–3: `PILOT_FINDINGS_1.md` `efdee6c`, `PILOT_FINDINGS_2.md` `3bd0f10`, `PILOT_FINDINGS_3.md` `37680d0`;
-- even a bit-identical acceleration costs about 65 s per replication at `K = 80`.
+**History:**
+- Rev 1 `8a3c2f2` was reviewed by Fable VF1 (SOUND WITH FIXES, `df2bad4`) and Sol VS1 (SOUND WITH FIXES with four blockers, `a39fc39`).
+- Rev 2 applies `ADJUDICATION_8A3C2F2.md`. The engine at `ea5b615` implements it.
 
-A computational-equivalence audit was rejected (Sol DS7, `77f9593`). The owner directed that one fast method be bound instead: "Fast method, then decide compute" (`OWNER_DIRECTION_PILOT.md`, `658bc30`).
+**Why.** The D-19 measured pilot (`PILOT_FINDINGS_1`–`3`) found that the Task 12 Sharpe numerics are too costly inside the DSR bootstrap. The cheapest version that is still bit-exact takes about 65 s per replication at `K = 80`, which puts the full grid at tens of thousands of core-hours.
 
-**Scope.** D-20 (`HUMAN_DECISION_MATRIX.md`) covers the stream identity and the code bindings of bootstrap-backed clauses. This proposal covers **only** the replicate Sharpes of Annex B §2.3:
-- `S*_{b,j}`, the Sharpe of the resampled uncentred column;
-- `S°_{b,j}`, the Sharpe of the resampled recentred column.
+A computational-equivalence audit was rejected (Sol DS7, `77f9593`). The owner then directed: "Fast method, then decide compute" (`OWNER_DIRECTION_PILOT.md`, `658bc30`).
 
-The rest of D-20 stays open.
+**Scope.** This proposal covers only the replicate Sharpes `S*_{b,j}` and `S°_{b,j}` of Annex B §2.3. Everything else in D-20 stays open.
+
+**Three parts need the owner's decision:**
+- a clarification of decided Annex B §2.3 (§2);
+- a change to the P18-6 reference contract (§4);
+- the binding itself (§1).
 
 ## 1. Method V (exact definition)
 
-**Inputs:**
-- `X`, the `T × K` float64 matrix of Annex B §2.1;
-- the replicate index sequences `idx_b`, for `b = 0..B−1`, from the production stationary-bootstrap construction, which is unchanged.
+**Inputs.**
+- `X`: the `T × K` float64 matrix of Annex B §2.1.
+- The replicate index sequences, from the production stationary-bootstrap construction. These are unchanged.
 
-**Steps:**
-1. `μ_j = fsum(X[:, j]) / T`, using `math.fsum` in column order. `Y = X − μ`, computed elementwise in IEEE double.
-2. `C` is the `B × T` matrix of counts: `C[b, t]` is the number of `i` with `idx_b[i] = t`. It is exact in float64.
-3. `s1 = C @ Y` and `s2 = C @ (Y ⊙ Y)`. These are computed as float64 matrix products by the pinned NumPy and BLAS, **single-threaded** (`OPENBLAS_NUM_THREADS=1`).
-4. The variance and Sharpes:
-   - `var = (s2 − s1 ⊙ s1 / T) / (T − 1)`;
-   - `mean° = s1 / T`;
-   - `S°_{b,j} = mean°_{b,j} / sqrt(var_{b,j})`;
-   - `S*_{b,j} = (mean°_{b,j} + μ_j) / sqrt(var_{b,j})`.
-5. **Invalid replicate.** If any `var_{b,j} ≤ 0` or any value is non-finite, the result is `INVALID_REPLICATE` (Annex B §2.5 rule 5).
+**Steps.**
+1. Compute `μ_j = fsum(X[:, j]) / T` and `Y = X − μ`. If either is non-finite, the replicate is `INVALID_REPLICATE`.
+2. Build `C[b, t]`, the count of day `t` in replicate `b`. It is exact.
+3. Compute `s1 = C @ Y` and `m = s1 / T`.
+4. Compute the **two-pass** sum of squares `ss[b, j] = Σ_t C[b, t]·(Y[t, j] − m[b, j])²`, in chunks of 64 replicates, using NumPy `einsum`. Then `var = ss / (T − 1)`. If `s1` or `var` is non-finite, the replicate is invalid.
+5. **Rule 5, applied exactly.** A replicate column whose drawn values are all equal is invalid, even when rounding leaves `var` above 0. The equality is checked wherever `var ≤ 10⁻²⁰·(m² + (m + μ)²)`. Any `var ≤ 0` is also invalid.
+6. Compute `S*_{b,j} = (m + μ)/sqrt(var)` and `S°_{b,j} = m/sqrt(var)`. If either is non-finite, the replicate is invalid.
 
-**What stays exactly as decided:**
-- the observed `S_j`, which uses the Task 12 numerics;
-- `S0 = fsum_b(max_j S°_{b,j}) / B` and `var_b(S*_j)`, which use `fsum` and two passes in replicate index order (Annex B §2.3);
-- the PW block lengths and the indices, which are the production routines;
+The two-pass form avoids the cancellation that the one-pass form of rev 1 suffered on tight clusters far from the column mean (VS1-2). A test covers that case.
+
+**What V binds.** V is fixed by the code hash of `_replicates_v` at the freeze, together with the runtime of §3.
+
+**What stays as decided:**
+- the observed `S_j` (Task 12 numerics);
+- `S0` and `var_b`, computed with `fsum` and two passes in replicate index order;
+- the PW block lengths. Calibration computes them with `fast.column_lengths`, which is bit-identical to production by construction (the same IEEE element-wise operations, correctly rounded `fsum`, the same control flow) and by test;
+- the indices;
 - every availability rule and the nominee rule;
-- `z_j = (S_j − S0) / sd_b(S*_j)`.
+- `z_j`;
+- gate G-1, which keeps the production routine.
 
-**Gate G-1** keeps the production paired-CI routine (R-8). V does not apply to it.
+## 2. Clarification of Annex B §2.3 (owner decision)
 
-## 2. One definition, no equivalence question
+Annex B §2.3 says: "`var_b` uses `B − 1`. Means and variances are computed with `math.fsum` and the two-pass algorithm, in replicate index order".
 
-V **is** the method. The calibration (the D-19 engine, `calibration/dsr.py` `_replicates_v`, commit `5250988`) and every real cycle evaluation compute the replicate Sharpes with V, on the same pinned runtime. So there is no fast-versus-exact equivalence to establish, and the issue in DS7 does not arise.
+**Proposed clarification** (a new R-row):
 
-P18-6's exact implementation–reference agreement holds because the reference is V itself on the pinned runtime.
+> "Annex B §2.3's fsum/two-pass sentence governs S0 and var_b, the statistics across replicates in replicate index order; the replicate Sharpes S*_{b,j} and S°_{b,j} are computed by method V (D-20)."
 
-## 3. Determinism and reproduction
+**Disclosed.** Earlier records (`PILOT_FINDINGS_1`–`3`) read the sentence as also covering the per-replicate Sharpe. Both readings are possible. If the owner rejects this clarification, V is an **amendment of Annex B**, not a clarification.
 
-**What is pinned.** These are recorded in the qualification object (prereg §4) and used for the real evaluation:
-- the Python version;
-- the NumPy version and its BLAS build;
-- `OPENBLAS_NUM_THREADS=1`;
-- the CPU model class.
+## 3. Runtime: pinned, checked, fail-closed
 
-**Reproducibility.** Results reproduce bit for bit on that runtime: a test checks that V is deterministic. **Bit-identity on different hardware is not claimed**, because BLAS chooses its kernels by CPU (`DYNAMIC_ARCH`). This is disclosed.
+**What is recorded.** `runtime_identity()` records:
+- the interpreter version and its executable SHA-256;
+- the SHA-256 of the NumPy core and OpenBLAS binaries;
+- the platform;
+- the CPU dispatch features;
+- the environment: `OPENBLAS_NUM_THREADS=1` and `OPENBLAS_CORETYPE=Haswell`. These are set, not defaulted.
 
-**Reproduction (Constitution §27).** The recorded hashes, seeds and runtime reproduce the result. The real evaluation records its runtime identity.
+**What is checked.** `v_runtime_check()` runs before any computation. It enforces the environment and a known-answer canary: a fixed matrix product hashed against a recorded value. It also compares the full identity with the identity recorded at the freeze. Any difference is a `U_ops` refusal.
 
-## 4. Evidence
+Measured on this computer, the canary hash differs when the environment is not pinned, so the check has teeth.
 
-**Agreement with Task 12.** On a GARCH, `ρ = 0.9`, `K = 20`, `T = 365` cell, V and the Task 12 numerics give:
-- the same availability reason, nominee and block;
-- a `z` within `10⁻⁹` relative.
+**Where it is recorded.** The identity goes into the qualification object and into every real-evaluation record.
 
-This is shown by the test `test_method_v_is_deterministic_and_close_to_the_task12_numerics`. It is a check, not a proof; V is its own definition, so the two are not required to be identical.
+**If the runtime cannot be recreated** for a later evaluation, the evaluation fails closed: the result is void, and a new runtime needs requalification. There is no silent fallback.
 
-**Pilot cost with V** (`5250988`, per replication):
+## 4. Reference contract (P18-6 change, owner decision)
 
-| Cell | Time |
+P18-6 requires the implementation and the reference to agree exactly on the pass/fail decision. With V as the definition, the reference becomes **frozen reference vectors**:
+- fixed matrices and index sequences, including near-degenerate, cluster and sparse cases;
+- V's expected outputs and decisions for each, recorded at the freeze.
+
+Every vector is also checked against the Task 12 numerics, and the two must agree on every decision.
+
+**Every real evaluation:**
+1. reproduces the vectors bit for bit;
+2. computes its result with V;
+3. also computes the Task 12 exact numerics once and reports both.
+
+If the two decisions differ, the difference is recorded as a disclosed numerical-method difference, and **V's result governs**.
+
+## 5. Evidence (engine `ea5b615`)
+
+**Tests:**
+- V is deterministic.
+- V agrees with Task 12 on availability, nominee and block, with `z` within `10⁻⁹`, on a benign cell.
+- V matches Task 12 on the cluster-cancellation case.
+- V refuses an all-zero replicate.
+- The runtime check accepts the pinned runtime and refuses without it.
+- The PW block length and G-1 availability are bit-identical to production.
+
+**Cost per replication, with two-pass V:**
+
+| Cell | Seconds per replication |
 |---|---|
-| `K = 80`, `T = 1247` | 4.7 s |
-| `K = 20`, `T = 730` | 2.3 s |
-| `K = 2`, `T = 365` | 0.9 s |
-| `K = 1`, `T = 1247` | 3.7 s |
+| `K = 80`, `T = 1247` | 6.7 |
+| `K = 20`, `T = 730` | 2.3 |
+| `K = 2`, `T = 365` | 0.9 |
+| `K = 1`, `T = 1247` | 3.4 |
 
-The production G-1 routine and the index loops now dominate. Estimated total for the 379-cell grid: about **11,000 core-hours**.
+The full 379-cell grid comes to roughly **12,000 core-hours** (estimate).
 
-**Conditioning.** Columns are centred by their exact mean before the sums, so `s2 − s1²/T` does not suffer catastrophic cancellation. Daily E-DIFF scale and `T ≤ 1247` keep counts and sums far from the limits of float64.
+## 6. Wording
 
-## 5. Wording changes
+**Draft R-8** (DRAFT_WORDING §2.0) appends:
 
-**Draft R-8** (DRAFT_WORDING §2.0) changes from:
+> ", except that the DSR replicate Sharpes S*_{b,j} and S°_{b,j} of Annex B §2.3 are computed by method V at the code hash and on the runtime identity recorded in the decided D-20 record and the D-19 qualification object"
 
-> "…the Task 12 Sharpe and ESS code) bind to that code at a hash fixed under <<OPEN D-20>>."
+The clarification row of §2 is added.
 
-to:
+**P18-6** gains the reference-vector contract of §4.
 
-> "…the Task 12 Sharpe and ESS code) bind to that code at a hash fixed under <<OPEN D-20>>, except that the DSR replicate Sharpes S*_{b,j} and S°_{b,j} of Annex B §2.3 are computed by method V (D-20 binding, d20-proposal/V_BINDING.md at its hash), on the runtime pinned in the D-19 qualification object."
+**Reference vectors:** D-20 option (a) applies. New deterministic reference vectors are reviewed.
 
-**Reference vectors.** D-20 option (a) applies: V gets fresh deterministic reference vectors, generated by the D-19 engine and reviewed.
+## 7. Owner question (after the re-check)
 
-## 6. Owner question (after the two reviews)
+> "Adopt method V for the inside-the-bootstrap Sharpe of the DSR test? This (1) reads one sentence of Annex B as covering only the averages across the 2,000 replicates, not each replicate's Sharpe — if you disagree, it is a change to Annex B; (2) makes V, run on one pinned computer setup with automatic checks, the official calculation for both calibration and real evaluation (if that setup can't be recreated later, the result is void and must be requalified); (3) makes frozen test cases the reference for exact agreement, with the original calculation also run and reported on every real evaluation. V can give slightly different numbers or availability than the original method in rare near-degenerate cases."
 
-> "Bind the inside-the-bootstrap Sharpe of the DSR method to method V (one fast, fixed calculation, used identically in calibration and real evaluation)?"
-
-The choices are:
-- **(A) Bind V**, recommended;
-- **(B) Keep the Task 12 numerics**, which makes the calibration infeasible here;
-- **keep blocked**.
-
-The compute choice is asked separately, after this decision.
+The options are:
+- **(A) Adopt V**, recommended. The full calibration is about 12,000 CPU-hours.
+- **(B) Keep the original Task 12 calculation inside the bootstrap.** The measured cost is about 65 s per replication at the largest cell, which is tens of thousands of CPU-hours. That means a larger rented-compute budget or a much longer local run.
+- **Keep blocked.**
