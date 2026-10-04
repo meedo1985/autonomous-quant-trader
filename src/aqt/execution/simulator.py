@@ -224,7 +224,10 @@ class SimulatedExchange:
         *,
         scenario: Scenario | None = None,
         fees: FeeSchedule | None = None,
+        orders: Mapping[str, Order] | None = None,
     ) -> None:
+        """`orders` are orders this venue already holds, for a forward-paper
+        account resumed from its journal (Task 29); each must be terminal."""
         if set(series) != set(filters):
             raise ValueError("every symbol needs both a bar series and filters")
         if any(amount < 0 for amount in balances.values()):
@@ -234,7 +237,12 @@ class SimulatedExchange:
         self._balances = {asset: Decimal(amount) for asset, amount in balances.items()}
         self._scenario = scenario or Scenario()
         self._fees = fees
-        self._orders: dict[str, Order] = {}
+        self._orders: dict[str, Order] = dict(orders or {})
+        if any(
+            o.status not in (OrderStatus.FILLED, OrderStatus.EXPIRED)
+            for o in self._orders.values()
+        ):
+            raise ValueError("a resumed venue holds only terminal orders")
         self._queries: dict[str, int] = {}
         self._placements: dict[str, int] = {}
         self.events: list[dict[str, str]] = []

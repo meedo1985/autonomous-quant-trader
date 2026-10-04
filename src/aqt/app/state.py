@@ -121,12 +121,16 @@ class AccountState:
     incidents_seen: int = 0
     """Entries in the incident log when saved: an incident opened after it
     is an alarm this snapshot has not applied (part b)."""
+    unfinished_from: datetime | None = None
+    """The first decision hour the run had not finished when this was saved:
+    the hour in progress at a save within an hour, the next one at an hour's
+    end (S29R2-1). `None` in a snapshot written before it was recorded."""
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self, "entered_at", require_utc(self.entered_at, field_name="entered_at")
         )
-        for name in ("last_increase", "valued_through"):
+        for name in ("last_increase", "valued_through", "unfinished_from"):
             if getattr(self, name) is not None:
                 require_utc(getattr(self, name), field_name=name)
         if not self.peak.is_finite() or self.peak < 0:
@@ -137,7 +141,14 @@ class AccountState:
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
 
     def as_mapping(self) -> dict[str, object]:
+        # Omitted when `None`, so earlier snapshots still parse exactly.
+        unfinished = (
+            {}
+            if self.unfinished_from is None
+            else {"unfinished_from": self.unfinished_from.isoformat()}
+        )
         return {
+            **unfinished,
             "attempts": {
                 k: [str(q), str(c)] for k, (q, c) in sorted(self.attempts.items())
             },
@@ -185,6 +196,7 @@ class AccountState:
                 )
             last = data["last_increase"]
             valued = data["valued_through"]
+            unfinished = data.get("unfinished_from")
             state = cls(
                 mode=Mode(data["mode"]),
                 entered_at=_time(data["entered_at"], "entered_at"),
@@ -208,6 +220,9 @@ class AccountState:
                 ),
                 zero_fills=zero_fills,
                 incidents_seen=seen,
+                unfinished_from=None
+                if unfinished is None
+                else _time(unfinished, "unfinished_from"),
             )
         except (KeyError, IndexError, TypeError, ValueError) as error:
             if isinstance(error, StateError):
