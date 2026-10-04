@@ -1,4 +1,4 @@
-# D-19 calibration preregistration for C2 (revision 4)
+# D-19 calibration preregistration for C2 (revision 5)
 
 **Status:** `AI PROPOSAL — NOT AN OWNER DECISION — NOT FROZEN — NOTHING BUILT OR RUN`
 
@@ -13,9 +13,10 @@
 | 1 | `aa981d8` | DF1 `f54e84e` | DS1 `90029a4` |
 | 2 | `71357d4` | DF2 `552af72` | DS2 `169985e` |
 | 3 | `59f5f6c` | DF3 `2c2b11b` | DS3 `807ee4a` |
-| 4 | this revision | not yet re-reviewed | not yet re-reviewed |
+| 4 | `a841fb3` | DF4 `c26e59e` | DS4 `c518e94` |
+| 5 | this revision | not yet re-checked | not yet re-checked |
 
-The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md` and `ADJUDICATION_59F5F6C.md`. The owner decision is U-1, recorded in `OWNER_DECISION_UPROC_SCOPE.md` (`8e04dd8`).
+The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md`, `ADJUDICATION_59F5F6C.md` and `ADJUDICATION_A841FB3.md`. The owner decision is U-1, recorded in `OWNER_DECISION_UPROC_SCOPE.md` (`8e04dd8`).
 
 **Authority and limits:**
 - `d19-recommendation/OWNER_STEP0_DECISION.md` (R19-1, R19-2) allows the design.
@@ -46,7 +47,7 @@ The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md` and `
    - Per family: the upper bound on `P_0(E_f)` is at most 0.025, where `E_f = A_f ∩ {z_f* ≥ z_crit}` (P18-6).
    - Per cycle: the upper bound on `P_0(E)` is at most 0.05. This is certified directly in the joint cells QJ, and holds by the union bound elsewhere.
 2. **No result (A-U1).** The upper bound on `P_0(U_proc^R)` is at most 0.005 per family. Per cycle it is at most 0.01, certified directly in QJ.
-   - `U_proc^R` is DSR availability, including both classifiers (§3.5, §3.6), or `U_G` (§7).
+   - `U_proc^R` is DSR availability, including the window classifier (§3.5), or `U_G` (§7). The declaration mapping (§3.6) is a deterministic validity check under P18-1 and is not part of `U_proc^R` (DS4-4).
 
 **What is not claimed:**
 - **Screened gates have no certified rate.** These are G-3, G-5, G-6, G-7, G-8, G-11 and G-14. They are screened before declaration (§7.2). If one is unavailable on the real window, that is recorded with no certified rate (A-U1).
@@ -84,8 +85,17 @@ The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md` and `
 - `σ̂_t` is a daily EWMA with a 7-day half-life, using past data only, seeded at 3.5%.
 - This is a daily stand-in for the benchmark.
 
-**Columns.** `X_j,t = 0.3·σ_t·x_j,t`.
-- **Cross-column construction.** `x_·,t = Σ^{1/2}·z_t`, where `z_t` holds independent, standardised draws from the cell's law. This is a linear construction: for non-Gaussian laws it fixes the correlation, not the copula, and the marginals of `x` are mixtures. This is disclosed.
+**Columns.** `X_j,t = 0.3·c_j·σ_t·x_j,t`, where the column scale is `c_j = 1` except in the unequal-moments cell (§3.2).
+- **Cross-column construction.** `x_·,t = Σ^{1/2}·z_t`, where `z_t` holds independent, standardised draws from the cell's law.
+  - `Σ^{1/2}` is the symmetric positive-semidefinite square root from the eigendecomposition, with eigenvalues clipped at 0.
+  - This is a linear construction: for non-Gaussian laws it fixes the correlation, not the copula, and the marginals of `x` are mixtures. This is disclosed.
+- **`Σ` by dependence level** (DS4-2, DF4-4). Indices are 0-based.
+  - Equicorrelated: `Σ = (1 − ρ)I + ρ11ᵀ`.
+  - Near-duplicates: `Σ_{2i,2i+1} = Σ_{2i+1,2i} = 0.999` for each pair (0,1), (2,3), …. Every other off-diagonal entry is 0. At odd `K`, the last column is independent.
+  - Exact duplicate: column 1 is set equal to column 0. The other columns are independent.
+  - Opposites: groups `G1` = the first `floor(K/2)` columns and `G2` = the rest. `ρ = 0.9` within a group and `−0.9` between the groups. This matrix is positive-semidefinite, with minimum eigenvalue 0.1.
+  - Unequal clusters: the clusters are consecutive index blocks of the stated sizes. `ρ = 0.9` within a cluster and `0.2` between clusters.
+  - One factor: `Σ = λλᵀ + diag(1 − λ²)`.
 - **Factor loadings.** These are drawn once per replication from the `"columns"` stream.
 - **Candidate legs.** `C_j = b + X_j`, which is about 2.3% per day.
 - **Equity.** An equity path at or below 0 is `INVALID_SERIES`.
@@ -118,6 +128,7 @@ The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md` and `
 | **Q1** core | Gaussian, constant `σ` | every level that applies at that `K` | {1, 2, 5, 20, 80} | every `T` |
 | **Q2** laws | t₅; skew-t ±1; GARCH-t₅; AR(1) with `φ` ∈ {0.2, 0.5} | independent; `ρ = 0.9`; opposites | {1, 2, 5, 20, 80} | `T_min`, `T_C2` |
 | **Q3** heteroskedastic factor | common GARCH | one factor | {5, 20, 80} | `T_min`, `T_C2` |
+| **Q2m** unequal moments | half the columns t₅, half Gaussian; scales `c_j` alternate 0.5 and 2 | independent | {2, 5, 20, 80} | `T_min`, `T_C2` |
 | **Q4** mixed column | one AR(1) column with `φ = 0.5` among iid columns | — | {2, 5, 20, 80} | `T_min`, `T_C2` |
 | **Q5** semi-empirical, family-labelled | §3.4 | — | {1, 2, 5, 20, 80} | `T_min`, `T_C2` |
 | **QJ** joint, both families | the trend library and the vol library on **one shared** §3.4 market path, so the BTC benchmark days are shared | — | each family at `K` ∈ {2, 20, 80} | `T_min`, `T_C2` |
@@ -127,19 +138,22 @@ The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md` and `
 - Q5 is per family.
 - QJ certifies the cycle-level bounds.
 
-**Coverage rule (O18-4).** After development, every O18-4 category must keep at least one qualifying cell; otherwise the method does not qualify. The categories are:
-- one-trial families;
-- two-trial families;
-- high correlation;
-- duplicates;
-- opposites;
-- unequal clusters;
-- unequal `T`;
-- serial dependence;
-- cross-trial dependence;
-- heavy tails;
-- unequal moments;
-- the joint generator.
+**Coverage rule (O18-4, DF4-3).** After development, every O18-4 category must keep at least one qualifying cell from its listed cells. Otherwise the method does not qualify.
+
+| O18-4 category | Cells that count |
+|---|---|
+| one-trial families | any group, `K = 1` |
+| two-trial families | any group, `K = 2` |
+| high correlation | Q1, `ρ` ∈ {0.9, 0.99} |
+| duplicates | Q1, near-duplicates or exact duplicate |
+| opposites | Q1 or Q2, opposites |
+| unequal clusters | Q1, unequal clusters |
+| unequal `T` | cells at two or more `T` levels |
+| serial dependence | Q2 AR(1), Q4 |
+| cross-trial dependence | Q1 or Q2 with `ρ > 0`; Q3 |
+| heavy tails | Q2 t₅ or GARCH-t₅ |
+| unequal moments | Q2m |
+| joint generator | QJ |
 
 **Cap rule.** A cell whose development cap-rate UCB exceeds τ_DSR/4 is a challenge cell.
 
@@ -157,7 +171,7 @@ The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md` and `
 
 1. **Returns.** Use a joint stationary bootstrap, with mean block length 20, of demeaned daily BTC and ETH returns. These come from the **exploration partition only**, and its manifest hash is in the object.
 2. **Exposures.** Trend-rule and vol-rule exposures are computed causally on the BTC path. The benchmark is the stand-in from §3.1. Each raw column is `X̃_j,t = (e_j,t − e^b_t)·r_t`.
-3. **Sign flips.** Draw signs `s_t` that are constant within geometric blocks of mean length 20. They are shared across all columns, and across both families in QJ. They come from the `"sign"` stream, and the first block starts at day 0. Then `X = s·X̃`, so `E[X] = 0` exactly, and `C = b + X`.
+3. **Sign flips.** Each geometric block of mean length 20 gets one sign: an iid fair draw of ±1, independent of the resampled path (DS4-2). The signs are shared across all columns, and across both families in QJ. They come from the `"sign"` stream, and the first block starts at day 0. Then `X = s·X̃`, so `E[X] = 0` exactly, and `C = b + X`.
 4. **Disclosed side effects.**
    - The marginal skewness is zero in distribution.
    - The implied exposure lies in [−1, 2].
@@ -183,7 +197,8 @@ The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md` and `
 1. A **threshold run** draws 10⁶ samples, from the generator only, in **every** enumerated candidate cell. It uses its own namespace and keeps each cell's per-tail order statistic:
    - `ceil(0.99999·n)` for an upper tail;
    - `floor(0.00001·n) + 1` for a lower tail.
-2. Before the freeze, each threshold is set per `T` level, as the extreme of the stored statistics over the **final** qualifying cells.
+2. **Development** uses, per `T` level, the extreme over **all** candidate cells (DF4-5).
+3. **Before the freeze,** each threshold is set per `T` level, as the extreme of the stored statistics over the **final** qualifying cells. Held-out refusal can therefore exceed development refusal by up to the per-cell sum over tails, about 1.3·10⁻⁴. Validity rests on the held-out run, which uses the frozen thresholds.
 
 **Refusal.**
 - **Rate.** The per-tail refusal rate is at most about 1.1·10⁻⁵ per qualifying cell, so at most about 1.3·10⁻⁴ over all tails. That is within the classifier's 2·10⁻⁴ budget inside the DSR-availability share.
@@ -196,7 +211,7 @@ The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md` and `
 
 **Diagnostics.** The §3.5 diagnostics are computed on its daily E-DIFF matrix over the **last `T_C2` complete days** of the exploration partition. The length dependence of the diagnostics then matches the `T_C2` thresholds. If the exploration partition holds fewer than `T_C2` days after the trials' warm-up, the design cannot be mapped and is refused.
 
-**Mapping.** The design maps to the qualifying cells with its `(K, T_C2)`. It is accepted if, and only if, every diagnostic lies within the frozen thresholds for that `T` level.
+**Mapping (DS4-1, DF4-1).** The design is accepted if, and only if, at least one **final qualifying cell `c`** with `K_c = K` and `T_c = T_C2` contains **every** diagnostic within `c`'s **own** stored per-tail order statistics. The cell ids that match are recorded in the declaration. A design whose law is exactly some cell's law is accepted with probability about `1 − 1.3·10⁻⁴`. The pooled thresholds of §3.5 are used only by the window classifier.
 
 **Outcome.**
 - If any diagnostic falls outside, the design is **refused at declaration**. Under P18-1 that means it cannot be declared, and no `m` is spent.
@@ -231,13 +246,25 @@ The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md` and `
    - Recompute the thresholds over the final qualifying cells.
    - Hash and commit the object.
    - The owner posts `qualification_object_sha256` on the attempt's channel.
-6. **Held-out certification** (§6) runs once its anchor's drand round is published (§8).
+6. **Held-out certification** (§6) runs after the attempt's O-6a freeze read and the publication of its drand round (§4, §8).
 7. **Accept or fail.** After a failure, at most one further attempt is allowed. It needs a recorded change, a new namespace and the next attempt key. Every attempt uses α = 0.025/`M`. No re-tuning on seen held-out data is allowed (P18-6).
 
 **Channel for `<<OWNER Q-1>>` (by substitution into O-6a SPEC rev 5 `84fca9c` §3–§7):**
 - **Prefix.** `AQTQ1`. The scriptPubKey is exactly `6a 25 41 51 54 51 31` followed by the 32-byte `qualification_object_sha256`, 39 bytes in all.
 - **Keys and coins.** Attempt `n` ∈ {1, 2} has its own key `A_Qn`, bound coin `F_Qn` and deadline height `D_Qn`. These values are fixed at the preregistration's acceptance, as `<<ACCEPTANCE: A_Q1, F_Q1, D_Q1, A_Q2, F_Q2, D_Q2>>`.
-- **Failure.** Every O-6a invalidation outcome is replaced by **attempt void**. The held-out run is not made and its namespace is not burned. The next attempt key is used, if one remains.
+- **Horizons (DF4-2).**
+  - O-6a's "after signing" becomes "after acceptance of this preregistration".
+  - Both "before C2 ends" and "before C2's evaluation is final" become "before the owner's accept or reject of certification (§12 item 4)".
+  - `D_Qn` must be above the acceptance height. `D_Q2` is fixed in the attempt-2 record before its post.
+- **Timing.** The held-out run starts only after the O-6a freeze read for `T_Qn` **and** the publication of the drand round.
+- **Failure boundary (DS4-3, DF4-2).** An O-6a invalidation found **before** the held-out run starts makes the attempt **void**:
+  - no held-out run is made, and the namespace is not burned;
+  - the same object may be posted again under the next attempt key and namespace `d19-heldout-v{n+1}`, with no recorded change.
+
+  An invalidation found **at or after** the start is a **failed attempt**:
+  - its namespace is burned;
+  - P18-6 applies, so there is no retuning;
+  - any further attempt needs a recorded change.
 - **Cost.** Two Bitcoin network fees per attempt, plus any withdrawal fee.
 
 ## 5. Development phase [frozen rules]
@@ -245,8 +272,16 @@ The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md` and `
 **Targets (τ).**
 - For each test `i`, τ_i is the largest true rate whose held-out pass probability is at least 0.999. It is computed at α = 0.025/`M_max` with that test's `N_i` (DF3-3).
 - `M_max` is the manifest's test count at the smallest `T_min` candidate, which is conservative.
-- At `M = 1000`, τ is about 0.0177 for the error test (`N = 20k`) and about 0.00113 for DSR availability (`N = 20k`).
-- For `U_G`, τ is about 0.000175 at `N = 20k` and about 0.00041 at `N = 40k`. Both values are printed.
+- At `M_max ≈ 1,143`, which is Fable's count of 371 cells at `T_min = 365` (DF4-6), the targets are:
+
+  | Test | `N` | τ |
+  |---|---|---|
+  | error | 20k | about 0.01763 |
+  | DSR availability | 20k | about 0.00113 |
+  | `U_G` | 20k | about 0.000148 |
+  | `U_G` | 40k | about 0.000415 |
+
+  At `τ_G(20k)`, a 22k development run must show no `U_G` event. The exact values are printed from the manifest. Q2m adds about 8 cells.
 
 **Replications.**
 - 22,000 per candidate cell.
@@ -264,7 +299,7 @@ The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md` and `
 
 **Tests.** The enumerated tests are (cell, family label or `agnostic` or `joint`, bound). The bounds are:
 - `P_0(E_f)` ≤ 0.025;
-- DSR availability with both classifiers ≤ 0.0035;
+- DSR availability, including the window classifier, ≤ 0.0035;
 - `U_G` ≤ 0.0015.
 
 QJ adds two cycle-level bounds:
@@ -307,7 +342,11 @@ It is one event with one test per cell (DS3-4).
 **Paths.** `n_S = 30` simulated null **hourly** BTC/ETH paths, built as follows:
 - **Bootstrap.** A joint hourly stationary bootstrap, with mean block length 168 h, of exploration-partition 1h bars. The manifest hash of those bars is in the object.
 - **Signs.** Signs in geometric blocks of mean length 24 h, shared by BTC and ETH.
-- **Reflection.** A bar with sign −1 is reflected in log space about its open: the log OHLC offsets `(h, l, c)` from the open become `(−l, −h, −c)`. Volume is kept.
+- **Reconstruction (DS4-5, DF4-4).** Each resampled bar gives its log offsets from its own open: `h = ln(H/O)`, `l = ln(L/O)`, `c = ln(C/O)`.
+  - A bar with sign −1 has `(h, l, c)` replaced by `(−l, −h, −c)`.
+  - The path is chained: each new bar's open equals the previous new close, and the first open is the first sampled bar's open. Then `H = O·e^h`, `L = O·e^l` and `C = O·e^c`. Any gap between a bar's open and the previous close in the source data is dropped.
+  - Volume is kept as sampled.
+  - There is no further demeaning. The symmetric, independent signs give zero drift in expectation.
 - **Length.** The C2 window length plus the trials' declared warm-up.
 
 **Runs.** Each trial is run under C-6 on every path. Every screened gate is computed at production counts:
@@ -352,6 +391,8 @@ seed = SHA256(cj({"anchor": <hex>, "cell_id": <str>, "ns": <str>, "rep": <int>})
 - The generator is numpy `Philox` (4×64, 10 rounds). Its key is two uint64 values, big-endian, taken from the first 16 bytes of the stream hash. The counter starts at 0. The numpy version is pinned in the object.
 - `"g1_ci"` is the trial seed for the production `paired_sharpe_ci` stream.
 
+**Symbol `s`.** `s` denotes the outer seed, as lowercase hex (DS4-5).
+
 **Inner Annex B family seed.** This is the production construction, with synthetic fields:
 
 | Field | Value |
@@ -378,7 +419,7 @@ seed = SHA256(cj({"anchor": <hex>, "cell_id": <str>, "ns": <str>, "rep": <int>})
 
 **Main runs.** Development and held-out each use about 20,000 replications per cell. QJ cells cost about twice a single-family cell. The `U_G` gates add their own cost: G-1 at 2,000 replicates, G-10 at 12,870 splits, and G-12 at three horizons.
 
-**Estimate.** About **2,000–7,000 CPU-core-hours** for the calibration, which is not measured. The threshold run is cheap.
+**Estimate.** About **2,000–7,000 CPU-core-hours** for the calibration. This estimate predates rev 4's roughly 30% larger grid and QJ's doubled cost, and it is not measured; the pilot replaces it (DF4-6). The threshold run is cheap.
 
 **Per-declaration costs.**
 - The screen: up to 80 trials × 30 paths × about 1,004 hourly runs.
@@ -389,7 +430,8 @@ seed = SHA256(cj({"anchor": <hex>, "cell_id": <str>, "ns": <str>, "rep": <int>})
 - a median cell;
 - a QJ cell;
 - the threshold run;
-- one screen of an 80-trial set.
+- one screen of an 80-trial set;
+- a declaration-mapping run of the real trend and vol rule libraries on exploration data, to measure how often real designs are refused.
 
 ## 11. Amendment wording proposed for `<<OPEN D-19 route>>` (A-U1, O18-4)
 
@@ -397,7 +439,7 @@ seed = SHA256(cj({"anchor": <hex>, "cell_id": <str>, "ns": <str>, "rep": <int>})
 >
 > Gates G-3, G-5, G-6, G-7, G-8, G-11 and G-14 are excluded from that target and governed by a fail-closed screen of the actual trial set on simulated null hourly paths before the declaration is committed. Their unavailability on the window is a procedure no-result event recorded with its cause code, without a certified rate.
 >
-> Each declared family design is mapped deterministically to a qualifying cell on exploration data before declaration; a design outside every qualifying cell is refused. The declared |J_f| must be one of 1, 2, 5, 20 or 80."
+> Each declared family design is mapped deterministically, on exploration data before declaration, to the qualifying cells of its K and T whose own acceptance region contains its full diagnostic vector; a design matched by no such cell is refused, and the matching cell ids are recorded in the declaration. The declared |J_f| must be one of 1, 2, 5, 20 or 80."
 
 ## 12. What the owner decides, and when
 
