@@ -34,7 +34,8 @@ Every finding is accepted. None is left unrepaired.
     and the banned set (the sizing estimator's output, plus any frozen
     feature identical to it, currently `ewma_vol_168h` for trials sized by
     `EWMA_168h`), with the mapping bound under `<<OPEN D-20>>`.
-  - Under (C): add the new `fixed_size` class clauses.
+  - Under (C): add the new `fixed_size` class clauses **and** everything listed
+    under (A) for vol-target trials (FR4-1).
   - (SR3-4: repairs the FR2-9 follow-up, which the rev 3 addendum claimed but
     did not write.)
 
@@ -74,3 +75,15 @@ Sol SR3 (`26f3615`) returned NOT READY. Every finding is accepted.
 **FR2-1 is resolved by deferral** (O-6a is out of this batch), not by
 verifying the Bitcoin channel. The DRAFT §2.0 message length must be fixed
 when the channel is specified.
+
+## Addendum 3: FR4 narrow check of rev 4 (`70cd0fa`) → revision 5
+
+Fable FR4 (`6b7a5f2`) returned NOT READY. Every finding is accepted.
+
+| Finding | Disposition |
+|---|---|
+| FR4-1 | Option (C) now includes (A)'s ban for vol-target trials. The follow-up list is updated to match. |
+| FR4-2 | The 83-byte limit is now attributed to an older guide. The reviewer's recollection of higher current defaults is recorded as unverified. The short-hash design is kept. |
+| FR4-3 | Q1 (C) now says the drawdown checks become easy to pass at 10%. |
+| FR4-4 | Q1 (A) now states the lost `ewma_vol_168h` input and the need for new code. |
+| FR4-5 | Q1 (B) now says a plain version tends to fail G-11. |

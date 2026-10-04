@@ -1,4 +1,4 @@
-# REG-1, REG-2, O-8 proposal (revision 4): sizing that can be registered, and baseline runs under the event contract
+# REG-1, REG-2, O-8 proposal (revision 5): sizing that can be registered, and baseline runs under the event contract
 
 **Status:** `NON-BINDING AI PROPOSAL — NOTHING DECIDED — NOT ACTIVE`
 **Date:** 2026-10-04
@@ -12,7 +12,8 @@ SR1-2, SR1-3). Rev 3 applies Fable's focused check FR2 (`4f230cb`, NOT READY)
 and the verified Sigstore facts. Sol's focused check SR2 was stopped by the
 system for low memory before it returned any output, so revision 2 has only
 one family's check. Rev 4 applies Sol's check SR3 (`26f3615`, NOT READY), and
-takes O-6a out of this batch (§4).
+takes O-6a out of this batch (§4). Rev 5 applies Fable's narrow check FR4
+(`6b7a5f2`).
 **Context:**
 - §4 draft rev 6 (`5c89f82`) §7;
 - Annex C rev 2, C-6 and C-10 (1);
@@ -180,13 +181,16 @@ this batch and stays `<<OWNER O-6a>>` in the draft.
     (blog.sigstore.dev/rekor-v2-ga). So there is no supported way to list
     every entry by one identity.
   - Keyless signing makes the signer's identity public.
-- **The Bitcoin OP_RETURN candidate is partly verified**
-  (developer.bitcoin.org/devguide/transactions.html, 2026-10-04).
+- **Bitcoin OP_RETURN candidate**, per an older developer guide that is
+  no longer maintained (developer.bitcoin.org/devguide/transactions.html,
+  read 2026-10-04). Current Bitcoin Core relay defaults are to be checked
+  when O-6a is specified (FR4-2).
   - Null-data outputs are standard, "relayed and mined by default", and
     "provably unspendable".
-  - Default relay allows **up to 83 bytes**. The DRAFT §2.0 message text
-    (about 90 bytes) is therefore too long. A short prefix plus the raw
-    32-byte hash fits.
+  - That guide gives a default relay limit of **83 bytes**, and the DRAFT
+    §2.0 message text is about 90 bytes. A reviewer recalls that later
+    Bitcoin Core versions raised the default; this is unverified. Either
+    way, a short prefix plus the raw 32-byte hash is the safe design.
 
 **Before O-6a is asked, the specification must define** (SR3-2):
 - the fixed key or script, and which spend counts as a post. Bitcoin has
@@ -229,19 +233,26 @@ and the amendment cannot be signed until it is resolved.
      - So your 10% rule cannot be registered directly. A deliberately built
        exact or near-10% version stays possible, and the random-timing check
        judges such a version unreliably.
+     - Honest variance-timing signals with default sizing lose one input,
+       `ewma_vol_168h`, which equals the sizing number. The ban also needs
+       new protected code (decided later, under D-20).
      - An entry/exit idea can later be tested at vol-target size. That is a
        different strategy, and its result does not tell you how 10% would do.
      - 10% stays your deployment choice under the loss bounds.
    - **(B) Vol-target sizing only, and the sizing number is allowed.** Your
      10% can be written exactly ("signal = 0.10 × volatility / target") and
-     registered. The random-timing check then judges it unreliably.
-   - **(C) Add a separate fixed-size class.** This is the cleanest way to
-     register 10% itself.
+     registered. The random-timing check then judges it unreliably: a plain
+     version tends to **fail** that check, for reasons unrelated to its
+     timing.
+   - **(C) Add a separate fixed-size class, and keep (A)'s ban for the
+     normal vol-target strategies.** This is the cleanest way to register
+     10% itself (FR4-1).
      - It is checked on the improvement tests.
      - At 10% the main promotion test may mostly measure how the benchmark
        did over the window, so its verdict may say little about your idea.
        Its chance of passing is unknown until the statistical calibration
        (D-19) is done.
+     - At 10%, the drawdown checks also become easy to pass.
      - It needs another drafting and review round.
 
    Under any choice, your rule needs a real entry signal from research before
