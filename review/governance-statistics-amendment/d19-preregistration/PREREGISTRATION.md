@@ -1,4 +1,4 @@
-# D-19 calibration preregistration for C2 (revision 5)
+# D-19 calibration preregistration for C2 (revision 6)
 
 **Status:** `AI PROPOSAL — NOT AN OWNER DECISION — NOT FROZEN — NOTHING BUILT OR RUN`
 
@@ -14,7 +14,8 @@
 | 2 | `71357d4` | DF2 `552af72` | DS2 `169985e` |
 | 3 | `59f5f6c` | DF3 `2c2b11b` | DS3 `807ee4a` |
 | 4 | `a841fb3` | DF4 `c26e59e` | DS4 `c518e94` |
-| 5 | this revision | not yet re-checked | not yet re-checked |
+| 5 | `327aa3d` | DF5 `df65001` | DS5 (see `SOL_REVIEW_327AA3D.md`) |
+| 6 | this revision | DF5/DS5 wording fixes applied (`ADJUDICATION_327AA3D.md`) | narrow re-check pending |
 
 The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md`, `ADJUDICATION_59F5F6C.md` and `ADJUDICATION_A841FB3.md`. The owner decision is U-1, recorded in `OWNER_DECISION_UPROC_SCOPE.md` (`8e04dd8`).
 
@@ -117,7 +118,7 @@ The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md`, `ADJ
 | equicorrelated | `ρ` ∈ {0.5, 0.9, 0.99} | `K ≥ 2` |
 | near-duplicates | pairs with `ρ = 0.999` | `K ≥ 2` |
 | exact duplicate | one pair of identical columns | `K ≥ 2` |
-| opposites | the first `floor(K/2)` columns are negated; `ρ = −0.9` between groups | `K ≥ 2` |
+| opposites | `Σ` as in §3.1: groups `G1` (the first `floor(K/2)` columns) and `G2`; `ρ = 0.9` within a group and `−0.9` between groups; no further negation (DF5-4) | `K ≥ 2` |
 | unequal clusters | sizes {1,4} at `K = 5`, {5,15} at 20, {20,60} at 80; `ρ` 0.9 within a cluster, 0.2 between | `K ≥ 5` |
 | one factor | loadings uniform on [0.3, 0.99] | `K ≥ 5` |
 
@@ -128,7 +129,7 @@ The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md`, `ADJ
 | **Q1** core | Gaussian, constant `σ` | every level that applies at that `K` | {1, 2, 5, 20, 80} | every `T` |
 | **Q2** laws | t₅; skew-t ±1; GARCH-t₅; AR(1) with `φ` ∈ {0.2, 0.5} | independent; `ρ = 0.9`; opposites | {1, 2, 5, 20, 80} | `T_min`, `T_C2` |
 | **Q3** heteroskedastic factor | common GARCH | one factor | {5, 20, 80} | `T_min`, `T_C2` |
-| **Q2m** unequal moments | half the columns t₅, half Gaussian; scales `c_j` alternate 0.5 and 2 | independent | {2, 5, 20, 80} | `T_min`, `T_C2` |
+| **Q2m** unequal moments | columns `j < ceil(K/2)` are t₅, the rest Gaussian; `c_j = 0.5` for even `j` and `2` for odd `j`, so both laws carry both scales at `K ≥ 5` (at `K = 2` law and scale are confounded, which is accepted; DF5-5, DS5-2) | independent | {2, 5, 20, 80} | `T_min`, `T_C2` |
 | **Q4** mixed column | one AR(1) column with `φ = 0.5` among iid columns | — | {2, 5, 20, 80} | `T_min`, `T_C2` |
 | **Q5** semi-empirical, family-labelled | §3.4 | — | {1, 2, 5, 20, 80} | `T_min`, `T_C2` |
 | **QJ** joint, both families | the trend library and the vol library on **one shared** §3.4 market path, so the BTC benchmark days are shared | — | each family at `K` ∈ {2, 20, 80} | `T_min`, `T_C2` |
@@ -248,15 +249,17 @@ The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md`, `ADJ
    - The owner posts `qualification_object_sha256` on the attempt's channel.
 6. **Held-out certification** (§6) runs after the attempt's O-6a freeze read and the publication of its drand round (§4, §8).
 7. **Accept or fail.** After a failure, at most one further attempt is allowed. It needs a recorded change, a new namespace and the next attempt key. Every attempt uses α = 0.025/`M`. No re-tuning on seen held-out data is allowed (P18-6).
+   - **Keys run out (DF5-1).** A void attempt also uses up its key. If no key remains, qualification has not been obtained under this preregistration. Any further key needs a new acceptance.
 
 **Channel for `<<OWNER Q-1>>` (by substitution into O-6a SPEC rev 5 `84fca9c` §3–§7):**
 - **Prefix.** `AQTQ1`. The scriptPubKey is exactly `6a 25 41 51 54 51 31` followed by the 32-byte `qualification_object_sha256`, 39 bytes in all.
-- **Keys and coins.** Attempt `n` ∈ {1, 2} has its own key `A_Qn`, bound coin `F_Qn` and deadline height `D_Qn`. These values are fixed at the preregistration's acceptance, as `<<ACCEPTANCE: A_Q1, F_Q1, D_Q1, A_Q2, F_Q2, D_Q2>>`.
+- **Keys and coins.** Attempt `n` ∈ {1, 2} has its own key `A_Qn`, bound coin `F_Qn` and deadline height `D_Qn`. `A_Q1`, `F_Q1`, `D_Q1`, `A_Q2` and `F_Q2` are fixed at the preregistration's acceptance, as `<<ACCEPTANCE: A_Q1, F_Q1, D_Q1, A_Q2, F_Q2>>`. `D_Q2` is fixed only in the attempt-2 record, before its post (DF5-3, DS5-1).
 - **Horizons (DF4-2).**
   - O-6a's "after signing" becomes "after acceptance of this preregistration".
   - Both "before C2 ends" and "before C2's evaluation is final" become "before the owner's accept or reject of certification (§12 item 4)".
   - `D_Qn` must be above the acceptance height. `D_Q2` is fixed in the attempt-2 record before its post.
 - **Timing.** The held-out run starts only after the O-6a freeze read for `T_Qn` **and** the publication of the drand round.
+- **Pre-run record (DF5-2).** Before the held-out run, two records are committed. One is a check of every O-6a invalidation condition for the attempt; the other records the time the run starts. An invalidation that is not listed in that committed check counts as found at or after the start, even if the chain shows it existed earlier.
 - **Failure boundary (DS4-3, DF4-2).** An O-6a invalidation found **before** the held-out run starts makes the attempt **void**:
   - no held-out run is made, and the namespace is not burned;
   - the same object may be posted again under the next attempt key and namespace `d19-heldout-v{n+1}`, with no recorded change.
@@ -272,7 +275,7 @@ The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md`, `ADJ
 **Targets (τ).**
 - For each test `i`, τ_i is the largest true rate whose held-out pass probability is at least 0.999. It is computed at α = 0.025/`M_max` with that test's `N_i` (DF3-3).
 - `M_max` is the manifest's test count at the smallest `T_min` candidate, which is conservative.
-- At `M_max ≈ 1,143`, which is Fable's count of 371 cells at `T_min = 365` (DF4-6), the targets are:
+- At `M_max ≈ 1,167`, from 379 cells at `T_min = 365` including Q2m (DS5-3), the targets are:
 
   | Test | `N` | τ |
   |---|---|---|
@@ -281,7 +284,7 @@ The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md`, `ADJ
   | `U_G` | 20k | about 0.000148 |
   | `U_G` | 40k | about 0.000415 |
 
-  At `τ_G(20k)`, a 22k development run must show no `U_G` event. The exact values are printed from the manifest. Q2m adds about 8 cells.
+  At `τ_G(20k)`, a 22k development run must show no `U_G` event. The exact values are printed from the manifest. The quoted τ values and critical counts do not change at this `M` (DS5-3).
 
 **Replications.**
 - 22,000 per candidate cell.
