@@ -59,3 +59,32 @@ One point is stricter than the question's wording ("voids the run"), and it is p
 
 - **Authorized now:** drafting the D-20 binding of the DSR replicate Sharpe to one deterministic vectorised method `V`, with the matching wording change to draft R-8; its two reviews; building `V` into the engine; re-measuring.
 - **Not authorized yet:** the D-20 decision itself (owner), and any compute run or spending (owner).
+
+## Third direction (2026-10-04, after the compute plan `706df5a`)
+
+### What the owner said (verbatim)
+
+> "its alot of money i cant handel that can we do less i can sped 3-10$ in month that all"
+
+### The question (verbatim)
+
+> "With a budget of $3-10/month, renting computers is out. How should the calibration be done?"
+
+### Options shown
+
+- **"Shrink it, run on laptop (Recommended)"**: "Free. About 100 scenarios instead of 380: only C2's real data length, families of at most 20 strategies (not 80), 10,000+10,000 runs instead of 22,000+20,000. About 2,000 CPU-hours = roughly 2.5-3 weeks of the laptop on mains power (pausable, e.g. nights only). Trade-offs: covers only cycle C2 (later windows need their own calibration, years away); you could declare at most 20 strategies per family; the pass bar gets slightly stricter (a real edge is a bit harder to detect). Needs a plan amendment reviewed by Fable and Sol, then your OK."
+- **"Full plan on laptop"**
+- **"Pause D-19"**
+
+### Answer
+
+**"Shrink it, run on laptop (Recommended)"**
+
+### Effect
+
+- **Spending.** The owner's budget is $3–10 a month, so no rental is planned and the `COMPUTE_PLAN.md` options A and B are set aside.
+- **What is authorized now:** drafting preregistration rev 7 (the budget version); its two reviews; finishing the engine for a laptop run.
+- **What still needs the owner:**
+  - accepting rev 7;
+  - the go-ahead for the runs.
+- **To be put to the owner at acceptance.** Certifying one data length narrows decided O18-4 ("unequal clusters and `T`"). That narrowing is asked explicitly.
