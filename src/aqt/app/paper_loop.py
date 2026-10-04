@@ -885,12 +885,11 @@ def run_paper(
         confirmed holdings, as a restart would (A27-18)."""
         nonlocal peak, stop_armed, valued
         _, check = recover(hour)
-        if hour in ends:
-            refuse_command(Trigger.HALT_OVERRIDE, busy_until, "FREEZE_EXIT this hour")
         try:
             controller.exit_freeze(check, check.at)
         except SafetyError as error:
             refuse_command(Trigger.FREEZE_EXIT, check.at, str(error))
+            refuse_halt_override(hour)
             return
         recovered(check)
         peak, stop_armed, valued, _ = _replay(
@@ -902,7 +901,15 @@ def run_paper(
             config.loss_stop_fraction,
             fires=False,
         )
+        # Logged after the exit, as before, but before the save that ends
+        # the hour (S29R3-1, S29R4-1).
+        refuse_halt_override(hour)
         save(check.at, ended=hour)
+
+    def refuse_halt_override(hour: datetime) -> None:
+        """An override for an hour with a FREEZE_EXIT is not applied."""
+        if hour in ends:
+            refuse_command(Trigger.HALT_OVERRIDE, busy_until, "FREEZE_EXIT this hour")
 
     def end_halt(
         hour: datetime,
