@@ -1,4 +1,4 @@
-# D-19 calibration preregistration for C2 (revision 6, accepted)
+# D-19 calibration preregistration for C2 (revision 6 accepted; revision 7 budget version proposed in §13)
 
 **Status:** `ACCEPTED BY THE OWNER (rev 6, OWNER_DECISION_D19_ACCEPT.md, ec35a29) — NOT YET COMPLETE (keys record pending) — NO CALIBRATION RUN`
 
@@ -17,6 +17,7 @@
 | 5 | `327aa3d` | DF5 `df65001` | DS5 (see `SOL_REVIEW_327AA3D.md`) |
 | 6 | `e1e4e7e` | DF5 wording fixes applied (`ADJUDICATION_327AA3D.md`) | DS6 READY `0ac488d`; **accepted by the owner** (`ec35a29`) |
 | 7 | `af03d00` | draft §13, computational equivalence | Sol DS7 UNSOUND (`77f9593`); **withdrawn** (`PILOT_FINDINGS_3.md`). The text below is rev 6 again. |
+| 7b | this revision | §13 budget version (owner direction 3, `30757e8`), with method V (D-20 partial, `b58d1c3`) | not yet reviewed; §1–§12 remain the accepted rev 6 text until the owner accepts §13 |
 
 The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md`, `ADJUDICATION_59F5F6C.md` and `ADJUDICATION_A841FB3.md`. The owner decision is U-1, recorded in `OWNER_DECISION_UPROC_SCOPE.md` (`8e04dd8`).
 
@@ -454,3 +455,47 @@ seed = SHA256(cj({"anchor": <hex>, "cell_id": <str>, "ns": <str>, "rep": <int>})
 4. **Accept or reject the certification result.** A failure leaves promotion blocked.
 
 Nothing here starts a cycle, reads confirmation or lockbox data, or authorizes trading.
+
+## 13. Budget version (rev 7b, proposed; overrides the sections it names)
+
+**Why.** The owner can spend at most $3–10 a month, so the calibration must run free on this laptop (owner direction 3, `30757e8`). The full plan is estimated at about 12,000 core-hours, which is about 3 months of this laptop. This version aims at about 2,000 core-hours. Method V computes the replicate Sharpes (A-V1, owner decision D-20 partial).
+
+**Overrides:**
+
+1. **Family sizes (§1, §3.2).** The declarable `|J_f|` is one of {1, 2, 5, 20}. Every group runs at the `K` values of {1, 2, 5, 20} where its law is defined. QJ runs each family at `K` ∈ {2, 20}.
+2. **One length (§3.2, §5 step 2; A-B7).** Every qualifying cell has `T = T_C2`. The `T_min` candidates are {`T_C2`}, so `T_min = T_C2`.
+   - **What this covers.** C2 only. A later window must have at least `T_C2` days, about 3.3 years, or be calibrated again.
+   - **Owner question at acceptance:** `<<OWNER O18-4-T>>`. This narrows decided O18-4, whose qualifying cells include "unequal clusters and `T`". The O18-4 coverage table then has no "unequal `T`" row.
+3. **Replications (§5, §6).**
+   - Development: **10,000** per cell.
+   - Held-out: **10,000** per cell, or **20,000** where the development 90% UCB of `U_G` exceeds τ_G(10k). That rule replaces the 20k/40k rule.
+   - τ is recomputed by the frozen script from the actual manifest. Illustrative values at `M ≈ 330`:
+
+     | Test | τ |
+     |---|---|
+     | error | 0.0153 |
+     | DSR availability | 0.00058 |
+     | `U_G` at 10k | 0.000019 |
+     | `U_G` at 20k | 0.00020 |
+
+   - **Disclosed effect.** The error target in development is stricter than the full plan's 0.0177, so `z_crit` comes out higher. The test has less power to pass a real edge. The validity of the false-pass bound is unchanged.
+4. **Classifier (§3.5).**
+   - The diagnostic **maximum `L_j/T` is dropped**. Fitting its thresholds would need the PW routine on every column of every threshold draw, about 11,000 core-hours. The `BLOCK_LENGTH_CAPPED` rule (Annex B §2.5) still refuses capped samples.
+   - The threshold run draws **300,000** samples per cell, using the generator only, and sets each tail at the order statistic for 99.998%. That gives at most about 2·10⁻⁵ refusal per tail. With about 10 tails, each cell's refusal rate is at most about 2·10⁻⁴, the classifier's budget.
+   - The threshold run is estimated at about 90 core-hours.
+5. **Running on the laptop (§10).**
+   - **Workers.** The run uses at most 5 worker processes, so the 8 GB laptop stays usable.
+   - **Checkpoints.** Every cell is checkpointed, so a pause, an interruption or a period on battery loses little work.
+   - **Pinned runtime.** The laptop's runtime identity, under method V, is the frozen runtime. Only replications run on that runtime count.
+   - **Estimate.** About **2,000 core-hours**: about 104 cells × 20,000 replications × about 3.5 s, plus the threshold run. That is about **2½–3 weeks** of continuous running on mains power. On battery the processor slows to about half speed.
+6. **The cell count** is about 104, taken from the frozen manifest. Of these, Q5 and QJ use exploration-partition data only.
+
+**Unchanged:**
+- the claim (§1), apart from the `K` and `T` it covers;
+- the null and the generators;
+- seeds;
+- the freeze order and the `AQTQ1` commitment;
+- the attempt rules;
+- the screen;
+- the mapping (§3.6), now at `K` ∈ {1, 2, 5, 20} and `T_C2`.
+
