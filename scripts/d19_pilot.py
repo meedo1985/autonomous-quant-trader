@@ -16,7 +16,8 @@ import sys
 import time
 from pathlib import Path
 
-os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")  # method V: single-threaded BLAS
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")  # method V pinned runtime
+os.environ.setdefault("OPENBLAS_CORETYPE", "Haswell")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))  # the top-level `calibration` package
 
@@ -68,6 +69,7 @@ def one(cell: Cell, rep: int, numerics: str) -> dict[str, float | str]:
 
 def main() -> int:
     fast.self_check()
+    dsr.v_runtime_check()
     parser = argparse.ArgumentParser()
     parser.add_argument("--reps", type=int, default=3)
     parser.add_argument("--reference-sample", type=int, default=1)

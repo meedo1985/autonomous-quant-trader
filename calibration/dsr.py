@@ -211,6 +211,26 @@ def _replicates_accelerated(
     return star, null
 
 
+V_ENVIRONMENT = {"OPENBLAS_NUM_THREADS": "1", "OPENBLAS_CORETYPE": "Haswell"}
+V_CANARY = "d26180459e2c6639334610fd4b31d953a7d08b5987330795cc233202bfbf7dfc"
+
+
+def v_runtime_check() -> None:
+    """Fail closed (a U_ops cause) unless method V runs on its pinned runtime
+    (VF1-2): the environment above, set before NumPy is imported, and a fixed
+    known-answer matrix product hashing to `V_CANARY`."""
+    import os  # noqa: PLC0415
+
+    for name, value in V_ENVIRONMENT.items():
+        if os.environ.get(name) != value:
+            raise RuntimeError(f"U_ops: method V needs {name}={value}")
+    rng = np.random.Generator(np.random.Philox(key=[2026, 1004]))
+    c = rng.integers(0, 4, (200, 300)).astype(np.float64)
+    y = rng.standard_normal((300, 40)) * 0.01
+    if hashlib.sha256((c @ y).tobytes()).hexdigest() != V_CANARY:
+        raise RuntimeError("U_ops: method V known-answer check failed on this runtime")
+
+
 def _replicates_v(
     x: np.ndarray, draws: list[list[int]]
 ) -> tuple[list[list[float]] | None, list[list[float]] | None]:
@@ -231,7 +251,18 @@ def _replicates_v(
     )
     s1, s2 = counts @ y, counts @ (y * y)
     var = (s2 - s1 * s1 / t) / (t - 1)
-    if (var <= 0).any() or not np.isfinite(var).all():
+    if not np.isfinite(var).all():
+        return None, None
+    # Rule 5 exactly (VF1-1): a replicate column whose drawn values are all
+    # equal is invalid even if rounding leaves var slightly above 0. Only
+    # near-zero variances need the exact check: a constant column's computed
+    # var is rounding noise, far below 1e-8 of its mean square.
+    small = var <= 1e-8 * (s2 / (t - 1))
+    for b_, j in zip(*np.nonzero(small), strict=True):
+        drawn = x[np.asarray(draws[b_]), j]
+        if (drawn == drawn[0]).all():
+            return None, None
+    if (var <= 0).any():
         return None, None
     sd = np.sqrt(var)
     mean = s1 / t

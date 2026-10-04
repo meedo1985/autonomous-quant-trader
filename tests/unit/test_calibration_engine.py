@@ -103,3 +103,36 @@ def test_method_v_is_deterministic_and_close_to_the_task12_numerics() -> None:
     )
     assert v1.z is not None and exact.z is not None
     assert abs(v1.z - exact.z) <= 1e-9 * max(1.0, abs(exact.z))
+
+
+def test_method_v_refuses_a_constant_replicate_column() -> None:
+    """VF1-1: Annex B rule 5 exactly, though rounding may leave var > 0."""
+    t = 200
+    x = np.zeros((t, 1))
+    x[:5, 0] = [0.01, -0.02, 0.03, 0.01, -0.01]  # 5 active days, 195 zero days
+    draws = [list(range(5, t)) + [5] * 5] + [list(range(t))] * 3  # rep 0: zeros
+    assert dsr._replicates_v(x, draws) == (None, None)  # noqa: SLF001
+
+
+def test_method_v_runtime_check_needs_the_pinned_runtime() -> None:
+    """VF1-2: known-answer canary in a fresh process with the pinned
+    environment; refused without it."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    code = "from calibration import dsr; dsr.v_runtime_check(); print('ok')"
+    env = {
+        **os.environ,
+        **dsr.V_ENVIRONMENT,
+        "PYTHONPATH": f"{root}{os.pathsep}{root / 'src'}",
+    }
+    done = subprocess.run([sys.executable, "-c", code], env=env, cwd=root,
+                          capture_output=True, text=True, check=False)  # fmt: skip
+    assert done.stdout.strip() == "ok", done.stderr
+    bare = {k: v for k, v in env.items() if k not in dsr.V_ENVIRONMENT}
+    refused = subprocess.run([sys.executable, "-c", code], env=bare, cwd=root,
+                             capture_output=True, text=True, check=False)  # fmt: skip
+    assert "U_ops" in refused.stderr
