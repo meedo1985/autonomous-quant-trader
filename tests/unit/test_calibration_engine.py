@@ -136,3 +136,21 @@ def test_method_v_runtime_check_needs_the_pinned_runtime() -> None:
     refused = subprocess.run([sys.executable, "-c", code], env=bare, cwd=root,
                              capture_output=True, text=True, check=False)  # fmt: skip
     assert "U_ops" in refused.stderr
+
+
+def test_method_v_variance_is_two_pass_stable() -> None:
+    """VS1-2: a resample drawn from a tight cluster far from the column mean
+    (large local mean, tiny local variance) keeps the Task 12 variance to a
+    few ulps; a one-pass formula fails here."""
+    t = 365
+    x = np.where(np.arange(t) % 2 == 0, 0.001, -0.001)[:, None]
+    x[::2, 0] += np.linspace(0, 1e-13, len(x[::2, 0]))  # positive cluster spread
+    cluster = list(range(0, t, 2))
+    draws = [(cluster * 2)[:t]]
+    star, null = dsr._replicates_v(x, draws)  # noqa: SLF001
+    assert star is not None
+    drawn = x[np.asarray(draws[0]), 0]
+    from calibration import fast
+
+    mean, var = fast.mean_var(drawn)  # Task 12 numerics
+    assert abs(star[0][0] - mean / var**0.5) <= 1e-6 * abs(mean / var**0.5)

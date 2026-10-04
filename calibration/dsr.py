@@ -32,6 +32,7 @@ from aqt.metrics.statistics import (
     block_length,
 )
 from calibration import fast
+from calibration.seeds import sha
 
 PURPOSE = "dsr_family_max_null"
 WINDOW = '["2022-01-01T00:00:00Z","2025-06-01T00:00:00Z"]'
@@ -215,7 +216,39 @@ V_ENVIRONMENT = {"OPENBLAS_NUM_THREADS": "1", "OPENBLAS_CORETYPE": "Haswell"}
 V_CANARY = "d26180459e2c6639334610fd4b31d953a7d08b5987330795cc233202bfbf7dfc"
 
 
-def v_runtime_check() -> None:
+def runtime_identity() -> dict[str, str]:
+    """What method V's bits depend on (VS1-4): interpreter and NumPy/BLAS
+    binaries by hash, platform, CPU dispatch features, and the pinned env."""
+    import os  # noqa: PLC0415
+    import platform  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    def digest(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    core = Path(np.__file__).parent
+    binaries = sorted(
+        p
+        for p in [*core.rglob("_multiarray_umath*"), *core.parent.rglob("*openblas*")]
+        if p.suffix in (".pyd", ".so", ".dll", ".dylib")
+    )
+    import importlib  # noqa: PLC0415
+
+    umath = importlib.import_module("numpy._core._multiarray_umath")
+    features = getattr(umath, "__cpu_features__", {})
+    return {
+        "python": sys.version,
+        "python_executable_sha256": digest(Path(sys.executable)),
+        "numpy": np.__version__,
+        "binaries": sha({p.name: digest(p) for p in binaries}),
+        "platform": f"{platform.system()} {platform.machine()}",
+        "cpu_features": sha(sorted(k for k, v in features.items() if v)),
+        **{name: os.environ.get(name, "") for name in V_ENVIRONMENT},
+    }
+
+
+def v_runtime_check(expected: dict[str, str] | None = None) -> None:
     """Fail closed (a U_ops cause) unless method V runs on its pinned runtime
     (VF1-2): the environment above, set before NumPy is imported, and a fixed
     known-answer matrix product hashing to `V_CANARY`."""
@@ -229,19 +262,27 @@ def v_runtime_check() -> None:
     y = rng.standard_normal((300, 40)) * 0.01
     if hashlib.sha256((c @ y).tobytes()).hexdigest() != V_CANARY:
         raise RuntimeError("U_ops: method V known-answer check failed on this runtime")
+    if expected is not None and runtime_identity() != expected:
+        raise RuntimeError("U_ops: runtime differs from the qualified runtime")
 
 
 def _replicates_v(
     x: np.ndarray, draws: list[list[int]]
 ) -> tuple[list[list[float]] | None, list[list[float]] | None]:
-    """Method V: per replicate b, counts c_bt of each day t; on columns centred
-    by their fsum mean mu_j, s1 = C @ Y and s2 = C @ (Y * Y); mean = s1 / T,
-    var = (s2 - s1**2 / T) / (T - 1); S* = (mean + mu) / sd, S0-law = mean / sd.
-    Invalid (INVALID_REPLICATE) if any var <= 0 or non-finite."""
+    """Method V (D-20 proposal rev 2), a counts-weighted **two-pass** variance:
+    1. mu_j = fsum(x[:, j]) / T; Y = X - mu.
+    2. C[b, t] = occurrences of day t in replicate b; s1 = C @ Y; m = s1 / T.
+    3. ss[b, j] = sum_t C[b, t] * (Y[t, j] - m[b, j]) ** 2 (chunked einsum);
+       var = ss / (T - 1).
+    4. S* = (m + mu) / sqrt(var); S-null = m / sqrt(var).
+    INVALID_REPLICATE (None) if any intermediate is non-finite, any var <= 0,
+    or any replicate column's drawn values are all equal (rule 5 exactly)."""
     t, k = x.shape
     b = len(draws)
     mu = np.array([math.fsum(x[:, j].tolist()) / t for j in range(k)])
     y = x - mu
+    if not (np.isfinite(mu).all() and np.isfinite(y).all()):
+        return None, None
     counts = (
         np.bincount(
             (np.arange(b)[:, None] * t + np.asarray(draws)).ravel(), minlength=b * t
@@ -249,21 +290,28 @@ def _replicates_v(
         .reshape(b, t)
         .astype(np.float64)
     )
-    s1, s2 = counts @ y, counts @ (y * y)
-    var = (s2 - s1 * s1 / t) / (t - 1)
-    if not np.isfinite(var).all():
+    s1 = counts @ y
+    m = s1 / t
+    ss = np.empty_like(m)
+    for lo in range(0, b, 64):
+        d = y[None, :, :] - m[lo : lo + 64, None, :]
+        ss[lo : lo + 64] = np.einsum("bt,btk->bk", counts[lo : lo + 64], d * d)
+    var = ss / (t - 1)
+    if not (np.isfinite(s1).all() and np.isfinite(var).all()):
         return None, None
-    # Rule 5 exactly (VF1-1): a replicate column whose drawn values are all
-    # equal is invalid even if rounding leaves var slightly above 0. Only
-    # near-zero variances need the exact check: a constant column's computed
-    # var is rounding noise, far below 1e-8 of its mean square.
-    small = var <= 1e-8 * (s2 / (t - 1))
-    for b_, j in zip(*np.nonzero(small), strict=True):
+    # Rule 5 exactly (VF1-1): a constant replicate column's two-pass var is
+    # rounding noise of order eps**2 times its squared (centred or raw) level;
+    # only such
+    # near-zero variances need the exact "all drawn values equal" check.
+    scale = m * m + (m + mu) ** 2 + np.finfo(float).tiny  # centred and raw level
+    for b_, j in zip(*np.nonzero(var <= 1e-20 * scale), strict=True):
         drawn = x[np.asarray(draws[b_]), j]
         if (drawn == drawn[0]).all():
             return None, None
     if (var <= 0).any():
         return None, None
     sd = np.sqrt(var)
-    mean = s1 / t
-    return ((mean + mu) / sd).tolist(), (mean / sd).tolist()
+    star, null = (m + mu) / sd, m / sd
+    if not (np.isfinite(star).all() and np.isfinite(null).all()):
+        return None, None
+    return star.tolist(), null.tolist()
