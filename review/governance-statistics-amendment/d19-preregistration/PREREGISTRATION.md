@@ -1,4 +1,4 @@
-# D-19 calibration preregistration for C2 (revision 6 accepted; revision 7 budget version proposed in §13)
+# D-19 calibration preregistration for C2 (revision 6 accepted; budget version rev 7c proposed in §13)
 
 **Status:** `ACCEPTED BY THE OWNER (rev 6, OWNER_DECISION_D19_ACCEPT.md, ec35a29) — NOT YET COMPLETE (keys record pending) — NO CALIBRATION RUN`
 
@@ -17,7 +17,8 @@
 | 5 | `327aa3d` | DF5 `df65001` | DS5 (see `SOL_REVIEW_327AA3D.md`) |
 | 6 | `e1e4e7e` | DF5 wording fixes applied (`ADJUDICATION_327AA3D.md`) | DS6 READY `0ac488d`; **accepted by the owner** (`ec35a29`) |
 | 7 | `af03d00` | draft §13, computational equivalence | Sol DS7 UNSOUND (`77f9593`); **withdrawn** (`PILOT_FINDINGS_3.md`). The text below is rev 6 again. |
-| 7b | this revision | §13 budget version (owner direction 3, `30757e8`), with method V (D-20 partial, `b58d1c3`) | not yet reviewed; §1–§12 remain the accepted rev 6 text until the owner accepts §13 |
+| 7b | `c09337f` | §13 budget version (owner direction 3, `30757e8`), with method V (D-20 partial, `b58d1c3`); BF1 UNSOUND `7c7cf49` | BS1 UNSOUND `769f966` |
+| 7c | this revision | §13 repaired per BF1 and BS1 (`ADJUDICATION_C09337F.md`); run on the owner's server | not yet reviewed; §1–§12 remain the accepted rev 6 text until the owner accepts §13 |
 
 The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md`, `ADJUDICATION_59F5F6C.md` and `ADJUDICATION_A841FB3.md`. The owner decision is U-1, recorded in `OWNER_DECISION_UPROC_SCOPE.md` (`8e04dd8`).
 
@@ -456,39 +457,58 @@ seed = SHA256(cj({"anchor": <hex>, "cell_id": <str>, "ns": <str>, "rep": <int>})
 
 Nothing here starts a cycle, reads confirmation or lockbox data, or authorizes trading.
 
-## 13. Budget version (rev 7b, proposed; overrides the sections it names)
+## 13. Budget version (rev 7c, proposed; overrides the sections it names)
 
-**Why.** The owner can spend at most $3–10 a month, so the calibration must run free on this laptop (owner direction 3, `30757e8`). The full plan is estimated at about 12,000 core-hours, which is about 3 months of this laptop. This version aims at about 2,000 core-hours. Method V computes the replicate Sharpes (A-V1, owner decision D-20 partial).
+**Why.** The owner can spend at most $3–10 a month (owner direction 3, `30757e8`). The laptop must be switched off, so the calibration runs on the owner's small rented server, the one that also runs forward paper (about €6 a month, no extra cost). The full plan is about 12,000 core-hours. This version aims at about 4,500. Method V computes the replicate Sharpes (A-V1, owner decision D-20 partial).
 
 **Overrides:**
 
-1. **Family sizes (§1, §3.2).** The declarable `|J_f|` is one of {1, 2, 5, 20}. Every group runs at the `K` values of {1, 2, 5, 20} where its law is defined. QJ runs each family at `K` ∈ {2, 20}.
-2. **One length (§3.2, §5 step 2; A-B7).** Every qualifying cell has `T = T_C2`. The `T_min` candidates are {`T_C2`}, so `T_min = T_C2`.
-   - **What this covers.** C2 only. A later window must have at least `T_C2` days, about 3.3 years, or be calibrated again.
-   - **Owner question at acceptance:** `<<OWNER O18-4-T>>`. This narrows decided O18-4, whose qualifying cells include "unequal clusters and `T`". The O18-4 coverage table then has no "unequal `T`" row.
-3. **Replications (§5, §6).**
-   - Development: **10,000** per cell.
-   - Held-out: **10,000** per cell, or **20,000** where the development 90% UCB of `U_G` exceeds τ_G(10k). That rule replaces the 20k/40k rule.
-   - τ is recomputed by the frozen script from the actual manifest. Illustrative values at `M ≈ 330`:
+1. **Family sizes (§1, §3.2, §9, §11).** The declarable `|J_f|` is one of {1, 2, 5, 20}. Every group runs at the `K` values of {1, 2, 5, 20} where its law is defined. QJ runs each family at `K` ∈ {2, 20}.
+2. **One length (§3.2, §5 step 2, §11; A-B7) (BF1-2, BS1-3).**
+   - Every qualifying cell has `T = T_C2`. The `T_min` candidates are {`T_C2`}, so `T_min = T_C2`.
+   - **What this covers.** The certification holds for a window of **exactly** `T_C2` days and nothing else. Every other window length needs a new qualification.
+   - **Eligibility.** A-B7 reads `T_min` as a floor (`T ≥ T_min`). For this qualification object it is narrowed to an equality: a window with `T ≠ T_C2` is **ineligible**. It is not evaluated, and it is not a `U_proc^R` event.
+   - **Owner questions at acceptance:**
+     - `<<OWNER O18-4-T>>`: drop decided O18-4's "unequal `T`" category. The coverage table then has no "unequal `T`" row.
+     - `<<OWNER A-B7-EQ>>`: the equality reading of `T_min` above.
+3. **Replications (§5, §6) (BF1-1, BS1-1, BF1-8).**
+   - Development: **12,000** per cell. Held-out: **20,000** per cell, in every cell. The 20k/40k rule and every "10k" branch are deleted.
+   - **§5 step 2 is restated.** A cell passes development availability when its 90% UCB of DSR availability is at most τ_DSR(20k) and its 90% UCB of `U_G` is at most τ_G(20k). At 12,000 replications, zero `U_G` events give a UCB of 1.92·10⁻⁴, which passes, and **one** event gives 3.24·10⁻⁴, which fails.
+   - **A cell that fails** development availability is **demoted to a challenge cell**, as the cap rule does. It is reported, not certified. The coverage rule (§3.2) then decides whether the method still qualifies. The mapping (§3.6) and the classifier thresholds (§3.5) use only the final qualifying cells, so a declared design that matches only demoted cells is refused at declaration.
+   - **Targets.** τ is computed by the frozen script with each test's `N_i = 20,000`, as run. Values at `M ≈ 322–340`, checked independently by both reviewers and by the drafter:
 
-     | Test | τ |
-     |---|---|
-     | error | 0.0153 |
-     | DSR availability | 0.00058 |
-     | `U_G` at 10k | 0.000019 |
-     | `U_G` at 20k | 0.00020 |
+     | Test | Critical count at 20k | τ |
+     |---|---|---|
+     | error | 418 (417 at `M = 340`) | 0.01796 (0.01791) |
+     | DSR availability | 40 | 0.00120 |
+     | `U_G` | 11 | 0.000202 |
 
-   - **Disclosed effect.** The error target in development is stricter than the full plan's 0.0177, so `z_crit` comes out higher. The test has less power to pass a real edge. The validity of the false-pass bound is unchanged.
-4. **Classifier (§3.5).**
-   - The diagnostic **maximum `L_j/T` is dropped**. Fitting its thresholds would need the PW routine on every column of every threshold draw, about 11,000 core-hours. The `BLOCK_LENGTH_CAPPED` rule (Annex B §2.5) still refuses capped samples.
-   - The threshold run draws **300,000** samples per cell, using the generator only, and sets each tail at the order statistic for 99.998%. That gives at most about 2·10⁻⁵ refusal per tail. With about 10 tails, each cell's refusal rate is at most about 2·10⁻⁴, the classifier's budget.
-   - The threshold run is estimated at about 90 core-hours.
-5. **Running on the laptop (§10).**
-   - **Workers.** The run uses at most 5 worker processes, so the 8 GB laptop stays usable.
-   - **Checkpoints.** Every cell is checkpointed, so a pause, an interruption or a period on battery loses little work.
-   - **Pinned runtime.** The laptop's runtime identity, under method V, is the frozen runtime. Only replications run on that runtime count.
-   - **Estimate.** About **2,000 core-hours**: about 104 cells × 20,000 replications × about 3.5 s, plus the threshold run. That is about **2½–3 weeks** of continuous running on mains power. On battery the processor slows to about half speed.
-6. **The cell count** is about 104, taken from the frozen manifest. Of these, Q5 and QJ use exploration-partition data only.
+   - **Disclosed effect.** `z_crit` is chosen so that the 90% UCB of `P_0(E_f)` at 12,000 development replications is at most τ_err. That UCB is wider than the full plan's at 22,000, so `z_crit` comes out a little higher, and the test has a little less power to pass a real edge. The validity of the false-pass bound is unchanged. One development `U_G` event demotes a cell.
+4. **Classifier (§3.5, §3.6) (BF1-3, BS1-2, BF1-7).**
+   - **`L_j/T` is dropped** from the diagnostics, in the window classifier (§3.5) and in the declaration-time mapping (§3.6). Fitting its thresholds would need the PW routine on every column of every threshold draw, about 1,000–1,500 core-hours, which the budget cannot carry. The `BLOCK_LENGTH_CAPPED` rule (Annex B §2.5) still refuses capped samples, and GPH `d̂` remains.
+   - **Tails.** The stochastic tails are exactly eight: maximum `g2`; minimum and maximum `g1`; maximum GPH `d̂`; maximum CUSUM-of-squares; maximum zero-day share; minimum and maximum pairwise correlation (the last two only when `K ≥ 2`). `K` and `T` are exact checks.
+   - **Threshold run.** 300,000 generator draws per cell, in its own namespace. The upper tail is the order statistic of rank `ceil(0.99999·n)` = 299,997, and the lower tail is rank `floor(0.00001·n) + 1` = 4. A window value **equal** to a threshold is accepted.
+   - **Refusal rate.** The expected exceedance is 4/300,001 ≈ 1.33·10⁻⁵ per tail, so about 1.07·10⁻⁴ over eight tails. This is an expected rate, not a bound, and it is within the classifier's 2·10⁻⁴ allocation. A non-finite diagnostic is a refusal, and its rate is measured in development and held-out with the rest of DSR availability.
+   - **Cost.** The threshold run's cost is measured in the re-pilot, including the Q5 and QJ generators. It is not assumed.
+5. **Reported-only runs (§3.3, §3.4, §9) (BF1-4, BF1-6).** Each runs **2,000** replications per cell, once, at `T_C2` and `K` ∈ {1, 2, 5, 20}:
+   - §9 power cells at a true annualised Sharpe of 1.0 only, at `K` ∈ {1, 20}, under Q1-independent and, at `K = 20`, Q3;
+   - §9 mixed nulls at `K` ∈ {2, 20};
+   - §3.3 challenge cells, with `K = 80` removed;
+   - the §3.4 sensitivity rerun with mean blocks of 60, on the Q5 and QJ cells.
+
+   These certify nothing, so fewer replications only widen their reported intervals.
+6. **Running on the server (§10) (BF1-4, BF1-5, BS1-4, BS1-5). These are preregistered run rules.**
+   - **Machine.** The owner's rented server (2 shared vCPU, 4 GB RAM), with 2 workers. The owner starts and stops the run. The AI never logs in.
+   - **Pinned runtime.** The calibration runs from a self-contained directory: a pinned standalone Python and pinned NumPy wheels, listed by hash in a lock file in the repository, so the same runtime can be rebuilt on another machine (A-V1). Its runtime identity, under method V, is the frozen runtime. Automatic reboots are switched off for the run. Security updates may install, because the check below catches any change.
+   - **Chunks.** Work is cut into fixed chunks of 500 replications of one cell, so an interruption loses at most one chunk per worker (about 40 minutes). Seeds are per replication (§8), so a resumed run gives the same bytes as an uninterrupted one.
+   - **Checkpoint file.** Each finished chunk is one file, written to a temporary name and then renamed. It records the qualification-object hash, the namespace (development, held-out or threshold), the cell id, the replication range, the runtime identity and the hash of the previous chunk of that cell. A chunk that is missing, duplicated, out of range or has a broken hash chain stops the run. Reduction reads the chunks in replication order.
+   - **On every start and resume,** `v_runtime_check` and the canary run before any chunk. A mismatch stops the run. Only chunks whose recorded runtime identity equals the frozen one count.
+   - **Held-out visibility (P18-6).** While the held-out run is going, only progress counts (chunks done per cell) are shown. Chunk contents are read only by the final reduction. A resume is not an access.
+   - **Before the full run,** a test shows that an interrupted and resumed cell gives byte-identical results to a clean run. The re-pilot also measures the server's speed per replication, its memory with 2 workers, and the threshold-run cost.
+   - **Estimate (not yet measured on the server).** About 104 cells × 32,000 replications × about 4.5 s is about 4,200 laptop-core-hours. QJ's double cost, the threshold run and the reported-only runs add about 300. A shared server core is assumed about 1.2× slower. That is about **5,400 server-core-hours, about 3½–4 months on 2 vCPU**. A 4-vCPU server would halve that; its price is checked before it is offered to the owner.
+   - **Risk disclosed.** A cloud host can move the server to different hardware. If the CPU features then change, the runtime check fails, the run stops, and it resumes only on a matching runtime.
+7. **The cell count** is about 104, taken from the frozen manifest. Of these, Q5 and QJ use exploration-partition data only.
+8. **Proposed §11 wording.** The last sentence of the §11 text becomes: "The declared |J_f| must be one of 1, 2, 5 or 20, and the evaluation window must be exactly T_C2 days."
 
 **Unchanged:**
 - the claim (§1), apart from the `K` and `T` it covers;
@@ -497,5 +517,4 @@ Nothing here starts a cycle, reads confirmation or lockbox data, or authorizes t
 - the freeze order and the `AQTQ1` commitment;
 - the attempt rules;
 - the screen;
-- the mapping (§3.6), now at `K` ∈ {1, 2, 5, 20} and `T_C2`.
-
+- the mapping (§3.6), now at `K` ∈ {1, 2, 5, 20} and `T_C2`, without `L_j/T`.
