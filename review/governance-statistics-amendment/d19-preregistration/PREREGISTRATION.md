@@ -1,4 +1,4 @@
-# D-19 calibration preregistration for C2 (revision 6 accepted; budget version rev 7f proposed in §13)
+# D-19 calibration preregistration for C2 (revision 6 accepted; budget version rev 7g proposed in §13)
 
 **Status:** `ACCEPTED BY THE OWNER (rev 6, OWNER_DECISION_D19_ACCEPT.md, ec35a29) — NOT YET COMPLETE (keys record pending) — NO CALIBRATION RUN`
 
@@ -21,7 +21,8 @@
 | 7c | `09b0fb9` | §13 repaired per BF1 and BS1 (`ADJUDICATION_C09337F.md`); run on the owner's server; BF2 SOUND WITH FIXES | BS2 UNSOUND (`aa6caa7`) |
 | 7d | `9762781` | §13 repaired per BF2 and BS2 (`ADJUDICATION_09B0FB9.md`); BF3 SOUND WITH FIXES (`ff9eb3a`) | BS3 SOUND WITH FIXES (`564ebea`) |
 | 7e | `9d811e6` | §13 repaired per BF3 and BS3 (`ADJUDICATION_9762781.md`); BF4 READY WITH FIXES (`23ce5f4`) | BS4 READY WITH FIXES (`026a23a`) |
-| 7f | this revision | §13 repaired per BF4 and BS4 (`ADJUDICATION_9D811E6.md`) | awaiting fix-check; §1–§12 remain the accepted rev 6 text until the owner accepts §13 |
+| 7f | `02c14e5` | §13 repaired per BF4 and BS4 (`ADJUDICATION_9D811E6.md`); BF5 READY WITH FIXES (`d69fe25`) | BS5 READY WITH FIXES (`d46c870`) |
+| 7g | this revision | §13 wording fixes per BF5 and BS5 (`ADJUDICATION_02C14E5.md`) | no further review planned: both fix-checks were READY WITH FIXES, minor only; §1–§12 remain the accepted rev 6 text until the owner accepts §13 |
 
 The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md`, `ADJUDICATION_59F5F6C.md` and `ADJUDICATION_A841FB3.md`. The owner decision is U-1, recorded in `OWNER_DECISION_UPROC_SCOPE.md` (`8e04dd8`).
 
@@ -460,7 +461,7 @@ seed = SHA256(cj({"anchor": <hex>, "cell_id": <str>, "ns": <str>, "rep": <int>})
 
 Nothing here starts a cycle, reads confirmation or lockbox data, or authorizes trading.
 
-## 13. Budget version (rev 7f, proposed; overrides the sections it names)
+## 13. Budget version (rev 7g, proposed; overrides the sections it names)
 
 **Why.** The owner can spend at most $3–10 a month (owner direction 3, `30757e8`). The laptop must be switched off, so the calibration runs on the owner's small rented server, the one that also runs forward paper (about €6 a month, no extra cost). The full plan is about 12,000 core-hours. This version aims at about 4,500. Method V computes the replicate Sharpes (A-V1, owner decision D-20 partial).
 
@@ -529,7 +530,7 @@ Nothing here starts a cycle, reads confirmation or lockbox data, or authorizes t
      - The host may install security updates. Automatic reboots are switched off for the run.
      - **Runtime identity, two parts (BF3-2, BS3-1).**
        - The **gating identity** consists of the decided A-V1 identity (interpreter, NumPy and OpenBLAS binaries, platform, CPU dispatch features, environment), the image digest, and the results of both canaries and the reference-vector suite. Chunk acceptance and A-V1's "frozen runtime" compare this part, and only this part.
-       - **"Platform"** in the gating identity means the operating system and machine architecture inside the image (as `runtime_identity` already records them: system and machine), and the image's libc. It does not include the host kernel release (BF4-3).
+       - **"Platform"** in the gating identity means the operating system and machine architecture inside the image (as `runtime_identity` already records them: system and machine). It does not include the host kernel release (BF4-3). The image's libc is not a separate field; it is gated through the image digest (BF5-1).
        - **Host provenance** is the CPU model, the microcode and the host kernel release. It is recorded in every chunk and disclosed, and never compared.
      - **Canaries.** A known-answer canary for `pow`, `exp` and `log` is added to the BLAS canary. The laptop's `V_CANARY` is not reused.
      - The runtime can be rebuilt only on a machine with the same CPU dispatch features. **Disclosed to the owner:** C2's real evaluation must run in the same image on such a machine (A-V1). If none is available, the qualification is void and must be redone.
@@ -572,9 +573,9 @@ Nothing here starts a cycle, reads confirmation or lockbox data, or authorizes t
      - **Fixed extras,** about 300 in total: QJ's double cost (about 80), the reported-only runs (about 100), and the threshold run, which is to be measured (about 100 assumed).
      - **Escapes (BS4-1).** Add 25·E[ordinary escapes] + 50·E[QJ escapes].
        - An ordinary cell has one `U_G` test, so it escapes with the per-test probability: 0.21, 0.43 and 0.58 at p = 2·10⁻⁵, 5·10⁻⁵ and 10⁻⁴.
-       - A QJ cell has two `U_G` tests. It escapes when at least one test has 1–2 events and neither has 3 or more. That is about 0.38, 0.65 and 0.68 if the two tests are independent.
-       - With 102 ordinary cells and 2 QJ cells, this adds about 570, 1,160 or 1,550.
-     - **Totals.** A shared server core is assumed about 1.2× slower, and the run uses 2 vCPU that forward paper leaves nearly free. The scenario totals are about **6,100, 6,800 or 7,300 server-core-hours, that is about 4, 4½ or 5 months**. With no escapes at all it would be about 5,400, or about 3½–4 months (BF4-1).
+       - A QJ cell has two `U_G` tests on one shared path, so they may be dependent. No independence is assumed: each QJ cell is budgeted at between 0 and 50 hours, so the 2 QJ cells add 0–100 (BS5-1). The re-pilot measures the joint QJ escape rate directly.
+       - With 102 ordinary cells (about 540, 1,100 or 1,480) and 2 QJ cells, this adds about 540–640, 1,100–1,200 or 1,480–1,580.
+     - **Totals.** A shared server core is assumed about 1.2× slower, and the run uses 2 vCPU that forward paper leaves nearly free. The scenario totals are about **6,000–6,200, 6,700–6,800 or 7,200–7,300 server-core-hours, that is about 4, 4½ or 5 months**. With no escapes at all it would be about 5,400, or about 3½–4 months (BF4-1).
      - **Conditional until measured.** These scenarios are conditional on the assumed rates. The go-ahead estimate uses the measured all-groups `U_G` rate from the re-pilot (BF4-2).
      - A 4-vCPU server would halve the time. Its price is checked before it is offered to the owner.
 7. **The cell count** is about 104, taken from the frozen manifest. Of these, Q5 and QJ use exploration-partition data only.
