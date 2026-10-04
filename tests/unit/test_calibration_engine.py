@@ -181,3 +181,11 @@ def test_method_v_refuses_without_a_verified_runtime(monkeypatch) -> None:
     x = np.random.default_rng(1).standard_normal((30, 2))
     with pytest.raises(RuntimeError, match="U_ops"):
         dsr._replicates_v(x, [list(range(30))])  # noqa: SLF001
+
+
+def test_method_v_refuses_overflowing_inputs() -> None:
+    """VS2-2: finite but extreme values make fsum overflow: a refusal."""
+    x = np.full((20, 1), 1e308)
+    x[::2, 0] = -1e308
+    x[0, 0] = 1e308
+    assert dsr._replicates_v(x, [list(range(20))]) == (None, None)  # noqa: SLF001

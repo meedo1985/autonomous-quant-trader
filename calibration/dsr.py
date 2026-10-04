@@ -320,7 +320,10 @@ def _replicates_v(
         raise RuntimeError("U_ops: method V needs v_runtime_check(identity) first")
     t, k = x.shape
     b = len(draws)
-    mu = np.array([math.fsum(x[:, j].tolist()) / t for j in range(k)])
+    try:  # VS2-2: fsum overflow on extreme finite inputs is a refusal
+        mu = np.array([math.fsum(x[:, j].tolist()) / t for j in range(k)])
+    except OverflowError:
+        return None, None
     y = x - mu
     if not (np.isfinite(mu).all() and np.isfinite(y).all()):
         return None, None
