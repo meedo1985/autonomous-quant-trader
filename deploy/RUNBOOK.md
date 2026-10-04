@@ -11,9 +11,10 @@ to root, and only you (with `sudo`) change them. The app runs as its own
 account `aqt`, which can read and run the code but not change it, and writes
 only to `/var/lib/aqt`. So the app can never approve or swap its own code.
 
-This runbook authorizes nothing by itself: no real money, no Binance keys,
-and no forward paper trading until Task 29 is authorized. Until then the
-service replays the exploration data and stops.
+This runbook authorizes nothing by itself: no real money and no Binance keys.
+Forward paper trading (Task 29) was authorized on 2026-10-04 with the baseline
+only (`review/roadmap/OWNER_ANSWER_QC_2026-10-04.md`): the service fetches
+Binance's public hourly bars and trades paper money on the simulator.
 
 ## 1. Rent and secure the server
 
@@ -74,7 +75,7 @@ Repeat `test` and `ack` at least every 7 days (D-2).
 
 ```sh
 sudo systemctl start aqt-paper
-sudo systemctl enable aqt-paper      # only once Task 29 is authorized
+sudo systemctl enable aqt-paper
 systemctl status aqt-paper
 ```
 
@@ -84,10 +85,11 @@ refuses by itself while an earlier error is unresolved (Task 27).
 ## 6. Logs
 
 - Screen output: `journalctl -u aqt-paper`.
-- Run report, operations log and incidents:
-  `/var/lib/aqt/data/processed/paper/<run id>/`.
+- Hourly reports with the `L-02` count, operations log, incidents and the
+  account's saved state: `/var/lib/aqt/data/forward/account-1/`.
+- The live bar store: `/var/lib/aqt/data/live/BTCUSDT-1h.jsonl`.
 - A start refused because the code is not the approved commit:
-  `/var/lib/aqt/data/processed/paper/deployment_refusals.jsonl`.
+  `/var/lib/aqt/data/forward/deployment_refusals.jsonl`.
 - Telegram tests: `/var/lib/aqt/data/processed/alerts/`.
 - Approvals: `/etc/aqt/deployments.jsonl`.
 

@@ -14,8 +14,13 @@ stopped. The configuration's `start` is the account's first decision hour; its
 key variable is set; no real money is involved (owner answer Q-C, 2026-10-04).
 
 Each step that runs appends one line to `<account>/forward_reports.jsonl`: the
-loop's report and the `L-02` effective-decision count with its method. Exit
-code 0, or 2 when a step was refused (with `--once`).
+loop's report and the `L-02` effective-decision count with its method.
+
+A failed fetch (network, Binance, clock skew) is alerted and retried at the
+next hour; its hours stay pending. A refused step stops the program with exit
+code 2, which is never retried (`deploy/aqt-paper.service`): the refusal is
+already logged and alerted, and the owner resolves it. With `--once`, exit code
+0 is a step that ran or had nothing to do, 1 a failed fetch, 2 a refusal.
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ from aqt.app.forward import ForwardError, l02_count, run_step
 from aqt.app.paper_loop import PaperConfig, load_config
 from aqt.app.state import AccountDir
 from aqt.benchmarks.canonical import VOL_TARGET_HALF_LIFE_HOURS
+from aqt.core.deployment import DeploymentError, approved_code
 from aqt.data.binance_public import DownloadError, refuse_credentials, urllib_transport
 from aqt.data.live_bars import LiveBarError, LiveBarStore, fetch_new_bars
 from aqt.monitoring.alerts import AlertRouter, LedgerSink, Sink, StreamSink
@@ -48,6 +54,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 MAX_SKEW = timedelta(seconds=5)  # owner setting S-5
 STEP_OFFSET = timedelta(minutes=1)  # after the hour, so the bar has closed
 REPORTS = "forward_reports.jsonl"
+REFUSALS = Path("data/forward/deployment_refusals.jsonl")  # under the working dir
 WARM_UP = (VOL_TARGET_HALF_LIFE_HOURS + 2) * timedelta(hours=1)
 """Bars the baseline needs before its first decision, plus its decision bar."""
 
@@ -75,7 +82,7 @@ def step(
             EventKind.STALE_DATA, Severity.CRITICAL, now, {"refused": str(error)}
         )
         AlertRouter(sinks).emit(event)
-        return 2
+        return 1
     series = store.series()
     try:
         report = run_step(
@@ -115,6 +122,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--telegram", action="store_true")
     parser.add_argument("--deployment-record", type=Path)
     args = parser.parse_args(argv)
+    if args.deployment_record is not None:
+        # Before the configuration, any data, network or channel, as the
+        # replay runner does (S30-4): unapproved code stops here, logged to a
+        # fixed file, and is never retried.
+        try:
+            approved_code(args.deployment_record, REPOSITORY_ROOT)
+        except DeploymentError as error:
+            refusal = {"decision": "REFUSE_START", "reason": f"deployment: {error}"}
+            REFUSALS.parent.mkdir(parents=True, exist_ok=True)
+            AlertRouter(
+                [
+                    StreamSink(sys.stdout, Severity.WARNING),
+                    LedgerSink(REFUSALS, Severity.INFO),
+                ]
+            ).emit(
+                Event(EventKind.STARTUP, Severity.CRITICAL, datetime.now(UTC), refusal)
+            )
+            return 2
     config = load_config(args.config)
     store = LiveBarStore(args.store, config.symbol)
     account = AccountDir(args.account)
@@ -132,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
         sinks.append(telegram)
     while True:
         code = step(config, store, account, sinks, channel, args.deployment_record)
-        if args.once:
+        if args.once or code == 2:
             return code
         now = datetime.now(UTC)
         hour = now.replace(minute=0, second=0, microsecond=0)
