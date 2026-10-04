@@ -1,9 +1,14 @@
 """Annex B method `aqt.dsr.bootstrap_max.candidate.v2`, family level.
 
-Annex B numerics throughout (fsum, two-pass, replicate order). Two
-implementations of the *same* bits: the pure-Python `reference` and the
-accelerated default in `calibration.fast`, which is bit-identical (see its
-docstring), so no computational-equivalence rule is needed.
+Replicate Sharpes (`numerics`):
+- `"v"` (default): the one vectorised deterministic method `V` proposed for
+  binding under D-20 (PILOT_FINDINGS_3), used identically in calibration and
+  in every real evaluation: counts x matrix sums on mean-centred columns,
+  single-threaded BLAS on the pinned runtime;
+- `"task12"`: the Task 12 Sharpe numerics (fsum, two-pass), accelerated and
+  bit-identical to `"reference"`, its pure-Python form (`calibration.fast`).
+Statistics across replicates (`S0`, `var_b`) always use fsum in replicate
+index order (Annex B §2.3).
 
 Indices come from the production stationary-bootstrap construction
 (`aqt.metrics.statistics`), keyed by a family seed with purpose
@@ -111,7 +116,7 @@ def evaluate(
     family_seed: str,
     rule: str,
     *,
-    reference: bool = False,
+    numerics: str = "v",
     classifier: Callable[[np.ndarray, list[float]], bool] | None = None,
 ) -> FamilyResult:
     """Annex B §2.5 rules 1-6 in order, then S0, D_j, z_j and the nominee.
@@ -124,7 +129,7 @@ def evaluate(
         return FamilyResult("ZERO_VARIANCE_COLUMN")
     pairs = (
         [_column_lengths(x[:, j].tolist()) for j in range(k)]
-        if reference
+        if numerics == "reference"
         else fast.column_lengths(x)
     )
     lengths: list[float] = []
@@ -141,7 +146,11 @@ def evaluate(
         return FamilyResult("UNSUPPORTED_LAW", length_ratio=ratio)
     block = family_block(lengths, rule)
     draws = [indices(family_seed, t, b, block) for b in range(BOOTSTRAP_ATTEMPTS)]
-    replicate = _replicates_reference if reference else _replicates_accelerated
+    replicate = {
+        "v": _replicates_v,
+        "task12": _replicates_accelerated,
+        "reference": _replicates_reference,
+    }[numerics]
     s_star, s_null = replicate(x, draws)
     if s_star is None or s_null is None:
         return FamilyResult("INVALID_REPLICATE", block=block, length_ratio=ratio)
@@ -200,3 +209,30 @@ def _replicates_accelerated(
             return None, None
         null.append(n_.tolist())
     return star, null
+
+
+def _replicates_v(
+    x: np.ndarray, draws: list[list[int]]
+) -> tuple[list[list[float]] | None, list[list[float]] | None]:
+    """Method V: per replicate b, counts c_bt of each day t; on columns centred
+    by their fsum mean mu_j, s1 = C @ Y and s2 = C @ (Y * Y); mean = s1 / T,
+    var = (s2 - s1**2 / T) / (T - 1); S* = (mean + mu) / sd, S0-law = mean / sd.
+    Invalid (INVALID_REPLICATE) if any var <= 0 or non-finite."""
+    t, k = x.shape
+    b = len(draws)
+    mu = np.array([math.fsum(x[:, j].tolist()) / t for j in range(k)])
+    y = x - mu
+    counts = (
+        np.bincount(
+            (np.arange(b)[:, None] * t + np.asarray(draws)).ravel(), minlength=b * t
+        )
+        .reshape(b, t)
+        .astype(np.float64)
+    )
+    s1, s2 = counts @ y, counts @ (y * y)
+    var = (s2 - s1 * s1 / t) / (t - 1)
+    if (var <= 0).any() or not np.isfinite(var).all():
+        return None, None
+    sd = np.sqrt(var)
+    mean = s1 / t
+    return ((mean + mu) / sd).tolist(), (mean / sd).tolist()

@@ -43,8 +43,8 @@ def test_accelerated_path_is_bit_identical_to_the_reference() -> None:
         seed, legs = _legs(5, 120, dep, law)
         fam = family_seed(seed, "test", "agnostic", 5, "0" * 64, 0)
         for rule in ("largest", "median"):
-            a = dsr.evaluate(legs.x, fam, rule, reference=True)
-            b = dsr.evaluate(legs.x, fam, rule)
+            a = dsr.evaluate(legs.x, fam, rule, numerics="reference")
+            b = dsr.evaluate(legs.x, fam, rule, numerics="task12")
             assert a == b  # every field, exact floats
 
 
@@ -85,3 +85,21 @@ def test_dependence_matrices_are_positive_semidefinite() -> None:
         for k in (5, 20, 80):
             w = np.linalg.eigvalsh(sigma_matrix(Cell("c", k, 10, dependence=dep), rng))
             assert w.min() > -1e-12
+
+
+def test_method_v_is_deterministic_and_close_to_the_task12_numerics() -> None:
+    """V is its own definition (D-20 proposal): repeatable bit for bit, and
+    within rounding of the Task 12 numerics on ordinary data."""
+    seed, legs = _legs(20, 365, "equi0.9", "garch")
+    fam = family_seed(seed, "test", "agnostic", 20, "0" * 64, 0)
+    v1 = dsr.evaluate(legs.x, fam, "largest")
+    v2 = dsr.evaluate(legs.x, fam, "largest")
+    exact = dsr.evaluate(legs.x, fam, "largest", numerics="task12")
+    assert v1 == v2
+    assert (v1.reason, v1.nominee, v1.block) == (
+        exact.reason,
+        exact.nominee,
+        exact.block,
+    )
+    assert v1.z is not None and exact.z is not None
+    assert abs(v1.z - exact.z) <= 1e-9 * max(1.0, abs(exact.z))

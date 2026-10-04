@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")  # method V: single-threaded BLAS
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))  # the top-level `calibration` package
 
@@ -33,7 +35,7 @@ CELLS = [
 REPS_PER_CELL = 42_000  # 22,000 development + 20,000 held-out (prereg §5-§6)
 
 
-def one(cell: Cell, rep: int, reference: bool) -> dict[str, float | str]:
+def one(cell: Cell, rep: int, numerics: str) -> dict[str, float | str]:
     seed = outer_seed(PREREG, cell.cell_id, "d19-pilot-v1", rep)
     t0 = time.perf_counter()
     legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
@@ -47,7 +49,7 @@ def one(cell: Cell, rep: int, reference: bool) -> dict[str, float | str]:
         return True
 
     result = dsr.evaluate(
-        legs.x, fam, "largest", reference=reference, classifier=classify
+        legs.x, fam, "largest", numerics=numerics, classifier=classify
     )
     t2 = time.perf_counter()
     if result.nominee is not None:
@@ -57,7 +59,7 @@ def one(cell: Cell, rep: int, reference: bool) -> dict[str, float | str]:
             legs.benchmark,
             result.nominee,
             seed,
-            reference=reference,
+            reference=numerics == "reference",
         )
     t3 = time.perf_counter()
     return {"generate": t1 - t0, "dsr": t2 - t1, "gates": t3 - t2, "total": t3 - t0,
@@ -72,18 +74,18 @@ def main() -> int:
     args = parser.parse_args()
     report = []
     for cell in CELLS:
-        runs = [one(cell, r, reference=False) for r in range(args.reps)]
+        runs = [one(cell, r, "v") for r in range(args.reps)]
         row = {
             "cell": cell.cell_id, "K": cell.k, "T": cell.t,
-            "accelerated_s_per_rep": sum(f["total"] for f in runs) / len(runs),
-            "accelerated_parts": {p: sum(f[p] for f in runs) / len(runs)
+            "v_s_per_rep": sum(f["total"] for f in runs) / len(runs),
+            "v_parts": {p: sum(f[p] for f in runs) / len(runs)
                            for p in ("generate", "dsr", "gates")},
             "reasons": [f["reason"] for f in runs],
         }  # fmt: skip
         if args.reference_sample and cell.k <= 20:
-            ex = [one(cell, r, reference=True) for r in range(args.reference_sample)]
-            row["reference_s_per_rep"] = sum(e["total"] for e in ex) / len(ex)
-        row["core_hours_full_run"] = row["accelerated_s_per_rep"] * REPS_PER_CELL / 3600
+            ex = [one(cell, r, "task12") for r in range(args.reference_sample)]
+            row["task12_exact_s_per_rep"] = sum(e["total"] for e in ex) / len(ex)
+        row["core_hours_full_run"] = row["v_s_per_rep"] * REPS_PER_CELL / 3600
         report.append(row)
         print(json.dumps(row), flush=True)
     return 0
