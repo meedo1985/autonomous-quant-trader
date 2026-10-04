@@ -1,11 +1,9 @@
 """Annex B method `aqt.dsr.bootstrap_max.candidate.v2`, family level.
 
-Two implementations of the same quantities:
-- `exact`: the Annex B numerics (fsum, two-pass, replicate order), the
-  reference;
-- `fast`: counts x matrix sums on mean-centred columns, for calibration
-  volume. Its use needs the computational-equivalence amendment proposed in
-  PILOT_FINDINGS_1 (prereg rev 6 binds the exact code).
+Annex B numerics throughout (fsum, two-pass, replicate order). Two
+implementations of the *same* bits: the pure-Python `reference` and the
+accelerated default in `calibration.fast`, which is bit-identical (see its
+docstring), so no computational-equivalence rule is needed.
 
 Indices come from the production stationary-bootstrap construction
 (`aqt.metrics.statistics`), keyed by a family seed with purpose
@@ -19,7 +17,6 @@ import math
 import random
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 
@@ -29,6 +26,7 @@ from aqt.metrics.statistics import (
     SEED_DOMAIN,
     block_length,
 )
+from calibration import fast
 
 PURPOSE = "dsr_family_max_null"
 WINDOW = '["2022-01-01T00:00:00Z","2025-06-01T00:00:00Z"]'
@@ -113,7 +111,7 @@ def evaluate(
     family_seed: str,
     rule: str,
     *,
-    exact: bool,
+    reference: bool = False,
     classifier: Callable[[np.ndarray, list[float]], bool] | None = None,
 ) -> FamilyResult:
     """Annex B §2.5 rules 1-6 in order, then S0, D_j, z_j and the nominee.
@@ -124,9 +122,14 @@ def evaluate(
         return FamilyResult("INVALID_SERIES")
     if (x.std(axis=0, ddof=1) == 0).any():
         return FamilyResult("ZERO_VARIANCE_COLUMN")
-    lengths, capped = [], False
-    for j in range(k):
-        length, cap = _column_lengths(x[:, j].tolist())
+    pairs = (
+        [_column_lengths(x[:, j].tolist()) for j in range(k)]
+        if reference
+        else fast.column_lengths(x)
+    )
+    lengths: list[float] = []
+    capped = False
+    for length, cap in pairs:
         if length is None:
             return FamilyResult("BLOCK_LENGTH_UNAVAILABLE")
         lengths.append(length)
@@ -138,21 +141,13 @@ def evaluate(
         return FamilyResult("UNSUPPORTED_LAW", length_ratio=ratio)
     block = family_block(lengths, rule)
     draws = [indices(family_seed, t, b, block) for b in range(BOOTSTRAP_ATTEMPTS)]
-    s_star: Any
-    s_null: Any
-    if exact:
-        s_star, s_null = _replicates_exact(x, draws)
-    else:
-        s_star, s_null = _replicates_fast(x, draws)
+    replicate = _replicates_reference if reference else _replicates_accelerated
+    s_star, s_null = replicate(x, draws)
     if s_star is None or s_null is None:
         return FamilyResult("INVALID_REPLICATE", block=block, length_ratio=ratio)
     observed = [_sharpe_exact(x[:, j].tolist()) for j in range(k)]
-    if exact:
-        s0 = math.fsum(max(row) for row in s_null) / BOOTSTRAP_ATTEMPTS
-        dispersion = [_mean_var([row[j] for row in s_star])[1] for j in range(k)]
-    else:
-        s0 = float(np.max(s_null, axis=1).mean())
-        dispersion = list(np.var(s_star, axis=0, ddof=1))
+    s0 = math.fsum(max(row) for row in s_null) / BOOTSTRAP_ATTEMPTS
+    dispersion = [_mean_var([row[j] for row in s_star])[1] for j in range(k)]
     if not math.isfinite(s0) or any(
         not (d > 0 and math.isfinite(d)) for d in dispersion
     ):
@@ -165,7 +160,7 @@ def evaluate(
     return FamilyResult(None, block, False, nominee, z[nominee], s0, ratio)
 
 
-def _replicates_exact(
+def _replicates_reference(
     x: np.ndarray, draws: list[list[int]]
 ) -> tuple[list[list[float]] | None, list[list[float]] | None]:
     t, k = x.shape
@@ -186,23 +181,22 @@ def _replicates_exact(
     return star, null
 
 
-def _replicates_fast(
+def _replicates_accelerated(
     x: np.ndarray, draws: list[list[int]]
-) -> tuple[np.ndarray | None, np.ndarray | None]:
-    t, _ = x.shape
-    b = len(draws)
-    counts = (
-        np.bincount(
-            (np.arange(b)[:, None] * t + np.asarray(draws)).ravel(), minlength=b * t
-        )
-        .reshape(b, t)
-        .astype(float)
+) -> tuple[list[list[float]] | None, list[list[float]] | None]:
+    """Bit-identical to `_replicates_reference` (NumPy gather, fsum sums)."""
+    t, k = x.shape
+    centred = np.column_stack(
+        [x[:, j] - math.fsum(x[:, j].tolist()) / t for j in range(k)]
     )
-    mean = x.mean(axis=0)
-    y = x - mean  # recentred law; also the conditioning shift
-    s1, s2 = counts @ y, counts @ (y * y)
-    var = (s2 - s1 * s1 / t) / (t - 1)
-    if (var <= 0).any() or not np.isfinite(var).all():
-        return None, None
-    sd = np.sqrt(var)
-    return (s1 / t + mean) / sd, (s1 / t) / sd
+    star, null = [], []
+    for idx in draws:
+        s = fast.sharpes(x[idx])
+        if s is None:
+            return None, None
+        star.append(s.tolist())
+        n_ = fast.sharpes(centred[idx])
+        if n_ is None:
+            return None, None
+        null.append(n_.tolist())
+    return star, null

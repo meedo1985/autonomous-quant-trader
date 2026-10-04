@@ -1,5 +1,6 @@
-"""D-19 calibration engine: exact and fast paths agree; seeds and generator
-are deterministic. Synthetic data only."""
+"""D-19 calibration engine: the accelerated path is bit-identical to the
+pure-Python reference and to production routines; seeds and generator are
+deterministic. Synthetic data only."""
 
 from __future__ import annotations
 
@@ -36,16 +37,39 @@ def test_indices_follow_the_production_bootstrap_algorithm(monkeypatch) -> None:
     assert dsr_purpose != list(expected)
 
 
-def test_exact_and_fast_paths_reach_the_same_decision() -> None:
-    for dep in ("independent", "equi0.9", "opposites"):
-        seed, legs = _legs(5, 120, dep)
+def test_accelerated_path_is_bit_identical_to_the_reference() -> None:
+    for dep, law in (("independent", "gaussian"), ("equi0.9", "garch"),
+                     ("opposites", "t5"), ("near_duplicates", "ar0.5")):  # fmt: skip
+        seed, legs = _legs(5, 120, dep, law)
         fam = family_seed(seed, "test", "agnostic", 5, "0" * 64, 0)
-        a = dsr.evaluate(legs.x, fam, "largest", exact=True)
-        b = dsr.evaluate(legs.x, fam, "largest", exact=False)
-        assert (a.reason, a.nominee, a.block) == (b.reason, b.nominee, b.block)
-        if a.reason is None:
-            assert a.z is not None and b.z is not None
-            assert abs(a.z - b.z) <= 1e-9 * max(1.0, abs(a.z))
+        for rule in ("largest", "median"):
+            a = dsr.evaluate(legs.x, fam, rule, reference=True)
+            b = dsr.evaluate(legs.x, fam, rule)
+            assert a == b  # every field, exact floats
+
+
+def test_block_length_is_bit_identical_to_production() -> None:
+    from calibration import fast
+
+    fast.self_check()
+    rng = np.random.default_rng(7)
+    for n in (16, 120, 365, 1247):
+        sparse = np.where(rng.random(n) < 0.9, 0.0, rng.standard_normal(n))
+        for x in (rng.standard_normal(n), np.cumsum(rng.standard_normal(n)), sparse):
+            expected = st.block_length(x.tolist())
+            value, capped = fast.block_length(x)
+            assert value == expected.value
+            assert capped == (expected.clipping == "UPPER")
+
+
+def test_g1_availability_matches_the_production_routine() -> None:
+    from calibration import gates
+
+    seed, legs = _legs(2, 120)
+    cand = legs.candidates[:, 0]
+    assert gates.g1(cand, legs.benchmark, seed) == gates.g1(
+        cand, legs.benchmark, seed, reference=True
+    )
 
 
 def test_columns_have_the_declared_correlation_and_zero_mean() -> None:

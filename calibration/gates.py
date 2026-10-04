@@ -6,18 +6,24 @@ would be UNAVAILABLE, or None. G-1 and G-12 call the production routines."""
 from __future__ import annotations
 
 import itertools
+import math
 
 import numpy as np
 
 from aqt.metrics import statistics as st
+from calibration import fast
 from calibration.seeds import sha
 
 WINDOW = '["2022-01-01T00:00:00Z","2025-06-01T00:00:00Z"]'
 SPLITS = np.array(list(itertools.combinations(range(16), 8)))  # 12,870
 
 
-def g1(candidate: np.ndarray, benchmark: np.ndarray, seed: str) -> str | None:
-    """Annex C C-1: the production paired-CI routine's own reason."""
+def g1(
+    candidate: np.ndarray, benchmark: np.ndarray, seed: str, *, reference: bool = False
+) -> str | None:
+    """Annex C C-1 availability. `reference` runs the production paired-CI
+    routine; the default repeats its steps with bit-identical accelerated
+    replicate Sharpes (`calibration.fast`) on the production indices."""
     stream = st.ReplicateStream(
         sha({"seed": seed, "stream": "g1_ci"}),
         st.CONVENTION_DOCUMENT_SHA256,
@@ -25,10 +31,33 @@ def g1(candidate: np.ndarray, benchmark: np.ndarray, seed: str) -> str | None:
         "1.0",
         WINDOW,
     )
-    result = st.paired_sharpe_improvement_interval(
-        candidate.tolist(), benchmark.tolist(), stream=stream
-    )
-    return None if result.reason is None else str(result.reason)
+    left, right = candidate.tolist(), benchmark.tolist()
+    if reference:
+        result = st.paired_sharpe_improvement_interval(left, right, stream=stream)
+        return None if result.reason is None else str(result.reason)
+    observed = st.paired_sharpe_statistics(left, right)
+    influence = st.paired_sharpe_improvement_influence(left, right)
+    if observed.reason or influence.reason or influence.values is None:
+        return str(observed.reason or influence.reason)
+    selected = st.block_length(influence.values)
+    if selected.reason or selected.value is None:
+        return str(selected.reason)
+    for i in range(st.BOOTSTRAP_ATTEMPTS):
+        idx = st.bootstrap_indices(
+            stream, observations=len(left), replicate_index=i, block=selected.value
+        )
+        scaled = []
+        for leg in (candidate, benchmark):
+            values = leg[list(idx)]
+            if (values == values[0]).all():
+                return "INVALID_REPLICATE"
+            mean, var = fast.mean_var(values)
+            if var == 0 or not math.isfinite(var):
+                return "INVALID_REPLICATE"
+            scaled.append(st.SCALE * (mean / math.sqrt(var)))
+        if not math.isfinite(scaled[0] - scaled[1]):
+            return "INVALID_REPLICATE"
+    return None
 
 
 def g2(candidate: np.ndarray, benchmark: np.ndarray) -> str | None:
@@ -78,11 +107,11 @@ def g12(candidate: np.ndarray) -> str | None:
 
 
 def u_g(x: np.ndarray, candidates: np.ndarray, benchmark: np.ndarray,
-        nominee: int, seed: str) -> str | None:  # fmt: skip
+        nominee: int, seed: str, *, reference: bool = False) -> str | None:  # fmt: skip
     """The single U_G event (DS3-4): the first unavailable gate, or None."""
     cand = candidates[:, nominee]
     for reason in (
-        g1(cand, benchmark, seed),
+        g1(cand, benchmark, seed, reference=reference),
         g2(cand, benchmark),
         g4(x.shape[0]),
         g10(x),
