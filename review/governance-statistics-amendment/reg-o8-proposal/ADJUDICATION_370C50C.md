@@ -28,7 +28,15 @@ Every finding is accepted. None is left unrepaired.
 
 **Follow-up for Annex C**, applied when the draft is next revised:
 - C-6: the band is read through `reaches_rebalance_band` (FR1-7).
-- C-10 (1): the `s_inputs` field, if REG-2 (a) is chosen.
+- C-10 (1): record the combined REG decision (A, B or C) with its
+  consequences.
+  - Under (A): add the `s_inputs` field and the run-time input restriction,
+    and the banned set (the sizing estimator's output, plus any frozen
+    feature identical to it, currently `ewma_vol_168h` for trials sized by
+    `EWMA_168h`), with the mapping bound under `<<OPEN D-20>>`.
+  - Under (C): add the new `fixed_size` class clauses.
+  - (SR3-4: repairs the FR2-9 follow-up, which the rev 3 addendum claimed but
+    did not write.)
 
 **Not re-reviewed.** Revision 2 changes the substance of REG-1 and REG-2, so a
 focused two-model check is run before the owner is asked.
@@ -51,3 +59,18 @@ asked.
 | FR2-7 | Accepted. The O-9 (b) wording now says "until a later amendment creates a new eligible window". |
 | FR2-8 | Accepted. The O-8 question now mentions the new fingerprints. |
 | FR2-9 | Accepted. The Annex C C-10 (1) follow-up now also covers the `ewma_vol_168h` identity mapping and the combined REG answer. |
+
+## Addendum 2: SR3 focused check of rev 3 (`62977ba`) → revision 4
+
+Sol SR3 (`26f3615`) returned NOT READY. Every finding is accepted.
+
+| Finding | Disposition |
+|---|---|
+| SR3-1 | Q1 (A) now says the ban bars direct use only, and that a deliberate model with price-history access can rebuild the exact number. "Keep blocked" is named explicitly. |
+| SR3-2 | O-6a is removed from this batch, because the channel is needed only before signing. §4 lists the specification items that must be defined before it is asked: key or script and spend rule, enumeration, confirmation depth, timestamp, archive, funding and privacy. It also records the verified 83-byte relay limit, which makes the DRAFT §2.0 message too long. |
+| SR3-3 | Every claim of the form "very unlikely to pass" is withdrawn and replaced: "may mostly measure the benchmark; pass probability unknown until D-19". SR3's counterexample is cited. |
+| SR3-4 | The follow-up list above has been repaired. |
+
+**FR2-1 is resolved by deferral** (O-6a is out of this batch), not by
+verifying the Bitcoin channel. The DRAFT §2.0 message length must be fixed
+when the channel is specified.

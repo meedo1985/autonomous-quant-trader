@@ -1,4 +1,4 @@
-# REG-1, REG-2, O-8 proposal (revision 3): sizing that can be registered, and baseline runs under the event contract
+# REG-1, REG-2, O-8 proposal (revision 4): sizing that can be registered, and baseline runs under the event contract
 
 **Status:** `NON-BINDING AI PROPOSAL — NOTHING DECIDED — NOT ACTIVE`
 **Date:** 2026-10-04
@@ -11,7 +11,8 @@ conclusions carry over" across sizing was **wrong** and is withdrawn (FR1-1,
 SR1-2, SR1-3). Rev 3 applies Fable's focused check FR2 (`4f230cb`, NOT READY)
 and the verified Sigstore facts. Sol's focused check SR2 was stopped by the
 system for low memory before it returned any output, so revision 2 has only
-one family's check.
+one family's check. Rev 4 applies Sol's check SR3 (`26f3615`, NOT READY), and
+takes O-6a out of this batch (§4).
 **Context:**
 - §4 draft rev 6 (`5c89f82`) §7;
 - Annex C rev 2, C-6 and C-10 (1);
@@ -100,14 +101,21 @@ as `s = 0.10·v/τ`. It then inherits §1's misalignment problem.
 rule works.** It tests a different strategy that shares only the entry/exit
 logic.
 
-**A fixed 10% is very unlikely to pass C2's DSR.** The DSR asks whether
+**At 10%, C2's DSR may mostly measure the benchmark.** The DSR asks whether
 candidate-minus-benchmark has a positive Sharpe. When the position is much
-smaller than the benchmark's, that difference is dominated by "short the
-benchmark". So a small fixed size is very unlikely to be promoted against
-`VOL_TARGET_BUY_AND_HOLD`, unless the benchmark did poorly over the window.
-This is a qualitative argument backed by toys, not a computed probability.
-It is a property of the decided selection rule (D-18, E-DIFF), not of the
-owner's idea.
+smaller than the benchmark's, that difference is often dominated by "short
+the benchmark", so the DSR verdict may say little about the 10% rule itself.
+
+**No pass probability is claimed** (SR3-3). Size alone does not make
+C − B ≈ −B: strong timing can still give a positive E-DIFF. In SR3's exact
+synthetic example, a perfectly predictive 10% signal gave E-DIFF +1.71 while
+the benchmark's Sharpe was +0.03. A poor benchmark window and a genuine
+timing edge are separate routes to a pass. The pass probability is unknown
+until the signal, the family, the window and the D-19 critical value are
+fixed.
+
+All of this follows from the decided selection rule (D-18, E-DIFF). None of
+it is a verdict on the owner's idea.
 
 **What the owner's rule is missing in any case** (FR1-5, SR1-3). The
 recorded rule has no entry trigger. With "always enter when flat", it is
@@ -122,7 +130,7 @@ from research. Other differences, under any option:
 | Option | Rule | Consequence |
 |---|---|---|
 | **(a) Not in C2** [recommended] | C2 registers only the C-10 vol-targeted form. | The owner's fixed-10% rule is **not tested** in C2. A *different* hypothesis can be registered once research supplies an entry signal: that signal with the −0.5% / +10% overlay, at vol-target size. Its result says nothing directly about 10% sizing. The 10% stays a deployment choice, governed by L-01..L-04. No new clause and no new trial dimension. |
-| (b) Add a `fixed_size` class | Target `overlay(clip(c·e_h, 0, 1))`, with a declared constant `c` and an entry signal `e_h ≥ 0` that may not read `σ̂`. G-11 shifts `e` and keeps `c`. `c` becomes a counted structural dimension. | It tests the 10% rule on the improvement checks (G-1, G-4, G-8, G-11). But at small `c` the main promotion test (the DSR, on E-DIFF ≈ −Sharpe of the benchmark) mostly measures **how the benchmark did over the window, not the rule**. A fail would say little about the idea, and so would a pass. Promotion is very unlikely unless the benchmark had a poor window (FR2-4). The drawdown checks become lenient. It also needs new clauses (protocol §2, Annex C C-10), a new review round and D-19 modelling. |
+| (b) Add a `fixed_size` class | Target `overlay(clip(c·e_h, 0, 1))`, with a declared constant `c` and an entry signal `e_h ≥ 0` that may not read `σ̂`. G-11 shifts `e` and keeps `c`. `c` becomes a counted structural dimension. | It tests the 10% rule on the improvement checks (G-1, G-4, G-8, G-11). But at small `c` the main promotion test (the DSR, on E-DIFF ≈ −Sharpe of the benchmark) mostly measures **how the benchmark did over the window, not the rule**. The DSR verdict may then be poorly informative about the rule. Its pass probability is unknown until D-19 (FR2-4, SR3-3). The drawdown checks become lenient. It also needs new clauses (protocol §2, Annex C C-10), a new review round and D-19 modelling. |
 
 ## 3. O-8: does the full event contract govern baseline and benchmark runs?
 
@@ -159,43 +167,42 @@ expected but **unverified** until the v1.1 code exists.
 | **(a) Confirm: the full contract governs every run** [recommended] | One engine semantics. Nothing changes measurably beyond N-4. |
 | (b) Only gate, stressed and null runs | A second specification for baseline runs, with no practical difference. |
 
-## 4. O-6a channel candidates
+## 4. O-6a: deferred, not asked in this batch
 
-The channel must meet the four requirements in DRAFT §2.0:
-1. it authenticates the poster;
-2. it is append-only;
-3. it carries a third-party timestamp;
-4. it is captured by an independent archive.
+The channel only has to be fixed **before signing**. It does not affect REG,
+O-8 or O-9. It needs its own specification and review, so it is taken out of
+this batch and stays `<<OWNER O-6a>>` in the draft.
 
-In addition, `first_post_rule` needs **every** entry by the identity to be
-listable.
+**Established so far:**
+- **Sigstore Rekor is rejected** (verified 2026-10-04).
+  - Rekor is append-only (docs.sigstore.dev/logging/overview).
+  - Rekor v2 removed the search index, and v1 will eventually be frozen
+    (blog.sigstore.dev/rekor-v2-ga). So there is no supported way to list
+    every entry by one identity.
+  - Keyless signing makes the signer's identity public.
+- **The Bitcoin OP_RETURN candidate is partly verified**
+  (developer.bitcoin.org/devguide/transactions.html, 2026-10-04).
+  - Null-data outputs are standard, "relayed and mined by default", and
+    "provably unspendable".
+  - Default relay allows **up to 83 bytes**. The DRAFT §2.0 message text
+    (about 90 bytes) is therefore too long. A short prefix plus the raw
+    32-byte hash fits.
 
-- **Sigstore Rekor: rejected (verified 2026-10-04).**
-  - It is append-only, and "entries are never mutated or removed"
-    (docs.sigstore.dev/logging/overview).
-  - Rekor v2 "removed" the search index, and Rekor v1 will "eventually" be
-    frozen (blog.sigstore.dev/rekor-v2-ga). Monitoring by identity is "a work
-    in progress" with limited support. So there is no supported way to list
-    every entry made by an identity.
-  - Keyless signing also puts the signer's e-mail or account in a public
-    certificate (FR2-1).
-- **Candidate: an OP_RETURN output in a Bitcoin transaction from one
-  dedicated address fixed in the protocol.**
-  - Authentication: only the key holder can spend from the address.
-  - Append-only: the chain itself.
-  - Timestamp: the block time, set by miners rather than the declarer.
-  - Archive: every full node holds a copy.
-  - Listing: anyone can list every transaction of the address.
-  - What it reveals: a pseudonymous address and a bare hash. No name, no
-    strategy.
-  - Cost: one small fee, and the address must be funded once.
-  - **Status: general knowledge, not yet checked against a cited source in
-    this session.** Verify before asking.
-- **Alternative: a trusted third party** who receives the hash, with no
-  public post. Uniqueness then rests on trust, not verification, and O-6 is
-  re-asked.
-- Ordinary social media or code-hosting accounts fail requirement 2, because
-  posts can be deleted and history can be rewritten.
+**Before O-6a is asked, the specification must define** (SR3-2):
+- the fixed key or script, and which spend counts as a post. Bitcoin has
+  spends of outputs, not posts "from an address", and an inbound payment
+  authenticates nothing;
+- how all posts are listed;
+- a confirmation depth that guards against reorganizations;
+- the canonical timestamp. Block time is only bounded, so a
+  confirmation-based time may be needed;
+- evidence of an independent archive. Pruned nodes do not keep a permanent
+  copy;
+- the fee and funding lifecycle;
+- a privacy disclosure: funding the address can link it to the owner.
+
+The trusted-third-party alternative remains. Otherwise O-6a stays blocked,
+and the amendment cannot be signed until it is resolved.
 
 ## 5. Consequences (all options)
 
@@ -215,29 +222,31 @@ listable.
    wrongly fail an honest one.
    - **(A) Vol-target sizing only, and the sizing number is barred from the
      signal** [recommended].
-     - This stops accidental misuse. Deliberate near-copies through other
-       volatility features remain possible.
-     - Your exact 10% rule cannot be registered. A near-10% version can still
-       be written through other volatility features, but the random-timing
-       check judges it unreliably and the main test barely looks at it.
+     - This bars **direct** use of the number and stops accidental misuse.
+       It does not stop a deliberate builder: a model allowed to read price
+       history could rebuild the exact number, and other volatility features
+       can approximate it (SR3-1).
+     - So your 10% rule cannot be registered directly. A deliberately built
+       exact or near-10% version stays possible, and the random-timing check
+       judges such a version unreliably.
      - An entry/exit idea can later be tested at vol-target size. That is a
        different strategy, and its result does not tell you how 10% would do.
      - 10% stays your deployment choice under the loss bounds.
    - **(B) Vol-target sizing only, and the sizing number is allowed.** Your
      10% can be written exactly ("signal = 0.10 × volatility / target") and
-     registered. The random-timing check then judges it unreliably, and the
-     main test barely looks at it.
+     registered. The random-timing check then judges it unreliably.
    - **(C) Add a separate fixed-size class.** This is the cleanest way to
      register 10% itself.
      - It is checked on the improvement tests.
-     - At 10% the main promotion test mostly measures how the benchmark did
-       over the window. A fail says little about your idea, and so would a
-       pass. Promotion is very unlikely unless the benchmark had a poor
-       window.
+     - At 10% the main promotion test may mostly measure how the benchmark
+       did over the window, so its verdict may say little about your idea.
+       Its chance of passing is unknown until the statistical calibration
+       (D-19) is done.
      - It needs another drafting and review round.
 
    Under any choice, your rule needs a real entry signal from research before
-   it becomes a testable strategy.
+   it becomes a testable strategy. If none of (A), (B) and (C) is acceptable,
+   choose "keep blocked".
 2. **O-8.** Do the order and fill rules apply to normal backtests too?
    Checked against the code, this changes nothing beyond the exits-to-zero
    rule you already chose. The benchmark definitions get new fingerprints,
@@ -245,15 +254,7 @@ listable.
    the new code exists.
    - (a) Yes [recommended].
    - (b) Only to the test runs.
-3. **O-6a.** Where does the single fingerprint post go? It must be one fixed
-   identity that cannot edit or delete, with an outside timestamp, an archive
-   copy, and every post listable.
-   - (a) A Bitcoin transaction from one dedicated address [recommended, once
-     verified]. It reveals a pseudonymous address and a bare fingerprint: no
-     name, no strategy. It costs one small fee.
-   - (b) No public post: a trusted third party holds the fingerprint, and the
-     seed question O-6 is re-asked.
-4. **O-9.** If a cycle is invalidated after its fingerprint post (a second
+3. **O-9.** If a cycle is invalidated after its fingerprint post (a second
    post, a mismatch, or no beacon value within 7 days), is the window used
    up?
    - (a) No [recommended]. The window can be reused, and each such
