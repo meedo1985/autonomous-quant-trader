@@ -32,3 +32,22 @@ Every finding is accepted. None is left unrepaired.
 
 **Not re-reviewed.** Revision 2 changes the substance of REG-1 and REG-2, so a
 focused two-model check is run before the owner is asked.
+
+## Addendum: FR2 focused check of rev 2 (`cc8c89c`) → revision 3
+
+Fable FR2 (`4f230cb`) returned NOT READY. Sol SR2 was stopped by the system for
+low memory before it produced any output. Rev 2 therefore has a check from
+one model family only, and SR2 must be re-run on rev 3 before the owner is
+asked.
+
+| Finding | Disposition |
+|---|---|
+| FR2-1 | Accepted, and verified against official sources on 2026-10-04: Rekor v2 removed the search index, and v1 will eventually be frozen. Rekor is **rejected** as a channel. The new candidate is a Bitcoin OP_RETURN from one dedicated address. That is general knowledge, marked unverified, and must be verified before asking. The trusted-third-party alternative is kept. |
+| FR2-2 | Accepted. REG-1 and REG-2 are now one combined question with three options, (A), (B) and (C), each stating its consequences. |
+| FR2-3 | Accepted. `ewma_vol_168h` is identified as σ̂ itself for default-sized trials, and is banned under (A). The loss for honest variance-timing signals is disclosed. |
+| FR2-4 | Accepted. Option (C) and the question now say that the DSR at small c mostly measures the benchmark's window, so neither a pass nor a fail is informative. |
+| FR2-5 | Accepted. "Closely related to, and wider than" replaces "the one already accepted". Failure in the other direction is added. |
+| FR2-6 | Accepted. The recompute route is qualified. |
+| FR2-7 | Accepted. The O-9 (b) wording now says "until a later amendment creates a new eligible window". |
+| FR2-8 | Accepted. The O-8 question now mentions the new fingerprints. |
+| FR2-9 | Accepted. The Annex C C-10 (1) follow-up now also covers the `ewma_vol_168h` identity mapping and the combined REG answer. |

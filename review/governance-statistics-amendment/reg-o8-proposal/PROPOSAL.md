@@ -1,4 +1,4 @@
-# REG-1, REG-2, O-8 proposal (revision 2): sizing that can be registered, and baseline runs under the event contract
+# REG-1, REG-2, O-8 proposal (revision 3): sizing that can be registered, and baseline runs under the event contract
 
 **Status:** `NON-BINDING AI PROPOSAL — NOTHING DECIDED — NOT ACTIVE`
 **Date:** 2026-10-04
@@ -8,7 +8,10 @@ are decided only by the owner, after two different-model reviews (R19-2).
 FIXES, and Sol SR1 (`8a68d02`), UNSOUND. Rev 2 applies
 `ADJUDICATION_370C50C.md`. In particular, rev 1's claim that "the Sharpe-based
 conclusions carry over" across sizing was **wrong** and is withdrawn (FR1-1,
-SR1-2, SR1-3).
+SR1-2, SR1-3). Rev 3 applies Fable's focused check FR2 (`4f230cb`, NOT READY)
+and the verified Sigstore facts. Sol's focused check SR2 was stopped by the
+system for low memory before it returned any output, so revision 2 has only
+one family's check.
 **Context:**
 - §4 draft rev 6 (`5c89f82`) §7;
 - Annex C rev 2, C-6 and C-10 (1);
@@ -32,22 +35,31 @@ or fail a candidate for reasons unrelated to timing skill (FR1-3):
   candidate, where 476 are needed).
 
 **The artifact cannot be closed by a rule on inputs.**
-- The frozen features include `rv_24`, `rv_168`, `rv_720`, `ewma_vol_168h` and
-  `atr_24` (`factory.py`).
-- A signal can also recompute `σ̂` from raw returns.
+- **One frozen feature is not a proxy but `σ̂` itself.** `ewma_vol_168h` is
+  identical by construction to the default sizing estimator `EWMA_168h`
+  (`canonical.py` l.54–55, l.450–453; `factory.py` l.63, l.355; FR2-3). For a
+  trial with default sizing it gives exact cancellation; for a trial sized by
+  another vol-family estimator it is a close proxy.
+- The other frozen volatility features (`rv_24`, `rv_168`, `rv_720`,
+  `atr_24`) are proxies.
+- A signal could also recompute `σ̂` if a declared model has access to return
+  history (FR2-6).
 - A proxy `v = σ̂(1+ε)` keeps almost all of the misalignment as `ε → 0`
   (SR1-1). In FR1's toy, `rv_720` kept about 82% of it and `rv_168` about 68%.
   Real BTC volatility, with longer memory, would likely keep more.
-- This is the residual the owner already accepted under D-14 Q3 (a),
-  consequence (2): "a signal that only reacts to volatility can pass the
-  random-timing check with no price-direction skill". **REG-2 cannot remove
-  it.**
+- This residual is **closely related to** what the owner accepted under
+  D-14 Q3 (a), consequence (2), and wider than it. That consequence says "a
+  signal that only reacts to volatility can pass the random-timing check with
+  no price-direction skill". Sizing misalignment can also make a candidate
+  **fail** for reasons unrelated to its timing, and a deliberate construction
+  can pass through misalignment rather than through variance timing (FR2-5).
+  **REG-2 cannot remove this residual.**
 
 **Options:**
 
 | Option | Rule | What it does, honestly |
 |---|---|---|
-| **(a) Declared-input ban** [recommended] | Each trial declares `s_inputs` (feature names and model ids), and the engine gives `s` only those inputs. `σ̂` and the sizing estimator's output are never among them. Enforcement is §16 code, `<<OPEN D-20>>`. | It stops **accidental or honest** exact cancellation, including writing a fixed size as `0.10·σ̂/τ`. **It does not stop a deliberate declarer**, who can use a close proxy or recompute `σ̂` from prices. The disclosure stays. |
+| **(a) Declared-input ban** [recommended] | Each trial declares `s_inputs` (feature names and model ids), and the engine gives `s` only those inputs. `σ̂`, the sizing estimator's output and **any frozen feature identical to it** (currently `ewma_vol_168h` for a trial sized by `EWMA_168h`) are never among them. The identity mapping and its enforcement are §16 code, `<<OPEN D-20>>`. | It stops **accidental or honest** exact cancellation, including writing a fixed size as `0.10·σ̂/τ`. **It does not stop a deliberate declarer**, who can use a close proxy or recompute `σ̂` from prices. The disclosure stays. Honest variance-timing signals with default sizing lose `ewma_vol_168h` as an input; the other volatility features remain available. |
 | (b) Allow | No restriction. | Exact cancellation becomes an ordinary, legal registration. Same disclosure. |
 | (c) Functional ban | No volatility-level feature may scale `s` multiplicatively. | This partly reverses the owner's D-14 Q3 (a), which credits variance timing inside `s`. It is still not mechanically checkable for model internals. Not recommended. |
 
@@ -110,7 +122,7 @@ from research. Other differences, under any option:
 | Option | Rule | Consequence |
 |---|---|---|
 | **(a) Not in C2** [recommended] | C2 registers only the C-10 vol-targeted form. | The owner's fixed-10% rule is **not tested** in C2. A *different* hypothesis can be registered once research supplies an entry signal: that signal with the −0.5% / +10% overlay, at vol-target size. Its result says nothing directly about 10% sizing. The 10% stays a deployment choice, governed by L-01..L-04. No new clause and no new trial dimension. |
-| (b) Add a `fixed_size` class | Target `overlay(clip(c·e_h, 0, 1))`, with a declared constant `c` and an entry signal `e_h ≥ 0` that may not read `σ̂`. G-11 shifts `e` and keeps `c`. `c` becomes a counted structural dimension. | This is the only route that tests the 10% rule as such. It needs new clauses (protocol §2, Annex C C-10), a new review round and D-19 modelling. **At small `c` it is very unlikely to pass the DSR (above)**, while the drawdown checks become lenient. |
+| (b) Add a `fixed_size` class | Target `overlay(clip(c·e_h, 0, 1))`, with a declared constant `c` and an entry signal `e_h ≥ 0` that may not read `σ̂`. G-11 shifts `e` and keeps `c`. `c` becomes a counted structural dimension. | It tests the 10% rule on the improvement checks (G-1, G-4, G-8, G-11). But at small `c` the main promotion test (the DSR, on E-DIFF ≈ −Sharpe of the benchmark) mostly measures **how the benchmark did over the window, not the rule**. A fail would say little about the idea, and so would a pass. Promotion is very unlikely unless the benchmark had a poor window (FR2-4). The drawdown checks become lenient. It also needs new clauses (protocol §2, Annex C C-10), a new review round and D-19 modelling. |
 
 ## 3. O-8: does the full event contract govern baseline and benchmark runs?
 
@@ -147,20 +159,43 @@ expected but **unverified** until the v1.1 code exists.
 | **(a) Confirm: the full contract governs every run** [recommended] | One engine semantics. Nothing changes measurably beyond N-4. |
 | (b) Only gate, stressed and null runs | A second specification for baseline runs, with no practical difference. |
 
-## 4. O-6a channel candidates (for the question; to be verified)
+## 4. O-6a channel candidates
 
-The channel must meet four requirements (DRAFT §2.0): authentication, append-only, third-party timestamp, independent archive.
-- **Sigstore Rekor** (public transparency log) with a dedicated signing
-  identity. It is append-only, it gives each entry an integrated timestamp
-  and an inclusion proof, and entries are searchable by identity.
-  **Unverified, from memory.** Check against official Sigstore documentation
-  before the question is asked.
-- **A trusted third party.** If the owner wants no public post, O-6 is
-  re-asked instead.
-- **Ordinary social or code-hosting accounts** (posts can be deleted, history
-  rewritten): they fail requirement (2) and are not candidates.
+The channel must meet the four requirements in DRAFT §2.0:
+1. it authenticates the poster;
+2. it is append-only;
+3. it carries a third-party timestamp;
+4. it is captured by an independent archive.
 
-The post is a bare hash. It reveals nothing about the strategies.
+In addition, `first_post_rule` needs **every** entry by the identity to be
+listable.
+
+- **Sigstore Rekor: rejected (verified 2026-10-04).**
+  - It is append-only, and "entries are never mutated or removed"
+    (docs.sigstore.dev/logging/overview).
+  - Rekor v2 "removed" the search index, and Rekor v1 will "eventually" be
+    frozen (blog.sigstore.dev/rekor-v2-ga). Monitoring by identity is "a work
+    in progress" with limited support. So there is no supported way to list
+    every entry made by an identity.
+  - Keyless signing also puts the signer's e-mail or account in a public
+    certificate (FR2-1).
+- **Candidate: an OP_RETURN output in a Bitcoin transaction from one
+  dedicated address fixed in the protocol.**
+  - Authentication: only the key holder can spend from the address.
+  - Append-only: the chain itself.
+  - Timestamp: the block time, set by miners rather than the declarer.
+  - Archive: every full node holds a copy.
+  - Listing: anyone can list every transaction of the address.
+  - What it reveals: a pseudonymous address and a bare hash. No name, no
+    strategy.
+  - Cost: one small fee, and the address must be funded once.
+  - **Status: general knowledge, not yet checked against a cited source in
+    this session.** Verify before asking.
+- **Alternative: a trusted third party** who receives the hash, with no
+  public post. Uniqueness then rests on trust, not verification, and O-6 is
+  re-asked.
+- Ordinary social media or code-hosting accounts fail requirement 2, because
+  posts can be deleted and history can be rewritten.
 
 ## 5. Consequences (all options)
 
@@ -172,41 +207,57 @@ The post is a bare hash. It reveals nothing about the strategies.
 
 ## 6. Proposed owner questions (neutral; each also allows "revise" or "keep blocked")
 
-1. **REG-2.** Should a strategy's signal be barred from using its own
-   volatility-sizing number? If a signal uses it, the random-timing check
-   partly measures sizing mismatch instead of timing skill.
-   - (a) Bar it through declared inputs [recommended]. Accidental misuse is
-     stopped, but a deliberate near-copy of the number (other volatility
-     features) stays possible. That residual is the one you already accepted
-     in D-14.
-   - (b) Allow it.
-2. **REG-1.** Can a fixed-size rule like your 10% be registered for C2?
-   - (a) Not in C2 [recommended]. Your 10% rule itself is **not** tested.
-     Later, an entry/exit idea can be tested at volatility-targeted size,
-     which is a different strategy, and its result does not tell you how 10%
-     would do. 10% stays your deployment choice under the loss bounds.
-   - (b) Add a fixed-size class. This is the only way to test 10% itself. It
-     needs another drafting and review round, and at 10% the strategy is very
-     unlikely to pass the main statistical test against the benchmark.
+1. **REG-1 and REG-2 together, because they interact (FR2-2).** This
+   question decides what sizing a C2 strategy may use, and whether its signal
+   may use its own volatility-sizing number. If the signal uses that number,
+   the random-timing check partly measures a sizing mismatch rather than
+   timing skill. That can wrongly pass a deliberately built strategy, or
+   wrongly fail an honest one.
+   - **(A) Vol-target sizing only, and the sizing number is barred from the
+     signal** [recommended].
+     - This stops accidental misuse. Deliberate near-copies through other
+       volatility features remain possible.
+     - Your exact 10% rule cannot be registered. A near-10% version can still
+       be written through other volatility features, but the random-timing
+       check judges it unreliably and the main test barely looks at it.
+     - An entry/exit idea can later be tested at vol-target size. That is a
+       different strategy, and its result does not tell you how 10% would do.
+     - 10% stays your deployment choice under the loss bounds.
+   - **(B) Vol-target sizing only, and the sizing number is allowed.** Your
+     10% can be written exactly ("signal = 0.10 × volatility / target") and
+     registered. The random-timing check then judges it unreliably, and the
+     main test barely looks at it.
+   - **(C) Add a separate fixed-size class.** This is the cleanest way to
+     register 10% itself.
+     - It is checked on the improvement tests.
+     - At 10% the main promotion test mostly measures how the benchmark did
+       over the window. A fail says little about your idea, and so would a
+       pass. Promotion is very unlikely unless the benchmark had a poor
+       window.
+     - It needs another drafting and review round.
 
-   Either way, your rule needs a real entry signal from research before it
-   can be a testable strategy.
-3. **O-8.** Do the order and fill rules apply to normal backtests too? Checked
-   against the code, this changes nothing beyond the exits-to-zero rule you
-   already chose. It is confirmed only once the new code exists.
-   - (a) Yes [recommended]
-   - (b) Only to the test runs
-4. **O-6a.** The single hash post needs one dedicated identity that verifies
-   who posted, can never edit or delete, carries an outside timestamp and is
-   archived. The post is a bare fingerprint and reveals nothing about your
-   strategies. The candidate is a public transparency log (Sigstore Rekor,
-   to be verified). Alternative: no public post, with a trusted third party
-   holding the fingerprint, in which case the seed question O-6 is re-asked.
-5. **O-9.** If a cycle is invalidated after its hash post (for example a
-   second post, a mismatch, or no beacon value within 7 days), is the window
-   used up?
+   Under any choice, your rule needs a real entry signal from research before
+   it becomes a testable strategy.
+2. **O-8.** Do the order and fill rules apply to normal backtests too?
+   Checked against the code, this changes nothing beyond the exits-to-zero
+   rule you already chose. The benchmark definitions get new fingerprints,
+   and their values are expected not to change; that is confirmed only once
+   the new code exists.
+   - (a) Yes [recommended].
+   - (b) Only to the test runs.
+3. **O-6a.** Where does the single fingerprint post go? It must be one fixed
+   identity that cannot edit or delete, with an outside timestamp, an archive
+   copy, and every post listable.
+   - (a) A Bitcoin transaction from one dedicated address [recommended, once
+     verified]. It reveals a pseudonymous address and a bare fingerprint: no
+     name, no strategy. It costs one small fee.
+   - (b) No public post: a trusted third party holds the fingerprint, and the
+     seed question O-6 is re-asked.
+4. **O-9.** If a cycle is invalidated after its fingerprint post (a second
+   post, a mismatch, or no beacon value within 7 days), is the window used
+   up?
    - (a) No [recommended]. The window can be reused, and each such
      invalidation costs one halving of the false-promotion allowance. A
      declarer who sees the seed and aborts pays only that halving.
-   - (b) Yes. C2's window is the only eligible one, so any such invalidation
-     ends promotion for **both** families.
+   - (b) Yes. C2's window is the only eligible one, so promotion ends for
+     **both** families until a later amendment creates a new eligible window.
