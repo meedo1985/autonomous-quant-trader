@@ -64,13 +64,19 @@ def _state(**changes: object) -> AccountState:
     return replace(base, **changes)
 
 
-def test_a_snapshot_round_trips_exactly(tmp_path: Path) -> None:
+@pytest.mark.parametrize("unfinished", [None, T0 + timedelta(hours=2)])
+def test_a_snapshot_round_trips_exactly(
+    tmp_path: Path, unfinished: datetime | None
+) -> None:
+    """S29R2-1: `unfinished_from` is omitted when `None`, so a snapshot
+    written before it existed still parses exactly."""
     journal = StateJournal(tmp_path / "state.jsonl")
-    state = _state()
+    state = _state(unfinished_from=unfinished)
     journal.save(state, T0 + timedelta(hours=2))
     loaded = journal.load()
     assert loaded == state
     assert loaded is not None and loaded.as_mapping() == state.as_mapping()
+    assert ("unfinished_from" in state.as_mapping()) is (unfinished is not None)
 
 
 def test_an_account_never_run_has_no_state(tmp_path: Path) -> None:

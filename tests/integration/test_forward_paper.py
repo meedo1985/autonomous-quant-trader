@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -18,14 +20,16 @@ from aqt.app.forward import (
     effective_decisions,
     run_step,
     skipped_while_busy_event,
+    unfinished_hours,
 )
-from aqt.app.paper_loop import RunReport
-from aqt.app.state import AccountDir
+from aqt.app.paper_loop import RunReport, nonce_for, refuse_marker_path
+from aqt.app.state import AccountDir, AccountState, StateJournal
 from aqt.core.deployment import approve
 from aqt.core.ledger import append_entry, read_entries
 from aqt.data.bars import BarSeries
+from aqt.execution.orders import ExecutorConfig, client_order_id_for
 from aqt.execution.safety import Mode
-from aqt.execution.simulator import SimulatedExchange
+from aqt.execution.simulator import Fault, Scenario, SimulatedExchange
 from aqt.monitoring.alerts import LedgerSink
 from aqt.monitoring.events import Severity
 from tests.integration.test_paper_loop import (
@@ -36,7 +40,7 @@ from tests.integration.test_paper_loop import (
     _run,
     _series,
 )
-from tests.integration.test_paper_recovery import _seed
+from tests.integration.test_paper_recovery import _probe_authorization, _seed
 from tests.integration.test_paper_restart import START
 
 HOURS = 30  # two 00:00 decisions: START and START + 24h
@@ -125,59 +129,126 @@ def _started(account: AccountDir, start: datetime, end: datetime) -> None:
     )
 
 
-BALANCES = {"USDT": Decimal("10000"), "BTC": Decimal("0")}
+class _Crash(BaseException):
+    """The process killed right after a journal save."""
+
+
+def _crashed(
+    tmp: Path, monkeypatch: pytest.MonkeyPatch, after: int | None, hours: int = 6
+) -> AccountDir:
+    """The account of a run whose order's reconciliation ends two hours
+    after its decision hour (A2324R-4), killed after its `after`-th journal
+    save (`None`: never). A kill leaves no refuse marker."""
+    config = _config(
+        1,
+        start=START,
+        end=START + hours * HOUR,
+        executor=ExecutorConfig(not_found_delay=timedelta(hours=2), absence_queries=2),
+    )
+    first = client_order_id_for(
+        replace(_probe_authorization(), nonce=nonce_for(config.run_id, 0))
+    )
+    account = AccountDir(tmp)
+    saves = 0
+    original = StateJournal.save
+
+    def save(self: StateJournal, state: AccountState, at: datetime) -> None:
+        nonlocal saves
+        original(self, state, at)
+        saves += 1
+        if saves == after:
+            raise _Crash
+
+    with monkeypatch.context() as patch, contextlib.suppress(_Crash):
+        patch.setattr(StateJournal, "save", save)
+        _run(
+            account.root,
+            config,
+            _series(24 * 14),
+            incidents=account.incident_log(),
+            journal=account.journal,
+            scenario=Scenario({first: Fault(timeout=True, not_found_queries=1)}),
+        )
+    refuse_marker_path(account.incident_log()).unlink(missing_ok=True)
+    return account
 
 
 @pytest.mark.parametrize(
-    ("saved", "cut"),
+    ("after", "unfinished"),
     [
-        # Every save site of the loop is at an hour's end (startup, the
-        # hour's own save, the final save) or within one hour (owner
-        # command, pre-send, FREEZE or HALT reconciliation): only that hour
-        # is named, never the finished hours before it (S29R-1).
-        (START + 2 * HOUR, START + 2 * HOUR),
-        (START + 2 * HOUR + timedelta(minutes=20), START + 2 * HOUR),
-        (START + 4 * HOUR, START + 4 * HOUR),  # the step's final save
-        (START - HOUR, None),  # stopped before it saved anything
+        # S29R2-1: each save records the first hour not finished, so a kill
+        # right after it names exactly the hours not run, and no others.
+        (1, (0, 1)),  # the startup save: hour 0 not decided yet
+        (2, (0, 1)),  # the pre-send save of hour 0's order
+        (3, (1, 3)),  # hour 0 ended at 02:00: hours 1 and 2 not run
+        (4, (2, 3)),  # hour 1 skipped while busy; hour 2 not run
+        (5, None),  # hour 2 skipped while busy: every hour so far finished
+        (None, None),  # the final save: every hour finished
     ],
 )
-def test_an_interrupted_step_names_only_the_hour_of_its_last_save(
-    tmp_path: Path, saved: datetime, cut: datetime | None
+def test_a_kill_after_any_save_names_exactly_the_hours_not_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    after: int | None,
+    unfinished: tuple[int, int] | None,
 ) -> None:
-    account = AccountDir(tmp_path / "a")
-    _started(account, START, START + 5 * HOUR)
-    _seed(account, saved, Mode.RUNNING, BALANCES, "10000")
-    report = _step(account, _series(24 * 14), START + 8 * HOUR)
-    assert report is not None and report.refused == ()
-    [found] = _interruptions(account)
-    assert (
-        found["interrupted_step"]
-        == f"{START.isoformat()} to {(START + 5 * HOUR).isoformat()}"
+    account = _crashed(tmp_path / "a", monkeypatch, after)
+    expected = (
+        None
+        if unfinished is None
+        else (START + unfinished[0] * HOUR, START + unfinished[1] * HOUR)
     )
-    assert found["hour_maybe_cut_short"] == (None if cut is None else cut.isoformat())
-    assert found["resumed_at"] == (_floor(saved) + HOUR).isoformat()
+    assert unfinished_hours(account.journal) == expected
+
+
+def test_an_interrupted_step_is_reported_with_its_hours(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S29R2-1: killed after the save that ends hour 0's two-hour
+    reconciliation: the next step names hours 1 and 2, before anything
+    else, and only once."""
+    account = _crashed(tmp_path / "a", monkeypatch, 3)
+    _started(account, START, START + 6 * HOUR)
+    before = len(read_entries(account.operations_path))
+    _step(account, _series(24 * 14), START + 8 * HOUR)
+    [found] = _interruptions(account)
+    assert {
+        k: found[k] for k in ("first_unfinished", "last_unfinished", "resumed_at")
+    } == {
+        "first_unfinished": (START + HOUR).isoformat(),
+        "last_unfinished": (START + 2 * HOUR).isoformat(),
+        "resumed_at": (START + 3 * HOUR).isoformat(),
+    }
+    first = read_entries(account.operations_path)[before].payload
+    assert first.get("kind") == "LOOP_LAG" and "interrupted_step" in first["fields"]
     _step(account, _series(24 * 14), START + 9 * HOUR)
-    assert len(_interruptions(account)) == 1  # the next step ended: reported once
+    assert len(_interruptions(account)) == 1
 
 
-def _floor(moment: datetime) -> datetime:
-    return moment.replace(minute=0, second=0, microsecond=0)
+def test_a_kill_after_the_final_save_reports_nothing(tmp_path: Path) -> None:
+    """S29R2-1: the step finished every hour; only its `END` was lost."""
+    account = AccountDir(tmp_path / "a")
+    series = _series(24 * 14)
+    _step(account, series, START + 3 * HOUR)
+    _started(account, START + 2 * HOUR, START + 3 * HOUR)  # the lost END
+    report = _step(account, series, START + 4 * HOUR)
+    assert report is not None and report.refused == ()
+    assert _interruptions(account) == []
 
 
-def test_an_interrupted_pre_send_is_reported_before_its_refusal(tmp_path: Path) -> None:
+def test_an_interrupted_pre_send_is_reported_before_its_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """S29R-1: the order saved as sent has an unknown outcome, which refuses
     the step; the interruption is reported first."""
-    account = AccountDir(tmp_path / "a")
-    _started(account, START, START + 5 * HOUR)
-    _seed(
-        account, START + 2 * HOUR, Mode.RUNNING, BALANCES, "10000", orders={"x": None}
-    )
+    account = _crashed(tmp_path / "a", monkeypatch, 2)
+    _started(account, START, START + 6 * HOUR)
     with pytest.raises(ForwardError, match="unknown outcome"):
         _step(account, _series(24 * 14), START + 8 * HOUR)
     kinds = [e.payload.get("kind") for e in read_entries(account.operations_path)]
-    assert kinds == ["LOOP_LAG", "STARTUP"]
+    assert kinds[-2:] == ["LOOP_LAG", "STARTUP"]
     [found] = _interruptions(account)
-    assert found["hour_maybe_cut_short"] == (START + 2 * HOUR).isoformat()
+    assert found["first_unfinished"] == found["last_unfinished"] == START.isoformat()
 
 
 def test_a_refused_step_is_not_an_interruption(tmp_path: Path) -> None:
@@ -192,17 +263,21 @@ def test_a_refused_step_is_not_an_interruption(tmp_path: Path) -> None:
     assert steps == ["START", "END", "START", "END"]
 
 
-def test_hours_a_running_reconciliation_skips_are_reported() -> None:
-    """S29R-1: the loop's last save after `end` (busy until then) means the
-    hours from `end` are skipped, as a replay skips them; they are named."""
-    end = START + 3 * HOUR
-    assert skipped_while_busy_event(end, end, end) is None
-    event = skipped_while_busy_event(end, end + 2 * HOUR, end)
-    assert event is not None and event.severity is Severity.WARNING
+def test_hours_a_running_reconciliation_skips_are_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S29R-1: a run ending at hour 1 whose reconciliation runs to 02:00
+    saves after hours 1 and 2, which it skipped as a replay skips them; they
+    are named as a warning."""
+    account = _crashed(tmp_path / "a", monkeypatch, None, hours=1)
+    skipped = unfinished_hours(account.journal)
+    assert skipped == (START + HOUR, START + 3 * HOUR)
+    event = skipped_while_busy_event(skipped, START)
+    assert event.severity is Severity.WARNING
     assert dict(event.fields) == {
         "skipped_hours": 2,
-        "first_skipped": end.isoformat(),
-        "last_skipped": (end + HOUR).isoformat(),
+        "first_skipped": (START + HOUR).isoformat(),
+        "last_skipped": (START + 2 * HOUR).isoformat(),
         "note": "a reconciliation was running; as in a replay, no decision "
         "is made in these hours",
     }

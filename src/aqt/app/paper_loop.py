@@ -780,6 +780,9 @@ def run_paper(
     """Authorizations whose orders a failed or unclear outcome left
     unreconciled; their reservations wait for a passed reconciliation."""
     busy_until = ready
+    unfinished = config.start
+    """The first decision hour not yet finished, saved with the state so a
+    restart knows which hours a crash cut short (S29R2-1)."""
 
     def save(at: datetime, record: LocalRecord | None = None) -> None:
         """Append the account's state to the journal, if there is one."""
@@ -800,6 +803,7 @@ def run_paper(
                 valued_through=valued,
                 zero_fills=zero_fills,
                 incidents_seen=seen,
+                unfinished_from=unfinished,
             ),
             at,
         )
@@ -991,6 +995,7 @@ def run_paper(
             skip_recovery(moment, ready, "the startup check was still running")
             fire(value(moment, mark_at(moment)), ready)  # valued all the same
             moment += HOUR
+        unfinished = moment
         save(ready)
         decision_time = ready
         # A FLATTEN sell is saved as sent before it is placed (Task 27).
@@ -1000,8 +1005,10 @@ def run_paper(
             if done is not None:
                 # The hour just finished, never before work it waited for
                 # (A27-1).
+                unfinished = moment
                 save(max(done, busy_until))
             decision_time, moment = moment, moment + HOUR
+            unfinished = decision_time
             check_channel(decision_time)
             done = max(decision_time, busy_until)
             mark = mark_at(decision_time)
@@ -1218,6 +1225,7 @@ def run_paper(
                 last_increase = proposal.decision_time
             local = check.next_record()
         if done is not None:
+            unfinished = moment
             save(max(done, busy_until))
 
     except BaseException as error:
