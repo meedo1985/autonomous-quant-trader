@@ -1,7 +1,7 @@
 # Constitution §4 amendment — draft wording for C2 (DSR and selection)
 
 **Status:** `AI WORDING PROPOSAL — NOT AN AMENDMENT — NOT AUTHORED — NOT SIGNED — NOT ACTIVE`
-**Date:** 2026-10-04, revision 6
+**Date:** 2026-10-04, revision 7
 **Drafted by:** Claude Opus 5.5 (`claude-opus-5-5`). Constitution §4 line 50:
 an AI "may propose but not author/merge/activate/self-approve amendments".
 This file only proposes wording; the amendment exists only if the owner
@@ -11,6 +11,9 @@ rev. 7 `9718fdc`) and B-1..B-7 (`../broadened-method/OWNER_DECISION_B.md`,
 design rev. 3 `a3d2c59`); scope D-18 O18-5, O18-7 and design §7. Revision 5
 adds the gate decisions D-01..D-10, D-14, D-15, N-1..N-4 (records listed in
 Annex C) and the owner items O-1..O-7 (`OWNER_DECISION_O1_O7.md`).
+Revision 7 adds REG (A), O-8 (a) and O-9 (a)
+(`../reg-o8-proposal/OWNER_DECISION_REG_O8_O9.md`, `4230b1f`; decided text
+`../reg-o8-proposal/PROPOSAL.md` rev 5 `8142647` §6).
 **History:** rev. 1 `e44146e` — Fable FA1 SOUND WITH FIXES, Sol SA1 UNSOUND
 (`2ecf18f`), adjudication `ff3c7f8`. Rev. 2 `afed53e` — focused checks Fable
 FA2 NOT READY (`b38204b`), Sol SA2 NOT READY (`9f67598`), adjudication
@@ -20,10 +23,12 @@ READY (`5ba2c05`), Sol SA3 NOT READY (`5f09df9`), adjudication
 (not reviewed). Rev. 5 folds in every decision listed under Basis and adds
 Annex C; Fable FA5 and Sol SA5 both rated it SOUND WITH FIXES
 (`883eec5`, `404b8e5`). Rev. 6 applies every disposition in
-`ADJUDICATION_AB9AD3F.md` without a further check.
+`ADJUDICATION_AB9AD3F.md` without a further check. Rev. 7 folds in
+REG (A), O-8 (a), O-9 (a) and FR1-7 (`ADJUDICATION_370C50C.md`), not yet
+reviewed.
 **Labels:** `[AI default]` = drafting choice, not an owner decision.
-`[derived]` = follows from decided rules. `<<OWNER x>>` (REG-1, REG-2, O-6a,
-O-8, O-9) = owner decision still needed (§7). `<<OPEN D-19 route>>` = a
+`[derived]` = follows from decided rules. `<<OWNER x>>` (O-6a) = owner
+decision still needed (§7). `<<OPEN D-19 route>>` = a
 certification route still to be drafted with the D-19 preregistration (§4). `<<D19: x>>` = value only the D-19 calibration can supply.
 `<<DECLARATION: x>>` = value computed at C2's declaration. `<<OPEN D-nn>>` =
 clause governed by an open decision row. **The amendment cannot be signed
@@ -104,10 +109,13 @@ kept (§2).
 | `FROZEN_HASHES.json` | `benchmark_set_sha256` (v1.0) | unchanged; a new key `benchmark_set_v1_1_sha256` is appended, along with keys for every new v1.1 file (§0) |
 
 The canonical benchmarks change too, so every benchmark hash is recomputed,
-and G-13 compares against the v1.1 hash. [derived] The baseline and benchmark
-effect of the full contract beyond N-4 and Q10 is `<<OWNER O-8>>` (Annex C
-C-6). The rows above for l.57, BACKTESTER l.9 and CANONICAL l.11 are already
-decided, because Q10 governs all runs.
+and G-13 compares against the v1.1 hash. [derived] The full event contract
+governs every run, baseline and benchmark included (O-8 (a), Annex C C-6).
+Checked against the code, at baseline it equals current behaviour plus N-4,
+and N-4 cannot change any canonical benchmark's values
+(`../reg-o8-proposal/PROPOSAL.md` §3). The benchmark values are therefore
+expected to stay the same; this is confirmed only once the v1.1 code
+exists.
 
 ## 2. Protocol v1.1 (cycle C2) — clause changes
 
@@ -145,7 +153,7 @@ seed_disclosure:                               # O-6
     verification: "the round's randomness is valid only if its signature verifies against the fixed public key; the round number, signature and randomness are recorded for Constitution §27"
     derivation: "family_seed_f = SHA256(annexB_family_seed_f || round || beacon_randomness); byte encoding <<OPEN D-20>>"
     failure: "no fallback chain or source. If no verifying output for the round exists within 7 days of its scheduled time, the cycle is INVALIDATED before any evaluation."
-    invalidation_after_post: "a cycle invalidated after its post increments m (Constitution v1.1 §9, O-1). Whether it also makes the window ineligible: <<OWNER O-9>>"   # FA5-3, SA5-3
+    invalidation_after_post: "a cycle invalidated after its post increments m (Constitution v1.1 §9, O-1). It does not make the eligible window ineligible (O-9 (a))."   # FA5-3, SA5-3
   disclosure: "kept as in §5"
 ```
 
@@ -158,8 +166,8 @@ the hash, and O-6 is then re-asked.
 
 **Residual (FA5-3).** After seeing the beacon, a declarer can still compute
 the outcome offline from public prices and abort. Each abort costs one
-halving of the allowance (`m` increments). Under O-9's recommended answer,
-the window stays usable.
+halving of the allowance (`m` increments). Under O-9 (a), the window stays
+usable.
 
 ### 2.1 Partitions and gap embargo (v1.0 lines 64–67; lines 205–214 unchanged)
 
@@ -283,7 +291,7 @@ promotion:
     G-8:  {lines: "260-265, 286", def: "Annex C C-8", na: "no ordered numeric tunable dimension (line 264)", stage: pre_lockbox, status: "decided D-04, D-05"}
     G-9:  {lines: "287", def: "Annex A P18-6", na: "never", stage: pre_lockbox, status: "<<D19 values>>; code binding <<OPEN D-20>>"}
     G-10: {lines: "234-241, 288", def: "Annex C C-9", na: "declared family trials |J_f| < 20 (line 235)", stage: pre_lockbox, status: "decided D-08, D-09, D-10"}
-    G-11: {lines: "134-140, 289", def: "Annex C C-10", na: "g11_class constant_signal, fixed at preregistration", stage: pre_lockbox, status: "decided D-14; registration <<OWNER REG-1, REG-2>>; shift sampling <<OPEN D-20>>"}
+    G-11: {lines: "134-140, 289", def: "Annex C C-10", na: "g11_class constant_signal, fixed at preregistration", stage: pre_lockbox, status: "decided D-14; registration REG (A); s_inputs enforcement and shift sampling <<OPEN D-20>>"}
     G-12: {lines: "242-244, 290", def: "Annex C C-11", na: "never", stage: pre_lockbox, status: "decided N-1"}
     G-13: {lines: "291", def: "benchmark hash matches the v1.1 canonical benchmark hash (§1a)", na: "never", stage: pre_lockbox, status: "defined"}
     G-14: {lines: "141-145, 289", def: "Annex C C-12", na: "trial fits no model of the vol-scaled target, fixed at preregistration", stage: pre_lockbox, status: "decided N-2 (a); seed stream <<OPEN D-20>>"}
@@ -319,10 +327,8 @@ and 300 stay in force. (Restored per FA5-9.)
 | 215–222 | CPCV diagnostic report (its ESS input is Annex C C-11) | `<<OPEN D-13>>` |
 | 77–79 | lockbox attestation coarse fields | `<<OPEN D-12>>` |
 | 83–92 | lockbox prediction interval and pass rule (L-1..L-4) | `<<OPEN D-11>>` |
-| §2.0 R-8, seed derivation; §2.4 `added_purposes`; Annex C C-0 (Sharpe, `max_drawdown`), C-1, C-10 (3), C-11, C-12 (5) | code bindings, stream conventions and reference vectors | `<<OPEN D-20>>` |
-| Annex C C-10 (1) | whether a fixed-size rule can be registered; whether `s` may depend on `σ̂` | `<<OWNER REG-1>>`, `<<OWNER REG-2>>` |
-| Annex C C-6 scope; §1a | the full event contract applied to baseline and benchmark runs | `<<OWNER O-8>>` |
-| §2.0 seed channel; invalidation after post | the public identity; whether invalidation consumes the window | `<<OWNER O-6a>>`, `<<OWNER O-9>>` |
+| §2.0 R-8, seed derivation; §2.4 `added_purposes`; Annex C C-0 (Sharpe, `max_drawdown`), C-1, C-6 (band routine), C-10 (1) (`s_inputs` mapping and enforcement), C-10 (3), C-11, C-12 (5) | code bindings, stream conventions and reference vectors | `<<OPEN D-20>>` |
+| §2.0 seed channel | the public identity | `<<OWNER O-6a>>` |
 | §2.0 beacon | the drand chain hash and public key | `<<SIGNING>>` |
 | §2.1, §2.4, G-9 | `T_min`, `family_block_rule`, `z_crit`, `U_proc` allocation | `<<D19>>` |
 | §2.1 start, gap | values fixed at declaration | `<<DECLARATION>>` |
@@ -371,11 +377,11 @@ blocked. (Restored per FA5-9.)
 ## 6. §4 and §16 checklist (owner steps, in order)
 
 1. Fill every `<<…>>` marker (FA3-12).
-   - **Done (owner choices):** D-01..D-10, D-14, D-15, N-1..N-4 and
-     O-1..O-7. The owner's answers added N-1..N-4 as decision rows; the
+   - **Done (owner choices):** D-01..D-10, D-14, D-15, N-1..N-4,
+     O-1..O-7, REG (A), O-8 and O-9. The owner's answers added N-1..N-4 as decision rows; the
      `HUMAN_DECISION_MATRIX.md` file itself is not yet edited.
    - **Remaining, in this order:**
-     1. REG-1, REG-2, O-6a, O-8 and O-9;
+     1. O-6a, after its own specification and review;
      2. the D-19 preregistration, including the certification route, run
         and accepted, so that its frozen qualification object covers the
         final gates;
@@ -419,35 +425,33 @@ blocked. (Restored per FA5-9.)
   default.
 - **O-7:** G-2 is absolute, 5 points.
 
+**Decided 2026-10-04** (`../reg-o8-proposal/OWNER_DECISION_REG_O8_O9.md`):
+- **REG (A)** (REG-1 and REG-2 combined): C2 sizing is vol-targeted only.
+  The signal `s` reads only its declared `s_inputs`, which never include
+  `σ̂` or a frozen feature identical to it (Annex C C-10 (1)). A fixed size
+  such as the owner's 10% cannot be registered in C2; it remains a
+  deployment choice under L-01..L-04. Accepted: the ban stops only direct
+  and accidental use, not a deliberate rebuild of `σ̂` or a close proxy.
+- **O-8 (a):** the full event contract (C-6) governs every run, baseline
+  and benchmark included.
+- **O-9 (a):** a cycle invalidated after its declaration post does not
+  consume the eligible window.
+
 **Still open:**
-- **REG-1** Can a fixed-size rule be registered for C2, for example the
-  owner's fixed 10%? In the C-10 form a fixed size is written
-  `s = 0.10·σ̂/τ`, so it depends on REG-2. Left open by the D-14/D-15
-  addendum (FC7-3).
-- **REG-2** May the signal `s` depend on `σ̂`? This bears on whether the
-  sizing restriction in C-10 (1) can be bypassed. Left open by the addendum.
 - **O-6a** Which public identity carries the single declaration-hash post?
   It must meet the four §2.0 channel requirements. The post is a bare hash
   and reveals nothing about the strategies. If the owner wants no public
   post, O-6 is re-asked with a trusted third party instead.
-- **O-8** Does the full event contract (C-6) govern baseline and benchmark
-  runs too, or only gate, stressed and null runs? N-4 and Q10 already govern
-  all runs. This consequence was "recorded, not presented" (FA5-2, SA5-1).
-  The concrete baseline effects are to be shown when asking.
-- **O-9** Does a cycle invalidated after its declaration post also make the
-  eligible window ineligible? Recommendation: no. C2's window is the only
-  eligible one, so consuming it ends promotion for both families. The
-  allowance halving already prices each abort (FA5-3).
-
-A proposal for REG-1, REG-2 and O-8, with a two-model review, comes first.
-Then all five items go to the owner together.
+  O-6a is deferred to its own specification and review before it is asked
+  (`../reg-o8-proposal/PROPOSAL.md` §4).
 
 ## 8. Next
 
 [AI default]
-1. Write the REG-1/REG-2/O-8 proposal, including the concrete baseline
-   effects of O-8, and have it reviewed.
-2. Ask the owner REG-1, REG-2, O-6a, O-8 and O-9.
+1. Have this revision's fold-in of REG (A), O-8 (a), O-9 (a) and FR1-7
+   checked for fidelity against the owner record.
+2. Write the O-6a channel specification, have it reviewed, and ask the
+   owner.
 3. Run the D-19 calibration preregistration, which supplies the `<<D19>>`
    values and the certification route.
 4. Run the two-model review of the final wording, including Annex C fidelity.

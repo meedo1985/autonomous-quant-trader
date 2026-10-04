@@ -1,7 +1,8 @@
 # Annex C — promotion gate definitions for cycle C2
 
 **Status:** `AI WORDING PROPOSAL — NOT AN AMENDMENT — NOT SIGNED — NOT ACTIVE`
-**Date:** 2026-10-04, revision 2 (applies `ADJUDICATION_AB9AD3F.md`)
+**Date:** 2026-10-04, revision 3 (folds in REG (A), O-8 (a) and FR1-7;
+revision 2 applied `ADJUDICATION_AB9AD3F.md`)
 **Drafted by:** Claude Opus 5.5 (`claude-opus-5-5`). This annex restates
 owner-decided rows as operative text. It decides nothing.
 
@@ -31,6 +32,7 @@ under DRAFT_WORDING §0 precedence.
 | N-1, N-2 | `n1-n2-proposal/OWNER_DECISION_N1_N2.md` | PROPOSAL rev 2 `82a6495` §1, §2 option (a) |
 | D-14, D-15, N-3, N-4 | `d14-d15-proposal/OWNER_DECISION_D14_D15.md` plus `OWNER_DECISION_D14_D15_ADDENDUM.md` (governs) | PROPOSAL rev 7 `411e1af` §1–§2: every recommended option, except Q13 (b), Q15 (b) and Q17 (b) per the addendum |
 | O-7 | `s4-amendment-draft/OWNER_DECISION_O1_O7.md` | absolute reading of l.276–278 |
+| REG (A), O-8 (a) | `reg-o8-proposal/OWNER_DECISION_REG_O8_O9.md` | PROPOSAL rev 5 `8142647` §6; FR1-7 per `reg-o8-proposal/ADJUDICATION_370C50C.md` |
 
 "l.n" means a line of `protocols/protocol_v1.yaml` v1.0, unless another file
 is named.
@@ -128,15 +130,8 @@ On a re-run in which the BTC candidate and the **BTC benchmark both run at
 
 ## C-6 Event contract [D-15 Q19, Q10 (b); N-4 Q20 (iii)]
 
-**Scope.** The contract governs gate, stressed and null runs.
-- N-4 (exits to 0, held exposure drifting) and Q10 (the clock anchor) were
-  decided for every run, baseline and benchmark included.
-- Applying the **rest** of this contract to baseline and benchmark runs was
-  recorded but never presented to the owner (addendum).
-  - It covers same-instant fills, atomic fills, the 00:00 band tested against
-    drifted exposure, decision-time direction, the clamp, and the unset-clock
-    rule.
-  - That application is `<<OWNER O-8>>` (FA5-2, SA5-1).
+**Scope.** The contract governs every run: gate, stressed, null, baseline
+and benchmark. [O-8 (a); N-4 and Q10 were already decided for every run]
 
 1. **Time.** Timestamps are instants, and close(t) = open(t+1). An order
    stores an absolute target exposure.
@@ -147,8 +142,11 @@ On a re-run in which the BTC candidate and the **BTC benchmark both run at
 4. **At each hourly instant, in order:**
    1. Execute due fills at the open(t+1) price.
    2. Evaluate the decision against held exposure:
-      - At 00:00 UTC, a change requires `|target − held| ≥` the declared band.
-        The declared band is the l.112 value, 0.10 (l.97). [AI default; FA5-16]
+      - At 00:00 UTC, a change requires `|target − held|` to reach the
+        declared band. The declared band is the l.112 value, 0.10 (l.97).
+        [AI default; FA5-16] "Reach" is tested by `reaches_rebalance_band`
+        in `src/aqt/benchmarks/canonical.py` (`≥ 0.10 − 4·ulp(1.0)`), here
+        and in every band test below; binding `<<OPEN D-20>>`. [FR1-7]
       - The direction of the order is classified now, at decision time, by
         comparing target with held exposure.
       - An increase is allowed only at 00:00, and only if the clock shows at
@@ -259,18 +257,27 @@ Evaluate in order:
 1. **Declared mapping.** Each trial declares, in its hashed interface,
    `target_h = overlay( clip( s_h · τ / σ̂_h, 0, 1 ), own path state )`, where:
    - `s_h ≥ 0` is computed only from market data and the trial's declared
-     model outputs;
+     model outputs, and only from its declared `s_inputs` (below);
    - `τ ∈ {0.40, 0.60, 0.80}` (l.127);
    - `σ̂_h` is restricted to `EWMA_168h` (l.115) or, in the vol family, one
      of l.121, annualised as in CANONICAL_BENCHMARKS l.23;
    - the overlay may only keep the target or set it to 0. It may not set or
      rescale size, and re-entry follows `s`.
-   - Whether `s` may depend on `σ̂`: `<<OWNER REG-2>>`.
-   - Whether a fixed-size rule can be registered, for example the owner's
-     fixed 10%: `<<OWNER REG-1>>`. In this form a fixed size is written
-     `s_h = 0.10·σ̂_h/τ`, so it is expressible only if REG-2 allows `s` to
-     depend on `σ̂`. (SA5-2, correcting rev 1)
-   - Both questions were left open by the D-14/D-15 addendum.
+   - **`s_inputs`.** Each trial declares `s_inputs` (feature names and
+     model ids) in its hashed interface, and the engine gives `s` only those
+     inputs. `σ̂`, the sizing estimator's output and any frozen feature
+     identical to it (currently `ewma_vol_168h` for a trial sized by
+     `EWMA_168h`) are never among them. A violation invalidates the
+     declaration. The identity mapping and its enforcement are §16 code,
+     `<<OPEN D-20>>`. [REG (A)]
+   - **Sizing is vol-targeted only.** There is no fixed-size class: a fixed
+     size such as the owner's 10% cannot be registered in C2 (written
+     `s_h = 0.10·σ̂_h/τ` it would need `σ̂` in `s`). It remains a deployment
+     choice under L-01..L-04. [REG (A)]
+   - **Disclosed.** The ban stops direct and accidental use only. A
+     deliberate rebuild of `σ̂`, or a close proxy, from prices remains
+     possible. Honest default-sized signals lose `ewma_vol_168h` as an
+     input; the other volatility features remain available. [REG (A)]
 2. **Class.** Each trial declares `g11_class ∈ {signal_timed,
    constant_signal}`.
    - The engine checks in every run that a `constant_signal` trial's `s` is
