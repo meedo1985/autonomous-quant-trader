@@ -1,4 +1,4 @@
-# O-6a: the public channel for the C2 declaration-hash post (specification, revision 3)
+# O-6a: the public channel for the C2 declaration-hash post (specification, revision 4)
 
 **Status:** `AI PROPOSAL — NOT AN OWNER DECISION — NOT ACTIVE`
 **Date:** 2026-10-04
@@ -8,7 +8,8 @@
 **History:**
 - Rev 1 `8f0405f`: Fable OF1 READY WITH FIXES (`cc136ba`); Sol OS1 NOT READY (`a7dcd6b`).
 - Rev 2 `9ffcb4a`: Fable OF2 READY WITH FIXES (`0cc0f8e`); Sol OS2 NOT READY (`bb10c3a`).
-- Rev 3 applies `ADJUDICATION_9FFCB4A.md`. It is not yet re-checked.
+- Rev 3 `89ecead`: Fable OF3 NOT READY (`f7d32ff`); Sol OS3 READY WITH FIXES (`784516d`).
+- Rev 4 applies `ADJUDICATION_89ECEAD.md`. It is not yet re-checked.
 
 ## 1. What the channel must do (DRAFT_WORDING §2.0)
 
@@ -31,6 +32,7 @@ The post is a confirmed Bitcoin mainnet transaction that spends one bound coin o
 - **Key `K` and address `A`.** `K` is one secp256k1 key, generated offline by the owner for C2 only. `A` is its P2WPKH address. Only `A` and the public key become public. `K` never enters the repository, a log, a prompt or an artifact.
 - **Bound coin `F`.** Before signing, the owner pays one amount to `A`, and the payment confirms. Its outpoint `txid:vout`, amount and block height are fixed in the protocol at signing: `<<SIGNING: address A, outpoint F, amount, height>>`.
 - **Check at signing (OF1-3).** At signing it is checked and recorded that `A` has never been spent from and holds only `F`.
+- **Post deadline height `D` (OF3-2).** `D` is a block height fixed in the protocol at signing (`<<SIGNING: D>>`). The owner chooses it to fall roughly when he plans to post, plus 4,320 blocks, which is about 30 days.
 - **Post.** A post is any main-chain transaction, confirmed after signing and before C2 ends, that spends any output locked to `A`. That includes `F`, and any payment someone else sends to `A`. An inbound payment is not a post.
 - **Well-formed post (OF1-5).** A well-formed post:
   - spends `F`;
@@ -62,8 +64,17 @@ The post is a confirmed Bitcoin mainnet transaction that spends one bound coin o
   For the qualifying capture (§5), the record also holds:
   - its URI and Wayback timestamp;
   - the original body bytes, fetched with the Wayback `id_` modifier;
-  - the response headers and status;
+  - the response headers and status, including `x-archive-src` and `x-archive-orig-date` (OF3-3);
   - the SHA-256 of the body (OS2-2).
+
+  At the freeze point, the record also holds the CDX evidence (OS3-1), for each of the two URLs:
+  - the exact CDX query URI (exact URL match, with no collapsing, and every page);
+  - the complete raw response bytes;
+  - the response headers and status;
+  - the retrieval time;
+  - the SHA-256 of the response.
+
+  It also holds the time at which the verifier's node first saw the post accepted.
 
 ## 5. Acceptance, `T` and the beacon round
 
@@ -81,10 +92,20 @@ The post is a confirmed Bitcoin mainnet transaction that spends one bound coin o
   - `https://blockstream.info/api/block-height/<h+5>`.
 
   Its original body, fetched with `id_`, must equal the frozen acceptance-tip block hash. These endpoints return the hash of the block at that height as plain text (mempool.space REST API documentation).
-  - That block did not exist before acceptance, so **no qualifying capture can predate acceptance**, whoever made it.
+  - That block did not exist before the chain reached 6 confirmations, so **no qualifying capture can predate the frozen 6-confirmation chain state**, whoever made it. It may predate the moment the verifier's own node saw that state; that does not weaken anything (OS3-2).
   - Rendered or replayed pages never count.
   - The owner requests one Save Page Now capture of each URL once the post is accepted. Anyone else's qualifying capture counts too.
-- **`T` (OS1-1, OF2-2).** `T` is the Wayback timestamp of the earliest qualifying capture listed by the archive's CDX index for the two URLs. The index is read once, at the **freeze point**, which is 7 days after acceptance as observed by the verifier's node. `T` and the round are then frozen and recorded. A capture that appears in, or disappears from, the index later is recorded, but it never changes `T`.
+- **`T` (OS1-1, OF2-2, OF3-1, OF3-3).**
+  - **Definition.** `T` is the 14-digit UTC CDX timestamp of the earliest qualifying capture of the two URLs. The capture's CDX row must:
+    - match the URL exactly;
+    - show archived status `200`.
+
+    Its `id_` fetch must be bound to that exact row: the same original URL, the same timestamp and the same digest. A replay redirect, or a fetch that resolves to any other timestamp, does not count (OS3-1).
+  - **Freeze point.** The index is read once, at the **freeze point**: 7 days after the verifier's node first saw the post accepted. The read is recorded as §4 sets out. `T` and the round are then frozen.
+  - **An earlier capture invalidates (OF3-1).** If anyone, at any time before C2's evaluation is final, shows a qualifying capture with a CDX timestamp earlier than the recorded `T`, and the earlier timestamp gives a different round, the cycle is invalidated. It then costs one increment of `m`, as the FA5-3 abort does.
+    - So reporting a later capture as the earliest, after the beacons are public, can only invalidate the cycle. It never chooses a round.
+    - The rule applies equally to an honest late addition to the index, for example from a partner archive.
+  - **A capture that disappears never changes `T`.** The retained record governs.
 - **No capture (OS2-2, OF2-3).** If no qualifying capture is listed at the freeze point, the cycle is invalidated before any evaluation, as in §2.0 `failure`. An outage of the Internet Archive lasting 7 days or more therefore costs one increment of `m`, with no fault by anyone.
 - **Later unavailability (OS2-2).** If the archive later cannot serve a recorded capture, the retained record governs. Anyone can check its bytes against the chain.
 - **Round.** The round is the first round of the fixed drand chain whose scheduled time is at least `T + 24h`, as in DRAFT §2.0.
@@ -113,9 +134,9 @@ The release notes for **Bitcoin Core 30.0**, released 2025-10-10, are at <https:
   - The post spends `F`. Its OP_RETURN output has value 0, and its change goes to an address other than `A`.
   - The cost is two network fees, plus any withdrawal fee charged by the source of the funds. This is the owner's real money, separate from L-01 (the trading capital), which stays 0. Fees vary with network demand; no figure is promised here.
 - **Fees and deadline (OS2-3).**
-  - The post is broadcast at a fee rate at least the node's `estimatesmartfee` for 6 blocks.
-  - Until the deadline, it may be replaced (RBF) only by a transaction carrying the identical OP_RETURN script.
-  - The deadline is 30 days after first broadcast. If the post has not confirmed by then, the cycle is invalidated. The owner then spends `F` back to himself with a higher fee [AI default]. That spend is itself a post, which closes the record.
+  - The post is broadcast at a fee rate at least the node's `estimatesmartfee` for 6 blocks. This is procedural: it cannot be verified publicly (OF3-2).
+  - Until the deadline, the post may be replaced (RBF) only by a transaction carrying the identical OP_RETURN script.
+  - **Deadline (OF3-2).** The deadline is public: the post must be included in a block at height at most `D` (§3). If no post is included by then, the cycle is invalidated. The owner then spends `F` back to himself with a higher fee [AI default]. That spend is itself a post, which closes the record.
   - A replacement with a different payload is forbidden, but it cannot be detected unless it confirms. If it confirms, it is the first post, its hash does not match, and the cycle is invalidated. Unconfirmed variants all resolve before acceptance, and so before `T` and the beacon.
 - **Custody (OF1-4).**
   - `K` is backed up offline and never shared until the post is accepted.
@@ -147,6 +168,8 @@ The release notes for **Bitcoin Core 30.0**, released 2025-10-10, are at <https:
   - **Risks:**
     - A lost or stolen key, or a mistake in the transaction, cancels or blocks the cycle.
     - If the Internet Archive is unreachable for a week after the post, the cycle is cancelled.
+    - If an earlier archive copy than the recorded one turns up later and changes the draw, the cycle is cancelled.
+    - The post must be in a block by a deadline set when you sign (about 30 days after your planned posting date).
     - The address may be linkable to you, depending on where the money comes from.
     - The record is public forever.
 - **(B) A trusted person named in the protocol.**
@@ -162,12 +185,13 @@ The release notes for **Bitcoin Core 30.0**, released 2025-10-10, are at <https:
 
 | Key | New wording |
 |---|---|
-| `channel` | "the Bitcoin mainnet address and bound coin `<<SIGNING: address A, outpoint F, amount, height>>`, per O-6a SPEC §3–§5" |
+| `channel` | "the Bitcoin mainnet address, bound coin and deadline height `<<SIGNING: address A, outpoint F, amount, height, D>>`, per O-6a SPEC §3–§5" |
 | `message` | "one zero-value OP_RETURN output with scriptPubKey exactly 6a25 4151544332 followed by the 32-byte declaration_sha256" |
 | `first_post_rule` | "as in SPEC §3: posts are main-chain spends from `A` after signing and before C2 ends; a post is accepted at 6 confirmations, and the record frozen at acceptance governs (SPEC §5)" |
 | `round` | "the first round whose scheduled time is at least T + 24h, where T is the Wayback timestamp of the earliest qualifying capture listed at the freeze point (SPEC §5)" |
 
-`failure` gains three conditions. Each invalidates the cycle:
+`failure` gains four conditions. Each invalidates the cycle:
 - no qualifying capture at the freeze point;
 - a change to the frozen acceptance record;
-- the post unconfirmed 30 days after first broadcast.
+- no post included by block height `D`;
+- an earlier qualifying capture giving a different round (SPEC §5).
