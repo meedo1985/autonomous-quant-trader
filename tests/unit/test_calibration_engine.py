@@ -7,11 +7,19 @@ from __future__ import annotations
 import json
 
 import numpy as np
+import pytest
 
 from aqt.metrics import statistics as st
 from calibration import dsr
 from calibration.generator import Cell, generate, sigma_matrix
 from calibration.seeds import family_seed, outer_seed, stream
+
+
+@pytest.fixture(autouse=True)
+def _v_verified(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit tests exercise V's arithmetic on whatever runtime runs them; the
+    pinned-runtime gate itself is tested in a subprocess below."""
+    monkeypatch.setattr(dsr, "_V_VERIFIED", True)
 
 
 def _legs(k: int, t: int, dep: str = "independent", law: str = "gaussian"):
@@ -123,7 +131,10 @@ def test_method_v_runtime_check_needs_the_pinned_runtime() -> None:
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[2]
-    code = "from calibration import dsr; dsr.v_runtime_check(); print('ok')"
+    code = (
+        "from calibration import dsr; "
+        "dsr.v_runtime_check(dsr.runtime_identity()); print('ok')"
+    )
     env = {
         **os.environ,
         **dsr.V_ENVIRONMENT,
@@ -132,6 +143,13 @@ def test_method_v_runtime_check_needs_the_pinned_runtime() -> None:
     done = subprocess.run([sys.executable, "-c", code], env=env, cwd=root,
                           capture_output=True, text=True, check=False)  # fmt: skip
     assert done.stdout.strip() == "ok", done.stderr
+    wrong = (
+        "from calibration import dsr; i = dsr.runtime_identity(); "
+        "i['numpy'] = '0.0'; dsr.v_runtime_check(i)"
+    )
+    differs = subprocess.run([sys.executable, "-c", wrong], env=env, cwd=root,
+                             capture_output=True, text=True, check=False)  # fmt: skip
+    assert "runtime differs" in differs.stderr
     bare = {k: v for k, v in env.items() if k not in dsr.V_ENVIRONMENT}
     refused = subprocess.run([sys.executable, "-c", code], env=bare, cwd=root,
                              capture_output=True, text=True, check=False)  # fmt: skip
@@ -154,3 +172,12 @@ def test_method_v_variance_is_two_pass_stable() -> None:
 
     mean, var = fast.mean_var(drawn)  # Task 12 numerics
     assert abs(star[0][0] - mean / var**0.5) <= 1e-6 * abs(mean / var**0.5)
+
+
+def test_method_v_refuses_without_a_verified_runtime(monkeypatch) -> None:
+    """VF2-1: V does not compute until the full identity check has passed,
+    and a differing identity is refused."""
+    monkeypatch.setattr(dsr, "_V_VERIFIED", False)
+    x = np.random.default_rng(1).standard_normal((30, 2))
+    with pytest.raises(RuntimeError, match="U_ops"):
+        dsr._replicates_v(x, [list(range(30))])  # noqa: SLF001

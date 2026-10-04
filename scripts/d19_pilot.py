@@ -69,7 +69,9 @@ def one(cell: Cell, rep: int, numerics: str) -> dict[str, float | str]:
 
 def main() -> int:
     fast.self_check()
-    dsr.v_runtime_check()
+    dsr.v_runtime_check(
+        dsr.runtime_identity()
+    )  # pilot: this runtime; runs pass the frozen one
     parser = argparse.ArgumentParser()
     parser.add_argument("--reps", type=int, default=3)
     parser.add_argument("--reference-sample", type=int, default=1)

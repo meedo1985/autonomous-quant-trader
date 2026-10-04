@@ -22,6 +22,7 @@ import math
 import random
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -33,6 +34,9 @@ from aqt.metrics.statistics import (
 )
 from calibration import fast
 from calibration.seeds import sha
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 PURPOSE = "dsr_family_max_null"
 WINDOW = '["2022-01-01T00:00:00Z","2025-06-01T00:00:00Z"]'
@@ -216,6 +220,29 @@ V_ENVIRONMENT = {"OPENBLAS_NUM_THREADS": "1", "OPENBLAS_CORETYPE": "Haswell"}
 V_CANARY = "d26180459e2c6639334610fd4b31d953a7d08b5987330795cc233202bfbf7dfc"
 
 
+def _interpreter_files(base: object) -> list[Path]:
+    """The base interpreter executable and its shared library (VF2-3)."""
+    import sys  # noqa: PLC0415
+    import sysconfig  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    exe = Path(str(base))
+    names = {
+        f"python{sys.version_info.major}{sys.version_info.minor}.dll",
+        str(sysconfig.get_config_var("LDLIBRARY") or ""),
+    }
+    libdir = Path(str(sysconfig.get_config_var("LIBDIR") or exe.parent))
+    found = [
+        p
+        for d in (exe.parent, libdir)
+        for n in names
+        if n
+        for p in [d / n]
+        if p.is_file()
+    ]
+    return sorted({exe, *found})
+
+
 def runtime_identity() -> dict[str, str]:
     """What method V's bits depend on (VS1-4): interpreter and NumPy/BLAS
     binaries by hash, platform, CPU dispatch features, and the pinned env."""
@@ -239,7 +266,14 @@ def runtime_identity() -> dict[str, str]:
     features = getattr(umath, "__cpu_features__", {})
     return {
         "python": sys.version,
-        "python_executable_sha256": digest(Path(sys.executable)),
+        "python_binaries": sha(
+            {
+                p.name: digest(p)
+                for p in _interpreter_files(
+                    Path(getattr(sys, "_base_executable", sys.executable))
+                )
+            }
+        ),
         "numpy": np.__version__,
         "binaries": sha({p.name: digest(p) for p in binaries}),
         "platform": f"{platform.system()} {platform.machine()}",
@@ -248,7 +282,10 @@ def runtime_identity() -> dict[str, str]:
     }
 
 
-def v_runtime_check(expected: dict[str, str] | None = None) -> None:
+_V_VERIFIED = False
+
+
+def v_runtime_check(expected: dict[str, str]) -> None:
     """Fail closed (a U_ops cause) unless method V runs on its pinned runtime
     (VF1-2): the environment above, set before NumPy is imported, and a fixed
     known-answer matrix product hashing to `V_CANARY`."""
@@ -262,8 +299,10 @@ def v_runtime_check(expected: dict[str, str] | None = None) -> None:
     y = rng.standard_normal((300, 40)) * 0.01
     if hashlib.sha256((c @ y).tobytes()).hexdigest() != V_CANARY:
         raise RuntimeError("U_ops: method V known-answer check failed on this runtime")
-    if expected is not None and runtime_identity() != expected:
+    if runtime_identity() != expected:
         raise RuntimeError("U_ops: runtime differs from the qualified runtime")
+    global _V_VERIFIED  # noqa: PLW0603
+    _V_VERIFIED = True
 
 
 def _replicates_v(
@@ -277,6 +316,8 @@ def _replicates_v(
     4. S* = (m + mu) / sqrt(var); S-null = m / sqrt(var).
     INVALID_REPLICATE (None) if any intermediate is non-finite, any var <= 0,
     or any replicate column's drawn values are all equal (rule 5 exactly)."""
+    if not _V_VERIFIED:
+        raise RuntimeError("U_ops: method V needs v_runtime_check(identity) first")
     t, k = x.shape
     b = len(draws)
     mu = np.array([math.fsum(x[:, j].tolist()) / t for j in range(k)])
@@ -308,6 +349,9 @@ def _replicates_v(
         drawn = x[np.asarray(draws[b_]), j]
         if (drawn == drawn[0]).all():
             return None, None
+        # VF2-2: distinct values within rounding of each other: the Task 12
+        # two-pass decides validity and supplies var, so rule 5 is exact.
+        var[b_, j] = fast.mean_var(drawn)[1]
     if (var <= 0).any():
         return None, None
     sd = np.sqrt(var)
