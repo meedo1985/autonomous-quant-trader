@@ -216,12 +216,17 @@ def resumed_venue(
 
 
 def snapshots(journal: StateJournal) -> list[tuple[datetime, Mapping[str, Decimal]]]:
-    """Every saved snapshot's time and the balances it implies."""
+    """Every saved snapshot's time and the balances it implies. A snapshot
+    saved while an order's outcome is still unknown (sent, not yet answered)
+    implies no balances and is skipped: the snapshot that records the outcome
+    follows it within the same step."""
     out: list[tuple[datetime, Mapping[str, Decimal]]] = []
     for entry in read_entries(journal.path):
-        state = AccountState.from_mapping(entry.payload)
+        local = _local(AccountState.from_mapping(entry.payload))
+        if any(order is None for order in local.orders.values()):
+            continue
         at = datetime.fromisoformat(entry.recorded_at_utc.replace("Z", "+00:00"))
-        out.append((at, expected_balances(_local(state))))
+        out.append((at, expected_balances(local)))
     return out
 
 

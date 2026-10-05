@@ -18,6 +18,7 @@ from aqt.app.forward import (
     ForwardError,
     daily_equity_returns,
     effective_decisions,
+    l02_count,
     run_step,
     skipped_while_busy_event,
     unfinished_hours,
@@ -105,6 +106,24 @@ def test_hourly_forward_steps_end_where_one_replay_ends(tmp_path: Path) -> None:
     assert forward is not None and replay is not None
     assert (forward.peak, forward.mode) == (replay.peak, replay.mode)
     assert _lags(account) == []  # on time and never interrupted: no breach
+
+
+def test_l02_count_skips_snapshots_with_an_order_in_flight(tmp_path: Path) -> None:
+    """A step saves the sent order before its outcome is known; that snapshot
+    has no expected balance and must not stop the `L-02` count (server crash
+    2026-10-05, every hour after the first order)."""
+    series = _series(24 * 14)
+    account = AccountDir(tmp_path)
+    for k in range(HOURS + 1):
+        _step(account, series, START + k * HOUR)
+    in_flight = [
+        e
+        for e in read_entries(account.journal.path)
+        if None in _local_orders(AccountState.from_mapping(e.payload))
+    ]
+    assert in_flight  # the case occurs in an ordinary run
+    count = l02_count(account.journal, _upto(series, START + HOURS * HOUR))
+    assert count.as_mapping()
 
 
 def _lags(account: AccountDir) -> list[dict[str, object]]:
@@ -417,3 +436,7 @@ def test_the_script_checks_the_deployment_before_anything_else(
     log = (tmp_path / script.REFUSALS).read_text()
     assert "REFUSE_START" in log and "deployment: " in log
     assert not (tmp_path / "a").exists() and not (tmp_path / "s").exists()
+
+
+def _local_orders(state: AccountState) -> list[object]:
+    return [*state.record.orders.values(), *state.sent.values()]
