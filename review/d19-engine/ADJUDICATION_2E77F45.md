@@ -26,3 +26,23 @@ Left unrepaired: D19CR-4 only, for the reason above.
 | `pwsh -NoProfile -File review/task6/verify_frozen.ps1` (pwsh from the Codex runtime path) | PASS: 28/28 trusted bytes, 14/14 sidecars, Constitution self-hash, 7/7 bindings, nested bindings |
 
 These repairs have not been re-reviewed by a different model.
+
+## D19CR-4 build (2026-10-05, Claude Opus 5.5; Codex attempts at capacity)
+
+Built per `CODEX_BRIEF_RUNDEF.md`: `calibration/rundef.py` (reference-vector
+suite of four fixed cases K = 1, 2, 5, 20 that reach method V's nominee and
+the U_G gates, about 3.4 s; host provenance; gating identity measured after
+method V's environment check; run definition build/write/load and hash;
+generator-code hash; `start_gate` re-checking runtime identity, both canaries,
+image digest and every reference vector), `scripts/d19_run_definition.py`
+(`record`, `check`), `tests/unit/test_calibration_rundef.py` (record in one
+fresh pinned process, check passes in another; wrong digest, changed canary,
+changed reference vector each stop with U_ops; wrong record type refused;
+generator hash covers every file).
+
+Not yet done: wiring `start_gate` into a run driver that hands its gating to
+`chunks.Chain` (the driver is a later item).
+
+Checks: `pytest -q` 1818 passed, 9 skipped; `ruff format --check .` 131 files
+formatted, `ruff check` clean; `mypy calibration src` 62 files clean;
+`lint-imports` 6 kept; frozen verification PASS.
