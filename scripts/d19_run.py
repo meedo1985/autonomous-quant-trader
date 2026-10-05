@@ -39,6 +39,7 @@ sys.pycache_prefix = tempfile.mkdtemp(prefix="d19-no-bytecode-")
 import argparse  # noqa: E402
 import multiprocessing  # noqa: E402
 import struct  # noqa: E402
+from concurrent.futures import ProcessPoolExecutor  # noqa: E402
 from typing import Any  # noqa: E402
 
 from calibration import chunks, classifier, rundef  # noqa: E402
@@ -107,9 +108,15 @@ def main(argv: list[str] | None = None) -> int:
     jobs: list[tuple[Any, ...]] = [
         (args.definition, args.store, args.namespace, c.cell_id) for c in cells
     ]
+    # A worker that dies (killed, out of memory) breaks the executor, which
+    # then fails every pending job instead of waiting for it (DR3-1).
     context = multiprocessing.get_context("spawn")
-    with context.Pool(args.workers) as pool:
-        heads = pool.starmap(worker, jobs)
+    try:
+        with ProcessPoolExecutor(args.workers, mp_context=context) as pool:
+            heads = list(pool.map(worker, *zip(*jobs, strict=True)))
+    except Exception as error:  # noqa: BLE001 - any worker failure stops the run
+        print(f"run stopped: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
     for job, head in zip(jobs, heads, strict=True):
         print(f"{job[2]}/{job[3]}: {head}")
     return 0

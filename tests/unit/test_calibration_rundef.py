@@ -617,30 +617,38 @@ def test_a_chain_carries_the_gating_its_worker_gate_returned(
     assert chunk["gating"] == {"from": "worker gate"}
 
 
-def test_an_interrupted_run_resumes_identically_and_a_new_plan_cannot_extend_it(
-    recorded: tuple[Path, Path], tmp_path: Path
-) -> None:
-    """DR-3/DR-5: a 501-draw plan (two chunks); the second chunk deleted as
-    if the run stopped, then resumed byte-identically; the earlier 3-draw
-    definition on the same store is refused (another binding)."""
-    root, small = recorded
-    plan = {**json.loads(CELLS), "replications": {"threshold": 501}}  # only the count
-    inputs = tmp_path / "in"
-    inputs.mkdir()
-    big = inputs / "big.json"
-    manifest = inputs / "cells.json"
-    manifest.write_text(json.dumps(plan))
-    for name in ("seeds", "exploration"):
-        (inputs / f"{name}.json").write_text("{}")
+def _record_plan(root: Path, inputs: Path, name: str, count: int) -> Path:
+    """A pilot definition with the fixture's cells and `count` draws."""
+    manifest = inputs / f"{name}-cells.json"
+    manifest.write_text(
+        json.dumps({**json.loads(CELLS), "replications": {"threshold": count}})
+    )
+    (inputs / "exploration.json").write_text("{}")
+    out = inputs / f"{name}.json"
     done = _script(
-        root, "record", "--out", str(big), "--prereg-commit", "HEAD",
+        root, "record", "--out", str(out), "--prereg-commit", "HEAD",
         "--engine-commit", _git(root, "rev-parse", "HEAD"),
         "--cell-manifest", str(manifest),
         "--exploration-manifest", str(inputs / "exploration.json"),
     )  # fmt: skip
     assert done.returncode == 0, done.stderr
-    store = tmp_path / "store"
+    return out
+
+
+def test_an_interrupted_run_resumes_identically_and_a_new_plan_cannot_extend_it(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """DR-3/DR3-2: a 501-draw plan (two chunks): the second chunk deleted as
+    if the run stopped, then resumed byte-identically. A finished 500-draw
+    run cannot be extended by a 501-draw definition: its chunk covers the
+    same range 0-500, so only the definition hash (the count) refuses it."""
+    root, _ = recorded
+    inputs = tmp_path / "in"
+    inputs.mkdir()
+    big = _record_plan(root, inputs, "big", 501)
+    exact = _record_plan(root, inputs, "exact", 500)
     args = ("--namespace", "threshold", "--workers", "1")
+    store = tmp_path / "store"
     assert _driver(root, big, store, *args).returncode == 0
     chain = store / "threshold" / "c-k1"
     whole = {p.name: p.read_bytes() for p in chain.iterdir()}
@@ -649,8 +657,45 @@ def test_an_interrupted_run_resumes_identically_and_a_new_plan_cannot_extend_it(
     (chain / "chunk-0000500.tmp").write_bytes(b"torn")
     assert _driver(root, big, store, *args).returncode == 0
     assert {p.name: p.read_bytes() for p in chain.iterdir()} == whole
-    other = _driver(root, small, store, *args)
-    assert other.returncode != 0 and "ChainError" in other.stderr  # refused
+    finished = tmp_path / "finished"
+    assert _driver(root, exact, finished, *args).returncode == 0
+    extended = _driver(root, big, finished, *args)
+    assert extended.returncode == 1 and "binding does not match" in extended.stderr
+
+
+def test_the_driver_refuses_a_malformed_definition_before_any_store(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """DR3-3: through the driver, not only the validator."""
+    root, out = recorded
+    defn = rundef.load(out)
+    cells = defn["cell_manifest"]["cells"]
+    defn["cell_manifest"]["cells"] = [cells[0], cells[0]]
+    bad = tmp_path / "bad.json"
+    rundef.write(bad, defn)
+    store = tmp_path / "store"
+    done = _driver(root, bad, store, "--namespace", "threshold")
+    assert done.returncode == 1 and "duplicate cell id" in done.stderr
+    assert not store.exists()
+
+
+def _die(*_: object) -> str:
+    os._exit(3)  # a worker killed mid-run (DR3-1)
+
+
+def test_a_killed_worker_stops_the_run_instead_of_hanging(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:  # fmt: skip
+    """DR3-1: the executor reports the broken worker; the run exits 1."""
+    root, out = recorded
+    driver = _load_driver(root, monkeypatch)
+    monkeypatch.setattr(driver.rundef, "start_gate", lambda d, _root: d["gating"])
+    monkeypatch.setattr(driver, "worker", _die)
+    store = str(tmp_path / "store")
+    argv = ["run", "--definition", str(out), "--store", store]
+    code = driver.main([*argv, "--namespace", "threshold"])
+    assert code == 1 and "BrokenProcessPool" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
