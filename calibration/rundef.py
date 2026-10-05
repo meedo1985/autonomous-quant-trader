@@ -237,10 +237,21 @@ def load(path: Path) -> dict[str, Any]:
 
 
 def start_gate(defn: dict[str, Any], root: Path) -> dict[str, Any]:
-    """Run on every start and resume, before any chunk: the code under
-    `root`, the pinned runtime, both canaries, the image digest and the full
-    reference-vector suite must equal the run definition's. Returns the
-    gating identity every chunk of the run must carry."""
+    """Run on every start and resume, before any chunk, in every process
+    that computes chunks (R3-3: each worker runs it itself and builds its
+    `Chain` from `definition_sha256(defn)` and the gating returned here). The
+    entry script and every loaded engine module must be hashed code under
+    `root`; that code, the pinned runtime, both canaries, the image digest
+    and the full reference-vector suite must equal the run definition's.
+    Returns the gating identity every chunk of the run must carry."""
+    main = getattr(sys.modules.get("__main__"), "__file__", None)
+    entry = None if main is None else Path(main).resolve()
+    if (
+        entry is None
+        or not entry.is_relative_to(root.resolve())
+        or not is_code(entry.relative_to(root.resolve()).as_posix())
+    ):
+        raise RuntimeError(f"U_ops: start gate: entry point is not hashed code: {main}")
     if outside := loaded_outside(root):
         raise RuntimeError(f"U_ops: start gate: loaded outside the checkout: {outside}")
     if generator_sha256(root) != defn["generator_sha256"]:

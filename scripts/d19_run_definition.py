@@ -88,12 +88,17 @@ def main(argv: list[str] | None = None) -> int:
             print(problem, file=sys.stderr)
             return 1
         try:
-            prereg = _git("show", f"{args.prereg_commit}:{PREREG_PATH}")
+            prereg_id = (  # the full commit ID, never a moving name (R3-1)
+                _git("rev-parse", "--verify", f"{args.prereg_commit}^{{commit}}")
+                .decode()
+                .strip()
+            )
+            prereg = _git("show", f"{prereg_id}:{PREREG_PATH}")
         except (OSError, subprocess.CalledProcessError):
             print(f"cannot read {PREREG_PATH} at {args.prereg_commit}", file=sys.stderr)
             return 1
         defn = rundef.build(
-            prereg_commit=args.prereg_commit,
+            prereg_commit=prereg_id,
             prereg_sha256=hashlib.sha256(prereg).hexdigest(),
             engine_commit=args.engine_commit,
             generator_code_sha256=rundef.generator_sha256(ROOT),

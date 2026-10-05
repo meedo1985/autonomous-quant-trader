@@ -270,6 +270,52 @@ def test_reference_vectors_see_g10_and_g12_numerics(
             trace[-1] = (*trace[-1][:-1], "changed")  # type: ignore[index]
         return reason
 
+    final = rundef.reference_vectors()[case.cell_id]
     monkeypatch.setattr(gates, gate, nudged)
     after = rundef._reference_outputs(case)  # noqa: SLF001
     assert after["u_g"] == before["u_g"] and after["u_g_trace"] != before["u_g_trace"]
+    assert rundef.reference_vectors()[case.cell_id] != final  # R3-4: final hash
+
+
+def test_the_recorded_prereg_commit_is_a_full_id(recorded: tuple[Path, Path]) -> None:
+    """R3-1: "HEAD" on the command line is stored as the commit it named."""
+    root, out = recorded
+    assert rundef.load(out)["prereg_commit"] == _git(root, "rev-parse", "HEAD")
+
+
+def test_the_code_inventory_holds_the_d19_entry_points() -> None:
+    inventory = rundef.code_inventory(ROOT)
+    assert "scripts/d19_run_definition.py" in inventory
+    assert "scripts/d19_pilot.py" in inventory
+    assert not any(
+        rel.startswith("scripts/") and "/d19_" not in rel for rel in inventory
+    )
+
+
+def test_an_entry_script_outside_the_hashed_code_stops_the_start(
+    recorded: tuple[Path, Path],
+) -> None:
+    """R3-2: a driver or launcher that is not hashed code cannot pass."""
+    root, out = recorded
+    other = root / "launcher.py"
+    shutil.copy(root / "scripts" / "d19_run_definition.py", other)
+    text = other.read_text(encoding="utf-8").replace("parents[1]", "parents[0]")
+    other.write_text(text, encoding="utf-8")
+    env = {**os.environ, rundef.IMAGE_DIGEST_ENV: DIGEST}
+    command = [sys.executable, str(other), "check", "--definition", str(out)]
+    done = subprocess.run(command, env=env, cwd=root, capture_output=True,
+                          text=True, check=False)  # fmt: skip
+    other.unlink()
+    assert done.returncode == 1 and "entry point is not hashed code" in done.stderr
+
+
+def test_the_start_gate_refuses_modules_loaded_outside_the_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R3-2/R3-4: `start_gate` itself refuses, not only the helper."""
+    (tmp_path / "scripts").mkdir()
+    entry = tmp_path / "scripts" / "d19_driver.py"
+    entry.write_text("")
+    monkeypatch.setattr(sys.modules["__main__"], "__file__", str(entry))
+    with pytest.raises(RuntimeError, match="loaded outside the checkout"):
+        rundef.start_gate({"generator_sha256": "", "gating": {}}, tmp_path)
