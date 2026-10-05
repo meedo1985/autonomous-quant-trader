@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -360,3 +361,51 @@ def test_a_git_replacement_ref_cannot_stand_in_for_the_engine_commit(
     assert _git(root, "show", f"{a}:calibration/seeds.py").endswith("# B")
     done = _record(root, tmp_path / "in" / "d.json", a)
     assert done.returncode == 1 and "engine code differs from HEAD" in done.stderr
+
+
+def test_an_engine_module_inside_the_runtime_installation_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R5-1: an `aqt`/`calibration` module under `sys.prefix` (the virtual
+    environment) is not covered by the code hash, so it is reported."""
+    fake = types.ModuleType("aqt.d19_fake")
+    fake.__file__ = str(
+        Path(sys.prefix) / "Lib" / "site-packages" / "aqt" / "d19_fake.py"
+    )
+    monkeypatch.setitem(sys.modules, "aqt.d19_fake", fake)
+    assert "aqt.d19_fake" in rundef.loaded_outside(ROOT)
+
+
+def test_record_refuses_a_file_changed_while_recording(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R5-2: an engine file edited after the first check and before writing
+    leaves nothing written."""
+    root = _checkout(tmp_path)
+    spec = importlib.util.spec_from_file_location(
+        "d19_record_under_test", root / "scripts" / "d19_run_definition.py"
+    )
+    assert spec is not None and spec.loader is not None
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+
+    def build_while_editing(**_: object) -> dict[str, object]:
+        with (root / "calibration" / "seeds.py").open("a") as handle:
+            handle.write("# edited during recording\n")
+        return {"record_type": rundef.RECORD_TYPE}
+
+    monkeypatch.setattr(script.rundef, "build", build_while_editing)
+    monkeypatch.setenv(rundef.IMAGE_DIGEST_ENV, DIGEST)
+    inputs = tmp_path / "in"
+    inputs.mkdir()
+    for name in ("cells", "seeds", "exploration"):
+        (inputs / f"{name}.json").write_text("{}")
+    out = inputs / "d.json"
+    code = script.main([
+        "record", "--out", str(out), "--prereg-commit", "HEAD",
+        "--engine-commit", _git(root, "rev-parse", "HEAD"),
+        "--cell-manifest", str(inputs / "cells.json"),
+        "--seed-spec", str(inputs / "seeds.json"),
+        "--exploration-manifest", str(inputs / "exploration.json"),
+    ])  # fmt: skip
+    assert code == 1 and not out.exists()

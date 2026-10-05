@@ -103,11 +103,12 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, subprocess.CalledProcessError):
             print(f"cannot read {PREREG_PATH} at {args.prereg_commit}", file=sys.stderr)
             return 1
+        code_hash = rundef.generator_sha256(ROOT)
         defn = rundef.build(
             prereg_commit=prereg_id,
             prereg_sha256=hashlib.sha256(prereg).hexdigest(),
             engine_commit=args.engine_commit,
-            generator_code_sha256=rundef.generator_sha256(ROOT),
+            generator_code_sha256=code_hash,
             cell_manifest=json.loads(args.cell_manifest.read_bytes()),
             seed_spec=json.loads(args.seed_spec.read_bytes()),
             image_digest=digest,
@@ -115,8 +116,13 @@ def main(argv: list[str] | None = None) -> int:
                 args.exploration_manifest.read_bytes()
             ).hexdigest(),
         )
-        if _head() != args.engine_commit:  # HEAD moved while recording (R4-2)
-            print("HEAD moved while recording; nothing written", file=sys.stderr)
+        # Re-check just before writing (R4-2, R5-2): HEAD, and every engine
+        # file against that commit and against the hash being recorded.
+        problem = _checkout_problem(args.engine_commit)
+        if problem is not None or rundef.generator_sha256(ROOT) != code_hash:
+            print(
+                f"changed while recording; nothing written: {problem}", file=sys.stderr
+            )
             return 1
         rundef.write(args.out, defn)
         print(rundef.definition_sha256(defn))

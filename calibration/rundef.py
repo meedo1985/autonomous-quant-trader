@@ -184,19 +184,22 @@ def loaded_outside(root: Path) -> list[str]:
     module loaded from inside `root` that is not hashed code, such as a
     nested `calibration/extra/x.py` or a script helper (R4-1)."""
     base = root.resolve()
-    # The interpreter's own installation (a virtual environment may sit in
-    # the checkout) is gated by the runtime identity, not the code hash.
+    # Third-party modules of the interpreter's own installation (a virtual
+    # environment may sit in the checkout) are gated by the runtime identity;
+    # an engine module never is, wherever it lies (R5-1).
     runtime = {Path(sys.prefix).resolve(), Path(sys.base_prefix).resolve()}
     outside = []
     for name, module in sorted(sys.modules.items()):
         file = getattr(module, "__file__", None)
         path = None if file is None else Path(file).resolve()
-        if path is not None and any(path.is_relative_to(r) for r in runtime):
-            continue
-        if path is not None and path.is_relative_to(base):
-            if not is_code(path.relative_to(base).as_posix()):
+        inside = path is not None and path.is_relative_to(base)
+        hashed = inside and is_code(path.relative_to(base).as_posix())  # type: ignore[union-attr]
+        if name.split(".")[0] in ("aqt", "calibration"):
+            if not hashed:
                 outside.append(name)
-        elif name.split(".")[0] in ("aqt", "calibration"):
+        elif path is not None and any(path.is_relative_to(r) for r in runtime):
+            continue
+        elif inside and not hashed:
             outside.append(name)
     return outside
 
