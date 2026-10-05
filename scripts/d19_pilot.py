@@ -70,7 +70,7 @@ def one(cell: Cell, rep: int, numerics: str) -> dict[str, float | str]:
 def main() -> int:
     fast.self_check()
     identity = dsr.runtime_identity()  # pilot: this runtime; qualification runs
-    dsr.v_runtime_check(identity)  # pass the frozen identity from the object
+    dsr.v_runtime_check(identity, dsr.canaries())  # runs pass the run definition's
     print(
         json.dumps({"runtime_identity": identity}), flush=True
     )  # pilot: this runtime; runs pass the frozen one

@@ -217,7 +217,6 @@ def _replicates_accelerated(
 
 
 V_ENVIRONMENT = {"OPENBLAS_NUM_THREADS": "1", "OPENBLAS_CORETYPE": "Haswell"}
-V_CANARY = "d26180459e2c6639334610fd4b31d953a7d08b5987330795cc233202bfbf7dfc"
 
 
 def _interpreter_files(base: object) -> list[Path]:
@@ -282,23 +281,50 @@ def runtime_identity() -> dict[str, str]:
     }
 
 
+def canaries() -> dict[str, str]:
+    """Known-answer canaries of this runtime (§13 rev 7g item 6): `blas`, a
+    fixed matrix product; `libm`, NumPy's and the interpreter's `exp`, `log`
+    and `pow` on fixed inputs. Expected values are measured on the run's
+    machine and recorded in the run definition; no other machine's values
+    are reused."""
+    import math  # noqa: PLC0415
+    import struct  # noqa: PLC0415
+
+    rng = np.random.Generator(np.random.Philox(key=[2026, 1004]))
+    c = rng.integers(0, 4, (200, 300)).astype(np.float64)
+    y = rng.standard_normal((300, 40)) * 0.01
+    a = rng.standard_normal(4096) * 3
+    b = rng.uniform(-2.5, 2.5, 4096)
+    pos = np.abs(a) + 1e-3
+    vectors = np.concatenate([np.exp(a), np.log(pos), np.power(pos, b)])
+    scalars: list[float] = []
+    for u, v in zip(a[:512].tolist(), b[:512].tolist(), strict=True):
+        p = abs(u) + 1e-3
+        scalars += [math.exp(u), math.log(p), math.pow(p, v)]
+    return {
+        "blas": hashlib.sha256((c @ y).tobytes()).hexdigest(),
+        "libm": hashlib.sha256(
+            vectors.tobytes() + struct.pack(f"<{len(scalars)}d", *scalars)
+        ).hexdigest(),
+    }
+
+
 _V_VERIFIED = False
 
 
-def v_runtime_check(expected: dict[str, str]) -> None:
+def v_runtime_check(
+    expected: dict[str, str], expected_canaries: dict[str, str]
+) -> None:
     """Fail closed (a U_ops cause) unless method V runs on its pinned runtime
-    (VF1-2): the environment above, set before NumPy is imported, and a fixed
-    known-answer matrix product hashing to `V_CANARY`."""
+    (VF1-2): the environment above, set before NumPy is imported, both
+    canaries equal to the run definition's values, and the same identity."""
     import os  # noqa: PLC0415
 
     for name, value in V_ENVIRONMENT.items():
         if os.environ.get(name) != value:
             raise RuntimeError(f"U_ops: method V needs {name}={value}")
-    rng = np.random.Generator(np.random.Philox(key=[2026, 1004]))
-    c = rng.integers(0, 4, (200, 300)).astype(np.float64)
-    y = rng.standard_normal((300, 40)) * 0.01
-    if hashlib.sha256((c @ y).tobytes()).hexdigest() != V_CANARY:
-        raise RuntimeError("U_ops: method V known-answer check failed on this runtime")
+    if canaries() != expected_canaries:
+        raise RuntimeError("U_ops: a known-answer canary failed on this runtime")
     if runtime_identity() != expected:
         raise RuntimeError("U_ops: runtime differs from the qualified runtime")
     global _V_VERIFIED  # noqa: PLW0603

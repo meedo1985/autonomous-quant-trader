@@ -133,7 +133,7 @@ def test_method_v_runtime_check_needs_the_pinned_runtime() -> None:
     root = Path(__file__).resolve().parents[2]
     code = (
         "from calibration import dsr; "
-        "dsr.v_runtime_check(dsr.runtime_identity()); print('ok')"
+        "dsr.v_runtime_check(dsr.runtime_identity(), dsr.canaries()); print('ok')"
     )
     env = {
         **os.environ,
@@ -145,7 +145,7 @@ def test_method_v_runtime_check_needs_the_pinned_runtime() -> None:
     assert done.stdout.strip() == "ok", done.stderr
     wrong = (
         "from calibration import dsr; i = dsr.runtime_identity(); "
-        "i['numpy'] = '0.0'; dsr.v_runtime_check(i)"
+        "i['numpy'] = '0.0'; dsr.v_runtime_check(i, dsr.canaries())"
     )
     differs = subprocess.run([sys.executable, "-c", wrong], env=env, cwd=root,
                              capture_output=True, text=True, check=False)  # fmt: skip
@@ -154,6 +154,13 @@ def test_method_v_runtime_check_needs_the_pinned_runtime() -> None:
     refused = subprocess.run([sys.executable, "-c", code], env=bare, cwd=root,
                              capture_output=True, text=True, check=False)  # fmt: skip
     assert "U_ops" in refused.stderr
+    canary = (
+        "from calibration import dsr; c = dsr.canaries(); c['libm'] = '0' * 64; "
+        "dsr.v_runtime_check(dsr.runtime_identity(), c)"
+    )
+    failed = subprocess.run([sys.executable, "-c", canary], env=env, cwd=root,
+                            capture_output=True, text=True, check=False)  # fmt: skip
+    assert "known-answer canary failed" in failed.stderr
 
 
 def test_method_v_variance_is_two_pass_stable() -> None:
