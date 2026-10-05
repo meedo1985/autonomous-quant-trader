@@ -18,6 +18,7 @@ from aqt.app.forward import (
     ForwardError,
     daily_equity_returns,
     effective_decisions,
+    l02_count,
     run_step,
     skipped_while_busy_event,
     unfinished_hours,
@@ -28,6 +29,7 @@ from aqt.core.deployment import approve
 from aqt.core.ledger import append_entry, read_entries
 from aqt.data.bars import BarSeries
 from aqt.execution.orders import ExecutorConfig, client_order_id_for
+from aqt.execution.reconcile import LocalRecord
 from aqt.execution.safety import Mode
 from aqt.execution.simulator import Fault, Scenario, SimulatedExchange
 from aqt.monitoring.alerts import LedgerSink
@@ -105,6 +107,36 @@ def test_hourly_forward_steps_end_where_one_replay_ends(tmp_path: Path) -> None:
     assert forward is not None and replay is not None
     assert (forward.peak, forward.mode) == (replay.peak, replay.mode)
     assert _lags(account) == []  # on time and never interrupted: no breach
+
+
+def test_l02_count_skips_snapshots_with_an_order_in_flight(tmp_path: Path) -> None:
+    """A step saves the sent order before its outcome is known; that snapshot
+    has no expected balance and must not stop the `L-02` count (server crash
+    2026-10-05, every hour after the first order)."""
+    series = _series(24 * 14)
+    account = AccountDir(tmp_path)
+    for k in range(HOURS + 1):
+        _step(account, series, START + k * HOUR)
+    in_flight = [
+        e
+        for e in read_entries(account.journal.path)
+        if None in _local_orders(AccountState.from_mapping(e.payload))
+    ]
+    assert in_flight  # the case occurs in an ordinary run
+    count = l02_count(account.journal, _upto(series, START + HOURS * HOUR))
+    assert count.raw_decisions == 1  # START and START + 24h valued (FF44-3)
+    # FF44-1: an outcome still unknown when the step ended (executor FREEZE,
+    # FLATTEN fault) leaves the holdings unknown, so no later midnight is
+    # valued, although its close exists.
+    state = account.journal.load()
+    assert state is not None
+    orders = {**state.record.orders, "unknown": None}
+    unknown = replace(state, record=LocalRecord(state.record.balances, orders))
+    account.journal.save(unknown, START + (HOURS + 1) * HOUR)
+    later = _upto(series, START + 50 * HOUR)  # the START + 48h close exists
+    assert l02_count(account.journal, later).raw_decisions == 1
+    account.journal.save(state, START + (HOURS + 2) * HOUR)  # outcome learned
+    assert l02_count(account.journal, later).raw_decisions == 2
 
 
 def _lags(account: AccountDir) -> list[dict[str, object]]:
@@ -417,3 +449,7 @@ def test_the_script_checks_the_deployment_before_anything_else(
     log = (tmp_path / script.REFUSALS).read_text()
     assert "REFUSE_START" in log and "deployment: " in log
     assert not (tmp_path / "a").exists() and not (tmp_path / "s").exists()
+
+
+def _local_orders(state: AccountState) -> list[object]:
+    return [*state.record.orders.values(), *state.sent.values()]
