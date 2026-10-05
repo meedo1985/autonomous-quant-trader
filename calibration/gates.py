@@ -19,7 +19,12 @@ SPLITS = np.array(list(itertools.combinations(range(16), 8)))  # 12,870
 
 
 def g1(
-    candidate: np.ndarray, benchmark: np.ndarray, seed: str, *, reference: bool = False
+    candidate: np.ndarray,
+    benchmark: np.ndarray,
+    seed: str,
+    *,
+    reference: bool = False,
+    trace: list[object] | None = None,
 ) -> str | None:
     """Annex C C-1 availability. `reference` runs the production paired-CI
     routine; the default repeats its steps with bit-identical accelerated
@@ -42,6 +47,8 @@ def g1(
     selected = st.block_length(influence.values)
     if selected.reason or selected.value is None:
         return str(selected.reason)
+    if trace is not None:
+        trace.append(("g1_block", selected.value))
     for i in range(st.BOOTSTRAP_ATTEMPTS):
         idx = st.bootstrap_indices(
             stream, observations=len(left), replicate_index=i, block=selected.value
@@ -57,6 +64,8 @@ def g1(
             scaled.append(st.SCALE * (mean / math.sqrt(var)))
         if not math.isfinite(scaled[0] - scaled[1]):
             return "INVALID_REPLICATE"
+        if trace is not None:
+            trace.append(("g1_replicate", scaled[0], scaled[1]))
     return None
 
 
@@ -75,7 +84,7 @@ def g4(t: int) -> str | None:
     return None if t >= 92 else "NO_COMPLETE_BLOCK"
 
 
-def g10(x: np.ndarray) -> str | None:
+def g10(x: np.ndarray, trace: list[object] | None = None) -> str | None:
     """Annex C C-9 availability: T >= 16 and every trial has a Sharpe on every
     IS and OOS half of all 12,870 splits. Enabled only when K >= 20."""
     t, k = x.shape
@@ -91,32 +100,35 @@ def g10(x: np.ndarray) -> str | None:
         m = n[halves].sum(axis=1)[:, None]
         a, b = s1[halves].sum(axis=1), s2[halves].sum(axis=1)
         var = (b - a * a / m) / (m - 1)
+        if trace is not None:
+            trace.append(("g10_var", var.tobytes().hex()))
         if (var <= 0).any() or not np.isfinite(var).all():
             return "NO_SHARPE_ON_HALF"
     return None
 
 
-def g12(candidate: np.ndarray) -> str | None:
+def g12(candidate: np.ndarray, trace: list[object] | None = None) -> str | None:
     """Annex C C-11 for every declared horizon H in {24, 72, 168} (DS2-7)."""
     values = candidate.tolist()
     for hours in (24, 72, 168):
         result = st.effective_sample_size(values, horizon_hours=hours)
+        if trace is not None:
+            trace.append(("g12_ess", hours, result.value))
         if result.reason is not None:
             return f"{result.reason}@H{hours}"
     return None
 
 
 def u_g(x: np.ndarray, candidates: np.ndarray, benchmark: np.ndarray,
-        nominee: int, seed: str, *, reference: bool = False) -> str | None:  # fmt: skip
-    """The single U_G event (DS3-4): the first unavailable gate, or None."""
+        nominee: int, seed: str, *, reference: bool = False,
+        trace: list[object] | None = None) -> str | None:  # fmt: skip
+    """The single U_G event (DS3-4): the first unavailable gate, or None.
+    `trace` collects the gates' intermediate numbers (reference vectors)."""
     cand = candidates[:, nominee]
-    for reason in (
-        g1(cand, benchmark, seed, reference=reference),
-        g2(cand, benchmark),
-        g4(x.shape[0]),
-        g10(x),
-        g12(cand),
-    ):
-        if reason is not None:
-            return reason
-    return None
+    return (
+        g1(cand, benchmark, seed, reference=reference, trace=trace)
+        or g2(cand, benchmark)
+        or g4(x.shape[0])
+        or g10(x, trace)
+        or g12(cand, trace)
+    )

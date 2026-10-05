@@ -265,3 +265,18 @@ def test_classifier_refuses_incomplete_or_non_finite_threshold_sets() -> None:
         classifier.fit_thresholds([base] * 9 + [{"K": 2.0, "T": 400.0}])
     with pytest.raises(ValueError, match="no threshold draws"):
         classifier.fit_thresholds([])
+    # FE-6: an incomplete diagnostic set is an engine error even with a NaN
+    with pytest.raises(ValueError, match="required fields"):
+        classifier.within({"K": 2.0, "T": 400.0, "max_skewness": float("nan")},
+                          upper, lower)  # fmt: skip
+    with pytest.raises(ValueError, match="no K or T"):
+        classifier.within({k: v for k, v in base.items() if k != "T"}, upper, lower)
+    # FE-8: a tie at a lower bound is accepted; below it is refused
+    draws = [base | {"min_skewness": -float(i)} for i in range(10)]
+    upper, lower = classifier.fit_thresholds(draws)
+    assert classifier.within(
+        base | {"min_skewness": lower["min_skewness"]}, upper, lower
+    )
+    assert not classifier.within(
+        base | {"min_skewness": lower["min_skewness"] - 1e-9}, upper, lower
+    )

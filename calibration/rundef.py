@@ -3,9 +3,14 @@
 The run definition is committed before the threshold run; its SHA-256 binds
 threshold and development chunks. It carries the gating identity: the A-V1
 runtime identity, the image digest, and the canary and reference-vector
-values measured on the run's own machine. `start_gate` re-measures all of it
-on every start and resume, before any chunk runs. Host provenance is
-recorded in each chunk and never compared."""
+values measured on the run's own machine, and the code hash of everything
+the engine runs (`calibration/` and the whole `src/aqt` package: the run
+must use its own pinned checkout, never the forward-paper one). `start_gate`
+re-checks all of it on every start and resume, before any chunk runs. Host
+provenance, including the libc and libm files the process has loaded, is
+recorded in each chunk and never compared (FE-4: libc is gated only through
+the image digest, which the owner's launcher must take from `docker inspect`
+on the host, never typed by hand)."""
 
 from __future__ import annotations
 
@@ -53,22 +58,33 @@ def reference_vectors() -> dict[str, str]:
         legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
         fam = family_seed(seed, cell.cell_id, "agnostic", cell.k, _PREREG, 0)
         result = dsr.evaluate(legs.x, fam, "largest", numerics="v")
-        gate = None
-        if result.nominee is not None:
-            gate = gates.u_g(
-                legs.x, legs.candidates, legs.benchmark, result.nominee, seed
-            )
+        nominee = 0 if result.nominee is None else result.nominee
+        trace: list[object] = []
+        gate = gates.u_g(
+            legs.x, legs.candidates, legs.benchmark, nominee, seed, trace=trace
+        )
         outputs = {
             "x": hashlib.sha256(legs.x.tobytes()).hexdigest(),
+            "benchmark": hashlib.sha256(legs.benchmark.tobytes()).hexdigest(),
             "candidates": hashlib.sha256(legs.candidates.tobytes()).hexdigest(),
             "result": dataclasses.asdict(result),
             "u_g": gate,
+            "u_g_trace": trace,
         }
         out[cell.cell_id] = sha(_exact(outputs))
+    # FE-3: one case built to be UNAVAILABLE (G-2: a -150% day ruins equity)
+    cell = REFERENCE_CASES[1]
+    seed = outer_seed(_ANCHOR, cell.cell_id, "refvec", 0)
+    legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
+    ruined = legs.candidates.copy()
+    ruined[5, 0] = -1.5
+    trace = []
+    gate = gates.u_g(legs.x, ruined, legs.benchmark, 0, seed, trace=trace)
+    out["refvec-k2-g2-unavailable"] = sha(_exact({"u_g": gate, "u_g_trace": trace}))
     return out
 
 
-def host_provenance() -> dict[str, str]:
+def host_provenance() -> dict[str, object]:
     """CPU model, microcode and host kernel release: recorded, never compared."""
     first: dict[str, str] = {}
     try:  # Linux: the first CPU's block of /proc/cpuinfo
@@ -82,7 +98,23 @@ def host_provenance() -> dict[str, str]:
         "cpu_model": first.get("model name", platform.processor()),
         "microcode": first.get("microcode", ""),
         "kernel": platform.release(),
+        "libraries": loaded_libraries(),
     }
+
+
+def loaded_libraries() -> dict[str, str]:
+    """SHA-256 of the libc and libm files this process has mapped (Linux;
+    empty elsewhere): disclosed provenance next to the image digest (FE-4)."""
+    paths: set[str] = set()
+    try:
+        for line in Path("/proc/self/maps").read_text("utf-8").splitlines():
+            path = line.split()[-1]
+            name = Path(path).name
+            if path.startswith("/") and name.startswith(("libc.so", "libc-", "libm")):
+                paths.add(path)
+    except OSError:
+        return {}
+    return {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in sorted(paths)}
 
 
 def gating(image_digest: str) -> dict[str, Any]:
@@ -100,15 +132,18 @@ def gating(image_digest: str) -> dict[str, Any]:
 
 
 def generator_sha256(root: Path) -> str:
-    """SHA-256 over every `calibration/*.py` file (sorted relative path and
-    bytes): the generator-code hash."""
-    files = sorted((root / "calibration").glob("*.py"))
+    """SHA-256 over every file the engine can run: `calibration/*.py` and
+    `src/aqt/**/*.py` (sorted relative path and bytes; FE-2)."""
+    files = sorted(
+        [*(root / "calibration").glob("*.py"), *(root / "src" / "aqt").rglob("*.py")]
+    )
     return sha({p.relative_to(root).as_posix(): p.read_bytes().hex() for p in files})
 
 
 def build(
     *,
     prereg_commit: str,
+    prereg_sha256: str,
     engine_commit: str,
     generator_code_sha256: str,
     cell_manifest: object,
@@ -120,6 +155,7 @@ def build(
     return {
         "record_type": RECORD_TYPE,
         "prereg_commit": prereg_commit,
+        "prereg_sha256": prereg_sha256,
         "engine_commit": engine_commit,
         "generator_sha256": generator_code_sha256,
         "cell_manifest": cell_manifest,
@@ -149,11 +185,13 @@ def load(path: Path) -> dict[str, Any]:
     return defn
 
 
-def start_gate(defn: dict[str, Any]) -> dict[str, Any]:
-    """Run on every start and resume, before any chunk: the pinned runtime,
-    both canaries, the image digest and the full reference-vector suite must
-    equal the run definition's. Returns the gating identity every chunk of
-    the run must carry."""
+def start_gate(defn: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Run on every start and resume, before any chunk: the code under
+    `root`, the pinned runtime, both canaries, the image digest and the full
+    reference-vector suite must equal the run definition's. Returns the
+    gating identity every chunk of the run must carry."""
+    if generator_sha256(root) != defn["generator_sha256"]:
+        raise RuntimeError("U_ops: start gate: engine code differs")
     recorded = defn["gating"]
     try:
         dsr.v_runtime_check(recorded["identity"], recorded["canaries"])

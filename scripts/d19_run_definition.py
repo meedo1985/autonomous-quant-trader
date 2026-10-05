@@ -1,10 +1,12 @@
 """D-19 run definition (prereg §13 rev 7g item 6), run by the owner on the
 calibration machine inside the pinned image.
 
-  record --out PATH --prereg-commit C --engine-commit C --cell-manifest FILE
-         --seed-spec FILE --exploration-manifest FILE
+  record --out PATH --prereg-commit C --prereg-file FILE --engine-commit C
+         --cell-manifest FILE --seed-spec FILE --exploration-manifest FILE
       Measure this machine's gating identity and write the run definition;
-      prints its SHA-256. The image digest comes from AQT_IMAGE_DIGEST.
+      prints its SHA-256. The engine commit must be this checkout's HEAD with
+      no uncommitted change. The image digest comes from AQT_IMAGE_DIGEST,
+      which the launcher takes from `docker inspect` on the host (FE-4).
   check --definition PATH
       The start gate: run on every start and resume before any chunk.
 
@@ -17,6 +19,7 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -28,12 +31,31 @@ sys.path.insert(0, str(ROOT))  # the top-level `calibration` package
 from calibration import rundef  # noqa: E402
 
 
+def _checkout_problem(commit: str) -> str | None:
+    """Why this checkout is not exactly `commit` (FE-1), or None."""
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True,
+                              text=True, check=True).stdout.strip()  # fmt: skip
+
+    try:
+        head, dirty = git("rev-parse", "HEAD"), git("status", "--porcelain")
+    except (OSError, subprocess.CalledProcessError) as error:
+        return f"cannot read the checkout with git: {error}"
+    if head != commit:
+        return f"engine commit {commit} is not this checkout's HEAD {head}"
+    if dirty:
+        return "the checkout has uncommitted changes"
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="D-19 run definition")
     sub = parser.add_subparsers(dest="command", required=True)
     record = sub.add_parser("record")
     record.add_argument("--out", type=Path, required=True)
     record.add_argument("--prereg-commit", required=True)
+    record.add_argument("--prereg-file", type=Path, required=True)
     record.add_argument("--engine-commit", required=True)
     record.add_argument("--cell-manifest", type=Path, required=True)
     record.add_argument("--seed-spec", type=Path, required=True)
@@ -46,8 +68,12 @@ def main(argv: list[str] | None = None) -> int:
         if not digest:
             print(f"{rundef.IMAGE_DIGEST_ENV} is not set", file=sys.stderr)
             return 1
+        if (problem := _checkout_problem(args.engine_commit)) is not None:
+            print(problem, file=sys.stderr)
+            return 1
         defn = rundef.build(
             prereg_commit=args.prereg_commit,
+            prereg_sha256=hashlib.sha256(args.prereg_file.read_bytes()).hexdigest(),
             engine_commit=args.engine_commit,
             generator_code_sha256=rundef.generator_sha256(ROOT),
             cell_manifest=json.loads(args.cell_manifest.read_bytes()),
@@ -62,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     defn = rundef.load(args.definition)
     try:
-        rundef.start_gate(defn)
+        rundef.start_gate(defn, ROOT)
     except RuntimeError as error:
         print(error, file=sys.stderr)
         return 1

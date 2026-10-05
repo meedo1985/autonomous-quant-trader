@@ -90,12 +90,14 @@ def within(
     accepted). A non-finite diagnostic or another K or T is a refusal; an
     incomplete diagnostic or threshold set is an error (D19CR-1)."""
     _thresholds_complete(upper, lower)
+    if "K" not in values or "T" not in values:
+        raise ValueError("diagnostics have no K or T")
+    if set(values) != required(int(values["K"])):
+        raise ValueError("diagnostics do not have exactly the required fields")
     if not all(np.isfinite(v) for v in values.values()):
         return False
-    if values.get("K") != upper["K"] or values.get("T") != upper["T"]:
+    if values["K"] != upper["K"] or values["T"] != upper["T"]:
         return False
-    if set(values) != required(int(upper["K"])):
-        raise ValueError("diagnostics do not have exactly the required fields")
     return all(values[n] <= v for n, v in upper.items()) and all(
         values[n] >= v for n, v in lower.items()
     )
