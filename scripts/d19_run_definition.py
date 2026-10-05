@@ -1,11 +1,12 @@
 """D-19 run definition (prereg §13 rev 7g item 6), run by the owner on the
 calibration machine inside the pinned image.
 
-  record --out PATH --prereg-commit C --prereg-file FILE --engine-commit C
+  record --out PATH --prereg-commit C --engine-commit C
          --cell-manifest FILE --seed-spec FILE --exploration-manifest FILE
       Measure this machine's gating identity and write the run definition;
-      prints its SHA-256. The engine commit must be this checkout's HEAD with
-      no uncommitted change. The image digest comes from AQT_IMAGE_DIGEST,
+      prints its SHA-256. The engine code must equal the engine commit (this
+      checkout's HEAD) file by file; the preregistration is read from its
+      commit. The image digest comes from AQT_IMAGE_DIGEST,
       which the launcher takes from `docker inspect` on the host (FE-4).
   check --definition PATH
       The start gate: run on every start and resume before any chunk.
@@ -26,26 +27,42 @@ from pathlib import Path
 os.environ["OPENBLAS_NUM_THREADS"] = "1"  # method V pinned runtime (VS1-4)
 os.environ["OPENBLAS_CORETYPE"] = "Haswell"
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))  # the top-level `calibration` package
+sys.path[:0] = [str(ROOT), str(ROOT / "src")]  # this checkout's code only (RR-2)
 
 from calibration import rundef  # noqa: E402
 
+PREREG_PATH = (
+    "review/governance-statistics-amendment/d19-preregistration/PREREGISTRATION.md"
+)
+
+
+def _git(*args: str) -> bytes:
+    return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True,
+                          check=True).stdout  # fmt: skip
+
 
 def _checkout_problem(commit: str) -> str | None:
-    """Why this checkout is not exactly `commit` (FE-1), or None."""
-
-    def git(*args: str) -> str:
-        return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True,
-                              text=True, check=True).stdout.strip()  # fmt: skip
-
+    """Why the engine code here is not exactly `commit`, or None. Compared
+    file by file with the commit's own blobs, not through `git status`, so
+    index flags and ignore rules cannot hide a change (FE-1, RR-3)."""
     try:
-        head, dirty = git("rev-parse", "HEAD"), git("status", "--porcelain")
+        head = _git("rev-parse", "HEAD").decode().strip()
+        listed = _git("ls-tree", "-r", "--name-only", "HEAD", "--", *rundef.CODE_DIRS)
+        committed = {
+            rel: rundef.canonical_sha256(_git("show", f"HEAD:{rel}"))
+            for rel in listed.decode().splitlines()
+            if rundef.is_code(rel)
+        }
     except (OSError, subprocess.CalledProcessError) as error:
         return f"cannot read the checkout with git: {error}"
     if head != commit:
         return f"engine commit {commit} is not this checkout's HEAD {head}"
-    if dirty:
-        return "the checkout has uncommitted changes"
+    present = rundef.code_inventory(ROOT)
+    if present != committed:
+        differ = sorted(set(present) ^ set(committed)) or sorted(
+            rel for rel in present if present[rel] != committed[rel]
+        )
+        return f"engine code differs from HEAD: {differ[:5]}"
     return None
 
 
@@ -55,7 +72,6 @@ def main(argv: list[str] | None = None) -> int:
     record = sub.add_parser("record")
     record.add_argument("--out", type=Path, required=True)
     record.add_argument("--prereg-commit", required=True)
-    record.add_argument("--prereg-file", type=Path, required=True)
     record.add_argument("--engine-commit", required=True)
     record.add_argument("--cell-manifest", type=Path, required=True)
     record.add_argument("--seed-spec", type=Path, required=True)
@@ -71,9 +87,14 @@ def main(argv: list[str] | None = None) -> int:
         if (problem := _checkout_problem(args.engine_commit)) is not None:
             print(problem, file=sys.stderr)
             return 1
+        try:
+            prereg = _git("show", f"{args.prereg_commit}:{PREREG_PATH}")
+        except (OSError, subprocess.CalledProcessError):
+            print(f"cannot read {PREREG_PATH} at {args.prereg_commit}", file=sys.stderr)
+            return 1
         defn = rundef.build(
             prereg_commit=args.prereg_commit,
-            prereg_sha256=hashlib.sha256(args.prereg_file.read_bytes()).hexdigest(),
+            prereg_sha256=hashlib.sha256(prereg).hexdigest(),
             engine_commit=args.engine_commit,
             generator_code_sha256=rundef.generator_sha256(ROOT),
             cell_manifest=json.loads(args.cell_manifest.read_bytes()),

@@ -125,10 +125,13 @@ def u_g(x: np.ndarray, candidates: np.ndarray, benchmark: np.ndarray,
     """The single U_G event (DS3-4): the first unavailable gate, or None.
     `trace` collects the gates' intermediate numbers (reference vectors)."""
     cand = candidates[:, nominee]
-    return (
-        g1(cand, benchmark, seed, reference=reference, trace=trace)
-        or g2(cand, benchmark)
-        or g4(x.shape[0])
-        or g10(x, trace)
-        or g12(cand, trace)
+    # Every gate runs (RR-1): an engine fault in a later gate is never hidden
+    # by an earlier refusal; the event is the first unavailable gate.
+    reasons = (
+        g1(cand, benchmark, seed, reference=reference, trace=trace),
+        g2(cand, benchmark),
+        g4(x.shape[0]),
+        g10(x, trace),
+        g12(cand, trace),
     )
+    return next((r for r in reasons if r is not None), None)

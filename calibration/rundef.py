@@ -19,7 +19,8 @@ import hashlib
 import json
 import os
 import platform
-from pathlib import Path
+import sys
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from calibration import dsr, gates
@@ -49,38 +50,45 @@ def _exact(value: object) -> object:
     return value
 
 
-def reference_vectors() -> dict[str, str]:
-    """The reference-vector suite: generator, method V and the gates on fixed
-    synthetic cases; each value is the SHA-256 of every output, bit-exact."""
-    out: dict[str, str] = {}
-    for cell in REFERENCE_CASES:
-        seed = outer_seed(_ANCHOR, cell.cell_id, "refvec", 0)
-        legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
-        fam = family_seed(seed, cell.cell_id, "agnostic", cell.k, _PREREG, 0)
-        result = dsr.evaluate(legs.x, fam, "largest", numerics="v")
-        nominee = 0 if result.nominee is None else result.nominee
-        trace: list[object] = []
-        gate = gates.u_g(
-            legs.x, legs.candidates, legs.benchmark, nominee, seed, trace=trace
-        )
-        outputs = {
-            "x": hashlib.sha256(legs.x.tobytes()).hexdigest(),
-            "benchmark": hashlib.sha256(legs.benchmark.tobytes()).hexdigest(),
-            "candidates": hashlib.sha256(legs.candidates.tobytes()).hexdigest(),
-            "result": dataclasses.asdict(result),
-            "u_g": gate,
-            "u_g_trace": trace,
-        }
-        out[cell.cell_id] = sha(_exact(outputs))
-    # FE-3: one case built to be UNAVAILABLE (G-2: a -150% day ruins equity)
+def _reference_outputs(cell: Cell) -> dict[str, object]:
+    """Every output of one reference case, before hashing."""
+    seed = outer_seed(_ANCHOR, cell.cell_id, "refvec", 0)
+    legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
+    fam = family_seed(seed, cell.cell_id, "agnostic", cell.k, _PREREG, 0)
+    result = dsr.evaluate(legs.x, fam, "largest", numerics="v")
+    nominee = 0 if result.nominee is None else result.nominee
+    trace: list[object] = []
+    gate = gates.u_g(
+        legs.x, legs.candidates, legs.benchmark, nominee, seed, trace=trace
+    )
+    return {
+        "x": hashlib.sha256(legs.x.tobytes()).hexdigest(),
+        "benchmark": hashlib.sha256(legs.benchmark.tobytes()).hexdigest(),
+        "candidates": hashlib.sha256(legs.candidates.tobytes()).hexdigest(),
+        "result": dataclasses.asdict(result),
+        "u_g": gate,
+        "u_g_trace": trace,
+    }
+
+
+def _unavailable_outputs() -> dict[str, object]:
+    """FE-3: a case built to be UNAVAILABLE (G-2: a -150% day ruins equity)."""
     cell = REFERENCE_CASES[1]
     seed = outer_seed(_ANCHOR, cell.cell_id, "refvec", 0)
     legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
     ruined = legs.candidates.copy()
     ruined[5, 0] = -1.5
-    trace = []
+    trace: list[object] = []
     gate = gates.u_g(legs.x, ruined, legs.benchmark, 0, seed, trace=trace)
-    out["refvec-k2-g2-unavailable"] = sha(_exact({"u_g": gate, "u_g_trace": trace}))
+    return {"u_g": gate, "u_g_trace": trace}
+
+
+def reference_vectors() -> dict[str, str]:
+    """The reference-vector suite: generator, method V and the gates (with
+    their intermediate numbers) on fixed synthetic cases; each value is the
+    SHA-256 of every output, bit-exact."""
+    out = {c.cell_id: sha(_exact(_reference_outputs(c))) for c in REFERENCE_CASES}
+    out["refvec-k2-g2-unavailable"] = sha(_exact(_unavailable_outputs()))
     return out
 
 
@@ -131,13 +139,56 @@ def gating(image_digest: str) -> dict[str, Any]:
     }
 
 
-def generator_sha256(root: Path) -> str:
-    """SHA-256 over every file the engine can run: `calibration/*.py` and
-    `src/aqt/**/*.py` (sorted relative path and bytes; FE-2)."""
-    files = sorted(
-        [*(root / "calibration").glob("*.py"), *(root / "src" / "aqt").rglob("*.py")]
+CODE_DIRS = ("calibration", "src/aqt", "scripts")
+
+
+def is_code(rel: str) -> bool:
+    """Whether a relative POSIX path is engine code: `calibration/*.py`,
+    `src/aqt/**/*.py` and the `scripts/d19_*.py` entry points (RR-2)."""
+    path = PurePosixPath(rel)
+    return path.suffix == ".py" and (
+        str(path.parent) == "calibration"
+        or rel.startswith("src/aqt/")
+        or (str(path.parent) == "scripts" and path.name.startswith("d19_"))
     )
-    return sha({p.relative_to(root).as_posix(): p.read_bytes().hex() for p in files})
+
+
+def canonical_sha256(data: bytes) -> str:
+    """CRLF read as LF, so a commit has one identity on every OS (RR-4)."""
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def code_inventory(root: Path) -> dict[str, str]:
+    """Every engine code file under `root`: relative POSIX path to the
+    canonical SHA-256 of its bytes."""
+    files = {
+        p.relative_to(root).as_posix(): p
+        for d in CODE_DIRS
+        for p in (root / d).rglob("*.py")
+    }
+    return {
+        rel: canonical_sha256(path.read_bytes())
+        for rel, path in sorted(files.items())
+        if is_code(rel)
+    }
+
+
+def generator_sha256(root: Path) -> str:
+    """The code hash recorded in the run definition (FE-2, RR-2, RR-4)."""
+    return sha(code_inventory(root))
+
+
+def loaded_outside(root: Path) -> list[str]:
+    """Engine modules this process loaded from anywhere but `root` (RR-2)."""
+    base = root.resolve()
+    outside = []
+    for name, module in sorted(sys.modules.items()):
+        if name.split(".")[0] not in ("aqt", "calibration"):
+            continue
+        path = getattr(module, "__file__", None)
+        if path is None or not Path(path).resolve().is_relative_to(base):
+            outside.append(name)
+    return outside
 
 
 def build(
@@ -190,6 +241,8 @@ def start_gate(defn: dict[str, Any], root: Path) -> dict[str, Any]:
     `root`, the pinned runtime, both canaries, the image digest and the full
     reference-vector suite must equal the run definition's. Returns the
     gating identity every chunk of the run must carry."""
+    if outside := loaded_outside(root):
+        raise RuntimeError(f"U_ops: start gate: loaded outside the checkout: {outside}")
     if generator_sha256(root) != defn["generator_sha256"]:
         raise RuntimeError("U_ops: start gate: engine code differs")
     recorded = defn["gating"]
