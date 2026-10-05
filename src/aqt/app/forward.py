@@ -215,19 +215,30 @@ def resumed_venue(
     )
 
 
-def snapshots(journal: StateJournal) -> list[tuple[datetime, Mapping[str, Decimal]]]:
-    """Every saved snapshot's time and the balances it implies. A snapshot
-    saved while an order's outcome is still unknown (sent, not yet answered)
-    implies no balances and is skipped: the snapshot that records the outcome
-    follows it within the same step."""
+def snapshots(
+    journal: StateJournal,
+) -> tuple[list[tuple[datetime, Mapping[str, Decimal]]], datetime | None]:
+    """Every saved snapshot's time and the balances it implies, and the time
+    valuation must stop (`None`: never).
+
+    A snapshot saved while an order's outcome is unknown implies no balances
+    and is skipped. Usually a later snapshot of the same step records the
+    outcome; until then the last known balances stand, so a midnight inside
+    that window is valued before the order (a known approximation, at most one
+    step long, FF44-2). When no known snapshot follows (an executor FREEZE or a
+    FLATTEN fault left the outcome unknown), the holdings since are unknown:
+    valuation stops at the first of those snapshots (FF44-1)."""
     out: list[tuple[datetime, Mapping[str, Decimal]]] = []
+    unknown_since: datetime | None = None
     for entry in read_entries(journal.path):
         local = _local(AccountState.from_mapping(entry.payload))
-        if any(order is None for order in local.orders.values()):
-            continue
         at = datetime.fromisoformat(entry.recorded_at_utc.replace("Z", "+00:00"))
+        if any(order is None for order in local.orders.values()):
+            unknown_since = unknown_since or at
+            continue
+        unknown_since = None
         out.append((at, expected_balances(local)))
-    return out
+    return out, unknown_since
 
 
 def daily_equity_returns(
@@ -235,13 +246,14 @@ def daily_equity_returns(
     closes: Mapping[datetime, Decimal],
     base: str,
     quote: str = "USDT",
+    until: datetime | None = None,
 ) -> list[float]:
     """Simple returns of equity between consecutive 00:00 UTC valuations.
 
     At each midnight at or after the first snapshot, the balances are those of the
     last snapshot saved at or before it, valued at the close of the bar that
     closes then (`closes` is keyed by close time). Valuation stops at the
-    first midnight with no close: a gap is never bridged."""
+    first midnight with no close, and after `until`: a gap is never bridged."""
     if not saved:
         return []
     ordered = sorted(saved, key=lambda pair: pair[0])
@@ -251,7 +263,7 @@ def daily_equity_returns(
         midnight += DAY  # the first midnight at or after the first snapshot
     values: list[Decimal] = []
     i = 0
-    while midnight in closes:
+    while midnight in closes and (until is None or midnight <= until):
         while i + 1 < len(ordered) and ordered[i + 1][0] <= midnight:
             i += 1
         balances = ordered[i][1]
@@ -426,4 +438,5 @@ def l02_count(journal: StateJournal, series: BarSeries) -> EffectiveDecisions:
         bar.open_time + bar.interval: Decimal(str(bar.close)) for bar in series.bars
     }
     base = series.symbol.removesuffix("USDT")
-    return effective_decisions(daily_equity_returns(snapshots(journal), closes, base))
+    saved, until = snapshots(journal)
+    return effective_decisions(daily_equity_returns(saved, closes, base, until=until))
