@@ -22,6 +22,10 @@ from calibration import dsr, fast, gates, rundef
 
 ROOT = Path(__file__).resolve().parents[2]
 DIGEST = "sha256:" + "ab" * 32
+CELLS = json.dumps({"cells": [
+    {"cell_id": "c-k2", "k": 2, "t": 60, "law": "garch", "dependence": "equi0.5"},
+    {"cell_id": "c-k1", "k": 1, "t": 60, "law": "t5", "dependence": "independent"},
+]})  # fmt: skip
 
 
 def _git(root: Path, *args: str) -> str:
@@ -47,7 +51,8 @@ def _checkout(tmp: Path) -> Path:
     shutil.copytree(ROOT / "src" / "aqt", root / "src" / "aqt",
                     ignore=shutil.ignore_patterns("__pycache__"))  # fmt: skip
     (root / "scripts").mkdir()
-    shutil.copy(ROOT / "scripts" / "d19_run_definition.py", root / "scripts")
+    for script in ("d19_run_definition.py", "d19_run.py"):
+        shutil.copy(ROOT / "scripts" / script, root / "scripts")
     prereg = root / "review" / "governance-statistics-amendment"
     prereg = prereg / "d19-preregistration" / "PREREGISTRATION.md"
     prereg.parent.mkdir(parents=True)
@@ -61,7 +66,7 @@ def _checkout(tmp: Path) -> Path:
 
 def _record(root: Path, out: Path, commit: str) -> subprocess.CompletedProcess[str]:
     inputs = out.parent
-    for name, text in (("cells", '{"cells": ["c1"]}'), ("seeds", '{"anchor": "x"}'),
+    for name, text in (("cells", CELLS), ("seeds", '{"anchor": "x"}'),
                        ("exploration", "{}")):  # fmt: skip
         (inputs / f"{name}.json").write_text(text)
     return _script(
@@ -479,3 +484,82 @@ def test_the_start_gate_itself_refuses_cached_bytecode(
     monkeypatch.setattr(sys, "dont_write_bytecode", False)
     with pytest.raises(RuntimeError, match="bytecode caching is not disabled"):
         rundef.start_gate({"generator_sha256": "", "gating": {}}, ROOT)
+
+
+def _driver(root: Path, out: Path, store: Path, *args: str,
+            digest: str = DIGEST) -> subprocess.CompletedProcess[str]:  # fmt: skip
+    env = {**os.environ, rundef.IMAGE_DIGEST_ENV: digest}
+    command = [sys.executable, str(root / "scripts" / "d19_run.py"), "run",
+               "--definition", str(out), "--store", str(store), *args]  # fmt: skip
+    return subprocess.run(command, env=env, cwd=root, capture_output=True,
+                          text=True, check=False)  # fmt: skip
+
+
+def test_the_driver_runs_one_bound_chain_per_cell_and_resumes(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """Two workers, one chain per manifest cell; every chunk carries the
+    run-definition hash and the gating the start gate returned (FE-5); a
+    second run computes nothing new and ends at the same heads."""
+    root, out = recorded
+    store = tmp_path / "store"
+    args = ("--namespace", "threshold", "--replications", "3", "--workers", "2")
+    first = _driver(root, out, store, *args)
+    assert first.returncode == 0, first.stderr
+    defn = rundef.load(out)
+    for cell in ("c-k2", "c-k1"):
+        chunk = json.loads(
+            (store / "threshold" / cell / "chunk-0000000.json").read_bytes()
+        )
+        assert chunk["binding"] == rundef.definition_sha256(defn)
+        assert chunk["gating"] == defn["gating"]
+        assert len(chunk["results"]) == 3
+    k1 = json.loads((store / "threshold" / "c-k1" / "chunk-0000000.json").read_bytes())
+    assert set(k1["results"][0]) == classifier_fields(1)
+    before = {p: p.read_bytes() for p in store.rglob("*.json")}
+    second = _driver(root, out, store, *args)
+    assert second.returncode == 0, second.stderr
+    assert second.stdout == first.stdout
+    assert {p: p.read_bytes() for p in store.rglob("*.json")} == before
+
+
+def classifier_fields(k: int) -> set[str]:
+    from calibration import classifier
+
+    return set(classifier.required(k))
+
+
+def test_the_driver_refuses_unbuilt_namespaces_and_a_failed_gate(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    root, out = recorded
+    store = tmp_path / "store"
+    done = _driver(root, out, store, "--namespace", "heldout", "--replications", "3")
+    assert done.returncode == 1 and "is not built" in done.stderr
+    done = _driver(root, out, store, "--namespace", "threshold", "--replications", "3",
+                   digest="sha256:other")  # fmt: skip
+    assert done.returncode == 1 and "image digest differs" in done.stderr
+    assert not store.exists()
+
+
+def test_a_worker_runs_the_start_gate_before_any_chunk(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R3-3: the worker itself gates; a refusal there writes nothing."""
+    root, out = recorded
+    script = root / "scripts" / "d19_run.py"
+    spec = importlib.util.spec_from_file_location("d19_run_under_test", script)
+    assert spec is not None and spec.loader is not None
+    monkeypatch.setattr(sys, "dont_write_bytecode", sys.dont_write_bytecode)
+    monkeypatch.setattr(sys, "pycache_prefix", sys.pycache_prefix)
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+
+    def refused(*_: object) -> dict[str, object]:
+        raise RuntimeError("U_ops: start gate: refused in the worker")
+
+    monkeypatch.setattr(driver.rundef, "start_gate", refused)
+    store = tmp_path / "store"
+    with pytest.raises(RuntimeError, match="refused in the worker"):
+        driver.worker(out, store, "threshold", "c-k2", 3)
+    assert not store.exists()
