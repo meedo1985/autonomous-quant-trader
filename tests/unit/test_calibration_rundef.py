@@ -463,3 +463,15 @@ def test_a_git_dir_override_cannot_record_another_repository(tmp_path: Path) -> 
     done = subprocess.run(command, env=env, cwd=root, capture_output=True,
                           text=True, check=False)  # fmt: skip
     assert done.returncode == 1 and "is not this checkout's HEAD" in done.stderr
+
+
+def test_the_start_gate_itself_refuses_cached_bytecode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R7-1: `start_gate` calls the bytecode check (this pytest process
+    caches bytecode), not only the helper."""
+    entry = ROOT / "scripts" / "d19_run_definition.py"
+    monkeypatch.setattr(sys.modules["__main__"], "__file__", str(entry))
+    monkeypatch.setattr(rundef, "loaded_outside", lambda _root: [])
+    with pytest.raises(RuntimeError, match="bytecode caching is not disabled"):
+        rundef.start_gate({"generator_sha256": "", "gating": {}}, ROOT)
