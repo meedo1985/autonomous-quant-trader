@@ -387,6 +387,9 @@ def test_record_refuses_a_file_changed_while_recording(
         "d19_record_under_test", root / "scripts" / "d19_run_definition.py"
     )
     assert spec is not None and spec.loader is not None
+    # the script switches bytecode caching off process-wide: restore after
+    monkeypatch.setattr(sys, "dont_write_bytecode", sys.dont_write_bytecode)
+    monkeypatch.setattr(sys, "pycache_prefix", sys.pycache_prefix)
     script = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(script)
 
@@ -473,5 +476,6 @@ def test_the_start_gate_itself_refuses_cached_bytecode(
     entry = ROOT / "scripts" / "d19_run_definition.py"
     monkeypatch.setattr(sys.modules["__main__"], "__file__", str(entry))
     monkeypatch.setattr(rundef, "loaded_outside", lambda _root: [])
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
     with pytest.raises(RuntimeError, match="bytecode caching is not disabled"):
         rundef.start_gate({"generator_sha256": "", "gating": {}}, ROOT)
