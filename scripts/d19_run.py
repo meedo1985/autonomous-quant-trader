@@ -45,7 +45,7 @@ from calibration import chunks, classifier, rundef  # noqa: E402
 from calibration.generator import Cell, cells_from_manifest, generate  # noqa: E402
 from calibration.seeds import outer_seed, stream  # noqa: E402
 
-NAMESPACES = {"threshold": "d19-threshold-v1"}  # prereg §8
+NAMESPACES = rundef.SEED_NAMESPACES  # prereg §8
 
 
 def _exact(values: dict[str, float]) -> dict[str, str]:
@@ -69,7 +69,9 @@ def worker(definition: Path, store: Path, namespace: str, cell_id: str) -> str:
     manifest = defn["cell_manifest"]
     cells = {c.cell_id: c for c in cells_from_manifest(manifest)}
     replications = rundef.run_plan(manifest)[namespace]
-    cell, anchor = cells[cell_id], defn["prereg_sha256"]
+    if defn["seed_spec"] != rundef.seed_spec(defn["prereg_sha256"]):
+        raise ValueError("seed specification is not the §8 one (DR2-2)")
+    cell, anchor = cells[cell_id], defn["seed_spec"]["anchor"]
     chain = chunks.Chain(
         store / namespace / cell_id,
         binding=rundef.definition_sha256(defn),

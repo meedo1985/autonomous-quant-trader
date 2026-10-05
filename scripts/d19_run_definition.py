@@ -2,7 +2,7 @@
 calibration machine inside the pinned image.
 
   record --out PATH --prereg-commit C --engine-commit C
-         --cell-manifest FILE --seed-spec FILE --exploration-manifest FILE
+         --cell-manifest FILE --exploration-manifest FILE
       Measure this machine's gating identity and write the run definition;
       prints its SHA-256. The engine code must equal the engine commit (this
       checkout's HEAD) file by file; the preregistration is read from its
@@ -88,7 +88,6 @@ def main(argv: list[str] | None = None) -> int:
     record.add_argument("--prereg-commit", required=True)
     record.add_argument("--engine-commit", required=True)
     record.add_argument("--cell-manifest", type=Path, required=True)
-    record.add_argument("--seed-spec", type=Path, required=True)
     record.add_argument("--exploration-manifest", type=Path, required=True)
     check = sub.add_parser("check")
     check.add_argument("--definition", type=Path, required=True)
@@ -125,7 +124,6 @@ def main(argv: list[str] | None = None) -> int:
             engine_commit=args.engine_commit,
             generator_code_sha256=code_hash,
             cell_manifest=manifest,
-            seed_spec=json.loads(args.seed_spec.read_bytes()),
             image_digest=digest,
             exploration_manifest_sha256=hashlib.sha256(
                 args.exploration_manifest.read_bytes()

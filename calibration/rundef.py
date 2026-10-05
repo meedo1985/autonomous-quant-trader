@@ -205,6 +205,14 @@ def loaded_outside(root: Path) -> list[str]:
 
 
 PRESCRIBED = {"threshold": 300_000}  # §13 rev 7g item 4
+SEED_NAMESPACES = {"threshold": "d19-threshold-v1"}  # prereg §8
+
+
+def seed_spec(prereg_sha256: str) -> dict[str, object]:
+    """The seed specification a run definition records, derived, never
+    supplied (DR2-2): prereg §8's anchor for threshold and development
+    runs is the preregistration hash, and its namespaces."""
+    return {"anchor": prereg_sha256, "namespaces": dict(SEED_NAMESPACES)}
 
 
 def run_plan(manifest: object) -> dict[str, int]:
@@ -221,8 +229,14 @@ def run_plan(manifest: object) -> dict[str, int]:
         type(n) is int and n >= 1 for n in counts.values()
     ):
         raise ValueError(f"replications must be positive integers for {PRESCRIBED}")
-    if purpose == "qualification" and counts != PRESCRIBED:
-        raise ValueError(f"a qualification run uses exactly {PRESCRIBED}")
+    if purpose == "qualification":
+        # DR2-1: a qualification run needs the complete frozen cell
+        # manifest (every candidate cell at T = T_C2) and every generator
+        # (skew-t, Q2m, Q5, QJ); neither exists yet, so none is accepted.
+        raise ValueError(
+            "qualification runs are refused until the frozen cell manifest "
+            "and all generators are built and verified"
+        )
     return dict(counts)
 
 
@@ -256,7 +270,6 @@ def build(
     engine_commit: str,
     generator_code_sha256: str,
     cell_manifest: object,
-    seed_spec: object,
     image_digest: str,
     exploration_manifest_sha256: str,
 ) -> dict[str, Any]:
@@ -268,7 +281,7 @@ def build(
         "engine_commit": engine_commit,
         "generator_sha256": generator_code_sha256,
         "cell_manifest": cell_manifest,
-        "seed_spec": seed_spec,
+        "seed_spec": seed_spec(prereg_sha256),
         "exploration_manifest_sha256": exploration_manifest_sha256,
         "gating": gating(image_digest),
     }

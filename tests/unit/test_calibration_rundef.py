@@ -74,7 +74,6 @@ def _record(root: Path, out: Path, commit: str) -> subprocess.CompletedProcess[s
         root, "record", "--out", str(out), "--prereg-commit", "HEAD",
         "--engine-commit", commit,
         "--cell-manifest", str(inputs / "cells.json"),
-        "--seed-spec", str(inputs / "seeds.json"),
         "--exploration-manifest", str(inputs / "exploration.json"),
     )  # fmt: skip
 
@@ -415,7 +414,6 @@ def test_record_refuses_a_file_changed_while_recording(
         "record", "--out", str(out), "--prereg-commit", "HEAD",
         "--engine-commit", _git(root, "rev-parse", "HEAD"),
         "--cell-manifest", str(inputs / "cells.json"),
-        "--seed-spec", str(inputs / "seeds.json"),
         "--exploration-manifest", str(inputs / "exploration.json"),
     ])  # fmt: skip
     assert code == 1 and not out.exists()
@@ -466,7 +464,6 @@ def test_a_git_dir_override_cannot_record_another_repository(tmp_path: Path) -> 
         "--out", str(inputs / "d.json"), "--prereg-commit", "HEAD",
         "--engine-commit", _git(other, "rev-parse", "HEAD"),
         "--cell-manifest", str(inputs / "cells.json"),
-        "--seed-spec", str(inputs / "seeds.json"),
         "--exploration-manifest", str(inputs / "exploration.json"),
     ]  # fmt: skip
     done = subprocess.run(command, env=env, cwd=root, capture_output=True,
@@ -627,8 +624,7 @@ def test_an_interrupted_run_resumes_identically_and_a_new_plan_cannot_extend_it(
     if the run stopped, then resumed byte-identically; the earlier 3-draw
     definition on the same store is refused (another binding)."""
     root, small = recorded
-    plan = {"purpose": "pilot", "replications": {"threshold": 501},
-            "cells": [json.loads(CELLS)["cells"][1]]}  # fmt: skip
+    plan = {**json.loads(CELLS), "replications": {"threshold": 501}}  # only the count
     inputs = tmp_path / "in"
     inputs.mkdir()
     big = inputs / "big.json"
@@ -639,7 +635,7 @@ def test_an_interrupted_run_resumes_identically_and_a_new_plan_cannot_extend_it(
     done = _script(
         root, "record", "--out", str(big), "--prereg-commit", "HEAD",
         "--engine-commit", _git(root, "rev-parse", "HEAD"),
-        "--cell-manifest", str(manifest), "--seed-spec", str(inputs / "seeds.json"),
+        "--cell-manifest", str(manifest),
         "--exploration-manifest", str(inputs / "exploration.json"),
     )  # fmt: skip
     assert done.returncode == 0, done.stderr
@@ -703,11 +699,32 @@ def test_a_malformed_cell_manifest_is_refused(manifest: object, message: str) ->
         ),
         ({"purpose": "pilot", "replications": {"threshold": 0}}, "positive"),
         ({"purpose": "pilot", "replications": {"threshold": 3, "dev": 1}}, "positive"),
-        ({"purpose": "qualification", "replications": {"threshold": 3}}, "exactly"),
+        ({"purpose": "qualification", "replications": {"threshold": 3}}, "refused"),
     ],
 )
 def test_a_bad_run_plan_is_refused(manifest: object, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         rundef.run_plan(manifest)
     prescribed = {"purpose": "qualification", "replications": {"threshold": 300_000}}
-    assert rundef.run_plan(prescribed) == {"threshold": 300_000}
+    with pytest.raises(ValueError, match="qualification runs are refused"):
+        rundef.run_plan(prescribed)  # DR2-1
+
+
+def test_the_recorded_seed_specification_is_the_section_8_one(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DR2-2: derived from the preregistration hash; a definition carrying
+    another one is refused by the worker."""
+    root, out = recorded
+    defn = rundef.load(out)
+    assert defn["seed_spec"] == {
+        "anchor": defn["prereg_sha256"],
+        "namespaces": {"threshold": "d19-threshold-v1"},
+    }
+    defn["seed_spec"]["anchor"] = "0" * 64
+    changed = tmp_path / "changed.json"
+    rundef.write(changed, defn)
+    driver = _load_driver(root, monkeypatch)
+    monkeypatch.setattr(driver.rundef, "start_gate", lambda d, _root: d["gating"])
+    with pytest.raises(ValueError, match="seed specification"):
+        driver.worker(changed, tmp_path / "store", "threshold", "c-k1")
