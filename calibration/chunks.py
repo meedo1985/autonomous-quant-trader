@@ -99,12 +99,13 @@ def _write(path: Path, record: dict[str, object]) -> None:
     os.replace(tmp, path)
 
 
-def _strays(chain: Chain) -> None:
-    """Refuse files the chain does not name; delete unfinished temporaries
-    unread."""
+def _strays(chain: Chain, *, restart: bool) -> None:
+    """Refuse files the chain does not name (duplicated or out of range).
+    An unfinished temporary is deleted unread on a restart and refused by
+    read-only verification (D19CR-2)."""
     names = {chain.path(s).name for s in chain.starts()}
     for entry in chain.root.iterdir():
-        if entry.suffix == ".tmp":
+        if entry.suffix == ".tmp" and restart:
             entry.unlink()
         elif entry.name not in names:
             raise ChainError(f"{entry.name}: not a chunk of this chain")
@@ -115,7 +116,7 @@ def run(chain: Chain, compute: Callable[[int], object]) -> str:
     return the final chain head. A corrupt chunk is deleted unread and
     recomputed; a gap before an existing chunk stops the chain."""
     chain.root.mkdir(parents=True, exist_ok=True)
-    _strays(chain)
+    _strays(chain, restart=True)
     existing = [s for s in chain.starts() if chain.path(s).exists()]
     last = existing[-1] if existing else -1
     previous = GENESIS
@@ -146,7 +147,9 @@ def run(chain: Chain, compute: Callable[[int], object]) -> str:
 
 
 def verify(chain: Chain) -> str:
-    """The final chain head of a complete chain; pass or `ChainError`."""
+    """The final chain head of a complete chain; pass or `ChainError`.
+    Read-only."""
+    _strays(chain, restart=False)
     previous = GENESIS
     for start in chain.starts():
         record = _load(chain.path(start))

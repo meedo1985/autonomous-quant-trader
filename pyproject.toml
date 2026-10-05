@@ -46,6 +46,7 @@ select = ["E", "F", "I", "B", "UP"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
+mypy_path = "src"  # `calibration` type-checks against the aqt source (D19CR-3)
 
 [tool.importlinter]
 root_package = "aqt"

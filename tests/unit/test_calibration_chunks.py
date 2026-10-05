@@ -126,3 +126,30 @@ def test_a_relinked_chunk_breaks_the_chain(tmp_path: Path) -> None:
     chain.path(10).write_bytes(other.path(10).read_bytes())
     with pytest.raises(ChainError):
         chunks.verify(chain)
+
+
+@pytest.mark.parametrize("name", ["chunk-0000009.json", "chunk-0000030.json"])
+def test_verify_and_reduce_refuse_a_duplicated_or_out_of_range_chunk(
+    tmp_path: Path, name: str
+) -> None:
+    """D19CR-2: final verification checks the directory too, read-only."""
+    chain = _chain(tmp_path)
+    chunks.run(chain, _compute)
+    (chain.root / name).write_bytes(chain.path(0).read_bytes())
+    with pytest.raises(ChainError, match="not a chunk of this chain"):
+        chunks.verify(chain)
+    with pytest.raises(ChainError, match="not a chunk of this chain"):
+        list(chunks.reduce(chain))
+    assert (chain.root / name).exists()  # verification deletes nothing
+
+
+def test_verify_refuses_an_unfinished_temporary_without_deleting_it(
+    tmp_path: Path,
+) -> None:
+    chain = _chain(tmp_path)
+    chunks.run(chain, _compute)
+    tmp = chain.root / "chunk-0000010.tmp"
+    tmp.write_bytes(b"partial")
+    with pytest.raises(ChainError):
+        chunks.verify(chain)
+    assert tmp.exists()

@@ -225,10 +225,43 @@ def test_classifier_ranks_tails_and_exact_checks() -> None:
     _, legs = _legs(5, 400)
     names = set(classifier.diagnostics(legs.x))
     assert names == {"K", "T", *classifier.UPPER, *classifier.LOWER}
-    draws = [{"K": 5.0, "T": 400.0, "max_skewness": float(i)} for i in range(10)]
+    base = {n: 0.0 for n in classifier.required(5)} | {"K": 5.0, "T": 400.0}
+    draws = [base | {"max_skewness": float(i)} for i in range(10)]
     upper, lower = classifier.fit_thresholds(draws)
-    assert upper == {"K": 5.0, "T": 400.0, "max_skewness": 9.0}
-    assert lower == {"K": 5.0, "T": 400.0}
-    tie = {"K": 5.0, "T": 400.0, "max_skewness": 9.0}
+    assert upper["max_skewness"] == 9.0 and (upper["K"], upper["T"]) == (5.0, 400.0)
+    assert set(lower) == {"K", "T", *classifier.LOWER}
+    tie = base | {"max_skewness": 9.0}
     assert classifier.within(tie, upper, lower)
+    assert not classifier.within({**tie, "max_skewness": 9.5}, upper, lower)
     assert not classifier.within({**tie, "T": 401.0}, upper, lower)
+    assert not classifier.within({**tie, "max_gph_d": float("nan")}, upper, lower)
+    assert classifier.required(1) == classifier.required(5) - {
+        "min_correlation",
+        "max_correlation",
+    }
+
+
+def test_classifier_refuses_incomplete_or_non_finite_threshold_sets() -> None:
+    """D19CR-1: a missing field or bound, a NaN bound or draw, or draws of
+    mixed K/T never pass silently."""
+    base = {n: 0.0 for n in classifier.required(2)} | {"K": 2.0, "T": 400.0}
+    upper, lower = classifier.fit_thresholds([base] * 10)
+    with pytest.raises(ValueError, match="no K"):
+        classifier.within(base, {}, {})
+    with pytest.raises(ValueError, match="no K"):
+        classifier.within(base, {"T": 400.0}, lower)
+    with pytest.raises(ValueError, match="required fields"):
+        classifier.within({"K": 2.0, "T": 400.0}, upper, lower)
+    with pytest.raises(ValueError, match="non-finite bound"):
+        classifier.within(base, upper | {"max_skewness": float("nan")}, lower)
+    with pytest.raises(ValueError, match="required fields"):
+        classifier.within(base, {k: v for k, v in upper.items() if k != "max_gph_d"},
+                          lower)  # fmt: skip
+    with pytest.raises(ValueError, match="non-finite diagnostic"):
+        classifier.fit_thresholds([base | {"max_skewness": float("nan")}] * 10)
+    with pytest.raises(ValueError, match="differ"):
+        classifier.fit_thresholds([base] * 9 + [base | {"T": 401.0}])
+    with pytest.raises(ValueError, match="differ"):
+        classifier.fit_thresholds([base] * 9 + [{"K": 2.0, "T": 400.0}])
+    with pytest.raises(ValueError, match="no threshold draws"):
+        classifier.fit_thresholds([])

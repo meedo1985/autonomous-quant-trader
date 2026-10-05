@@ -10,7 +10,7 @@ import math
 
 import numpy as np
 
-from aqt.metrics import statistics as st
+import aqt.metrics.statistics as st
 from calibration import fast
 from calibration.seeds import sha
 
