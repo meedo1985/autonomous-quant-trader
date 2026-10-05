@@ -1,6 +1,6 @@
 You are an independent, adversarial code reviewer (different model from the implementer, Claude Opus 5.5). Read-only: do not edit or commit; no network.
 
-Repository in your working directory, branch d19-calibration-engine. New file: `scripts/d19_run.py` (the D-19 run driver, threshold namespace only), plus new tests at the end of `tests/unit/test_calibration_rundef.py` (`_driver`, `test_the_driver_*`, `test_a_worker_runs_the_start_gate_before_any_chunk`) and a manifest change in that file's fixture. Review `git diff HEAD~1 HEAD -- scripts tests` (the driver commit).
+Repository in your working directory, branch d19-calibration-engine. New file: `scripts/d19_run.py` (the D-19 run driver, threshold namespace only), plus new tests at the end of `tests/unit/test_calibration_rundef.py` (`_driver`, `test_the_driver_*`, `test_a_worker_runs_the_start_gate_before_any_chunk`) and a manifest change in that file's fixture. Review `git diff 96a223e 1789d0b -- scripts tests` (the driver commit 1789d0b).
 
 Spec: `git show origin/docs/d19-recommendation:review/governance-statistics-amendment/d19-preregistration/PREREGISTRATION.md` section 13 (rev 7g), items 4 and 6 (and §8 seeds).
 Accepted components it builds on: `calibration/rundef.py` (start_gate, run definition; accepted in review/d19-engine/SOL6_REREVIEW_5734FB7.md) and `calibration/chunks.py`.
