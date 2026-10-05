@@ -1,13 +1,15 @@
 """D-19 run driver (prereg §13 rev 7g item 6), started by the owner's
 launcher on the calibration machine inside the pinned image.
 
-  run --definition PATH --store DIR --namespace threshold --replications N
-      [--workers 2]
+  run --definition PATH --store DIR --namespace threshold [--workers 2]
       One hash-chained chain per cell of the run definition's manifest, in
       worker processes. Every worker runs the start gate itself before any
       chunk (R3-3) and builds its chain only from the run-definition hash and
       the gating the gate returns (FE-5); host provenance is recorded, never
       compared. Restarting resumes: finished chunks are verified and kept.
+      The replication count comes from the run definition's plan (DR-3),
+      seeds from prereg §8: namespace d19-threshold-v1, anchor = the
+      preregistration hash recorded in the definition (DR-1).
 
 Only the threshold namespace is built: each replication is the classifier
 diagnostics of one generator draw. Development and held-out need the
@@ -36,35 +38,38 @@ sys.pycache_prefix = tempfile.mkdtemp(prefix="d19-no-bytecode-")
 
 import argparse  # noqa: E402
 import multiprocessing  # noqa: E402
+import struct  # noqa: E402
 from typing import Any  # noqa: E402
 
 from calibration import chunks, classifier, rundef  # noqa: E402
-from calibration.generator import Cell, generate  # noqa: E402
+from calibration.generator import Cell, cells_from_manifest, generate  # noqa: E402
 from calibration.seeds import outer_seed, stream  # noqa: E402
 
-NAMESPACES = ("threshold",)
+NAMESPACES = {"threshold": "d19-threshold-v1"}  # prereg §8
 
 
 def _exact(values: dict[str, float]) -> dict[str, str]:
-    return {name: value.hex() for name, value in sorted(values.items())}
+    """Each value as its IEEE-754 binary64 bit pattern (big-endian hex):
+    every NaN payload and signed zero kept (DR-4)."""
+    return {n: struct.pack(">d", v).hex() for n, v in sorted(values.items())}
 
 
 def threshold_replication(cell: Cell, anchor: str, rep: int) -> dict[str, str]:
     """One threshold-run draw: the classifier diagnostics, bit-exact."""
-    seed = outer_seed(anchor, cell.cell_id, "threshold", rep)
+    seed = outer_seed(anchor, cell.cell_id, NAMESPACES["threshold"], rep)
     legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
     return _exact(classifier.diagnostics(legs.x))
 
 
-def worker(
-    definition: Path, store: Path, namespace: str, cell_id: str, replications: int
-) -> str:
+def worker(definition: Path, store: Path, namespace: str, cell_id: str) -> str:
     """One chain, in its own process: the start gate first, then the chunks
     (R3-3, FE-5). Returns the chain head."""
     defn = rundef.load(definition)
     gating = rundef.start_gate(defn, ROOT)
-    cells = {c["cell_id"]: Cell(**c) for c in defn["cell_manifest"]["cells"]}
-    cell, anchor = cells[cell_id], defn["seed_spec"]["anchor"]
+    manifest = defn["cell_manifest"]
+    cells = {c.cell_id: c for c in cells_from_manifest(manifest)}
+    replications = rundef.run_plan(manifest)[namespace]
+    cell, anchor = cells[cell_id], defn["prereg_sha256"]
     chain = chunks.Chain(
         store / namespace / cell_id,
         binding=rundef.definition_sha256(defn),
@@ -84,7 +89,6 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--definition", type=Path, required=True)
     run.add_argument("--store", type=Path, required=True)
     run.add_argument("--namespace", required=True)
-    run.add_argument("--replications", type=int, required=True)
     run.add_argument("--workers", type=int, default=2)
     args = parser.parse_args(argv)
     if args.namespace not in NAMESPACES:
@@ -92,13 +96,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     defn = rundef.load(args.definition)
     try:
+        cells = cells_from_manifest(defn["cell_manifest"])  # DR-2
+        rundef.run_plan(defn["cell_manifest"])  # DR-3
         rundef.start_gate(defn, ROOT)  # fail fast; every worker checks again
-    except RuntimeError as error:
+    except (ValueError, RuntimeError) as error:
         print(error, file=sys.stderr)
         return 1
     jobs: list[tuple[Any, ...]] = [
-        (args.definition, args.store, args.namespace, c["cell_id"], args.replications)
-        for c in defn["cell_manifest"]["cells"]
+        (args.definition, args.store, args.namespace, c.cell_id) for c in cells
     ]
     context = multiprocessing.get_context("spawn")
     with context.Pool(args.workers) as pool:

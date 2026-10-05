@@ -11,6 +11,7 @@ import json
 import os
 import py_compile
 import shutil
+import struct
 import subprocess
 import sys
 import types
@@ -22,7 +23,7 @@ from calibration import dsr, fast, gates, rundef
 
 ROOT = Path(__file__).resolve().parents[2]
 DIGEST = "sha256:" + "ab" * 32
-CELLS = json.dumps({"cells": [
+CELLS = json.dumps({"purpose": "pilot", "replications": {"threshold": 3}, "cells": [
     {"cell_id": "c-k2", "k": 2, "t": 60, "law": "garch", "dependence": "equi0.5"},
     {"cell_id": "c-k1", "k": 1, "t": 60, "law": "t5", "dependence": "independent"},
 ]})  # fmt: skip
@@ -503,7 +504,7 @@ def test_the_driver_runs_one_bound_chain_per_cell_and_resumes(
     second run computes nothing new and ends at the same heads."""
     root, out = recorded
     store = tmp_path / "store"
-    args = ("--namespace", "threshold", "--replications", "3", "--workers", "2")
+    args = ("--namespace", "threshold", "--workers", "2")
     first = _driver(root, out, store, *args)
     assert first.returncode == 0, first.stderr
     defn = rundef.load(out)
@@ -534,10 +535,9 @@ def test_the_driver_refuses_unbuilt_namespaces_and_a_failed_gate(
 ) -> None:
     root, out = recorded
     store = tmp_path / "store"
-    done = _driver(root, out, store, "--namespace", "heldout", "--replications", "3")
+    done = _driver(root, out, store, "--namespace", "heldout")
     assert done.returncode == 1 and "is not built" in done.stderr
-    done = _driver(root, out, store, "--namespace", "threshold", "--replications", "3",
-                   digest="sha256:other")  # fmt: skip
+    done = _driver(root, out, store, "--namespace", "threshold", digest="sha256:other")
     assert done.returncode == 1 and "image digest differs" in done.stderr
     assert not store.exists()
 
@@ -561,5 +561,153 @@ def test_a_worker_runs_the_start_gate_before_any_chunk(
     monkeypatch.setattr(driver.rundef, "start_gate", refused)
     store = tmp_path / "store"
     with pytest.raises(RuntimeError, match="refused in the worker"):
-        driver.worker(out, store, "threshold", "c-k2", 3)
+        driver.worker(out, store, "threshold", "c-k2")
     assert not store.exists()
+
+
+def _load_driver(root: Path, monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "d19_run_loaded", root / "scripts" / "d19_run.py"
+    )
+    assert spec is not None and spec.loader is not None
+    monkeypatch.setattr(sys, "dont_write_bytecode", sys.dont_write_bytecode)
+    monkeypatch.setattr(sys, "pycache_prefix", sys.pycache_prefix)
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    return driver
+
+
+def test_threshold_seeds_follow_prereg_section_8(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DR-1/DR-5: namespace d19-threshold-v1, anchor = the recorded
+    preregistration hash; every stored draw equals that computation."""
+    from calibration import classifier
+    from calibration.generator import Cell, generate
+    from calibration.seeds import outer_seed, stream
+
+    root, out = recorded
+    driver = _load_driver(root, monkeypatch)
+    monkeypatch.setattr(driver.rundef, "start_gate", lambda defn, _root: defn["gating"])
+    store = tmp_path / "store"
+    driver.worker(out, store, "threshold", "c-k2")
+    chunk = json.loads(
+        (store / "threshold" / "c-k2" / "chunk-0000000.json").read_bytes()
+    )
+    defn = rundef.load(out)
+    cell = Cell("c-k2", 2, 60, "garch", "equi0.5")
+    for rep_, stored in enumerate(chunk["results"]):
+        seed = outer_seed(defn["prereg_sha256"], "c-k2", "d19-threshold-v1", rep_)
+        legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
+        expected = classifier.diagnostics(legs.x)
+        assert stored == {
+            n: struct.pack(">d", v).hex() for n, v in sorted(expected.items())
+        }
+
+
+def test_a_chain_carries_the_gating_its_worker_gate_returned(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FE-5/DR-5: not the definition's copy, the worker gate's return."""
+    root, out = recorded
+    driver = _load_driver(root, monkeypatch)
+    monkeypatch.setattr(driver.rundef, "start_gate", lambda *_: {"from": "worker gate"})
+    store = tmp_path / "store"
+    driver.worker(out, store, "threshold", "c-k1")
+    chunk = json.loads(
+        (store / "threshold" / "c-k1" / "chunk-0000000.json").read_bytes()
+    )
+    assert chunk["gating"] == {"from": "worker gate"}
+
+
+def test_an_interrupted_run_resumes_identically_and_a_new_plan_cannot_extend_it(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """DR-3/DR-5: a 501-draw plan (two chunks); the second chunk deleted as
+    if the run stopped, then resumed byte-identically; the earlier 3-draw
+    definition on the same store is refused (another binding)."""
+    root, small = recorded
+    plan = {"purpose": "pilot", "replications": {"threshold": 501},
+            "cells": [json.loads(CELLS)["cells"][1]]}  # fmt: skip
+    inputs = tmp_path / "in"
+    inputs.mkdir()
+    big = inputs / "big.json"
+    manifest = inputs / "cells.json"
+    manifest.write_text(json.dumps(plan))
+    for name in ("seeds", "exploration"):
+        (inputs / f"{name}.json").write_text("{}")
+    done = _script(
+        root, "record", "--out", str(big), "--prereg-commit", "HEAD",
+        "--engine-commit", _git(root, "rev-parse", "HEAD"),
+        "--cell-manifest", str(manifest), "--seed-spec", str(inputs / "seeds.json"),
+        "--exploration-manifest", str(inputs / "exploration.json"),
+    )  # fmt: skip
+    assert done.returncode == 0, done.stderr
+    store = tmp_path / "store"
+    args = ("--namespace", "threshold", "--workers", "1")
+    assert _driver(root, big, store, *args).returncode == 0
+    chain = store / "threshold" / "c-k1"
+    whole = {p.name: p.read_bytes() for p in chain.iterdir()}
+    assert sorted(whole) == ["chunk-0000000.json", "chunk-0000500.json"]
+    (chain / "chunk-0000500.json").unlink()
+    (chain / "chunk-0000500.tmp").write_bytes(b"torn")
+    assert _driver(root, big, store, *args).returncode == 0
+    assert {p.name: p.read_bytes() for p in chain.iterdir()} == whole
+    other = _driver(root, small, store, *args)
+    assert other.returncode != 0 and "ChainError" in other.stderr  # refused
+
+
+@pytest.mark.parametrize(
+    ("manifest", "message"),
+    [
+        ({"cells": "x"}, "no list of cells"),
+        ({"cells": []}, "no cells"),
+        ({"cells": [{"cell_id": "a", "k": 2, "t": 60, "law": "gaussian"}]}, "exactly"),
+        (
+            {
+                "cells": [
+                    _c := {
+                        "cell_id": "a",
+                        "k": 2,
+                        "t": 60,
+                        "law": "gaussian",
+                        "dependence": "independent",
+                    },
+                    _c,
+                ]
+            },
+            "duplicate",
+        ),  # fmt: skip
+        ({"cells": [{**_c, "cell_id": "../x"}]}, "path-safe"),
+        ({"cells": [{**_c, "k": 3}]}, "K must be"),
+        ({"cells": [{**_c, "t": 8}]}, "T must be"),
+        ({"cells": [{**_c, "law": "cauchy"}]}, "unknown law"),
+        ({"cells": [{**_c, "k": 1, "dependence": "equi0.5"}]}, "K = 1"),
+        ({"cells": [{**_c, "dependence": "clusters"}]}, "clusters"),
+    ],
+)
+def test_a_malformed_cell_manifest_is_refused(manifest: object, message: str) -> None:
+    from calibration.generator import cells_from_manifest
+
+    with pytest.raises(ValueError, match=message):
+        cells_from_manifest(manifest)
+
+
+@pytest.mark.parametrize(
+    ("manifest", "message"),
+    [
+        ({"purpose": "pilot"}, "purpose and replications"),
+        (
+            {"purpose": "x", "replications": {"threshold": 3}},
+            "purpose and replications",
+        ),
+        ({"purpose": "pilot", "replications": {"threshold": 0}}, "positive"),
+        ({"purpose": "pilot", "replications": {"threshold": 3, "dev": 1}}, "positive"),
+        ({"purpose": "qualification", "replications": {"threshold": 3}}, "exactly"),
+    ],
+)
+def test_a_bad_run_plan_is_refused(manifest: object, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        rundef.run_plan(manifest)
+    prescribed = {"purpose": "qualification", "replications": {"threshold": 300_000}}
+    assert rundef.run_plan(prescribed) == {"threshold": 300_000}

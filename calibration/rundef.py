@@ -204,6 +204,28 @@ def loaded_outside(root: Path) -> list[str]:
     return outside
 
 
+PRESCRIBED = {"threshold": 300_000}  # §13 rev 7g item 4
+
+
+def run_plan(manifest: object) -> dict[str, int]:
+    """Replications per namespace, from the cell manifest, or ValueError
+    (DR-3). A `qualification` run uses exactly the prescribed counts; a
+    `pilot` run (the measured re-pilot) any positive count. Both are in the
+    run definition, so its hash binds them and a resume cannot change them."""
+    if not isinstance(manifest, dict):
+        raise ValueError("cell manifest is not an object")
+    purpose, counts = manifest.get("purpose"), manifest.get("replications")
+    if purpose not in ("qualification", "pilot") or not isinstance(counts, dict):
+        raise ValueError("cell manifest needs purpose and replications")
+    if set(counts) != set(PRESCRIBED) or not all(
+        type(n) is int and n >= 1 for n in counts.values()
+    ):
+        raise ValueError(f"replications must be positive integers for {PRESCRIBED}")
+    if purpose == "qualification" and counts != PRESCRIBED:
+        raise ValueError(f"a qualification run uses exactly {PRESCRIBED}")
+    return dict(counts)
+
+
 def bytecode_problem() -> str | None:
     """Why engine code may not be running from its hashed source, or None
     (R6-1): a stale, unchecked or planted `.pyc` can run different code while

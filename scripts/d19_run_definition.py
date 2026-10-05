@@ -35,6 +35,7 @@ sys.dont_write_bytecode = True
 sys.pycache_prefix = tempfile.mkdtemp(prefix="d19-no-bytecode-")
 
 from calibration import rundef  # noqa: E402
+from calibration.generator import cells_from_manifest  # noqa: E402
 
 PREREG_PATH = (
     "review/governance-statistics-amendment/d19-preregistration/PREREGISTRATION.md"
@@ -110,13 +111,20 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, subprocess.CalledProcessError):
             print(f"cannot read {PREREG_PATH} at {args.prereg_commit}", file=sys.stderr)
             return 1
+        manifest = json.loads(args.cell_manifest.read_bytes())
+        try:  # DR-2, DR-3: a bad manifest never enters a run definition
+            cells_from_manifest(manifest)
+            rundef.run_plan(manifest)
+        except ValueError as error:
+            print(f"cell manifest: {error}", file=sys.stderr)
+            return 1
         code_hash = rundef.generator_sha256(ROOT)
         defn = rundef.build(
             prereg_commit=prereg_id,
             prereg_sha256=hashlib.sha256(prereg).hexdigest(),
             engine_commit=args.engine_commit,
             generator_code_sha256=code_hash,
-            cell_manifest=json.loads(args.cell_manifest.read_bytes()),
+            cell_manifest=manifest,
             seed_spec=json.loads(args.seed_spec.read_bytes()),
             image_digest=digest,
             exploration_manifest_sha256=hashlib.sha256(

@@ -6,6 +6,7 @@ authorised; the measured pilot only needs cost-representative cells."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import numpy as np
@@ -23,6 +24,55 @@ class Cell:
     law: str = "gaussian"  # gaussian | t5 | ar0.2 | ar0.5 | garch
     dependence: str = "independent"  # independent | equi0.5 | equi0.9 | equi0.99 |
     # near_duplicates | exact_duplicate | opposites | clusters | factor
+
+
+LAWS = ("gaussian", "t5", "ar0.2", "ar0.5", "garch")
+DEPENDENCES = (
+    "independent",
+    "equi0.5",
+    "equi0.9",
+    "equi0.99",
+    "near_duplicates",
+    "exact_duplicate",
+    "opposites",
+    "clusters",
+    "factor",
+)
+K_VALUES = (1, 2, 5, 20)  # §13 rev 7g item 1
+_CELL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+
+def cells_from_manifest(manifest: object) -> list[Cell]:
+    """The manifest's cells, or ValueError (DR-2): exactly the five fields,
+    unique path-safe ids, K in {1, 2, 5, 20}, T >= 16, a law and dependence
+    this generator implements and that fit K. Nothing falls through to a
+    generator default."""
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("cells"), list):
+        raise ValueError("cell manifest has no list of cells")
+    cells, seen = [], set()
+    for entry in manifest["cells"]:
+        if not isinstance(entry, dict) or set(entry) != set(Cell.__slots__):
+            raise ValueError(f"cell entry does not have exactly {Cell.__slots__}")
+        cell = Cell(**entry)
+        if not isinstance(cell.cell_id, str) or not _CELL_ID.fullmatch(cell.cell_id):
+            raise ValueError(f"cell id is not path-safe: {cell.cell_id!r}")
+        if cell.cell_id in seen:
+            raise ValueError(f"duplicate cell id: {cell.cell_id}")
+        seen.add(cell.cell_id)
+        if type(cell.k) is not int or cell.k not in K_VALUES:
+            raise ValueError(f"{cell.cell_id}: K must be one of {K_VALUES}")
+        if type(cell.t) is not int or cell.t < 16:
+            raise ValueError(f"{cell.cell_id}: T must be an integer >= 16")
+        if cell.law not in LAWS or cell.dependence not in DEPENDENCES:
+            raise ValueError(f"{cell.cell_id}: unknown law or dependence")
+        if cell.k == 1 and cell.dependence != "independent":
+            raise ValueError(f"{cell.cell_id}: K = 1 has no dependence")
+        if cell.dependence == "clusters" and cell.k not in (5, 20):
+            raise ValueError(f"{cell.cell_id}: clusters need K = 5 or 20")
+        cells.append(cell)
+    if not cells:
+        raise ValueError("cell manifest has no cells")
+    return cells
 
 
 @dataclass(frozen=True, slots=True)
