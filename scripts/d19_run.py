@@ -1,7 +1,7 @@
 """D-19 run driver (prereg §13 rev 7g item 6), started by the owner's
 launcher on the calibration machine inside the pinned image.
 
-  run --definition PATH --store DIR --namespace threshold [--workers 2]
+  run --definition PATH --store DIR --namespace threshold
       One hash-chained chain per cell of the run definition's manifest, in
       worker processes. Every worker runs the start gate itself before any
       chunk (R3-3) and builds its chain only from the run-definition hash and
@@ -47,6 +47,7 @@ from calibration.generator import Cell, cells_from_manifest, generate  # noqa: E
 from calibration.seeds import outer_seed, stream  # noqa: E402
 
 NAMESPACES = rundef.SEED_NAMESPACES  # prereg §8
+WORKERS = 2  # §13 rev 7g item 6: two workers, not a run-time choice (DR5-1)
 
 
 def _exact(values: dict[str, float]) -> dict[str, str]:
@@ -96,7 +97,6 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--definition", type=Path, required=True)
     run.add_argument("--store", type=Path, required=True)
     run.add_argument("--namespace", required=True)
-    run.add_argument("--workers", type=int, default=2)
     args = parser.parse_args(argv)
     if args.namespace not in NAMESPACES:
         print(f"namespace {args.namespace!r} is not built", file=sys.stderr)
@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     # then fails every pending job instead of waiting for it (DR3-1).
     context = multiprocessing.get_context("spawn")
     try:
-        with ProcessPoolExecutor(args.workers, mp_context=context) as pool:
+        with ProcessPoolExecutor(WORKERS, mp_context=context) as pool:
             heads = list(pool.map(worker, *zip(*jobs, strict=True)))
     except Exception as error:  # noqa: BLE001 - any worker failure stops the run
         print(f"run stopped: {type(error).__name__}: {error}", file=sys.stderr)

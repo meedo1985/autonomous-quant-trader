@@ -6,6 +6,7 @@ data only."""
 
 from __future__ import annotations
 
+import concurrent.futures
 import importlib.util
 import json
 import os
@@ -501,7 +502,7 @@ def test_the_driver_runs_one_bound_chain_per_cell_and_resumes(
     second run computes nothing new and ends at the same heads."""
     root, out = recorded
     store = tmp_path / "store"
-    args = ("--namespace", "threshold", "--workers", "2")
+    args = ("--namespace", "threshold")
     first = _driver(root, out, store, *args)
     assert first.returncode == 0, first.stderr
     defn = rundef.load(out)
@@ -653,7 +654,7 @@ def test_an_interrupted_run_resumes_identically_and_a_new_plan_cannot_extend_it(
     inputs.mkdir()
     big = _record_plan(root, inputs, "big", 501)
     exact = _record_plan(root, inputs, "exact", 500)
-    args = ("--namespace", "threshold", "--workers", "1")
+    args = ("--namespace", "threshold")
     store = tmp_path / "store"
     assert _driver(root, big, store, *args).returncode == 0
     chain = store / "threshold" / "c-k1"
@@ -802,3 +803,36 @@ def test_the_recorded_seed_specification_is_the_section_8_one(
     with pytest.raises(ValueError, match="seed specification"):
         driver.worker(changed, tmp_path / "store", "threshold", "c-k1",
                       rundef.definition_sha256(rundef.load(changed)))  # fmt: skip
+
+
+def test_the_parent_hands_its_definition_hash_to_every_worker(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:  # fmt: skip
+    """DR5-1/DR5-2: `main` runs exactly two workers and passes the hash of the
+    definition it gated; the file replaced after the parent's gate (here,
+    inside that gate) is refused by the real worker. Threads stand in for
+    processes so the replacement and the pool size can be observed."""
+    root, out = recorded
+    copy = tmp_path / "definition.json"
+    shutil.copy(out, copy)
+    driver = _load_driver(root, monkeypatch)
+    sizes: list[int] = []
+
+    class InProcess(concurrent.futures.ThreadPoolExecutor):
+        def __init__(self, workers: int, mp_context: object = None) -> None:
+            sizes.append(workers)
+            super().__init__(workers)
+
+    def gate_then_replace(defn: dict[str, object], _root: Path) -> object:
+        replaced = {**defn, "engine_commit": "f" * 40}
+        rundef.write(copy, replaced)  # a different definition, same path
+        return defn["gating"]
+
+    monkeypatch.setattr(driver, "ProcessPoolExecutor", InProcess)
+    monkeypatch.setattr(driver.rundef, "start_gate", gate_then_replace)
+    store = tmp_path / "store"
+    code = driver.main(["run", "--definition", str(copy), "--store", str(store),
+                        "--namespace", "threshold"])  # fmt: skip
+    assert code == 1 and "changed after the run started" in capsys.readouterr().err
+    assert sizes == [2] and not store.exists()
