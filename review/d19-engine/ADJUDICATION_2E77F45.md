@@ -18,7 +18,7 @@ Left unrepaired: D19CR-4 only, for the reason above.
 | Command | Result |
 |---|---|
 | `.venv/Scripts/python.exe -m pytest tests/unit/test_calibration_engine.py tests/unit/test_calibration_chunks.py -q -p no:cacheprovider` | 26 passed |
-| `.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider` | [exited with code 0] |
+| `.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider` | 1812 passed, 9 skipped in 527.26s (0:08:47) |
 | `.venv/Scripts/python.exe -m ruff check .` | all checks passed |
 | `.venv/Scripts/python.exe -m ruff format --check .` | 128 files already formatted |
 | `.venv/Scripts/python.exe -m mypy calibration` / `mypy src` / `mypy calibration src` | no issues (8 / 53 / 61 files) |
