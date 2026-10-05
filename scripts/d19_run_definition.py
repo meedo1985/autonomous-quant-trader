@@ -22,12 +22,17 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 os.environ["OPENBLAS_NUM_THREADS"] = "1"  # method V pinned runtime (VS1-4)
 os.environ["OPENBLAS_CORETYPE"] = "Haswell"
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "src")]  # this checkout's code only (RR-2)
+# No cached bytecode is read or written: every module runs from its source
+# (R6-1; `rundef.bytecode_problem` checks this in the start gate).
+sys.dont_write_bytecode = True
+sys.pycache_prefix = tempfile.mkdtemp(prefix="d19-no-bytecode-")
 
 from calibration import rundef  # noqa: E402
 
@@ -39,8 +44,10 @@ PREREG_PATH = (
 def _git(*args: str) -> bytes:
     """Git without replacement objects (R4-2): `refs/replace` can never stand
     a different tree in for the commit ID that is recorded."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    # No GIT_DIR/GIT_WORK_TREE/... override can point at another repository (R6-2).
     return subprocess.run(["git", "--no-replace-objects", "-C", str(ROOT), *args],
-                          capture_output=True, check=True).stdout  # fmt: skip
+                          capture_output=True, check=True, env=env).stdout  # fmt: skip
 
 
 def _head() -> str:

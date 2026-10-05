@@ -204,6 +204,29 @@ def loaded_outside(root: Path) -> list[str]:
     return outside
 
 
+def bytecode_problem() -> str | None:
+    """Why engine code may not be running from its hashed source, or None
+    (R6-1): a stale, unchecked or planted `.pyc` can run different code while
+    `__file__` names the source. The entry script must set
+    `sys.dont_write_bytecode` and point `sys.pycache_prefix` at a new empty
+    directory before importing any engine module."""
+    prefix = sys.pycache_prefix
+    if not sys.dont_write_bytecode or prefix is None:
+        return "bytecode caching is not disabled"
+    if any(Path(prefix).rglob("*.pyc")):
+        return "the bytecode cache directory is not empty"
+    for name, module in sorted(sys.modules.items()):
+        if name.split(".")[0] not in ("aqt", "calibration"):
+            continue
+        cached = getattr(module, "__cached__", None)
+        origin = getattr(getattr(module, "__spec__", None), "origin", None)
+        if not str(origin).endswith(".py") or (
+            cached is not None and not Path(cached).is_relative_to(Path(prefix))
+        ):
+            return f"{name} was not loaded from its source"
+    return None
+
+
 def build(
     *,
     prereg_commit: str,
@@ -267,6 +290,8 @@ def start_gate(defn: dict[str, Any], root: Path) -> dict[str, Any]:
         raise RuntimeError(f"U_ops: start gate: entry point is not hashed code: {main}")
     if outside := loaded_outside(root):
         raise RuntimeError(f"U_ops: start gate: loaded outside the checkout: {outside}")
+    if problem := bytecode_problem():
+        raise RuntimeError(f"U_ops: start gate: {problem}")
     if generator_sha256(root) != defn["generator_sha256"]:
         raise RuntimeError("U_ops: start gate: engine code differs")
     recorded = defn["gating"]

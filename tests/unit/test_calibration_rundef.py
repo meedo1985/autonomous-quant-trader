@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import py_compile
 import shutil
 import subprocess
 import sys
@@ -409,3 +410,56 @@ def test_record_refuses_a_file_changed_while_recording(
         "--exploration-manifest", str(inputs / "exploration.json"),
     ])  # fmt: skip
     assert code == 1 and not out.exists()
+
+
+def test_a_planted_bytecode_file_never_runs(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """R6-1: an unchecked-hash `.pyc` for `calibration/seeds.py` that would
+    run different code is never read; the gate passes on the source."""
+    root, out = recorded
+    copy = tmp_path / "engine"
+    shutil.copytree(root, copy)
+    seeds = copy / "calibration" / "seeds.py"
+    planted = tmp_path / "planted.py"
+    planted.write_text(seeds.read_text(encoding="utf-8") + "\nprint('PLANTED')\n")
+    py_compile.compile(
+        str(planted),
+        cfile=importlib.util.cache_from_source(str(seeds)),
+        dfile=str(seeds),
+        invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH,
+    )
+    done = _script(copy, "check", "--definition", str(out))
+    assert "PLANTED" not in done.stdout + done.stderr
+    assert done.returncode == 0, done.stderr
+
+
+def test_the_start_gate_needs_bytecode_disabled() -> None:
+    """R6-1: this pytest process caches bytecode, so the gate's check fails."""
+    assert rundef.bytecode_problem() is not None
+
+
+def test_a_git_dir_override_cannot_record_another_repository(tmp_path: Path) -> None:
+    """R6-2: GIT_DIR/GIT_WORK_TREE pointing at another repository whose
+    engine files match are ignored; its HEAD is not this checkout's."""
+    root = _checkout(tmp_path / "a")
+    other = _checkout(tmp_path / "b")
+    ident = ["-c", "user.name=t", "-c", "user.email=t@t"]
+    _git(other, *ident, "commit", "-q", "--allow-empty", "-m", "other")
+    (tmp_path / "in").mkdir()
+    inputs = tmp_path / "in"
+    for name in ("cells", "seeds", "exploration"):
+        (inputs / f"{name}.json").write_text("{}")
+    env = {**os.environ, rundef.IMAGE_DIGEST_ENV: DIGEST,
+           "GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other)}  # fmt: skip
+    command = [
+        sys.executable, str(root / "scripts" / "d19_run_definition.py"), "record",
+        "--out", str(inputs / "d.json"), "--prereg-commit", "HEAD",
+        "--engine-commit", _git(other, "rev-parse", "HEAD"),
+        "--cell-manifest", str(inputs / "cells.json"),
+        "--seed-spec", str(inputs / "seeds.json"),
+        "--exploration-manifest", str(inputs / "exploration.json"),
+    ]  # fmt: skip
+    done = subprocess.run(command, env=env, cwd=root, capture_output=True,
+                          text=True, check=False)  # fmt: skip
+    assert done.returncode == 1 and "is not this checkout's HEAD" in done.stderr
