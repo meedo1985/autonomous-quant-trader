@@ -37,8 +37,14 @@ PREREG_PATH = (
 
 
 def _git(*args: str) -> bytes:
-    return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True,
-                          check=True).stdout  # fmt: skip
+    """Git without replacement objects (R4-2): `refs/replace` can never stand
+    a different tree in for the commit ID that is recorded."""
+    return subprocess.run(["git", "--no-replace-objects", "-C", str(ROOT), *args],
+                          capture_output=True, check=True).stdout  # fmt: skip
+
+
+def _head() -> str:
+    return _git("rev-parse", "--verify", "HEAD^{commit}").decode().strip()
 
 
 def _checkout_problem(commit: str) -> str | None:
@@ -46,10 +52,10 @@ def _checkout_problem(commit: str) -> str | None:
     file by file with the commit's own blobs, not through `git status`, so
     index flags and ignore rules cannot hide a change (FE-1, RR-3)."""
     try:
-        head = _git("rev-parse", "HEAD").decode().strip()
-        listed = _git("ls-tree", "-r", "--name-only", "HEAD", "--", *rundef.CODE_DIRS)
+        head = _head()  # one captured ID for every read (R4-2)
+        listed = _git("ls-tree", "-r", "--name-only", head, "--", *rundef.CODE_DIRS)
         committed = {
-            rel: rundef.canonical_sha256(_git("show", f"HEAD:{rel}"))
+            rel: rundef.canonical_sha256(_git("show", f"{head}:{rel}"))
             for rel in listed.decode().splitlines()
             if rundef.is_code(rel)
         }
@@ -109,6 +115,9 @@ def main(argv: list[str] | None = None) -> int:
                 args.exploration_manifest.read_bytes()
             ).hexdigest(),
         )
+        if _head() != args.engine_commit:  # HEAD moved while recording (R4-2)
+            print("HEAD moved while recording; nothing written", file=sys.stderr)
+            return 1
         rundef.write(args.out, defn)
         print(rundef.definition_sha256(defn))
         return 0

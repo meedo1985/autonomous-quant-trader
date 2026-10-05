@@ -179,14 +179,24 @@ def generator_sha256(root: Path) -> str:
 
 
 def loaded_outside(root: Path) -> list[str]:
-    """Engine modules this process loaded from anywhere but `root` (RR-2)."""
+    """Modules this process runs that the code hash does not cover: an
+    `aqt`/`calibration` module loaded from anywhere but `root` (RR-2), or any
+    module loaded from inside `root` that is not hashed code, such as a
+    nested `calibration/extra/x.py` or a script helper (R4-1)."""
     base = root.resolve()
+    # The interpreter's own installation (a virtual environment may sit in
+    # the checkout) is gated by the runtime identity, not the code hash.
+    runtime = {Path(sys.prefix).resolve(), Path(sys.base_prefix).resolve()}
     outside = []
     for name, module in sorted(sys.modules.items()):
-        if name.split(".")[0] not in ("aqt", "calibration"):
+        file = getattr(module, "__file__", None)
+        path = None if file is None else Path(file).resolve()
+        if path is not None and any(path.is_relative_to(r) for r in runtime):
             continue
-        path = getattr(module, "__file__", None)
-        if path is None or not Path(path).resolve().is_relative_to(base):
+        if path is not None and path.is_relative_to(base):
+            if not is_code(path.relative_to(base).as_posix()):
+                outside.append(name)
+        elif name.split(".")[0] in ("aqt", "calibration"):
             outside.append(name)
     return outside
 

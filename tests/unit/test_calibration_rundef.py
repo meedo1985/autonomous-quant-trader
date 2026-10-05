@@ -6,6 +6,7 @@ data only."""
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -151,7 +152,9 @@ def test_the_code_hash_is_the_same_for_crlf_and_lf_checkouts(tmp_path: Path) -> 
 def test_engine_modules_loaded_from_elsewhere_are_reported(tmp_path: Path) -> None:
     """RR-2: this test process loaded `aqt` and `calibration` from the
     repository, so for any other root they are outside it."""
-    assert rundef.loaded_outside(ROOT) == []
+    engine = ("aqt", "calibration")
+    assert not [m for m in rundef.loaded_outside(ROOT) if m.split(".")[0] in engine]
+    assert __name__ in rundef.loaded_outside(ROOT)  # not hashed code
     outside = rundef.loaded_outside(tmp_path)
     assert "calibration.rundef" in outside and "aqt.metrics.statistics" in outside
 
@@ -319,3 +322,41 @@ def test_the_start_gate_refuses_modules_loaded_outside_the_checkout(
     monkeypatch.setattr(sys.modules["__main__"], "__file__", str(entry))
     with pytest.raises(RuntimeError, match="loaded outside the checkout"):
         rundef.start_gate({"generator_sha256": "", "gating": {}}, tmp_path)
+
+
+def test_a_nested_helper_inside_the_checkout_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R4-1: a module loaded from inside the checkout but outside the hashed
+    code (here `calibration/extra/worker.py`, added after recording)."""
+    helper = tmp_path / "calibration" / "extra" / "worker.py"
+    helper.parent.mkdir(parents=True)
+    helper.write_text("X = 1\n")
+    spec = importlib.util.spec_from_file_location("d19_extra_worker", helper)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setitem(sys.modules, "d19_extra_worker", module)
+    assert "d19_extra_worker" in rundef.loaded_outside(tmp_path)
+    assert "calibration/extra/worker.py" not in rundef.code_inventory(tmp_path)
+
+
+def test_a_git_replacement_ref_cannot_stand_in_for_the_engine_commit(
+    tmp_path: Path,
+) -> None:
+    """R4-2: with `refs/replace` mapping commit A to B, plain `ls-tree`/`show`
+    of A read B's tree; the working tree matches B, the record says A."""
+    root = _checkout(tmp_path)
+    (tmp_path / "in").mkdir()
+    a = _git(root, "rev-parse", "HEAD")
+    with (root / "calibration" / "seeds.py").open("a") as handle:
+        handle.write("# B\n")
+    ident = ["-c", "user.name=t", "-c", "user.email=t@t"]
+    _git(root, *ident, "commit", "-q", "-am", "B")
+    b = _git(root, "rev-parse", "HEAD")
+    _git(root, "checkout", "-q", a)
+    _git(root, "checkout", b, "--", "calibration/seeds.py")  # worktree as B
+    _git(root, "replace", a, b)
+    assert _git(root, "show", f"{a}:calibration/seeds.py").endswith("# B")
+    done = _record(root, tmp_path / "in" / "d.json", a)
+    assert done.returncode == 1 and "engine code differs from HEAD" in done.stderr
