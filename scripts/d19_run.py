@@ -62,10 +62,14 @@ def threshold_replication(cell: Cell, anchor: str, rep: int) -> dict[str, str]:
     return _exact(classifier.diagnostics(legs.x))
 
 
-def worker(definition: Path, store: Path, namespace: str, cell_id: str) -> str:
+def worker(
+    definition: Path, store: Path, namespace: str, cell_id: str, expected: str
+) -> str:
     """One chain, in its own process: the start gate first, then the chunks
     (R3-3, FE-5). Returns the chain head."""
     defn = rundef.load(definition)
+    if rundef.definition_sha256(defn) != expected:  # DR4-1
+        raise ValueError("the run definition changed after the run started")
     gating = rundef.start_gate(defn, ROOT)
     manifest = defn["cell_manifest"]
     cells = {c.cell_id: c for c in cells_from_manifest(manifest)}
@@ -105,8 +109,10 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, RuntimeError) as error:
         print(error, file=sys.stderr)
         return 1
+    expected = rundef.definition_sha256(defn)  # every worker must load this
     jobs: list[tuple[Any, ...]] = [
-        (args.definition, args.store, args.namespace, c.cell_id) for c in cells
+        (args.definition, args.store, args.namespace, c.cell_id, expected)
+        for c in cells
     ]
     # A worker that dies (killed, out of memory) breaks the executor, which
     # then fails every pending job instead of waiting for it (DR3-1).

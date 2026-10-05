@@ -558,7 +558,9 @@ def test_a_worker_runs_the_start_gate_before_any_chunk(
     monkeypatch.setattr(driver.rundef, "start_gate", refused)
     store = tmp_path / "store"
     with pytest.raises(RuntimeError, match="refused in the worker"):
-        driver.worker(out, store, "threshold", "c-k2")
+        driver.worker(
+            out, store, "threshold", "c-k2", rundef.definition_sha256(rundef.load(out))
+        )
     assert not store.exists()
 
 
@@ -587,7 +589,9 @@ def test_threshold_seeds_follow_prereg_section_8(
     driver = _load_driver(root, monkeypatch)
     monkeypatch.setattr(driver.rundef, "start_gate", lambda defn, _root: defn["gating"])
     store = tmp_path / "store"
-    driver.worker(out, store, "threshold", "c-k2")
+    driver.worker(
+        out, store, "threshold", "c-k2", rundef.definition_sha256(rundef.load(out))
+    )
     chunk = json.loads(
         (store / "threshold" / "c-k2" / "chunk-0000000.json").read_bytes()
     )
@@ -610,7 +614,9 @@ def test_a_chain_carries_the_gating_its_worker_gate_returned(
     driver = _load_driver(root, monkeypatch)
     monkeypatch.setattr(driver.rundef, "start_gate", lambda *_: {"from": "worker gate"})
     store = tmp_path / "store"
-    driver.worker(out, store, "threshold", "c-k1")
+    driver.worker(
+        out, store, "threshold", "c-k1", rundef.definition_sha256(rundef.load(out))
+    )
     chunk = json.loads(
         (store / "threshold" / "c-k1" / "chunk-0000000.json").read_bytes()
     )
@@ -684,18 +690,40 @@ def _die(*_: object) -> str:
 
 
 def test_a_killed_worker_stops_the_run_instead_of_hanging(
-    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:  # fmt: skip
-    """DR3-1: the executor reports the broken worker; the run exits 1."""
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """DR3-1/DR4-2: in a separate process with a timeout, so a regression to a
+    hanging pool fails promptly instead of hanging the test run."""
+    root, out = recorded
+    script = str(root / "scripts" / "d19_run.py")
+    code = "\n".join([
+        "import importlib.util, sys",
+        f"sys.path[:0] = [{str(Path(__file__).parent)!r}]",
+        "import test_calibration_rundef as t",
+        f"spec = importlib.util.spec_from_file_location('drv', {script!r})",
+        "d = importlib.util.module_from_spec(spec); spec.loader.exec_module(d)",
+        "d.rundef.start_gate = lambda defn, root: defn['gating']",
+        "d.worker = t._die",
+        f"sys.exit(d.main(['run', '--definition', {str(out)!r}, '--store', "
+        f"{str(tmp_path / 'store')!r}, '--namespace', 'threshold']))",
+    ])  # fmt: skip
+    env = {**os.environ, "PYTHONPATH": f"{ROOT}{os.pathsep}{ROOT / 'src'}"}
+    command = [sys.executable, "-c", code]
+    done = subprocess.run(command, env=env, cwd=root, capture_output=True,
+                          text=True, timeout=180, check=False)  # fmt: skip
+    assert done.returncode == 1 and "BrokenProcessPool" in done.stderr, done.stderr
+
+
+def test_a_worker_refuses_a_definition_replaced_after_the_start(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DR4-1: the worker reloads the file; a different hash is refused."""
     root, out = recorded
     driver = _load_driver(root, monkeypatch)
     monkeypatch.setattr(driver.rundef, "start_gate", lambda d, _root: d["gating"])
-    monkeypatch.setattr(driver, "worker", _die)
-    store = str(tmp_path / "store")
-    argv = ["run", "--definition", str(out), "--store", store]
-    code = driver.main([*argv, "--namespace", "threshold"])
-    assert code == 1 and "BrokenProcessPool" in capsys.readouterr().err
+    with pytest.raises(ValueError, match="changed after the run started"):
+        driver.worker(out, tmp_path / "store", "threshold", "c-k1", "0" * 64)
+    assert not (tmp_path / "store").exists()
 
 
 @pytest.mark.parametrize(
@@ -772,4 +800,5 @@ def test_the_recorded_seed_specification_is_the_section_8_one(
     driver = _load_driver(root, monkeypatch)
     monkeypatch.setattr(driver.rundef, "start_gate", lambda d, _root: d["gating"])
     with pytest.raises(ValueError, match="seed specification"):
-        driver.worker(changed, tmp_path / "store", "threshold", "c-k1")
+        driver.worker(changed, tmp_path / "store", "threshold", "c-k1",
+                      rundef.definition_sha256(rundef.load(changed)))  # fmt: skip
