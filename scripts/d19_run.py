@@ -9,7 +9,9 @@ launcher on the calibration machine inside the pinned image.
       compared. Restarting resumes: finished chunks are verified and kept.
       The replication count comes from the run definition's plan (DR-3),
       seeds from prereg §8: namespace d19-threshold-v1, anchor = the
-      preregistration hash recorded in the definition (DR-1).
+      preregistration hash recorded in the definition (DR-1). One run per
+      store namespace at a time (FD-4); the first failed chain stops the
+      run and no later chain starts (FD-2).
 
 Only the threshold namespace is built: each replication is the classifier
 diagnostics of one generator draw. Development and held-out need the
@@ -22,7 +24,9 @@ Synthetic data only.
 
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -35,12 +39,18 @@ sys.path[:0] = [str(ROOT), str(ROOT / "src")]  # this checkout's code only (RR-2
 # which re-runs these lines when it imports this script (R6-1).
 sys.dont_write_bytecode = True
 sys.pycache_prefix = tempfile.mkdtemp(prefix="d19-no-bytecode-")
+atexit.register(shutil.rmtree, sys.pycache_prefix, True)  # FD-6
 
 import argparse  # noqa: E402
 import multiprocessing  # noqa: E402
 import struct  # noqa: E402
-from concurrent.futures import ProcessPoolExecutor  # noqa: E402
-from typing import Any  # noqa: E402
+from concurrent.futures import (  # noqa: E402
+    FIRST_COMPLETED,
+    Future,
+    ProcessPoolExecutor,
+    wait,
+)
+from typing import IO, Any  # noqa: E402
 
 from calibration import chunks, classifier, rundef  # noqa: E402
 from calibration.generator import Cell, cells_from_manifest, generate  # noqa: E402
@@ -90,6 +100,51 @@ def worker(
     return chunks.run(chain, lambda rep: threshold_replication(cell, anchor, rep))
 
 
+def lock(directory: Path) -> IO[bytes]:
+    """An exclusive lock on `directory`, held while the returned file is
+    open and released when the process ends, however it ends; RuntimeError
+    if another run holds it (FD-4)."""
+    directory.mkdir(parents=True, exist_ok=True)
+    handle = (directory / ".lock").open("a+b")
+    handle.seek(0)  # every process locks the same byte
+    try:
+        if sys.platform == "win32":
+            import msvcrt  # noqa: PLC0415
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl  # noqa: PLC0415
+
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as error:
+        handle.close()
+        raise RuntimeError(f"another run holds {directory}") from error
+    return handle
+
+
+def run_all(jobs: list[tuple[Any, ...]], job: Any = None) -> list[str]:
+    """Every job in the two-worker spawn pool; heads in job order. At most
+    one job per worker is handed to the pool, so the first exception, from
+    whichever job, is raised as soon as the other running job ends, and no
+    later job starts (FD-2). A worker that dies (killed, out of memory)
+    breaks the executor, which fails its jobs (DR3-1)."""
+    context = multiprocessing.get_context("spawn")
+    queue = iter(enumerate(jobs))
+    running: dict[Future[str], int] = {}
+    heads: dict[int, str] = {}
+    with ProcessPoolExecutor(WORKERS, mp_context=context) as pool:
+        while True:
+            for index, args in queue:
+                running[pool.submit(job or worker, *args)] = index
+                if len(running) == WORKERS:
+                    break
+            if not running:
+                return [heads[i] for i in range(len(jobs))]
+            done, _ = wait(running, return_when=FIRST_COMPLETED)
+            for future in done:
+                heads[running.pop(future)] = future.result()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="D-19 run driver")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -101,12 +156,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.namespace not in NAMESPACES:
         print(f"namespace {args.namespace!r} is not built", file=sys.stderr)
         return 1
-    defn = rundef.load(args.definition)
     try:
+        defn = rundef.load(args.definition)  # FD-6: a message, not a traceback
         cells = cells_from_manifest(defn["cell_manifest"])  # DR-2
         rundef.run_plan(defn["cell_manifest"])  # DR-3
         rundef.start_gate(defn, ROOT)  # fail fast; every worker checks again
-    except (ValueError, RuntimeError) as error:
+    except (OSError, KeyError, ValueError, RuntimeError) as error:
         print(error, file=sys.stderr)
         return 1
     expected = rundef.definition_sha256(defn)  # every worker must load this
@@ -114,12 +169,9 @@ def main(argv: list[str] | None = None) -> int:
         (args.definition, args.store, args.namespace, c.cell_id, expected)
         for c in cells
     ]
-    # A worker that dies (killed, out of memory) breaks the executor, which
-    # then fails every pending job instead of waiting for it (DR3-1).
-    context = multiprocessing.get_context("spawn")
     try:
-        with ProcessPoolExecutor(WORKERS, mp_context=context) as pool:
-            heads = list(pool.map(worker, *zip(*jobs, strict=True)))
+        with lock(args.store / args.namespace):
+            heads = run_all(jobs)
     except Exception as error:  # noqa: BLE001 - any worker failure stops the run
         print(f"run stopped: {type(error).__name__}: {error}", file=sys.stderr)
         return 1

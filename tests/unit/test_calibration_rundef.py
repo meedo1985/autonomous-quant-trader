@@ -835,4 +835,104 @@ def test_the_parent_hands_its_definition_hash_to_every_worker(
     code = driver.main(["run", "--definition", str(copy), "--store", str(store),
                         "--namespace", "threshold"])  # fmt: skip
     assert code == 1 and "changed after the run started" in capsys.readouterr().err
-    assert sizes == [2] and not store.exists()
+    assert sizes == [2] and not list(store.rglob("chunk-*"))
+
+
+def _diverged() -> None:
+    raise RuntimeError("fast.mean_var differs from the reference")
+
+
+def test_a_runtime_where_fast_differs_is_never_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FD-1/CRD-1: the reference vectors are measured on the same machine,
+    so they cannot see it; recording refuses."""
+    monkeypatch.setattr(dsr, "runtime_identity", lambda: {})
+    monkeypatch.setattr(dsr, "canaries", lambda: {})
+    monkeypatch.setattr(dsr, "v_runtime_check", lambda *_: None)
+    monkeypatch.setattr(fast, "self_check", _diverged)
+    with pytest.raises(RuntimeError, match="differs from the reference"):
+        rundef.gating(DIGEST)
+
+
+def test_a_runtime_where_fast_differs_stops_the_start(
+    recorded: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FD-1/CRD-1: every earlier gate passes; the self-check still refuses."""
+    root, out = recorded
+    defn = rundef.load(out)
+    entry = types.ModuleType("__main__")
+    entry.__file__ = str(root / "scripts" / "d19_run.py")
+    monkeypatch.setitem(sys.modules, "__main__", entry)
+    monkeypatch.setattr(rundef, "loaded_outside", lambda _root: [])
+    monkeypatch.setattr(rundef, "bytecode_problem", lambda: None)
+    code_hash = defn["generator_sha256"]
+    monkeypatch.setattr(rundef, "generator_sha256", lambda _root: code_hash)
+    monkeypatch.setattr(dsr, "v_runtime_check", lambda *_: None)
+    monkeypatch.setattr(fast, "self_check", _diverged)
+    with pytest.raises(RuntimeError, match="U_ops: start gate: fast.mean_var"):
+        rundef.start_gate(defn, root)
+
+
+def _slow_or_failing(name: str, marks: Path) -> str:
+    """Spawn-pool stand-in: 'slow' blocks, 'fail' raises at once, the rest
+    leave a marker."""
+    import time
+
+    if name == "slow":
+        time.sleep(3)
+    if name == "fail":
+        raise ValueError("chain fail broke")
+    time.sleep(0.4)  # a queued chain takes time; six fit inside "slow"
+    (marks / name).write_text("done")
+    return name
+
+
+def test_a_failed_chain_stops_the_run_without_waiting_for_earlier_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FD-2/CRD-2: the second job fails while the first is still running;
+    the run stops when the first ends, and no queued job starts. With all
+    jobs submitted and results read in job order, all six would run."""
+    driver = _load_driver(ROOT, monkeypatch)
+    monkeypatch.syspath_prepend(str(Path(__file__).parent))
+    import test_calibration_rundef as here  # picklable by name in spawn workers
+
+    marks = tmp_path / "marks"
+    marks.mkdir()
+    names = ["slow", "fail", *(f"q{i}" for i in range(6))]
+    with pytest.raises(ValueError, match="chain fail broke"):
+        driver.run_all([(n, marks) for n in names], here._slow_or_failing)
+    assert {m.name for m in marks.iterdir()} <= {"slow"}  # no queued job ran
+
+
+def test_a_second_run_on_the_same_store_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FD-4/CRD-3: one run per store namespace; the lock ends with its run."""
+    driver = _load_driver(ROOT, monkeypatch)
+    namespace = tmp_path / "store" / "threshold"
+    script = str(ROOT / "scripts" / "d19_run.py")
+    with driver.lock(namespace):
+        code = "\n".join([
+            "import importlib.util, sys",
+            f"spec = importlib.util.spec_from_file_location('drv', {script!r})",
+            "d = importlib.util.module_from_spec(spec); spec.loader.exec_module(d)",
+            f"d.lock(__import__('pathlib').Path({str(namespace)!r}))",
+        ])  # fmt: skip
+        done = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                              text=True, timeout=120, check=False)  # fmt: skip
+        assert done.returncode == 1 and "another run holds" in done.stderr
+    with driver.lock(namespace):  # released: taken again
+        pass
+
+
+def test_a_missing_definition_is_a_message_not_a_traceback(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """FD-6."""
+    root, _ = recorded
+    done = _driver(root, tmp_path / "absent.json", tmp_path / "store",
+                   "--namespace", "threshold")  # fmt: skip
+    assert done.returncode == 1 and "Traceback" not in done.stderr
+    assert "absent.json" in done.stderr and not (tmp_path / "store").exists()

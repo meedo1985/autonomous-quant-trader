@@ -23,7 +23,7 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from calibration import dsr, gates
+from calibration import dsr, fast, gates
 from calibration.generator import Cell, generate
 from calibration.seeds import cj, family_seed, outer_seed, sha, stream
 
@@ -128,9 +128,11 @@ def loaded_libraries() -> dict[str, str]:
 def gating(image_digest: str) -> dict[str, Any]:
     """The gating identity of this machine, measured when the run definition
     is recorded: method V's pinned environment is checked first (V refuses
-    to run before it), then the reference vectors are computed."""
+    to run before it), and `fast` must equal its pure-Python reference on
+    this runtime (FD-1), then the reference vectors are computed."""
     identity, measured = dsr.runtime_identity(), dsr.canaries()
     dsr.v_runtime_check(identity, measured)
+    fast.self_check()
     return {
         "identity": identity,
         "image_digest": image_digest,
@@ -332,6 +334,10 @@ def start_gate(defn: dict[str, Any], root: Path) -> dict[str, Any]:
     recorded = defn["gating"]
     try:
         dsr.v_runtime_check(recorded["identity"], recorded["canaries"])
+    except RuntimeError as error:
+        raise RuntimeError(f"U_ops: start gate: {error}") from error
+    try:
+        fast.self_check()  # FD-1: the reference vectors alone cannot see it
     except RuntimeError as error:
         raise RuntimeError(f"U_ops: start gate: {error}") from error
     if os.environ.get(IMAGE_DIGEST_ENV) != recorded["image_digest"]:

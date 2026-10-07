@@ -70,6 +70,17 @@ def test_block_length_is_bit_identical_to_production() -> None:
             assert capped == (expected.clipping == "UPPER")
 
 
+def test_mean_var_is_bit_identical_to_the_reference_on_every_runtime() -> None:
+    """FD-1/CRD-1: on AVX-512 Linux NumPy's `power` differed from `**` in
+    44 of 2,000 such series; `fast` now squares with `**` itself."""
+    from calibration import fast
+
+    rng = np.random.default_rng(20261007)
+    for _ in range(2000):
+        x = rng.standard_normal(365) * 0.01
+        assert fast.mean_var(x) == dsr._mean_var(x.tolist())  # noqa: SLF001
+
+
 def test_g1_availability_matches_the_production_routine() -> None:
     from calibration import gates
 

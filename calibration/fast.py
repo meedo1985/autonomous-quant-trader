@@ -5,10 +5,11 @@ equivalence rule is needed:
 - sums use `math.fsum`, whose correctly rounded result does not depend on
   order, over NumPy-gathered values (`.tolist()`);
 - element-wise `+ - * /` in NumPy are the same IEEE operations as in Python;
-- `x ** 2` in the reference calls C `pow`; NumPy's `power` with an *array*
-  exponent calls the same `pow` (its scalar-2 path is `x * x`, which differs
-  in about 5 in 10,000 cases on this platform), so `_square` uses the array
-  form, and `self_check` refuses to run if that ever stops holding.
+- `x ** 2` in the reference is Python's float power, so `_squares` applies
+  that same operation to each value. NumPy's `power` is not used: with
+  AVX-512 dispatch it differs from `**` in about 27 of 1,000 values, and
+  `x * x` differs from `**` as well (FD-1, CRD-1). `self_check` compares
+  `mean_var` with the pure-Python reference and refuses on any difference.
 
 Index generation stays the production loop: a vectorised exact
 Mersenne-Twister walk matched it draw for draw but was slower (1.20 s against
@@ -22,23 +23,28 @@ import random
 import numpy as np
 
 
-def _square(d: np.ndarray) -> np.ndarray:
-    return np.asarray(np.power(d, np.full_like(d, 2.0)))
+def _squares(d: np.ndarray) -> list[float]:
+    """Each value squared with Python's `**`, the reference's operation."""
+    return [v**2 for v in d.tolist()]
 
 
 def self_check() -> None:
-    """The `pow` identity this module relies on, on random values."""
+    """`mean_var` equals the pure-Python reference on random values, or
+    RuntimeError (a U_ops cause in the start gate)."""
     r = random.Random(20261004)
-    xs = [r.uniform(-1, 1) * 10 ** r.randint(-8, 3) for _ in range(20000)]
-    if _square(np.array(xs)).tolist() != [x**2 for x in xs]:
-        raise RuntimeError("NumPy power no longer matches Python ** on this runtime")
+    for _ in range(50):
+        xs = [r.uniform(-1, 1) * 10 ** r.randint(-8, 3) for _ in range(400)]
+        mean = math.fsum(xs) / len(xs)
+        expected = mean, math.fsum((x - mean) ** 2 for x in xs) / (len(xs) - 1)
+        if mean_var(np.array(xs)) != expected:
+            raise RuntimeError("fast.mean_var differs from the reference")
 
 
 def mean_var(values: np.ndarray) -> tuple[float, float]:
     """Reference two-pass mean and (n-1) variance, bit-identical."""
     n = len(values)
     mean = math.fsum(values.tolist()) / n
-    return mean, math.fsum(_square(values - mean).tolist()) / (n - 1)
+    return mean, math.fsum(_squares(values - mean)) / (n - 1)
 
 
 def sharpes(gathered: np.ndarray) -> np.ndarray | None:
