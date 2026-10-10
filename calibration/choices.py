@@ -77,47 +77,105 @@ def _finite_hex(value: object) -> bool:
     return number == number and abs(number) != float("inf")
 
 
+NO_LENGTHS = frozenset({"INVALID_SERIES", "ZERO_VARIANCE_COLUMN"})  # rules 1-2
+# Outcomes reached before the block rule is applied: the same for both rules.
+RULE_FREE = BEFORE_CLASSIFIER | {"UNSUPPORTED_LAW"}
+
+
+def _entry_problem(
+    entry: object, refused: bool, k: float, u_g_nominee: object
+) -> str | None:
+    """Why one rule's entry is not a return of `dsr.evaluate` as
+    `dev_replication` encodes it, or None."""
+    if not isinstance(entry, dict):
+        return "malformed"
+    reason = entry["reason"]
+    if reason not in BEFORE_CLASSIFIER | AFTER_CLASSIFIER | {"UNSUPPORTED_LAW", None}:
+        return f"unknown cause code {reason!r}"
+    if reason not in BEFORE_CLASSIFIER and refused != (reason == "UNSUPPORTED_LAW"):
+        return "classifier outcome does not follow from the thresholds"
+    has_ratio = reason not in NO_LENGTHS and reason != "BLOCK_LENGTH_UNAVAILABLE"
+    if not _present(entry["length_ratio"], has_ratio):
+        return "max L/T does not match the cause code"
+    available = reason is None
+    for name in ("z", "s0"):
+        if not _present(entry[name], available):
+            return f"{name} does not match the cause code"
+    if not _present(entry["block"], available or reason in AFTER_CLASSIFIER):
+        return "L does not match the cause code"
+    j = entry["nominee"]
+    if not available:
+        return None if j is None else "a refusal carries a nominee"
+    if type(j) is not int or not 0 <= j < k:
+        return "an available result without a valid nominee"
+    return None if j == u_g_nominee else "DSR nominee differs from the U_G nominee"
+
+
+def _present(value: object, expected: bool) -> bool:
+    """A finite binary64 hex when expected, else None."""
+    return _finite_hex(value) if expected else value is None
+
+
+def _columns_problem(record: dict[str, object], reason: object, k: float) -> str | None:
+    """`columns` and `column_checks` against the cause code (I1R3-2): rule 1
+    fails iff a column is not finite, rule 2 iff all are and one has zero
+    variance; lengths exist from rule 3 on, one is missing iff rule 3 fails,
+    and some column is capped iff rule 4 fails."""
+    checks = record["column_checks"]
+    if not isinstance(checks, list) or len(checks) != k:
+        return "column_checks malformed"
+    finite = [c[0] for c in checks]
+    if (not all(finite)) != (reason == "INVALID_SERIES"):
+        return "column_checks do not match rule 1"
+    if all(finite) and any(c[1] is False for c in checks) != (
+        reason == "ZERO_VARIANCE_COLUMN"
+    ):
+        return "column_checks do not match rule 2"
+    columns = record["columns"]
+    if reason in NO_LENGTHS:
+        return None if columns is None else "lengths recorded before rule 3"
+    if not isinstance(columns, list) or len(columns) != k:
+        return "columns malformed"
+    lengths = [c[0] for c in columns]
+    if any(v is not None and not _finite_hex(v) for v in lengths):
+        return "a column length is not finite"
+    if (None in lengths) != (reason == "BLOCK_LENGTH_UNAVAILABLE"):
+        return "columns do not match rule 3"
+    if None not in lengths and any(c[1] for c in columns) != (reason == CAPPED):
+        return "columns do not match rule 4"
+    return None
+
+
 def consistent(record: dict[str, object], bounds: reduce.Bounds) -> str | None:
     """Why a development record cannot have come from `dev_replication`
-    with these thresholds, or None (I1-3, I1R-1, I1R-2): each cause code in
-    the Annex B order (a rule 1-4 code whatever the classifier says;
-    otherwise UNSUPPORTED_LAW iff the classifier refuses; a rule 5-6 code
-    only after it accepts); every field is what that return of
-    `dsr.evaluate` sets (I1R2-1): an available result has finite z_f*, S0
-    and L and nominated the U_G nominee (an integer in range K); a rule 5-6
-    refusal has a finite L and nothing else; any other refusal has none of
-    them; at K = 1 both rules are one result."""
+    with these thresholds, or None (I1-3, I1R-1/2, I1R2-1, I1R3-1/2).
+
+    Per rule, every field is what that return of `dsr.evaluate` sets, in
+    the Annex B order: a rule 1-4 code whatever the classifier says, else
+    UNSUPPORTED_LAW iff the classifier refuses, a rule 5-6 code only after
+    it accepts; max L/T from rule 4 on; L from rule 5 on; z_f*, S0 and an
+    integer nominee in range K equal to the U_G nominee only when
+    available. Across rules, outcomes before the block rule applies are one
+    result, max L/T is rule-free, and at K = 1 the rules are identical. The
+    per-column fields match the first rules' outcome."""
     values = reduce.decode(record["diagnostics"])
     refused = not classifier.within(values, *bounds)
+    k = values["K"]
     for rule in RULES:
-        entry = record[rule]
-        if not isinstance(entry, dict):
-            return f"{rule}: malformed"
-        reason = entry["reason"]
-        known = BEFORE_CLASSIFIER | AFTER_CLASSIFIER | {"UNSUPPORTED_LAW", None}
-        if reason not in known:
-            return f"{rule}: unknown cause code {reason!r}"
-        if reason not in BEFORE_CLASSIFIER and refused != (reason == "UNSUPPORTED_LAW"):
-            return f"{rule}: classifier outcome does not follow from the thresholds"
-        if reason is None:
-            if not all(_finite_hex(entry[f]) for f in ("z", "s0", "block")):
-                return f"{rule}: an available result without finite z, S0 or L"
-            j = entry["nominee"]
-            if type(j) is not int or not 0 <= j < values["K"]:
-                return f"{rule}: an available result without a valid nominee"
-            if j != record["nominee"]:
-                return f"{rule}: DSR nominee differs from the U_G nominee"
-            continue
-        if any(entry[f] is not None for f in ("z", "s0", "nominee")):
-            return f"{rule}: a refusal carries z, S0 or a nominee"
-        has_block = entry["block"] is not None
-        if has_block != (reason in AFTER_CLASSIFIER) or (
-            has_block and not _finite_hex(entry["block"])
-        ):
-            return f"{rule}: L does not match the cause code"
-    if values["K"] == 1 and record["largest"] != record["median"]:
+        problem = _entry_problem(record[rule], refused, k, record["nominee"])
+        if problem is not None:
+            return f"{rule}: {problem}"
+    first, second = record["largest"], record["median"]
+    assert isinstance(first, dict) and isinstance(second, dict)
+    if k == 1 and first != second:
         return "K = 1: the two rules differ"
-    return None
+    if (first["reason"] in RULE_FREE or second["reason"] in RULE_FREE) and (
+        first != second
+    ):
+        return "the rules differ before the block rule is applied"
+    if first["length_ratio"] != second["length_ratio"]:
+        return "max L/T differs between the rules"
+    return _columns_problem(record, first["reason"], k)
 
 
 def _passes(rep: Rep, z: float) -> bool:

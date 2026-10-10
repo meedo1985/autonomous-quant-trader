@@ -115,21 +115,42 @@ def _record(
     reason: str | None, nominee: int, u_g_nominee: int, *, k: float = 1.0,
     z: float | None = 2.0,
 ) -> dict[str, object]:  # fmt: skip
-    """A record as dev_replication writes it: an available result has every
-    field; a rules 5-6 refusal only L; any other refusal none (I1R2-1)."""
+    """A whole record as dev_replication writes it for this cause code
+    (I1R2-1, I1R3-2): z, S0 and a nominee only when available; L from rule 5
+    on; max L/T from rule 4 on; per-column lengths from rule 3 on; per-column
+    checks matching rules 1-2; a missing length for rule 3, a cap for rule 4."""
     available = reason is None
+    has_lengths = reason not in choices.NO_LENGTHS
     entry = {
         "reason": reason,
         "nominee": nominee if available else None,
         "z": None if z is None or not available else _h(z),
         "s0": _h(0.1) if available else None,
         "block": _h(3.0) if available or reason in choices.AFTER_CLASSIFIER else None,
+        "length_ratio": _h(0.05)
+        if has_lengths and reason != "BLOCK_LENGTH_UNAVAILABLE"
+        else None,
     }
+    n = int(k)
+    checks: list[list[bool | None]] = [[True, True] for _ in range(n)]
+    if reason == "INVALID_SERIES":
+        checks[0] = [False, None]
+    if reason == "ZERO_VARIANCE_COLUMN":
+        checks[0] = [True, False]
+    columns: list[list[object]] | None = (
+        [[_h(3.0), False] for _ in range(n)] if has_lengths else None
+    )
+    if columns is not None and reason == "BLOCK_LENGTH_UNAVAILABLE":
+        columns[0][0] = None
+    if columns is not None and reason == choices.CAPPED:
+        columns[0][1] = True
     return {
         "diagnostics": {"K": _h(k), "T": _h(9.0), "g": _h(0.5)},
         "largest": entry,
         "median": dict(entry),
         "nominee": u_g_nominee,
+        "columns": columns,
+        "column_checks": checks,
     }
 
 
@@ -157,9 +178,11 @@ def test_a_record_must_follow_from_its_thresholds_and_nominee() -> None:
     unsupported = _record("UNSUPPORTED_LAW", 0, 0)
     assert "classifier" in str(choices.consistent(unsupported, ACCEPTS))
     assert "nominee" in str(choices.consistent(_record(None, 1, 0), ACCEPTS))
-    assert "finite" in str(choices.consistent(_record(None, 0, 0, z=None), ACCEPTS))
+    assert "z does not match" in str(
+        choices.consistent(_record(None, 0, 0, z=None), ACCEPTS)
+    )
     nan_z = _record(None, 0, 0, z=float("nan"))
-    assert "finite" in str(choices.consistent(nan_z, ACCEPTS))
+    assert "z does not match" in str(choices.consistent(nan_z, ACCEPTS))
     assert "unknown" in str(choices.consistent(_record("OTHER", 0, 0), ACCEPTS))
 
 
@@ -216,3 +239,43 @@ def test_a_target_comparison_inside_the_margin_is_flagged(
     failed = choices.choose(cells, 3)
     assert failed["margin_ok"] is False and failed["status"] == "margin_failed"
     assert failed["qualifies_before_coverage"] is False  # I1R-4
+
+
+@pytest.mark.usefixtures("toy_classifier")
+def test_outcomes_before_the_block_rule_and_column_fields_must_agree() -> None:
+    """I1R3-1, I1R3-2: rule-free outcomes are one result across rules; max
+    L/T is rule-free; per-column fields match rules 1-4."""
+    for code in (*choices.BEFORE_CLASSIFIER, None, *choices.AFTER_CLASSIFIER):
+        valid = _record(code, 0, 0, k=2.0)
+        assert choices.consistent(valid, ACCEPTS) is None, code
+    early = _record("INVALID_SERIES", 0, 0, k=2.0)
+    early["median"] = {**early["median"], "reason": "ZERO_VARIANCE_COLUMN"}  # type: ignore[dict-item]
+    assert "before the block rule" in str(choices.consistent(early, ACCEPTS))
+    ratio = _record(None, 0, 0, k=2.0)
+    ratio["median"] = {**ratio["median"], "length_ratio": _h(0.06)}  # type: ignore[dict-item]
+    assert "max L/T differs" in str(choices.consistent(ratio, ACCEPTS))
+    refused = _record("UNSUPPORTED_LAW", 0, 0, k=2.0)
+    assert choices.consistent(refused, REFUSES) is None
+    assert "max L/T" in str(
+        choices.consistent(_with(refused, length_ratio=None), REFUSES)
+    )
+    assert "columns malformed" in str(
+        choices.consistent({**refused, "columns": None}, REFUSES)
+    )
+    series = _record("INVALID_SERIES", 0, 0, k=2.0)
+    with_lengths = {**series, "columns": [[_h(3.0), False], [_h(3.0), False]]}
+    assert "before rule 3" in str(choices.consistent(with_lengths, ACCEPTS))
+    all_finite = {**series, "column_checks": [[True, True], [True, True]]}
+    assert "rule 1" in str(choices.consistent(all_finite, ACCEPTS))
+    variance = _record("ZERO_VARIANCE_COLUMN", 0, 0, k=2.0)
+    no_zero = {**variance, "column_checks": [[True, True], [True, True]]}
+    assert "rule 2" in str(choices.consistent(no_zero, ACCEPTS))
+    capped = _record(choices.CAPPED, 0, 0, k=2.0)
+    uncapped = {**capped, "columns": [[_h(3.0), False], [_h(3.0), False]]}
+    assert "rule 4" in str(choices.consistent(uncapped, ACCEPTS))
+    missing = _record("BLOCK_LENGTH_UNAVAILABLE", 0, 0, k=2.0)
+    complete = {**missing, "columns": [[_h(3.0), False], [_h(3.0), False]]}
+    assert "rule 3" in str(choices.consistent(complete, ACCEPTS))
+    available = _record(None, 0, 0, k=2.0)
+    stray_cap = {**available, "columns": [[_h(3.0), True], [_h(3.0), False]]}
+    assert "rule 4" in str(choices.consistent(stray_cap, ACCEPTS))

@@ -1092,6 +1092,9 @@ def test_development_records_equal_an_independent_section_2_computation(
             assert stored["u_g"] == u_g
             assert reduce_decode(stored["diagnostics"]) == values
             assert stored["columns"] is not None and len(stored["columns"]) == cell.k
+            from calibration import choices  # real records pass the check (I1R3)
+
+            assert choices.consistent(stored, bounds) is None
     assert accepted > 0  # the bootstrap path and z_f* were exercised
 
 
