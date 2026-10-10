@@ -223,9 +223,13 @@ def test_at_k_1_both_rules_must_be_one_result() -> None:
     record = _record(None, 0, 0)
     record["median"] = {**record["median"], "z": _h(2.5)}  # type: ignore[dict-item]
     assert "K = 1" in str(choices.consistent(record, ACCEPTS))
-    two = _record(None, 0, 0, k=2.0)
-    two["median"] = {**two["median"], "z": _h(2.5)}  # type: ignore[dict-item]
-    assert choices.consistent(two, ACCEPTS) is None
+    two = _record(None, 0, 0, k=2.0)  # lengths 2 and 4: blocks 4 and 3
+    two["columns"] = [[_h(2.0), False], [_h(4.0), False]]
+    ratio = _h(4.0 / 9.0)
+    two["largest"] = {**two["largest"], "block": _h(4.0), "length_ratio": ratio}  # type: ignore[dict-item]
+    two["median"] = {**two["median"], "block": _h(3.0), "length_ratio": ratio,  # type: ignore[dict-item]
+                     "z": _h(2.5)}  # fmt: skip
+    assert choices.consistent(two, ACCEPTS) is None  # different blocks may differ
 
 
 def test_a_target_comparison_inside_the_margin_is_flagged(
@@ -309,3 +313,19 @@ def test_derived_values_and_the_record_schema_are_checked() -> None:
         {},
     ):
         assert choices.consistent(broken, ACCEPTS) is not None  # no exception
+
+
+@pytest.mark.usefixtures("toy_classifier")
+def test_equal_blocks_one_result_and_k_t_positive_integers() -> None:
+    """I1R5-1: equal blocks under both rules mean one result. I1R5-2/3: K
+    and T are positive integers; T = 0 is a reported problem, not an error."""
+    good = _record(None, 0, 0, k=2.0)  # lengths 3, 3: both blocks are 3
+    split = {
+        **good,
+        "median": {**good["median"], "reason": "INVALID_REPLICATE", "z": None,  # type: ignore[dict-item]
+                   "s0": None, "nominee": None},
+    }  # fmt: skip
+    assert "share a block" in str(choices.consistent(split, ACCEPTS))
+    for t in (9.5, 0.0, -9.0, float("nan"), float("inf")):
+        bad = {**good, "diagnostics": {**good["diagnostics"], "T": _h(t)}}  # type: ignore[dict-item]
+        assert choices.consistent(bad, ACCEPTS) is not None, t

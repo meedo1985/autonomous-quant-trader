@@ -210,6 +210,11 @@ def _derived_problem(record: dict[str, object], t: float) -> str | None:
             "v"
         ] != dsr.family_block(lengths, rule):
             return f"{rule}: L is not the family block of the column lengths"
+    # I1R5-1: one input, family seed, classifier result and block give one
+    # dsr.evaluate result, so equal blocks mean identical rule entries.
+    same = dsr.family_block(lengths, "largest") == dsr.family_block(lengths, "median")
+    if same and record["largest"] != record["median"]:
+        return "the rules share a block but differ in result"
     return None
 
 
@@ -233,15 +238,22 @@ def consistent(record: dict[str, object], bounds: reduce.Bounds) -> str | None:
     claim them."""
     try:
         return _consistent(record, bounds)
-    except (KeyError, TypeError, IndexError, ValueError, AttributeError) as error:
+    except (
+        KeyError,
+        TypeError,
+        IndexError,
+        ValueError,
+        AttributeError,
+        ArithmeticError,
+    ) as error:
         return f"malformed record: {type(error).__name__}"
 
 
 def _consistent(record: dict[str, object], bounds: reduce.Bounds) -> str | None:
     values = reduce.decode(record["diagnostics"])
     k = values["K"]
-    if k != int(k) or k < 1:
-        return "K malformed"
+    if not all(v == int(v) and v >= 1 for v in (k, values["T"])):  # I1R5-2/3
+        return "K or T is not a positive integer"
     problem = _shape_problem(record, int(k))
     if problem is not None:
         return problem
