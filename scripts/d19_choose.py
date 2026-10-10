@@ -37,7 +37,10 @@ from calibration.seeds import sha  # noqa: E402
 TESTS_PER_AGNOSTIC_CELL = 3  # error, DSR availability, U_G (prereg §6)
 # I1-4: M = 3 per cell holds only for family-agnostic cells (Q1-Q4). Any other
 # law refuses here until per-family and joint tests are counted (Q5, QJ).
-AGNOSTIC_LAWS = ("gaussian", "t5", "ar0.2", "ar0.5", "garch")
+AGNOSTIC_LAWS = (
+    "gaussian", "t5", "ar0.2", "ar0.5", "garch", "skewt+", "skewt-", "unequal",
+    "mixed_ar",
+)  # fmt: skip
 
 
 def _chain(
