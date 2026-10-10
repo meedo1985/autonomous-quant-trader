@@ -202,19 +202,25 @@ def market(rng: np.random.Generator, law: str, n: int) -> tuple[np.ndarray, np.n
     return np.full(n, SIGMA), e[BURN:]
 
 
+def benchmark_exposure(r: np.ndarray) -> np.ndarray:
+    """The §3.1 benchmark stand-in: e_t = min(1, 0.40/(sigma_hat_t sqrt(365)))
+    with sigma_hat a daily EWMA (half-life 7 days) of past returns only,
+    seeded at the unconditional 3.5%."""
+    decay = 0.5 ** (1 / 7)
+    var_hat, e = SIGMA**2, np.empty(len(r))
+    for i in range(len(r)):
+        e[i] = min(1.0, 0.40 / (np.sqrt(var_hat) * np.sqrt(365)))
+        var_hat = decay * var_hat + (1 - decay) * r[i] ** 2
+    return e
+
+
 def generate(
     cell: Cell, market_rng: np.random.Generator, columns: np.random.Generator
 ) -> Legs:
     t, k = cell.t, cell.k
     sigma, eps = market(market_rng, cell.law, t)
     r = sigma * eps
-    # benchmark: e_t = min(1, 0.40/(sigma_hat*sqrt(365))), EWMA half-life 7 days
-    decay = 0.5 ** (1 / 7)
-    var_hat, e = SIGMA**2, np.empty(t)
-    for i in range(t):
-        e[i] = min(1.0, 0.40 / (np.sqrt(var_hat) * np.sqrt(365)))
-        var_hat = decay * var_hat + (1 - decay) * r[i] ** 2
-    benchmark = e * r
+    benchmark = benchmark_exposure(r) * r
     root = _root(sigma_matrix(cell, columns))
     law = {"garch": "t5", "unequal": "gaussian", "mixed_ar": "gaussian"}.get(
         cell.law, cell.law
