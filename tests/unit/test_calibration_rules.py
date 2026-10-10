@@ -49,11 +49,85 @@ def test_every_rule_is_causal(family: str) -> None:
 
 def test_reference_variance_and_the_source_guard() -> None:
     assert V_BAR == pytest.approx(float(np.mean(R[:, 0] ** 2)), rel=0, abs=0)
-    for bad in (-1.0, np.nan):
+    for column, bad in [(0, -1.0), (0, np.nan), (0, np.inf), (1, np.nan), (1, -np.inf)]:
         source = R.copy()
-        source[5, 0] = bad
+        source[5, column] = bad
         with pytest.raises(ValueError):
             rules.reference_variance(source)
+
+
+def test_a_non_finite_price_index_is_refused() -> None:
+    """1e300 x 1e300 overflows: the trend rules raise rather than clip."""
+    with pytest.raises(ValueError, match="non-finite price index"):
+        rules.trend_targets(np.full(5, 1e300), V_BAR, 0)
+
+
+# Accepted proposal revision 3, written out independently of the module.
+ORDER = [
+    (0, 0, 0), (1, 1, 1), (2, 2, 2), (0, 1, 2), (1, 2, 0), (2, 0, 1), (0, 2, 1),
+    (1, 0, 2), (2, 1, 0), (0, 0, 1), (1, 1, 2), (2, 2, 0), (0, 1, 0), (1, 2, 1),
+    (2, 0, 2), (0, 2, 2), (1, 0, 0), (2, 1, 1), (0, 0, 2), (1, 1, 0), (2, 2, 1),
+    (0, 1, 1), (1, 2, 2), (2, 0, 0), (0, 2, 0), (1, 0, 1), (2, 1, 2),
+]  # fmt: skip
+TAU = (0.60, 0.40, 0.80)
+HOURS = (24, 72, 168)
+
+
+def _expected_trial(family: str, m: int, s: int, k: int) -> tuple[object, ...]:
+    if family == "trend":
+        return ("trend", (("SMA_200", "SMA_100", "SMA_50")[m], TAU[k]), HOURS[s])
+    if m == 0:
+        return ("vol", (("EWMA_168h", "EWMA_72h", "EWMA_336h")[s], TAU[k]), 24)
+    return ("vol", (("HAR_RV", "GARCH_1_1")[m - 1], TAU[k]), HOURS[s])
+
+
+@pytest.mark.parametrize("family", rules.FAMILIES)
+def test_the_accepted_table_and_constants_are_pinned(family: str) -> None:
+    assert [rules.index(i) for i in range(27)] == ORDER
+    assert [rules.trial(family, i) for i in range(27)] == [
+        _expected_trial(family, *t) for t in ORDER
+    ]
+    assert (rules.SMA_DAYS, rules.HORIZONS, rules.TAUS) == (
+        (200, 100, 50),
+        (1, 3, 7),
+        TAU,
+    )
+    assert (rules.TREND_EWMA_HALF_LIFE, rules.EWMA_HALF_LIVES) == (7, (7, 3, 14))
+    assert (rules.GARCH_ALPHA, rules.GARCH_BETA) == (0.10, 0.85)
+    assert (rules.HAR_BETAS, rules.HAR_C, rules.HAR_LAGS) == (
+        (0.35, 0.35, 0.20),
+        0.10,
+        22,
+    )
+
+
+def _cuts(family: str, i: int) -> list[int]:
+    """Days 0, 1, 22, 23, 200, 250, and for a trend rule its first two
+    refresh days with L prices (H = 7 at L = 200: days 203 and 210)."""
+    cuts = [0, 1, 22, 23, 200, 250]
+    if family == "trend":
+        m, s, _ = rules.index(i)
+        h, first = rules.HORIZONS[s], rules.SMA_DAYS[m]
+        first += -first % h
+        cuts += [first, first + h]
+    return cuts
+
+
+@pytest.mark.parametrize("family", rules.FAMILIES)
+def test_every_target_ignores_its_own_day(family: str) -> None:
+    """Target t of every rule is the same whether r_t is +60%, -60% or 0
+    (one of the three flips any comparison or estimator using r_t)."""
+    targets = rules.trend_targets if family == "trend" else rules.vol_targets
+    r = R[:, 0]
+    for i in range(27):
+        for cut in _cuts(family, i):
+            got = []
+            for value in (0.6, -0.6, 0.0):
+                other = r.copy()
+                other[cut] = value
+                got.append(targets(other, V_BAR, i)[: cut + 1])
+            np.testing.assert_array_equal(got[0], got[1], err_msg=f"{i} {cut}")
+            np.testing.assert_array_equal(got[0], got[2], err_msg=f"{i} {cut}")
 
 
 def test_ewma_and_garch_against_direct_recursions() -> None:

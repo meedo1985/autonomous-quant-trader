@@ -121,7 +121,8 @@ def trend_targets(r: np.ndarray, v_bar: float, i: int) -> np.ndarray:
     held between; 0 until L prices exist."""
     m, s, k = index(i)
     days, h = SMA_DAYS[m], HORIZONS[s]
-    price = np.cumprod(1 + r)
+    with np.errstate(over="ignore"):  # checked on the next line
+        price = np.cumprod(1 + r)
     if not np.all(np.isfinite(price)):
         raise ValueError("non-finite price index")
     size = _size(ewma_variance(r, v_bar, TREND_EWMA_HALF_LIFE), TAUS[k])
