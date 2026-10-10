@@ -4,6 +4,7 @@ escape and demotion, the cap rule, and z_crit on the 0.001 grid."""
 
 from __future__ import annotations
 
+import struct
 from decimal import Decimal
 
 import pytest
@@ -104,3 +105,39 @@ def test_choose_reports_every_step() -> None:
     assert report["family_block_rule"] == "largest"
     assert report["z_crit"] is not None
     assert report["cells"]["a"]["status"] == "qualifying"
+
+
+def _record(reason: str | None, nominee: int, u_g_nominee: int) -> dict[str, object]:
+    entry = {"reason": reason, "nominee": nominee}
+    return {"diagnostics": {"K": struct.pack(">d", 1.0).hex(),
+                            "T": struct.pack(">d", 9.0).hex(),
+                            "g": struct.pack(">d", 0.5).hex()},
+            "largest": entry, "median": entry, "nominee": u_g_nominee}  # fmt: skip
+
+
+def test_a_record_must_follow_from_its_thresholds_and_nominee(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """I1-3: an accepted record stored as refused (or the reverse), or a DSR
+    nominee that is not the U_G nominee, is reported."""
+    monkeypatch.setattr(choices.classifier, "within", lambda v, u, lo: v["g"] <= u["g"])
+    accepts, refuses = ({"g": 1.0}, {}), ({"g": 0.0}, {})
+    assert choices.consistent(_record(None, 0, 0), accepts) is None
+    assert choices.consistent(_record("UNSUPPORTED_LAW", 0, 0), refuses) is None
+    assert choices.consistent(_record("BLOCK_LENGTH_CAPPED", 0, 0), accepts) is None
+    assert "classifier" in str(choices.consistent(_record(None, 0, 0), refuses))
+    assert "classifier" in str(
+        choices.consistent(_record("UNSUPPORTED_LAW", 0, 0), accepts)
+    )
+    assert "nominee" in str(choices.consistent(_record(None, 1, 0), accepts))
+
+
+def test_a_target_comparison_inside_the_margin_is_flagged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """I1-6: every UCB-tau comparison records its margin; too close fails."""
+    cells = {"a": {r: _reps(z=[2.5] * 50) for r in choices.RULES}}
+    report = choices.choose(cells, 3)
+    assert report["margin_ok"] is True and 0 < report["smallest_margin"] < 1
+    monkeypatch.setattr(choices, "MARGIN_MIN", 1.0)
+    assert choices.choose(cells, 3)["margin_ok"] is False

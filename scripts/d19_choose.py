@@ -32,8 +32,12 @@ from typing import Any  # noqa: E402
 
 from calibration import choices, chunks, reduce, rundef  # noqa: E402
 from calibration.generator import Cell, cells_from_manifest  # noqa: E402
+from calibration.seeds import sha  # noqa: E402
 
 TESTS_PER_AGNOSTIC_CELL = 3  # error, DSR availability, U_G (prereg §6)
+# I1-4: M = 3 per cell holds only for family-agnostic cells (Q1-Q4). Any other
+# law refuses here until per-family and joint tests are counted (Q5, QJ).
+AGNOSTIC_LAWS = ("gaussian", "t5", "ar0.2", "ar0.5", "garch")
 
 
 def _chain(
@@ -54,11 +58,18 @@ def _float(value: object) -> float | None:
     return None if value is None else reduce.decode({"v": value})["v"]
 
 
-def development(chain: chunks.Chain) -> dict[str, list[choices.Rep]]:
-    """A verified development chain as replications per block rule."""
+def development(
+    chain: chunks.Chain, bounds: reduce.Bounds
+) -> dict[str, list[choices.Rep]]:
+    """A verified development chain as replications per block rule; every
+    record must follow from the development thresholds (I1-3)."""
     out: dict[str, list[choices.Rep]] = {rule: [] for rule in choices.RULES}
-    for record in chunks.reduce(chain):
-        assert isinstance(record, dict)
+    for rep, record in enumerate(chunks.reduce(chain)):
+        if not isinstance(record, dict):
+            raise ValueError(f"{chain.cell_id} rep {rep}: malformed record")
+        problem = choices.consistent(record, bounds)
+        if problem is not None:
+            raise ValueError(f"{chain.cell_id} rep {rep}: {problem}")
         for rule in choices.RULES:
             r = record[rule]
             out[rule].append(choices.Rep(r["reason"], _float(r["z"]), record["u_g"]))
@@ -76,16 +87,23 @@ def main(argv: list[str] | None = None) -> int:
     defn = rundef.load(args.definition)
     try:
         cells = cells_from_manifest(defn["cell_manifest"])
+        other = sorted({c.law for c in cells} - set(AGNOSTIC_LAWS))
+        if other:
+            raise ValueError(f"tests are not counted for laws {other} (I1-4)")
         gating = rundef.start_gate(defn, ROOT)
-        dev = {
-            c.cell_id: development(_chain(defn, args.store, "dev", c, gating))
+        chains = {
+            (ns, c.cell_id): _chain(defn, args.store, ns, c, gating)
+            for ns in ("threshold", "dev")
             for c in cells
         }
+        heads = {f"{ns}/{c}": chunks.verify(chain) for (ns, c), chain in chains.items()}
         bounds = {
-            c.cell_id: reduce.cell_thresholds(
-                _chain(defn, args.store, "threshold", c, gating)
-            )
+            c.cell_id: reduce.cell_thresholds(chains["threshold", c.cell_id])
             for c in cells
+        }
+        pooled = reduce.pooled(list(bounds.values()))
+        dev = {
+            c.cell_id: development(chains["dev", c.cell_id], pooled[c.k]) for c in cells
         }
     except (ValueError, RuntimeError) as error:  # ChainError is a RuntimeError
         print(error, file=sys.stderr)
@@ -101,8 +119,16 @@ def main(argv: list[str] | None = None) -> int:
         for k, (up, lo) in sorted(reduce.pooled(final).items())
     }
     report["definition_sha256"] = rundef.definition_sha256(defn)
+    report["chain_heads"] = heads  # I1-3: the chains this report was made from
+    report["dev_thresholds_sha256"] = sha(
+        {str(k): [{n: v.hex() for n, v in side.items()} for side in b]
+         for k, b in sorted(pooled.items())}
+    )  # fmt: skip
     args.out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", "utf-8")
     print(f"z_crit {report['z_crit']}, family_block_rule {report['family_block_rule']}")
+    if not report["margin_ok"]:  # I1-6: fail closed, the owner decides
+        print(f"a target comparison is within {choices.MARGIN_MIN:g}", file=sys.stderr)
+        return 3
     return 0
 
 

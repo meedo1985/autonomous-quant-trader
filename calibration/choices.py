@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from calibration import binomial
+from calibration import binomial, classifier, reduce
 
 RULES = ("largest", "median")  # tie -> largest (§5 step 1)
 Z_SCREEN = 1.96  # §5 step 1
@@ -24,6 +24,9 @@ Z_MAX = Decimal("20.000")  # no qualifying z_crit above this grid end
 BOUNDS = {"error": 0.025, "dsr": 0.0035, "u_g": 0.0015}  # prereg §6
 HELD_OUT = (20_000, 40_000)  # §13 item 3
 CAPPED = "BLOCK_LENGTH_CAPPED"
+# I1-6: the targets carry about 1e-9 relative error (lgamma at N = 40k);
+# a comparison closer than this is flagged, never decided silently.
+MARGIN_MIN = 1e-6
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,11 +48,38 @@ class CellResult:
     status: str  # "qualifying" | "demoted_availability" | "demoted_cap"
     held_out: int | None  # 20k or 40k when qualifying
     error_events_at_z: int | None = None
+    margin: float = float("inf")  # smallest relative |UCB - tau| / tau used
     notes: list[str] = field(default_factory=list)
 
 
 def _ucb(x: int, n: int) -> float:
     return binomial.upper(x, n, binomial.DEVELOPMENT_CONFIDENCE)
+
+
+def _within(result: CellResult, ucb: float, tau: float) -> bool:
+    """ucb <= tau, recording the relative margin of the comparison (I1-6)."""
+    result.margin = min(result.margin, abs(ucb - tau) / tau)
+    return ucb <= tau
+
+
+def consistent(record: dict[str, object], bounds: reduce.Bounds) -> str | None:
+    """Why a development record does not follow from its thresholds and
+    nominee rule, or None (I1-3): the classifier refused iff the record says
+    UNSUPPORTED_LAW (when rules 1-4 let it run), and an available DSR result
+    nominated the U_G nominee."""
+    refused = not classifier.within(reduce.decode(record["diagnostics"]), *bounds)
+    for rule in RULES:
+        entry = record[rule]
+        if not isinstance(entry, dict):
+            return f"{rule}: malformed"
+        reason = entry["reason"]
+        if (reason is None and refused) or (
+            reason == "UNSUPPORTED_LAW" and not refused
+        ):
+            return f"{rule}: classifier outcome does not follow from the thresholds"
+        if reason is None and entry["nominee"] != record["nominee"]:
+            return f"{rule}: DSR nominee differs from the U_G nominee"
+    return None
 
 
 def _passes(rep: Rep, z: float) -> bool:
@@ -84,16 +114,16 @@ def availability(
     capped = sum(r.reason == CAPPED for r in reps)
     result = CellResult(cell_id, n, dsr_events, u_g_events, capped, "", None)
     tau_dsr = tau[20_000]["dsr"]["tau"]
-    if _ucb(capped, n) > tau_dsr / 4:
+    if not _within(result, _ucb(capped, n), tau_dsr / 4):
         result.status = "demoted_cap"
         return result
-    if _ucb(dsr_events, n) > tau_dsr:
+    if not _within(result, _ucb(dsr_events, n), tau_dsr):
         result.status = "demoted_availability"
         result.notes.append("DSR availability")
         return result
     u_g = _ucb(u_g_events, n)
     for held_out in HELD_OUT:
-        if u_g <= tau[held_out]["u_g"]["tau"]:
+        if _within(result, u_g, tau[held_out]["u_g"]["tau"]):
             result.status, result.held_out = "qualifying", held_out
             return result
     result.status = "demoted_availability"
@@ -158,9 +188,14 @@ def choose(cells: dict[str, dict[str, list[Rep]]], m: int) -> dict[str, object]:
         if r.held_out is not None
     }
     chosen = z_crit(qualifying, tau_error) if qualifying else None
-    if chosen is not None:
-        for c, reps in qualifying.items():
+    for c, reps in qualifying.items():
+        a = allowed(len(reps), tau_error[c])
+        for x in (a, a + 1):  # the two counts the limit sits between
+            if 0 <= x <= len(reps):
+                _within(results[c], _ucb(x, len(reps)), tau_error[c])
+        if chosen is not None:
             results[c].error_events_at_z = sum(_passes(r, float(chosen)) for r in reps)
+    margin = min((r.margin for r in results.values()), default=float("inf"))
     return {
         "family_block_rule": rule,
         "worst_cell_rate_at_1.96": worst,
@@ -169,4 +204,6 @@ def choose(cells: dict[str, dict[str, list[Rep]]], m: int) -> dict[str, object]:
         "cells": {c: vars(r) for c, r in sorted(results.items())},
         "z_crit": None if chosen is None else str(chosen),
         "qualifies_before_coverage": chosen is not None,
+        "smallest_margin": margin,
+        "margin_ok": margin >= MARGIN_MIN,
     }

@@ -93,17 +93,21 @@ def nominee(x: np.ndarray) -> int | None:
 
 
 def dev_replication(
-    cell: Cell, anchor: str, rep: int, bounds: reduce.Bounds
+    cell: Cell, anchor: str, prereg: str, rep: int, bounds: reduce.Bounds
 ) -> dict[str, object]:
-    """One development replication (prereg §2), bit-exact. A gate not
-    computed counts as unavailable (P18-7), so no nominee is a U_G event."""
+    """One development replication (prereg §2), bit-exact. `anchor` keys the
+    outer seed; `prereg` is the family seed's protocol_hash in every
+    namespace (§8, I1-5). A gate not computed counts as unavailable (P18-7),
+    so no nominee is a U_G event. Recorded (§2 step 6, §9): the diagnostics;
+    per block rule the cause code, z_f*, L, S0, max L_j/T and the DSR
+    nominee; every column's (L_j, capped); the U_G nominee and event."""
     seed = outer_seed(anchor, cell.cell_id, NAMESPACES["dev"], rep)
     legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
     values = classifier.diagnostics(legs.x)
     upper, lower = bounds
     accept = classifier.within(values, upper, lower)
-    fam = family_seed(seed, cell.cell_id, "agnostic", cell.k, anchor, rep)
-    out: dict[str, object] = {"diagnostics": _exact(values)}
+    fam = family_seed(seed, cell.cell_id, "agnostic", cell.k, prereg, rep)
+    out: dict[str, object] = {"diagnostics": _exact(values), "columns": None}
     for rule in ("largest", "median"):
         if rule == "median" and cell.k == 1:
             out[rule] = out["largest"]  # one column: the same block, same result
@@ -112,9 +116,15 @@ def dev_replication(
         out[rule] = {
             "reason": result.reason,
             "z": _hex(result.z),
+            "block": _hex(result.block),
+            "s0": _hex(result.s0),
             "length_ratio": _hex(result.length_ratio),
+            "nominee": result.nominee,
         }
+        if result.columns is not None:  # the same for both rules
+            out["columns"] = [[_hex(v), c] for v, c in result.columns]
     j = nominee(legs.x)
+    out["nominee"] = j
     out["u_g"] = (
         "NO_NOMINEE"
         if j is None
@@ -179,7 +189,10 @@ def worker(
         if bounds is None:
             raise ValueError("a development chain needs its thresholds")
         dev = bounds
-        return chunks.run(chain, lambda rep: dev_replication(cell, anchor, rep, dev))
+        prereg = defn["prereg_sha256"]
+        return chunks.run(
+            chain, lambda rep: dev_replication(cell, anchor, prereg, rep, dev)
+        )
     return chunks.run(chain, lambda rep: threshold_replication(cell, anchor, rep))
 
 

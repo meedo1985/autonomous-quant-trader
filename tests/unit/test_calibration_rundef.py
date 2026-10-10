@@ -987,10 +987,12 @@ def test_the_development_run_needs_the_threshold_run_then_follows_section_2(
         assert chunk["binding"] == rundef.definition_sha256(defn)
         assert len(chunk["results"]) == 2
         for record in chunk["results"]:
-            assert set(record) == {"diagnostics", "largest", "median", "u_g"}
+            assert set(record) == {"diagnostics", "columns", "largest", "median",
+                                   "nominee", "u_g"}  # fmt: skip
             assert set(record["diagnostics"]) == classifier_fields(k)
             for rule in ("largest", "median"):
-                assert set(record[rule]) == {"reason", "z", "length_ratio"}
+                assert set(record[rule]) == {"reason", "z", "block", "s0",
+                                             "length_ratio", "nominee"}  # fmt: skip
     report_path = tmp_path / "choices.json"
     command = [sys.executable, str(root / "scripts" / "d19_choose.py"), "choose",
                "--definition", str(out), "--store", str(store),
@@ -1005,14 +1007,35 @@ def test_the_development_run_needs_the_threshold_run_then_follows_section_2(
     # two development replications per cell cannot qualify anything
     assert {c["status"] for c in report["cells"].values()} == {"demoted_cap"}
     assert report["z_crit"] is None and report["final_thresholds"] == {}
+    heads = {
+        f"{ns}/{c}" for ns in ("threshold", "dev") for c in ("pilot-k1", "pilot-k2")
+    }
+    assert set(report["chain_heads"]) == heads
+    assert report["margin_ok"] is True
 
 
+def _hex64(value: float | None) -> str | None:
+    return None if value is None else struct.pack(">d", value).hex()
+
+
+def _widened(bounds: tuple[dict[str, float], dict[str, float]], by: float) -> object:
+    """Every tail moved outward by `by` (inward if negative); K, T exact."""
+    upper, lower = bounds
+    return (
+        {n: v if n in ("K", "T") else v + by for n, v in upper.items()},
+        {n: v if n in ("K", "T") else v - by for n, v in lower.items()},
+    )
+
+
+@pytest.mark.parametrize("cell_id", ["pilot-k2", "pilot-k1"])
 def test_development_records_equal_an_independent_section_2_computation(
-    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Namespace d19-dev-v1, the pooled thresholds, both rules, U_G on the
-    highest-S trial."""
-    from calibration import classifier, gates, reduce
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    cell_id: str,
+) -> None:  # fmt: skip
+    """I1-1: namespace d19-dev-v1, protocol_hash = the preregistration hash,
+    both rules through the bootstrap (thresholds widened so the classifier
+    accepts), and the refused path (thresholds that accept nothing)."""
+    from calibration import classifier, gates
     from calibration.generator import Cell, generate
     from calibration.seeds import family_seed, outer_seed, stream
 
@@ -1022,35 +1045,57 @@ def test_development_records_equal_an_independent_section_2_computation(
     monkeypatch.setattr(driver.rundef, "start_gate", lambda d, _root: d["gating"])
     defn = rundef.load(out)
     expected = rundef.definition_sha256(defn)
+    cells = {"pilot-k2": Cell("pilot-k2", 2, 60, "garch", "equi0.5"),
+             "pilot-k1": Cell("pilot-k1", 1, 60, "t5", "independent")}  # fmt: skip
+    cell = cells[cell_id]
     store = tmp_path / "store"
-    cells = [Cell("pilot-k2", 2, 60, "garch", "equi0.5"),
-             Cell("pilot-k1", 1, 60, "t5", "independent")]  # fmt: skip
-    for c in cells:
+    for c in cells.values():
         driver.worker(out, store, "threshold", c.cell_id, expected)
-    bounds = driver.dev_bounds(defn, store, defn["gating"], cells)
-    assert set(bounds) == {1, 2}
-    cell = cells[0]
-    driver.worker(out, store, "dev", cell.cell_id, expected, bounds[2])
-    chunk = json.loads(
-        (store / "dev" / cell.cell_id / "chunk-0000000.json").read_bytes()
-    )
+    pooled = driver.dev_bounds(defn, store, defn["gating"], list(cells.values()))
+    wide, none = _widened(pooled[cell.k], 1e6), _widened(pooled[cell.k], -1e6)
     anchor = defn["prereg_sha256"]
-    for rep, stored in enumerate(chunk["results"]):
-        seed = outer_seed(anchor, cell.cell_id, "d19-dev-v1", rep)
-        legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
-        values = classifier.diagnostics(legs.x)
-        accept = classifier.within(values, *bounds[2])
-        fam = family_seed(seed, cell.cell_id, "agnostic", 2, anchor, rep)
-        for rule in ("largest", "median"):
-            result = dsr.evaluate(legs.x, fam, rule, classifier=lambda *_, a=accept: a)
-            assert stored[rule]["reason"] == result.reason
-            z = None if result.z is None else struct.pack(">d", result.z).hex()
-            assert stored[rule]["z"] == z
-        sharpes = [float(np.mean(c) / np.std(c, ddof=1)) for c in legs.x.T]
-        top = int(np.argmax(sharpes))
-        u_g = gates.u_g(legs.x, legs.candidates, legs.benchmark, top, seed)
-        assert stored["u_g"] == u_g
-        assert reduce.decode(stored["diagnostics"]) == values
+    accepted = 0
+    for name, bounds in (("wide", wide), ("none", none)):
+        driver.worker(out, store / name, "dev", cell_id, expected, bounds)
+        chunk = json.loads(
+            (store / name / "dev" / cell_id / "chunk-0000000.json").read_bytes()
+        )
+        for rep, stored in enumerate(chunk["results"]):
+            seed = outer_seed(anchor, cell_id, "d19-dev-v1", rep)
+            legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
+            values = classifier.diagnostics(legs.x)
+            accept = classifier.within(values, *bounds)
+            assert accept is (name == "wide")
+            fam = family_seed(seed, cell_id, "agnostic", cell.k, anchor, rep)
+            blocks = set()
+            for rule in ("largest", "median"):
+                result = dsr.evaluate(
+                    legs.x, fam, rule, classifier=lambda *_, a=accept: a
+                )
+                assert stored[rule] == {
+                    "reason": result.reason, "z": _hex64(result.z),
+                    "block": _hex64(result.block), "s0": _hex64(result.s0),
+                    "length_ratio": _hex64(result.length_ratio),
+                    "nominee": result.nominee,
+                }  # fmt: skip
+                accepted += result.z is not None
+                blocks.add(result.block)
+            if name == "wide" and cell.k == 2 and None not in blocks:
+                assert len(blocks) == 2  # the two rules really differ
+            sharpes = [float(np.mean(c) / np.std(c, ddof=1)) for c in legs.x.T]
+            top = int(np.argmax(sharpes))
+            assert stored["nominee"] == top
+            u_g = gates.u_g(legs.x, legs.candidates, legs.benchmark, top, seed)
+            assert stored["u_g"] == u_g
+            assert reduce_decode(stored["diagnostics"]) == values
+            assert stored["columns"] is not None and len(stored["columns"]) == cell.k
+    assert accepted > 0  # the bootstrap path and z_f* were exercised
+
+
+def reduce_decode(values: object) -> dict[str, float]:
+    from calibration import reduce
+
+    return reduce.decode(values)
 
 
 def test_the_nominee_is_the_highest_sharpe_lowest_id_on_ties(

@@ -51,6 +51,7 @@ class FamilyResult:
     z: float | None = None  # z_f* of the nominee
     s0: float | None = None
     length_ratio: float | None = None  # max_j L_j / T
+    columns: tuple[tuple[float | None, bool], ...] | None = None  # (L_j, capped)
 
 
 def _replicate_seed(family_seed: str, n: int, b: int) -> int:
@@ -137,18 +138,21 @@ def evaluate(
         if numerics == "reference"
         else fast.column_lengths(x)
     )
+    columns = tuple((None if v is None else float(v), bool(c)) for v, c in pairs)
     lengths: list[float] = []
     capped = False
     for length, cap in pairs:
         if length is None:
-            return FamilyResult("BLOCK_LENGTH_UNAVAILABLE")
+            return FamilyResult("BLOCK_LENGTH_UNAVAILABLE", columns=columns)
         lengths.append(length)
         capped = capped or cap
     ratio = max(lengths) / t
     if capped:
-        return FamilyResult("BLOCK_LENGTH_CAPPED", capped=True, length_ratio=ratio)
+        return FamilyResult(
+            "BLOCK_LENGTH_CAPPED", capped=True, length_ratio=ratio, columns=columns
+        )
     if classifier is not None and not classifier(x, lengths):
-        return FamilyResult("UNSUPPORTED_LAW", length_ratio=ratio)
+        return FamilyResult("UNSUPPORTED_LAW", length_ratio=ratio, columns=columns)
     block = family_block(lengths, rule)
     draws = [indices(family_seed, t, b, block) for b in range(BOOTSTRAP_ATTEMPTS)]
     replicate = {
@@ -158,20 +162,26 @@ def evaluate(
     }[numerics]
     s_star, s_null = replicate(x, draws)
     if s_star is None or s_null is None:
-        return FamilyResult("INVALID_REPLICATE", block=block, length_ratio=ratio)
+        return FamilyResult(
+            "INVALID_REPLICATE", block=block, length_ratio=ratio, columns=columns
+        )
     observed = [_sharpe_exact(x[:, j].tolist()) for j in range(k)]
     s0 = math.fsum(max(row) for row in s_null) / BOOTSTRAP_ATTEMPTS
     dispersion = [_mean_var([row[j] for row in s_star])[1] for j in range(k)]
     if not math.isfinite(s0) or any(
         not (d > 0 and math.isfinite(d)) for d in dispersion
     ):
-        return FamilyResult("INVALID_ARITHMETIC", block=block, length_ratio=ratio)
+        return FamilyResult(
+            "INVALID_ARITHMETIC", block=block, length_ratio=ratio, columns=columns
+        )
     # z_j = (S_j - S0)/sd_b(S*_j): sqrt(T-1) cancels (Annex B §2.3)
     z = [(observed[j] - s0) / math.sqrt(dispersion[j]) for j in range(k)]
     if any(not math.isfinite(v) for v in z):
-        return FamilyResult("INVALID_ARITHMETIC", block=block, length_ratio=ratio)
+        return FamilyResult(
+            "INVALID_ARITHMETIC", block=block, length_ratio=ratio, columns=columns
+        )
     nominee = max(range(k), key=lambda j: (observed[j], -j))  # ties: lowest id
-    return FamilyResult(None, block, False, nominee, z[nominee], s0, ratio)
+    return FamilyResult(None, block, False, nominee, z[nominee], s0, ratio, columns)
 
 
 def _replicates_reference(
