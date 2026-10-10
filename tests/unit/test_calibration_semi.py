@@ -142,7 +142,8 @@ def test_a_replication_flips_every_column_by_one_shared_sign() -> None:
     source -= source.mean(axis=0)
 
     def exposures(path: np.ndarray) -> np.ndarray:
-        trend = (np.cumsum(path[:, 0]) > 0).astype(float)
+        level = np.concatenate([[0.0], np.cumsum(path[:-1, 0])])  # rows < t
+        trend = (level > 0).astype(float)
         return np.column_stack([trend, np.full(len(path), 0.5), 1 - trend])
 
     t, warmup = 300, 50

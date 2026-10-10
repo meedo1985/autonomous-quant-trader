@@ -43,8 +43,10 @@ SYMBOLS = ("BTCUSDT", "ETHUSDT")
 HOURS_PER_DAY = 24
 MEAN_BLOCK = 20  # §3.4; the sensitivity rerun uses 60
 
-# exposures(path) -> (rows of path) x K exposures, causal: row t uses only
-# rows <= t of the path (columns: BTC, ETH daily simple returns).
+# exposures(path) -> (rows of path) x K exposures. Row t is the exposure
+# held on day t, which earns r_t; it is decided at the close of day t - 1
+# and may use only rows < t of the path (columns: BTC, ETH daily simple
+# returns). Each library must be tested for this prefix invariance.
 Exposures = Callable[[np.ndarray], np.ndarray]
 
 

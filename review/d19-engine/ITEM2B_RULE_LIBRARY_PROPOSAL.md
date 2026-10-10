@@ -1,10 +1,11 @@
 # Proposal: the trend and vol rule libraries of the D-19 semi-empirical cells (Q5, QJ)
 
-**Status:** DRAFT, revision 2: reviewed once (GPT-6 Sol, I2B-1..I2B-8), the
-owner's choices on I2B-3, I2B-4 and I2B-7 written in, the equations and
-timing added (I2B-5, I2B-6). It needs a re-review and then the owner's
-recorded acceptance. Nothing here is binding before that. No calibration
-has been run.
+**Status:** DRAFT, revision 3. Reviewed twice by GPT-6 Sol (I2B-1..I2B-8,
+then I2BR-1..I2BR-5). It includes the owner's choices on I2B-3, I2B-4 and
+I2B-7, the equations and timing (I2B-5, I2B-6), and the drafter's defaults
+for I2BR-2..I2BR-5 (day 0, HAR start, trial identities, `v̄` and the price
+guard). It needs the owner's recorded acceptance. Nothing here is binding
+before that. No calibration has been run.
 
 **Drafted by:** Claude Opus 5.5 (`claude-opus-5-5`), 2026-10-10. The owner
 delegates drafting choices; every item below is an `[AI default]` with its
@@ -61,25 +62,35 @@ disclosed (alternative: restart a block at every gap).
 *Alternatives:* (a) use each day's last available bar; (b) chain across a
 missing day. Both fill or bridge gaps, which the rules forbid.
 
-### Common definitions (I2B-5, I2B-6)
+### Common definitions (I2B-5, I2B-6, I2BR-2, I2BR-3, I2BR-5)
 
 These hold for every rule. Path day 0 is the first warm-up day, and evaluation
 starts at path day W = 250 (R-5).
 
 - **Returns and price.** `r_t` is the path's BTC daily simple return on day t.
-  The price index is `P_t = Π_{s ≤ t} (1 + r_s)`.
+  The price index is `P_t = Π_{s ≤ t} (1 + r_s)` in binary64. The source is
+  refused, before any replication, if any of its BTC rows has `1 + r ≤ 0` or
+  is not finite. A non-finite price index on a path raises an error and is
+  never clipped.
 - **Timing.** The exposure held on day t, which earns `r_t`, is decided at the
   close of day t − 1 (00:00 UTC of day t). It uses only `r_0 … r_{t−1}`.
   Changing any path row from t onward cannot change it, and the built
   libraries will be tested for that prefix invariance.
-- **Reference variance.** `v̄` is the variance of the source's BTC column (the
-  demeaned exploration returns). It is computed once per source and frozen,
+- **Reference variance.** `v̄` is the population variance (divisor n, `ddof = 0`)
+  of the source's BTC column, the demeaned exploration returns, i.e. the
+  mean of its squares. It is computed once per source and frozen,
   never refitted on a replication.
 - **Annualising and clipping.** A daily variance forecast v becomes the target
   `min(1, τ / √(365 v))`, with target 1 when v = 0 (canonical convention 3).
   The target always lies in [0, 1].
-- **Frozen controls (owner decision, I2B-4).** The held exposure starts at 0 on
-  path day 0. Each day the new target replaces the held exposure only when
+- **Day 0 and missing history.** A decision is made at the start of every path
+  day, including day 0, from the returns observed before it (none on day 0).
+  The held state before the day-0 decision is 0. Every rule therefore has a
+  defined target from day 0: a trend rule's target is 0 until L prices exist,
+  and every variance estimator starts from `v̄`. Where a formula needs a
+  return before path day 0, `r_s² = v̄` is used for s < 0 (this affects only
+  HAR's first 22 days). All of this lies in the warm-up.
+- **Frozen controls (owner decision, I2B-4).** Each day the new target replaces the held exposure only when
   `aqt.benchmarks.canonical.reaches_rebalance_band(target − held)` is true:
   the frozen 0.10 band, on every rebalance, moving fully to the target
   (canonical conventions 1, 2 and 8). Decisions are daily at 00:00 UTC, so a
@@ -114,7 +125,9 @@ Always long, with the duplicates removed (owner decision, I2B-7):
 - **Model point:** estimator class ∈ (EWMA, `HAR_RV`, `GARCH_1_1`).
 - **Second index:** for EWMA it selects the half-life (7, 3, 14) days, i.e.
   `EWMA_168h`, `EWMA_72h`, `EWMA_336h`, with a 1-day horizon. For HAR and
-  GARCH it selects the forecast horizon H ∈ (1, 3, 7) days.
+  GARCH it selects the forecast horizon H ∈ (1, 3, 7) days. The second index
+  therefore means different things for different estimators (I2BR-4). The
+  trial identities are in the table below.
 - **Vol target:** τ ∈ (0.60, 0.40, 0.80).
 
 The target is recomputed every day from the forecast below. The frozen
@@ -130,14 +143,31 @@ parameters are illustrative constants of the usual magnitude. They are
   forecast iterates the same equation forward, with forecasts in place of
   unobserved RV, and averages the H one-day forecasts.
 
+**Trial identities** (frozen unit `(hypothesis_id, parameter_point,
+horizon)`; I2BR-4). The estimator is categorical-structural, part of the
+parameter point (`exposure_mapping.sizing_estimator_dimension_type`).
+
+| Family | Model point index → | Second index → | Parameter point | Horizon |
+|---|---|---|---|---|
+| trend | L ∈ (200, 100, 50) | H ∈ (1, 3, 7) d | (SMA L, τ) | 24 / 72 / 168 h |
+| vol, model 0 | `EWMA` | half-life (7, 3, 14) d | (`EWMA_168h` / `EWMA_72h` / `EWMA_336h`, τ) | 24 h |
+| vol, model 1 | `HAR_RV` | H ∈ (1, 3, 7) d | (`HAR_RV`, τ) | 24 / 72 / 168 h |
+| vol, model 2 | `GARCH_1_1` | H ∈ (1, 3, 7) d | (`GARCH_1_1`, τ) | 24 / 72 / 168 h |
+
+The 27 vol rules are 27 distinct trial identities and fit the 81-trial
+budget. Five estimators × 3 targets give 15 parameter points; the horizons
+of HAR and GARCH add the rest.
+
 ### R-4 Which K rules a cell uses (owner decision, I2B-3)
 
 **Fixed set per K.** Rule index i = 0 … 26 has digits a = i mod 3,
 b = ⌊i/3⌋ mod 3 and c = ⌊i/9⌋. It maps to (model point a, second index
 (a + b) mod 3, τ index (a + 2b + c) mod 3). The map is one-to-one, and:
 
-- the first 3 rules use every value of every dimension once;
-- the first 9 rules contain every pair of values from any two dimensions once;
+- the first 3 rules use every value of every index once;
+- the first 9 rules contain every pair of values from any two indices once.
+  This is balance in the indexed choices. In the vol library it is not equal
+  coverage of physical horizons, since EWMA rules are all 24 h (I2BR-4);
 - rule 0 is the canonical-like rule (SMA 200 or `EWMA_168h`, H = 1, τ = 0.60).
 
 A cell with K rules uses rules 0 … K − 1 of its family, in that order. Under
