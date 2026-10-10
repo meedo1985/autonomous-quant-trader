@@ -4,6 +4,7 @@ Synthetic returns only."""
 from __future__ import annotations
 
 import itertools
+from collections.abc import Callable
 
 import numpy as np
 import pytest
@@ -102,34 +103,55 @@ def test_the_accepted_table_and_constants_are_pinned(family: str) -> None:
 
 
 # Up-drifting, high-vol path: trend signals are mostly on and sizes mostly
-# below 1, so a changed return shows in the targets instead of being masked.
+# below 1, so a changed return tends to show in the targets.
 UP = np.random.default_rng(12).normal(0.004, 0.06, 240)
 UP_V_BAR = float(np.mean(UP**2))
+PROBES = (None, 0.6, -0.6, 0.0)  # None: the path's own r_t
+
+
+def _first_violation(targets: Callable[[np.ndarray], np.ndarray]) -> int | None:
+    """The first day t at which target 0..t differs between r_t probes."""
+    for t in range(len(UP)):
+        outs = []
+        for value in PROBES:
+            other = UP.copy()
+            if value is not None:
+                other[t] = value
+            outs.append(targets(other)[: t + 1])
+        if any(not np.array_equal(o, outs[0]) for o in outs[1:]):
+            return t
+    return None
+
+
+def _target_fn(family: str, i: int) -> Callable[[np.ndarray], np.ndarray]:
+    f = rules.trend_targets if family == "trend" else rules.vol_targets
+    return lambda r: f(r, UP_V_BAR, i)
 
 
 @pytest.mark.parametrize("family", rules.FAMILIES)
 def test_every_target_ignores_its_own_day(family: str) -> None:
-    """For every rule and **every** day t: target 0..t is identical whether
-    r_t is +60%, -60% or 0. The same change must show in a later target on
-    at least 95% of days, so the check is not vacuous (a rule reading r_t at
-    day t would differ there instead)."""
-    targets = rules.trend_targets if family == "trend" else rules.vol_targets
+    """What this proves: for every rule and every day t of the test path,
+    targets 0..t are identical under four values of r_t (its own, +60%,
+    -60%, 0). It does not prove that every conceivable partial look-ahead
+    would change a target under those probes; the witness test below shows
+    that the whole-rule one-day look-ahead of each rule is caught."""
     for i in range(27):
-        visible = 0
-        for t in range(len(UP)):
-            outs = []
-            for value in (0.6, -0.6, 0.0):
-                other = UP.copy()
-                other[t] = value
-                outs.append(targets(other, UP_V_BAR, i))
-            for out in outs[1:]:
-                np.testing.assert_array_equal(
-                    out[: t + 1], outs[0][: t + 1], err_msg=f"rule {i}, day {t}"
-                )
-            visible += any(
-                not np.array_equal(o[t + 1 :], outs[0][t + 1 :]) for o in outs
-            )
-        assert visible >= 0.95 * (len(UP) - 1), f"rule {i}: {visible}"
+        assert _first_violation(_target_fn(family, i)) is None, f"rule {i}"
+
+
+@pytest.mark.parametrize("family", rules.FAMILIES)
+def test_the_check_catches_each_rules_one_day_look_ahead(family: str) -> None:
+    """Witness, per rule: the same rule run on the path shifted one day
+    earlier (target t then reads r_1 .. r_t) must fail the check above."""
+    for i in range(27):
+        honest = _target_fn(family, i)
+
+        def peeking(
+            r: np.ndarray, f: Callable[[np.ndarray], np.ndarray] = honest
+        ) -> np.ndarray:
+            return f(np.append(r[1:], 0.0))
+
+        assert _first_violation(peeking) is not None, f"rule {i} not caught"
 
 
 def test_ewma_and_garch_against_direct_recursions() -> None:
