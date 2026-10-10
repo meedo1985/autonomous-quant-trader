@@ -101,33 +101,35 @@ def test_the_accepted_table_and_constants_are_pinned(family: str) -> None:
     )
 
 
-def _cuts(family: str, i: int) -> list[int]:
-    """Days 0, 1, 22, 23, 200, 250, and for a trend rule its first two
-    refresh days with L prices (H = 7 at L = 200: days 203 and 210)."""
-    cuts = [0, 1, 22, 23, 200, 250]
-    if family == "trend":
-        m, s, _ = rules.index(i)
-        h, first = rules.HORIZONS[s], rules.SMA_DAYS[m]
-        first += -first % h
-        cuts += [first, first + h]
-    return cuts
+# Up-drifting, high-vol path: trend signals are mostly on and sizes mostly
+# below 1, so a changed return shows in the targets instead of being masked.
+UP = np.random.default_rng(12).normal(0.004, 0.06, 240)
+UP_V_BAR = float(np.mean(UP**2))
 
 
 @pytest.mark.parametrize("family", rules.FAMILIES)
 def test_every_target_ignores_its_own_day(family: str) -> None:
-    """Target t of every rule is the same whether r_t is +60%, -60% or 0
-    (one of the three flips any comparison or estimator using r_t)."""
+    """For every rule and **every** day t: target 0..t is identical whether
+    r_t is +60%, -60% or 0. The same change must show in a later target on
+    at least 95% of days, so the check is not vacuous (a rule reading r_t at
+    day t would differ there instead)."""
     targets = rules.trend_targets if family == "trend" else rules.vol_targets
-    r = R[:, 0]
     for i in range(27):
-        for cut in _cuts(family, i):
-            got = []
+        visible = 0
+        for t in range(len(UP)):
+            outs = []
             for value in (0.6, -0.6, 0.0):
-                other = r.copy()
-                other[cut] = value
-                got.append(targets(other, V_BAR, i)[: cut + 1])
-            np.testing.assert_array_equal(got[0], got[1], err_msg=f"{i} {cut}")
-            np.testing.assert_array_equal(got[0], got[2], err_msg=f"{i} {cut}")
+                other = UP.copy()
+                other[t] = value
+                outs.append(targets(other, UP_V_BAR, i))
+            for out in outs[1:]:
+                np.testing.assert_array_equal(
+                    out[: t + 1], outs[0][: t + 1], err_msg=f"rule {i}, day {t}"
+                )
+            visible += any(
+                not np.array_equal(o[t + 1 :], outs[0][t + 1 :]) for o in outs
+            )
+        assert visible >= 0.95 * (len(UP) - 1), f"rule {i}: {visible}"
 
 
 def test_ewma_and_garch_against_direct_recursions() -> None:
