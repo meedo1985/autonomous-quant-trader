@@ -62,23 +62,49 @@ def _within(result: CellResult, ucb: float, tau: float) -> bool:
     return ucb <= tau
 
 
+# Annex B §2.5 order (dsr.evaluate): rules 1-4 stop before the classifier,
+# the classifier refuses with UNSUPPORTED_LAW, rules 5-6 can fail after it.
+BEFORE_CLASSIFIER = frozenset(
+    {"INVALID_SERIES", "ZERO_VARIANCE_COLUMN", "BLOCK_LENGTH_UNAVAILABLE", CAPPED}
+)
+AFTER_CLASSIFIER = frozenset({"INVALID_REPLICATE", "INVALID_ARITHMETIC"})
+
+
+def _finite_hex(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    number = reduce.decode({"v": value})["v"]
+    return number == number and abs(number) != float("inf")
+
+
 def consistent(record: dict[str, object], bounds: reduce.Bounds) -> str | None:
-    """Why a development record does not follow from its thresholds and
-    nominee rule, or None (I1-3): the classifier refused iff the record says
-    UNSUPPORTED_LAW (when rules 1-4 let it run), and an available DSR result
-    nominated the U_G nominee."""
-    refused = not classifier.within(reduce.decode(record["diagnostics"]), *bounds)
+    """Why a development record cannot have come from `dev_replication`
+    with these thresholds, or None (I1-3, I1R-1, I1R-2): each cause code in
+    the Annex B order (a rule 1-4 code whatever the classifier says;
+    otherwise UNSUPPORTED_LAW iff the classifier refuses; a rule 5-6 code
+    only after it accepts); an available result carries a finite z_f*, S0
+    and block and nominated the U_G nominee; at K = 1 both rules are one
+    result."""
+    values = reduce.decode(record["diagnostics"])
+    refused = not classifier.within(values, *bounds)
     for rule in RULES:
         entry = record[rule]
         if not isinstance(entry, dict):
             return f"{rule}: malformed"
         reason = entry["reason"]
-        if (reason is None and refused) or (
-            reason == "UNSUPPORTED_LAW" and not refused
-        ):
+        if reason in BEFORE_CLASSIFIER:
+            continue
+        if refused != (reason == "UNSUPPORTED_LAW"):
             return f"{rule}: classifier outcome does not follow from the thresholds"
-        if reason is None and entry["nominee"] != record["nominee"]:
-            return f"{rule}: DSR nominee differs from the U_G nominee"
+        if reason is None:
+            if not all(_finite_hex(entry[f]) for f in ("z", "s0", "block")):
+                return f"{rule}: an available result without finite z, S0 or L"
+            if entry["nominee"] != record["nominee"]:
+                return f"{rule}: DSR nominee differs from the U_G nominee"
+        elif reason not in AFTER_CLASSIFIER and reason != "UNSUPPORTED_LAW":
+            return f"{rule}: unknown cause code {reason!r}"
+    if values["K"] == 1 and record["largest"] != record["median"]:
+        return "K = 1: the two rules differ"
     return None
 
 
@@ -203,7 +229,9 @@ def choose(cells: dict[str, dict[str, list[Rep]]], m: int) -> dict[str, object]:
         "targets": tau,
         "cells": {c: vars(r) for c, r in sorted(results.items())},
         "z_crit": None if chosen is None else str(chosen),
-        "qualifies_before_coverage": chosen is not None,
+        # I1R-4: never read as a choice when a comparison is too close
+        "status": "ok" if margin >= MARGIN_MIN else "margin_failed",
+        "qualifies_before_coverage": chosen is not None and margin >= MARGIN_MIN,
         "smallest_margin": margin,
         "margin_ok": margin >= MARGIN_MIN,
     }

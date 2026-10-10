@@ -987,7 +987,8 @@ def test_the_development_run_needs_the_threshold_run_then_follows_section_2(
         assert chunk["binding"] == rundef.definition_sha256(defn)
         assert len(chunk["results"]) == 2
         for record in chunk["results"]:
-            assert set(record) == {"diagnostics", "columns", "largest", "median",
+            assert set(record) == {"diagnostics", "columns", "column_checks",
+                                   "largest", "median",
                                    "nominee", "u_g"}  # fmt: skip
             assert set(record["diagnostics"]) == classifier_fields(k)
             for rule in ("largest", "median"):
@@ -1011,7 +1012,9 @@ def test_the_development_run_needs_the_threshold_run_then_follows_section_2(
         f"{ns}/{c}" for ns in ("threshold", "dev") for c in ("pilot-k1", "pilot-k2")
     }
     assert set(report["chain_heads"]) == heads
-    assert report["margin_ok"] is True
+    assert report["margin_ok"] is True and report["status"] == "ok"
+    assert "not qualification decisions" in report["measurement_only"]  # I1R-5
+    assert chose.stdout.startswith("z_crit None")
 
 
 def _hex64(value: float | None) -> str | None:
@@ -1107,3 +1110,46 @@ def test_the_nominee_is_the_highest_sharpe_lowest_id_on_ties(
     assert driver.nominee(np.column_stack([column - 1, column])) == 1
     assert driver.nominee(np.column_stack([column, np.ones(4)])) is None
     assert driver.nominee(np.column_stack([column, column * np.nan])) is None
+
+
+def test_a_margin_failure_exits_3_and_never_reads_as_a_choice(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:  # fmt: skip
+    """I1R-4: through the real script, a target comparison inside the
+    margin writes a report marked margin_failed and exits 3 without the
+    z_crit line."""
+    from calibration import choices
+    from calibration.generator import Cell
+
+    root, out = recorded
+    driver = _load_driver(root, monkeypatch)
+    monkeypatch.setattr(dsr, "_V_VERIFIED", True)
+    monkeypatch.setattr(driver.rundef, "start_gate", lambda d, _root: d["gating"])
+    defn = rundef.load(out)
+    expected = rundef.definition_sha256(defn)
+    cells = [Cell("pilot-k2", 2, 60, "garch", "equi0.5"),
+             Cell("pilot-k1", 1, 60, "t5", "independent")]  # fmt: skip
+    store = tmp_path / "store"
+    for c in cells:
+        driver.worker(out, store, "threshold", c.cell_id, expected)
+    pooled = driver.dev_bounds(defn, store, defn["gating"], cells)
+    for c in cells:
+        driver.worker(out, store, "dev", c.cell_id, expected, pooled[c.k])
+    spec = importlib.util.spec_from_file_location(
+        "d19_choose_loaded", root / "scripts" / "d19_choose.py"
+    )
+    assert spec is not None and spec.loader is not None
+    chooser = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(chooser)
+    monkeypatch.setattr(chooser.rundef, "start_gate", lambda d, _root: d["gating"])
+    monkeypatch.setattr(choices, "MARGIN_MIN", 1e300)
+    report_path = tmp_path / "report.json"
+    code = chooser.main(["choose", "--definition", str(out), "--store", str(store),
+                         "--out", str(report_path)])  # fmt: skip
+    captured = capsys.readouterr()
+    assert code == 3 and "margin_failed" in captured.err
+    assert "z_crit" not in captured.out
+    report = json.loads(report_path.read_text())
+    assert report["status"] == "margin_failed"
+    assert report["qualifies_before_coverage"] is False

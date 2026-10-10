@@ -119,16 +119,25 @@ def main(argv: list[str] | None = None) -> int:
         for k, (up, lo) in sorted(reduce.pooled(final).items())
     }
     report["definition_sha256"] = rundef.definition_sha256(defn)
+    if defn["cell_manifest"]["purpose"] == "pilot":  # I1R-5
+        report["measurement_only"] = (
+            "pilot run: development counts below about 7,700 per cell demote "
+            "every cell by the cap rule, so these statuses, z_crit and final "
+            "thresholds are not qualification decisions; read the event counts"
+        )
     report["chain_heads"] = heads  # I1-3: the chains this report was made from
     report["dev_thresholds_sha256"] = sha(
         {str(k): [{n: v.hex() for n, v in side.items()} for side in b]
          for k, b in sorted(pooled.items())}
     )  # fmt: skip
     args.out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", "utf-8")
-    print(f"z_crit {report['z_crit']}, family_block_rule {report['family_block_rule']}")
-    if not report["margin_ok"]:  # I1-6: fail closed, the owner decides
-        print(f"a target comparison is within {choices.MARGIN_MIN:g}", file=sys.stderr)
+    if not report["margin_ok"]:  # I1-6, I1R-4: fail closed, the owner decides
+        print(
+            f"margin_failed: a target comparison is within {choices.MARGIN_MIN:g}",
+            file=sys.stderr,
+        )
         return 3
+    print(f"z_crit {report['z_crit']}, family_block_rule {report['family_block_rule']}")
     return 0
 
 

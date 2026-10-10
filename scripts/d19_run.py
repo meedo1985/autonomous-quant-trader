@@ -100,14 +100,23 @@ def dev_replication(
     namespace (§8, I1-5). A gate not computed counts as unavailable (P18-7),
     so no nominee is a U_G event. Recorded (§2 step 6, §9): the diagnostics;
     per block rule the cause code, z_f*, L, S0, max L_j/T and the DSR
-    nominee; every column's (L_j, capped); the U_G nominee and event."""
+    nominee; every column's (L_j, capped); the U_G nominee and event;
+    every column's rule 1-2 checks."""
     seed = outer_seed(anchor, cell.cell_id, NAMESPACES["dev"], rep)
     legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
     values = classifier.diagnostics(legs.x)
     upper, lower = bounds
     accept = classifier.within(values, upper, lower)
     fam = family_seed(seed, cell.cell_id, "agnostic", cell.k, prereg, rep)
-    out: dict[str, object] = {"diagnostics": _exact(values), "columns": None}
+    out: dict[str, object] = {
+        "diagnostics": _exact(values),
+        "columns": None,
+        # I1R-3: Annex B rules 1-2 per column (finite; nonzero variance), so
+        # §9's per-column failure rates cover failures before any L_j exists
+        "column_checks": [
+            [bool(np.isfinite(c).all()), bool(c.std(ddof=1) != 0)] for c in legs.x.T
+        ],
+    }
     for rule in ("largest", "median"):
         if rule == "median" and cell.k == 1:
             out[rule] = out["largest"]  # one column: the same block, same result

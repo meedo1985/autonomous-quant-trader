@@ -107,29 +107,68 @@ def test_choose_reports_every_step() -> None:
     assert report["cells"]["a"]["status"] == "qualifying"
 
 
-def _record(reason: str | None, nominee: int, u_g_nominee: int) -> dict[str, object]:
-    entry = {"reason": reason, "nominee": nominee}
-    return {"diagnostics": {"K": struct.pack(">d", 1.0).hex(),
-                            "T": struct.pack(">d", 9.0).hex(),
-                            "g": struct.pack(">d", 0.5).hex()},
-            "largest": entry, "median": entry, "nominee": u_g_nominee}  # fmt: skip
+def _h(value: float) -> str:
+    return struct.pack(">d", value).hex()
 
 
-def test_a_record_must_follow_from_its_thresholds_and_nominee(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """I1-3: an accepted record stored as refused (or the reverse), or a DSR
-    nominee that is not the U_G nominee, is reported."""
+def _record(
+    reason: str | None, nominee: int, u_g_nominee: int, *, k: float = 1.0,
+    z: float | None = 2.0,
+) -> dict[str, object]:  # fmt: skip
+    entry = {
+        "reason": reason,
+        "nominee": nominee,
+        "z": None if z is None else _h(z),
+        "s0": _h(0.1),
+        "block": _h(3.0),
+    }
+    return {
+        "diagnostics": {"K": _h(k), "T": _h(9.0), "g": _h(0.5)},
+        "largest": entry,
+        "median": dict(entry),
+        "nominee": u_g_nominee,
+    }
+
+
+@pytest.fixture
+def toy_classifier(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(choices.classifier, "within", lambda v, u, lo: v["g"] <= u["g"])
-    accepts, refuses = ({"g": 1.0}, {}), ({"g": 0.0}, {})
-    assert choices.consistent(_record(None, 0, 0), accepts) is None
-    assert choices.consistent(_record("UNSUPPORTED_LAW", 0, 0), refuses) is None
-    assert choices.consistent(_record("BLOCK_LENGTH_CAPPED", 0, 0), accepts) is None
-    assert "classifier" in str(choices.consistent(_record(None, 0, 0), refuses))
-    assert "classifier" in str(
-        choices.consistent(_record("UNSUPPORTED_LAW", 0, 0), accepts)
-    )
-    assert "nominee" in str(choices.consistent(_record(None, 1, 0), accepts))
+
+
+ACCEPTS, REFUSES = ({"g": 1.0}, {}), ({"g": 0.0}, {})
+
+
+@pytest.mark.usefixtures("toy_classifier")
+def test_a_record_must_follow_from_its_thresholds_and_nominee() -> None:
+    """I1-3, I1R-1: the classifier outcome, the Annex B order of cause
+    codes, the fields of an available result, and the nominee."""
+    for code in choices.BEFORE_CLASSIFIER:  # rules 1-4 stop first, either way
+        assert choices.consistent(_record(code, 0, 0), ACCEPTS) is None
+        assert choices.consistent(_record(code, 0, 0), REFUSES) is None
+    for code in choices.AFTER_CLASSIFIER:  # rules 5-6 only after acceptance
+        assert choices.consistent(_record(code, 0, 0), ACCEPTS) is None
+        assert "classifier" in str(choices.consistent(_record(code, 0, 0), REFUSES))
+    assert choices.consistent(_record(None, 0, 0), ACCEPTS) is None
+    assert choices.consistent(_record("UNSUPPORTED_LAW", 0, 0), REFUSES) is None
+    assert "classifier" in str(choices.consistent(_record(None, 0, 0), REFUSES))
+    unsupported = _record("UNSUPPORTED_LAW", 0, 0)
+    assert "classifier" in str(choices.consistent(unsupported, ACCEPTS))
+    assert "nominee" in str(choices.consistent(_record(None, 1, 0), ACCEPTS))
+    assert "finite" in str(choices.consistent(_record(None, 0, 0, z=None), ACCEPTS))
+    nan_z = _record(None, 0, 0, z=float("nan"))
+    assert "finite" in str(choices.consistent(nan_z, ACCEPTS))
+    assert "unknown" in str(choices.consistent(_record("OTHER", 0, 0), ACCEPTS))
+
+
+@pytest.mark.usefixtures("toy_classifier")
+def test_at_k_1_both_rules_must_be_one_result() -> None:
+    """I1R-2: dev_replication reuses one result at K = 1."""
+    record = _record(None, 0, 0)
+    record["median"] = {**record["median"], "z": _h(2.5)}  # type: ignore[dict-item]
+    assert "K = 1" in str(choices.consistent(record, ACCEPTS))
+    two = _record(None, 0, 0, k=2.0)
+    two["median"] = {**two["median"], "z": _h(2.5)}  # type: ignore[dict-item]
+    assert choices.consistent(two, ACCEPTS) is None
 
 
 def test_a_target_comparison_inside_the_margin_is_flagged(
@@ -139,5 +178,8 @@ def test_a_target_comparison_inside_the_margin_is_flagged(
     cells = {"a": {r: _reps(z=[2.5] * 50) for r in choices.RULES}}
     report = choices.choose(cells, 3)
     assert report["margin_ok"] is True and 0 < report["smallest_margin"] < 1
+    assert report["status"] == "ok" and report["qualifies_before_coverage"] is True
     monkeypatch.setattr(choices, "MARGIN_MIN", 1.0)
-    assert choices.choose(cells, 3)["margin_ok"] is False
+    failed = choices.choose(cells, 3)
+    assert failed["margin_ok"] is False and failed["status"] == "margin_failed"
+    assert failed["qualifies_before_coverage"] is False  # I1R-4
