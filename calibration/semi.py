@@ -77,17 +77,32 @@ def exploration_returns(
     return returns, tuple(b.manifest.manifest_sha256 for b in builds), left_out
 
 
+def reference_variance(source: np.ndarray) -> float:
+    """v_bar (rule-library R-5): mean of squares of the demeaned BTC column
+    (ddof 0). Refuses a source with a non-finite row or a BTC factor
+    1 + r <= 0."""
+    btc = np.asarray(source, dtype=float)[:, 0]
+    if not np.all(np.isfinite(source)) or np.any(1 + btc <= 0):
+        raise ValueError("source has a non-finite row or a BTC return <= -100%")
+    return float(np.mean(btc**2))
+
+
 @dataclass(frozen=True)
 class Source:
-    """The demeaned (BTC, ETH) daily returns and their identity, which the
-    run definition records and every worker re-checks (§3.4 item 1)."""
+    """The demeaned (BTC, ETH) daily returns, their identity, which the run
+    definition records and every worker re-checks (§3.4 item 1), and v_bar,
+    validated and frozen once per source (R-5, I2BW-3)."""
 
     returns: np.ndarray
     identity: dict[str, object]
+    v_bar: float
 
 
 def load_source(raw_root: Path) -> Source:
+    """Refuses (ValueError) a source that R-5 refuses, before anything is
+    recorded or drawn."""
     returns, hashes, left_out = exploration_returns(raw_root)
+    v_bar = reference_variance(returns)
     data = np.ascontiguousarray(returns, dtype="<f8").tobytes()
     identity: dict[str, object] = {
         "manifest_sha256": dict(zip(SYMBOLS, hashes, strict=True)),
@@ -95,7 +110,7 @@ def load_source(raw_root: Path) -> Source:
         "rows": len(returns),
         "left_out_days": len(left_out),
     }
-    return Source(returns, identity)
+    return Source(returns, identity, v_bar)
 
 
 def joint_returns(

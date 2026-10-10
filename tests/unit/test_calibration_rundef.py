@@ -1055,7 +1055,8 @@ def test_development_records_equal_an_independent_section_2_computation(
     for c in cells.values():
         driver.worker(out, store, "threshold", c.cell_id, expected)
     pooled = driver.dev_bounds(defn, store, defn["gating"], list(cells.values()))
-    wide, none = _widened(pooled[cell.k], 1e6), _widened(pooled[cell.k], -1e6)
+    key = (cell.k, cell.t)
+    wide, none = _widened(pooled[key], 1e6), _widened(pooled[key], -1e6)
     anchor = defn["prereg_sha256"]
     accepted = 0
     for name, bounds in (("wide", wide), ("none", none)):
@@ -1138,7 +1139,7 @@ def test_a_margin_failure_exits_3_and_never_reads_as_a_choice(
         driver.worker(out, store, "threshold", c.cell_id, expected)
     pooled = driver.dev_bounds(defn, store, defn["gating"], cells)
     for c in cells:
-        driver.worker(out, store, "dev", c.cell_id, expected, pooled[c.k])
+        driver.worker(out, store, "dev", c.cell_id, expected, pooled[c.k, c.t])
     spec = importlib.util.spec_from_file_location(
         "d19_choose_loaded", root / "scripts" / "d19_choose.py"
     )
@@ -1215,7 +1216,9 @@ def _write_raw(root: Path, drift: float = 0.0) -> None:
             (directory / f"{name}.zip.source.json").write_text(json.dumps(sidecar))
 
 
-def test_a_q5_pilot_runs_on_recorded_exploration_data_only(tmp_path: Path) -> None:
+def test_a_q5_pilot_runs_on_recorded_exploration_data_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Q5 (prereg §3.4) end to end: the run definition records the source
     identity built from the archives; the driver's threshold draws equal
     `rules.draw` on that source with §8 seeds; a run without the archives,
@@ -1231,15 +1234,30 @@ def test_a_q5_pilot_runs_on_recorded_exploration_data_only(tmp_path: Path) -> No
     inputs = tmp_path / "in"
     inputs.mkdir()
     (inputs / "cells.json").write_text(Q5_CELLS)
-    (inputs / "exploration.json").write_text("{}")
+    from aqt.data.klines import build_exploration_manifest
+    from aqt.data.manifest import canonical_json_bytes
+
+    for name, path in (("btc", raw), ("other", other)):
+        built = build_exploration_manifest("exploration", "BTCUSDT", path)
+        (inputs / f"{name}.json").write_bytes(
+            canonical_json_bytes(built.manifest.as_mapping())
+        )
+    (inputs / "empty.json").write_text("{}")
     out = inputs / "d.json"
-    base = ("record", "--out", str(out), "--prereg-commit", "HEAD",
-            "--engine-commit", _git(root, "rev-parse", "HEAD"),
-            "--cell-manifest", str(inputs / "cells.json"),
-            "--exploration-manifest", str(inputs / "exploration.json"))  # fmt: skip
-    done = _script(root, *base)
+
+    def base(manifest: str) -> tuple[str, ...]:
+        return ("record", "--out", str(out), "--prereg-commit", "HEAD",
+                "--engine-commit", _git(root, "rev-parse", "HEAD"),
+                "--cell-manifest", str(inputs / "cells.json"),
+                "--exploration-manifest", str(inputs / manifest))  # fmt: skip
+
+    done = _script(root, *base("btc.json"))
     assert done.returncode == 1 and "Q5 cells need --raw-root" in done.stderr
-    done = _script(root, *base, "--raw-root", str(raw))
+    for wrong in ("empty.json", "other.json"):  # I2BW-2
+        done = _script(root, *base(wrong), "--raw-root", str(raw))
+        assert done.returncode == 1 and "not the BTC exploration" in done.stderr
+    assert not out.exists()
+    done = _script(root, *base("btc.json"), "--raw-root", str(raw))
     assert done.returncode == 0, done.stderr
     defn = rundef.load(out)
     source = semi.load_source(raw)
@@ -1271,6 +1289,21 @@ def test_a_q5_pilot_runs_on_recorded_exploration_data_only(tmp_path: Path) -> No
     assert done.returncode == 0, done.stderr
     dev = json.loads((store / "dev" / "pilot-q5" / "chunk-0000000.json").read_bytes())
     assert len(dev["results"]) == 2
+    # I2BW-5: the stored development draws are this source's Q5 draws under
+    # the dev namespace, and each record is one `dev_replication` could
+    # write with the pooled thresholds (the d19_choose consistency check).
+    from calibration import choices
+
+    bounds = _load_driver(root, monkeypatch).dev_bounds(
+        defn, store, defn["gating"], [cell, Cell("pilot-k1", 1, 40, "t5")]
+    )[cell.k, cell.t]
+    for rep_, stored in enumerate(dev["results"]):
+        seed = outer_seed(defn["prereg_sha256"], "pilot-q5", "d19-dev-v1", rep_)
+        expected = classifier.diagnostics(rules.draw(cell, seed, source).x)
+        assert stored["diagnostics"] == {
+            n: struct.pack(">d", v).hex() for n, v in sorted(expected.items())
+        }
+        assert choices.consistent(stored, bounds) is None
 
 
 def test_a_q5_development_draw_uses_its_family_label(
@@ -1292,7 +1325,8 @@ def test_a_q5_development_draw_uses_its_family_label(
         raise Seeded  # stop before Annex B, which needs the pinned runtime
 
     monkeypatch.setattr(driver, "family_seed", spy)
-    source = semi.Source(np.random.default_rng(3).normal(0, 0.03, (300, 2)), {})
+    returns = np.random.default_rng(3).normal(0, 0.03, (300, 2))
+    source = semi.Source(returns, {}, semi.reference_variance(returns))
     from calibration import classifier
 
     def loose(k: int) -> tuple[dict[str, float], dict[str, float]]:

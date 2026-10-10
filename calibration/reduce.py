@@ -30,18 +30,17 @@ def cell_thresholds(chain: chunks.Chain) -> Bounds:
     return classifier.fit_thresholds([decode(v) for v in chunks.reduce(chain)])
 
 
-def pooled(cells: list[Bounds]) -> dict[int, Bounds]:
-    """Per `K`: the largest upper and the smallest lower threshold over the
-    cells of that `K`."""
-    out: dict[int, Bounds] = {}
+def pooled(cells: list[Bounds]) -> dict[tuple[int, int], Bounds]:
+    """Per `T` level (§3.5 item 2), and within it per `K`, since `K` and `T`
+    are exact classifier checks and `K = 1` has no correlation tails: the
+    largest upper and the smallest lower threshold over those cells."""
+    out: dict[tuple[int, int], Bounds] = {}
     for upper, lower in cells:
-        k = int(upper["K"])
-        if k not in out:
-            out[k] = (dict(upper), dict(lower))
+        key = (int(upper["K"]), int(upper["T"]))
+        if key not in out:
+            out[key] = (dict(upper), dict(lower))
             continue
-        up, lo = out[k]
-        if up["T"] != upper["T"]:
-            raise ValueError(f"K = {k}: cells differ in T")
+        up, lo = out[key]
         for name, value in upper.items():
             up[name] = max(up[name], value)
         for name, value in lower.items():

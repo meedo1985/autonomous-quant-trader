@@ -6,8 +6,6 @@ from __future__ import annotations
 import math
 import struct
 
-import pytest
-
 from calibration import reduce
 
 
@@ -26,14 +24,14 @@ def _cell(k: int, t: int, top: float, bottom: float) -> reduce.Bounds:
     )
 
 
-def test_pooled_takes_the_extreme_per_k_and_never_mixes_k() -> None:
+def test_pooled_takes_the_extreme_per_t_level_and_k_and_never_mixes_them() -> None:
+    """Two T levels at one K, and two K at one T (I2BW-1)."""
     pooled = reduce.pooled(
-        [_cell(2, 9, 1.0, -1.0), _cell(2, 9, 3.0, -0.5), _cell(5, 9, 2.0, -2.0)]
-    )
-    assert pooled[2] == _cell(2, 9, 3.0, -1.0)
-    assert pooled[5] == _cell(5, 9, 2.0, -2.0)
-
-
-def test_pooled_refuses_cells_of_one_k_with_different_t() -> None:
-    with pytest.raises(ValueError, match="differ in T"):
-        reduce.pooled([_cell(2, 9, 1.0, -1.0), _cell(2, 10, 1.0, -1.0)])
+        [_cell(2, 9, 1.0, -1.0), _cell(2, 9, 3.0, -0.5), _cell(5, 9, 2.0, -2.0),
+         _cell(2, 10, 7.0, -7.0)]
+    )  # fmt: skip
+    assert pooled == {
+        (2, 9): _cell(2, 9, 3.0, -1.0),
+        (5, 9): _cell(5, 9, 2.0, -2.0),
+        (2, 10): _cell(2, 10, 7.0, -7.0),
+    }

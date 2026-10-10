@@ -243,3 +243,19 @@ def test_the_source_identity_binds_manifests_and_returns(
         "rows": 3,
         "left_out_days": len(left_out),
     }
+
+
+def test_a_source_r5_refuses_is_refused_when_loaded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """I2BW-3: v_bar is fixed, and an invalid source refused, once per
+    source, before anything is recorded or drawn."""
+    bad = np.array([[0.01, 0.0], [-1.001, 0.0], [0.02, 0.0]])
+    monkeypatch.setattr(semi, "exploration_returns", lambda root: (bad, ("a", "b"), ()))
+    with pytest.raises(ValueError, match="<= -100%"):
+        semi.load_source(Path("raw"))
+    good = np.array([[0.01, 0.0], [-0.03, 0.0], [0.02, 0.0]])
+    monkeypatch.setattr(
+        semi, "exploration_returns", lambda root: (good, ("a", "b"), ())
+    )
+    assert semi.load_source(Path("raw")).v_bar == float(np.mean(good[:, 0] ** 2))

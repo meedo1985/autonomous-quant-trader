@@ -173,7 +173,7 @@ def dev_replication(
 
 def dev_bounds(
     defn: dict[str, Any], store: Path, gating: object, cells: list[Cell]
-) -> dict[int, reduce.Bounds]:
+) -> dict[tuple[int, int], reduce.Bounds]:
     """The development thresholds from every cell's complete, verified
     threshold chain; ChainError if any chain is incomplete or broken."""
     count = rundef.run_plan(defn["cell_manifest"])["threshold"]
@@ -283,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
             args.namespace,
             c.cell_id,
             expected,
-            bounds.get(c.k),
+            bounds.get((c.k, c.t)),
             args.raw_root,
         )  # fmt: skip
         for c in cells

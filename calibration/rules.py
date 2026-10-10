@@ -17,7 +17,9 @@ import numpy as np
 from aqt.benchmarks.canonical import reaches_rebalance_band
 from calibration.generator import SEMI_LAWS, Cell, Legs, generate
 from calibration.seeds import stream
-from calibration.semi import Exposures, Source, semi_empirical
+from calibration.semi import Exposures, Source, reference_variance, semi_empirical
+
+__all__ = ["reference_variance"]  # re-exported: R-5's v_bar lives in semi
 
 FAMILIES = ("trend", "vol")
 RULES = 27
@@ -54,15 +56,6 @@ def trial(family: str, i: int) -> tuple[str, tuple[object, ...], int]:
     if m == 0:
         return "vol", (EWMA_NAMES[s], tau), 24
     return "vol", (ESTIMATORS[m], tau), 24 * HORIZONS[s]
-
-
-def reference_variance(source: np.ndarray) -> float:
-    """v_bar: mean of squares of the demeaned BTC column (ddof 0). Refuses a
-    source with a non-finite row or a BTC factor 1 + r <= 0."""
-    btc = np.asarray(source, dtype=float)[:, 0]
-    if not np.all(np.isfinite(source)) or np.any(1 + btc <= 0):
-        raise ValueError("source has a non-finite row or a BTC return <= -100%")
-    return float(np.mean(btc**2))
 
 
 def _size(v: np.ndarray, tau: float) -> np.ndarray:
@@ -196,7 +189,6 @@ def draw(cell: Cell, seed: str, source: Source | None) -> Legs:
         return generate(cell, stream(seed, "market"), stream(seed, "columns"))
     if source is None:
         raise ValueError(f"{cell.cell_id}: a Q5 cell needs the exploration source")
-    v_bar = reference_variance(source.returns)
-    exposures = library(family_label(cell), cell.k, v_bar)
+    exposures = library(family_label(cell), cell.k, source.v_bar)
     return semi_empirical(source.returns, exposures, stream(seed, "market"),
                           stream(seed, "sign"), cell.t, WARMUP)  # fmt: skip

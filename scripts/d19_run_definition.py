@@ -10,7 +10,9 @@ calibration machine inside the pinned image.
       which the launcher takes from `docker inspect` on the host (FE-4).
       A manifest with Q5 cells needs --raw-root, the exploration archives:
       the identity of the daily returns built from them is recorded, and
-      every worker re-checks it before computing.
+      every worker re-checks it before computing. Then --exploration-manifest
+      must be the BTC exploration manifest of those archives
+      (`scripts/build_manifests.py`), so the two records agree.
   check --definition PATH
       The start gate: run on every start and resume before any chunk.
 
@@ -131,6 +133,27 @@ def main(argv: list[str] | None = None) -> int:
                 source = semi.load_source(args.raw_root).identity
             except ValueError as error:  # KlineError is a ValueError
                 print(f"exploration data: {error}", file=sys.stderr)
+                return 1
+            # I2BW-2: in a Q5 run the recorded exploration manifest must be
+            # the BTC exploration manifest the source was built from.
+            try:
+                named = json.loads(args.exploration_manifest.read_bytes())
+            except ValueError:
+                named = None
+            want = {
+                "manifest_type": "aqt.partition_manifest.v1",
+                "partition": "exploration",
+                "symbol": "BTCUSDT",
+                "manifest_sha256": source["manifest_sha256"]["BTCUSDT"],  # type: ignore[index]
+            }
+            if not isinstance(named, dict) or any(
+                named.get(key) != value for key, value in want.items()
+            ):
+                print(
+                    "--exploration-manifest is not the BTC exploration manifest "
+                    "of --raw-root",
+                    file=sys.stderr,
+                )
                 return 1
         code_hash = rundef.generator_sha256(ROOT)
         defn = rundef.build(

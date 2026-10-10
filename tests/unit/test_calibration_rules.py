@@ -261,7 +261,7 @@ def test_draw_uses_the_section_8_streams_for_each_kind_of_cell() -> None:
     legs = rules.draw(synthetic, seed, None)
     expected = generate(synthetic, stream(seed, "market"), stream(seed, "columns"))
     np.testing.assert_array_equal(legs.x, expected.x)
-    source = semi.Source(R, {})
+    source = semi.Source(R, {}, V_BAR)
     for family in rules.FAMILIES:
         cell = Cell("q5", 5, 40, f"semi-{family}")
         assert rules.family_label(cell) == family
