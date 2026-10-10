@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from calibration import binomial, classifier, reduce
+from calibration import binomial, classifier, dsr, reduce
 
 RULES = ("largest", "median")  # tie -> largest (§5 step 1)
 Z_SCREEN = 1.96  # §5 step 1
@@ -146,21 +146,106 @@ def _columns_problem(record: dict[str, object], reason: object, k: float) -> str
     return None
 
 
+RECORD_KEYS = frozenset(
+    {"diagnostics", "columns", "column_checks", "largest", "median", "nominee", "u_g"}
+)
+ENTRY_KEYS = frozenset({"reason", "z", "block", "s0", "length_ratio", "nominee"})
+
+
+def _shape_problem(record: dict[str, object], k: int) -> str | None:
+    """The exact keys and field types `dev_replication` writes (I1R4-2)."""
+    if set(record) != RECORD_KEYS:
+        return "record keys differ from the driver's"
+    for rule in RULES:
+        entry = record[rule]
+        if not isinstance(entry, dict) or set(entry) != ENTRY_KEYS:
+            return f"{rule}: entry keys differ from the driver's"
+    checks = record["column_checks"]
+    if not isinstance(checks, list) or len(checks) != k:
+        return "column_checks malformed"
+    for c in checks:
+        if not (isinstance(c, list) and len(c) == 2 and type(c[0]) is bool):
+            return "column_checks malformed"
+        if (type(c[1]) is not bool) if c[0] else (c[1] is not None):
+            return "column_checks malformed"
+    columns = record["columns"]
+    if columns is not None and not (
+        isinstance(columns, list)
+        and len(columns) == k
+        and all(
+            isinstance(c, list)
+            and len(c) == 2
+            and (c[0] is None or isinstance(c[0], str))
+            and type(c[1]) is bool
+            for c in columns
+        )
+    ):
+        return "columns malformed"
+    j, u_g = record["nominee"], record["u_g"]
+    if j is None:
+        return None if u_g == "NO_NOMINEE" else "no U_G nominee without NO_NOMINEE"
+    if type(j) is not int or not 0 <= j < k:
+        return "U_G nominee is not an integer in range K"
+    if u_g is not None and (not isinstance(u_g, str) or u_g == "NO_NOMINEE"):
+        return "U_G event malformed"
+    return None
+
+
+def _derived_problem(record: dict[str, object], t: float) -> str | None:
+    """Fields `dsr.evaluate` computes from the column lengths (I1R4-1): max
+    L_j/T and, per rule, the family block L."""
+    columns = record["columns"]
+    if not isinstance(columns, list) or any(c[0] is None for c in columns):
+        return None  # no lengths, or rule 3 failed: nothing derived
+    lengths = [reduce.decode({"v": c[0]})["v"] for c in columns]
+    for rule in RULES:
+        entry = record[rule]
+        assert isinstance(entry, dict)
+        if (
+            entry["length_ratio"] is not None
+            and reduce.decode({"v": entry["length_ratio"]})["v"] != max(lengths) / t
+        ):
+            return f"{rule}: max L/T is not max(L_j)/T"
+        if entry["block"] is not None and reduce.decode({"v": entry["block"]})[
+            "v"
+        ] != dsr.family_block(lengths, rule):
+            return f"{rule}: L is not the family block of the column lengths"
+    return None
+
+
 def consistent(record: dict[str, object], bounds: reduce.Bounds) -> str | None:
     """Why a development record cannot have come from `dev_replication`
-    with these thresholds, or None (I1-3, I1R-1/2, I1R2-1, I1R3-1/2).
+    with these thresholds, or None (I1-3, I1R-1/2, I1R2-1, I1R3-1/2,
+    I1R4-1/2). Any malformed record is a reported problem, never an error.
 
-    Per rule, every field is what that return of `dsr.evaluate` sets, in
-    the Annex B order: a rule 1-4 code whatever the classifier says, else
+    Checked: the exact keys and field types the driver writes; per rule,
+    every field present or null as that return of `dsr.evaluate` sets it, in
+    the Annex B order (a rule 1-4 code whatever the classifier says, else
     UNSUPPORTED_LAW iff the classifier refuses, a rule 5-6 code only after
-    it accepts; max L/T from rule 4 on; L from rule 5 on; z_f*, S0 and an
-    integer nominee in range K equal to the U_G nominee only when
-    available. Across rules, outcomes before the block rule applies are one
-    result, max L/T is rule-free, and at K = 1 the rules are identical. The
-    per-column fields match the first rules' outcome."""
+    it accepts); across rules, outcomes before the block rule applies are
+    one result and at K = 1 the rules are identical; the per-column fields
+    match rules 1-4; and every value derived from the column lengths (max
+    L_j/T, each rule's family block L) equals its recomputation.
+
+    Not checked, by design: z_f*, S0, which trial is nominated and the U_G
+    outcome need the bootstrap or the gates to recompute. They are bound by
+    the chain hashes and reproduce from the §8 seeds; this check does not
+    claim them."""
+    try:
+        return _consistent(record, bounds)
+    except (KeyError, TypeError, IndexError, ValueError, AttributeError) as error:
+        return f"malformed record: {type(error).__name__}"
+
+
+def _consistent(record: dict[str, object], bounds: reduce.Bounds) -> str | None:
     values = reduce.decode(record["diagnostics"])
-    refused = not classifier.within(values, *bounds)
     k = values["K"]
+    if k != int(k) or k < 1:
+        return "K malformed"
+    problem = _shape_problem(record, int(k))
+    if problem is not None:
+        return problem
+    refused = not classifier.within(values, *bounds)
     for rule in RULES:
         problem = _entry_problem(record[rule], refused, k, record["nominee"])
         if problem is not None:
@@ -175,7 +260,8 @@ def consistent(record: dict[str, object], bounds: reduce.Bounds) -> str | None:
         return "the rules differ before the block rule is applied"
     if first["length_ratio"] != second["length_ratio"]:
         return "max L/T differs between the rules"
-    return _columns_problem(record, first["reason"], k)
+    problem = _columns_problem(record, first["reason"], k)
+    return problem if problem is not None else _derived_problem(record, values["T"])
 
 
 def _passes(rep: Rep, z: float) -> bool:

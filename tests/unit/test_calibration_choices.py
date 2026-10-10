@@ -127,7 +127,7 @@ def _record(
         "z": None if z is None or not available else _h(z),
         "s0": _h(0.1) if available else None,
         "block": _h(3.0) if available or reason in choices.AFTER_CLASSIFIER else None,
-        "length_ratio": _h(0.05)
+        "length_ratio": _h(3.0 / 9.0)  # max(L_j) / T
         if has_lengths and reason != "BLOCK_LENGTH_UNAVAILABLE"
         else None,
     }
@@ -149,6 +149,7 @@ def _record(
         "largest": entry,
         "median": dict(entry),
         "nominee": u_g_nominee,
+        "u_g": None,
         "columns": columns,
         "column_checks": checks,
     }
@@ -279,3 +280,32 @@ def test_outcomes_before_the_block_rule_and_column_fields_must_agree() -> None:
     available = _record(None, 0, 0, k=2.0)
     stray_cap = {**available, "columns": [[_h(3.0), True], [_h(3.0), False]]}
     assert "rule 4" in str(choices.consistent(stray_cap, ACCEPTS))
+
+
+@pytest.mark.usefixtures("toy_classifier")
+def test_derived_values_and_the_record_schema_are_checked() -> None:
+    """I1R4-1: max L/T and each rule's block L are recomputed from the
+    column lengths. I1R4-2: exact keys and field shapes; a malformed record
+    is a reported problem, never an exception."""
+    good = _record(None, 0, 0, k=2.0)
+    assert choices.consistent(good, ACCEPTS) is None
+    ratio = _with(good, length_ratio=_h(0.05))
+    assert "max(L_j)/T" in str(choices.consistent(ratio, ACCEPTS))
+    block = {**good, "median": {**good["median"], "block": _h(4.0)}}  # type: ignore[dict-item]
+    assert "family block" in str(choices.consistent(block, ACCEPTS))
+    odd = {**good, "column_checks": [[True, None], [True, True]]}
+    assert "column_checks malformed" in str(choices.consistent(odd, ACCEPTS))
+    no_u_g = {n: v for n, v in good.items() if n != "u_g"}
+    assert "record keys" in str(choices.consistent(no_u_g, ACCEPTS))
+    extra = _with(good, extra=1)
+    assert "entry keys" in str(choices.consistent(extra, ACCEPTS))
+    lost = {**good, "nominee": None}
+    assert "NO_NOMINEE" in str(choices.consistent(lost, ACCEPTS))
+    for broken in (
+        {**good, "columns": [[1]]},
+        {**good, "column_checks": "x"},
+        {**good, "diagnostics": {"K": "zz"}},
+        {**good, "largest": None},
+        {},
+    ):
+        assert choices.consistent(broken, ACCEPTS) is not None  # no exception
