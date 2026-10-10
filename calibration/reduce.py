@@ -2,11 +2,12 @@
 
 The driver stores every diagnostic as its IEEE-754 binary64 bit pattern
 (big-endian hex). `cell_thresholds` reads a complete, verified threshold
-chain and fits that cell's per-tail thresholds; `pooled` takes, per `K`, the
-extreme over cells: the development thresholds of §3.5 item 2 ("per `T`
-level, the extreme over all candidate cells"; every cell has `T = T_C2`,
-§13 item 2, and `K` is an exact check of the classifier, so cells of
-different `K` are never pooled)."""
+chain and fits that cell's per-tail thresholds. `pooled` takes, per `T`
+level, every tail's extreme over all candidate cells at that level, whatever
+their `K`: the development thresholds of §3.5 item 2 ("per `T` level, the
+extreme over all candidate cells"; owner decision 2026-10-11 on I2BW-1).
+`for_k` makes one cell's threshold set from its level's pool: `K` and `T`
+stay exact checks, and the correlation tails exist only for `K >= 2`."""
 
 from __future__ import annotations
 
@@ -30,19 +31,36 @@ def cell_thresholds(chain: chunks.Chain) -> Bounds:
     return classifier.fit_thresholds([decode(v) for v in chunks.reduce(chain)])
 
 
-def pooled(cells: list[Bounds]) -> dict[tuple[int, int], Bounds]:
-    """Per `T` level (§3.5 item 2), and within it per `K`, since `K` and `T`
-    are exact classifier checks and `K = 1` has no correlation tails: the
-    largest upper and the smallest lower threshold over those cells."""
-    out: dict[tuple[int, int], Bounds] = {}
+EXACT = ("K", "T")
+
+
+def pooled(cells: list[Bounds]) -> dict[int, Bounds]:
+    """Per `T` level: the largest upper and the smallest lower value of each
+    tail over every cell at that level, of any `K`. A pool carries `T` and
+    the tails, not `K`."""
+    out: dict[int, Bounds] = {}
     for upper, lower in cells:
-        key = (int(upper["K"]), int(upper["T"]))
-        if key not in out:
-            out[key] = (dict(upper), dict(lower))
-            continue
-        up, lo = out[key]
+        t = upper["T"]
+        up, lo = out.setdefault(int(t), ({"T": t}, {"T": t}))
         for name, value in upper.items():
-            up[name] = max(up[name], value)
+            if name not in EXACT:
+                up[name] = max(up.get(name, value), value)
         for name, value in lower.items():
-            lo[name] = min(lo[name], value)
+            if name not in EXACT:
+                lo[name] = min(lo.get(name, value), value)
     return out
+
+
+def for_k(pool: Bounds, k: int) -> Bounds:
+    """The threshold set for `K = k` from its `T` level's pool: `K` and `T`
+    exact, and exactly the tails `classifier.required(k)` names. ValueError
+    if the pool lacks one (no cell with `K >= 2` at that level)."""
+    up, lo = pool
+    need = classifier.required(k)
+    exact = {"K": float(k), "T": up["T"]}
+    try:
+        upper = exact | {n: up[n] for n in sorted(need & set(classifier.UPPER))}
+        lower = exact | {n: lo[n] for n in sorted(need & set(classifier.LOWER))}
+    except KeyError as missing:
+        raise ValueError(f"T = {up['T']}: no candidate cell has {missing}") from None
+    return upper, lower

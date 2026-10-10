@@ -40,6 +40,8 @@ sys.path[:0] = [str(ROOT), str(ROOT / "src")]  # this checkout's code only (RR-2
 sys.dont_write_bytecode = True
 sys.pycache_prefix = tempfile.mkdtemp(prefix="d19-no-bytecode-")
 
+from aqt.data.klines import EXPLORATION, build_exploration_manifest  # noqa: E402
+from aqt.data.manifest import canonical_json_bytes  # noqa: E402
 from calibration import rundef, semi  # noqa: E402
 from calibration.generator import SEMI_LAWS, cells_from_manifest  # noqa: E402
 
@@ -134,20 +136,12 @@ def main(argv: list[str] | None = None) -> int:
             except ValueError as error:  # KlineError is a ValueError
                 print(f"exploration data: {error}", file=sys.stderr)
                 return 1
-            # I2BW-2: in a Q5 run the recorded exploration manifest must be
-            # the BTC exploration manifest the source was built from.
-            try:
-                named = json.loads(args.exploration_manifest.read_bytes())
-            except ValueError:
-                named = None
-            want = {
-                "manifest_type": "aqt.partition_manifest.v1",
-                "partition": "exploration",
-                "symbol": "BTCUSDT",
-                "manifest_sha256": source["manifest_sha256"]["BTCUSDT"],  # type: ignore[index]
-            }
-            if not isinstance(named, dict) or any(
-                named.get(key) != value for key, value in want.items()
+            # I2BW-2: in a Q5 run the recorded exploration manifest must be,
+            # byte for byte, the BTC exploration manifest that
+            # `scripts/build_manifests.py` writes from these archives.
+            btc = build_exploration_manifest(EXPLORATION, "BTCUSDT", args.raw_root)
+            if args.exploration_manifest.read_bytes() != canonical_json_bytes(
+                btc.manifest.as_mapping()
             ):
                 print(
                     "--exploration-manifest is not the BTC exploration manifest "

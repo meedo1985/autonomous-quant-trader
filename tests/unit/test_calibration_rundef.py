@@ -1055,8 +1055,7 @@ def test_development_records_equal_an_independent_section_2_computation(
     for c in cells.values():
         driver.worker(out, store, "threshold", c.cell_id, expected)
     pooled = driver.dev_bounds(defn, store, defn["gating"], list(cells.values()))
-    key = (cell.k, cell.t)
-    wide, none = _widened(pooled[key], 1e6), _widened(pooled[key], -1e6)
+    wide, none = _widened(pooled[cell_id], 1e6), _widened(pooled[cell_id], -1e6)
     anchor = defn["prereg_sha256"]
     accepted = 0
     for name, bounds in (("wide", wide), ("none", none)):
@@ -1139,7 +1138,7 @@ def test_a_margin_failure_exits_3_and_never_reads_as_a_choice(
         driver.worker(out, store, "threshold", c.cell_id, expected)
     pooled = driver.dev_bounds(defn, store, defn["gating"], cells)
     for c in cells:
-        driver.worker(out, store, "dev", c.cell_id, expected, pooled[c.k, c.t])
+        driver.worker(out, store, "dev", c.cell_id, expected, pooled[c.cell_id])
     spec = importlib.util.spec_from_file_location(
         "d19_choose_loaded", root / "scripts" / "d19_choose.py"
     )
@@ -1243,6 +1242,10 @@ def test_a_q5_pilot_runs_on_recorded_exploration_data_only(
             canonical_json_bytes(built.manifest.as_mapping())
         )
     (inputs / "empty.json").write_text("{}")
+    real = json.loads((inputs / "btc.json").read_bytes())
+    forged = {k: real[k] for k in ("manifest_type", "partition", "symbol",
+                                   "manifest_sha256")}  # fmt: skip
+    (inputs / "forged.json").write_text(json.dumps(forged))
     out = inputs / "d.json"
 
     def base(manifest: str) -> tuple[str, ...]:
@@ -1253,7 +1256,7 @@ def test_a_q5_pilot_runs_on_recorded_exploration_data_only(
 
     done = _script(root, *base("btc.json"))
     assert done.returncode == 1 and "Q5 cells need --raw-root" in done.stderr
-    for wrong in ("empty.json", "other.json"):  # I2BW-2
+    for wrong in ("empty.json", "other.json", "forged.json"):  # I2BW-2
         done = _script(root, *base(wrong), "--raw-root", str(raw))
         assert done.returncode == 1 and "not the BTC exploration" in done.stderr
     assert not out.exists()
@@ -1296,7 +1299,7 @@ def test_a_q5_pilot_runs_on_recorded_exploration_data_only(
 
     bounds = _load_driver(root, monkeypatch).dev_bounds(
         defn, store, defn["gating"], [cell, Cell("pilot-k1", 1, 40, "t5")]
-    )[cell.k, cell.t]
+    )[cell.cell_id]
     for rep_, stored in enumerate(dev["results"]):
         seed = outer_seed(defn["prereg_sha256"], "pilot-q5", "d19-dev-v1", rep_)
         expected = classifier.diagnostics(rules.draw(cell, seed, source).x)
@@ -1343,3 +1346,52 @@ def test_a_q5_development_draw_uses_its_family_label(
     with pytest.raises(Seeded):
         driver.dev_replication(Cell("s", 2, 40, "t5"), "a" * 64, "b" * 64, 0, loose(2))
     assert labels == ["vol", "agnostic"]
+
+
+def test_a_q5_development_record_equals_an_independent_section_2_computation(
+    recorded: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """I2BW-5: one Q5 development replication, recomputed from its parts:
+    the dev-namespace draw on the source, Annex B under both block rules with
+    the family seed labelled by the family, the P18-4 nominee and U_G."""
+    from calibration import classifier, gates, rules, semi
+    from calibration.generator import Cell
+    from calibration.seeds import family_seed, outer_seed
+
+    root, _ = recorded
+    driver = _load_driver(root, monkeypatch)
+    monkeypatch.setattr(dsr, "_V_VERIFIED", True)
+    returns = np.random.default_rng(8).normal(0, 0.035, (400, 2))
+    returns -= returns.mean(axis=0)
+    source = semi.Source(returns, {}, semi.reference_variance(returns))
+    anchor, prereg = "c" * 64, "d" * 64
+    for family in rules.FAMILIES:
+        cell = Cell(f"q5-{family}", 2, 120, f"semi-{family}")
+        need = classifier.required(2)
+        upper = {n: 1e300 for n in need - set(classifier.LOWER)} | {"K": 2, "T": 120}
+        lower = {n: -1e300 for n in need - set(classifier.UPPER)} | {"K": 2, "T": 120}
+        reasons = set()
+        for rep_ in range(3):
+            stored = driver.dev_replication(cell, anchor, prereg, rep_,
+                                            (upper, lower), source)  # fmt: skip
+            seed = outer_seed(anchor, cell.cell_id, "d19-dev-v1", rep_)
+            legs = rules.draw(cell, seed, source)
+            accept = classifier.within(classifier.diagnostics(legs.x), upper, lower)
+            assert accept
+            fam = family_seed(seed, cell.cell_id, family, 2, prereg, rep_)
+            for rule in ("largest", "median"):
+                result = dsr.evaluate(legs.x, fam, rule, classifier=lambda *_: True)
+                assert stored[rule] == {
+                    "reason": result.reason, "z": _hex64(result.z),
+                    "block": _hex64(result.block), "s0": _hex64(result.s0),
+                    "length_ratio": _hex64(result.length_ratio),
+                    "nominee": result.nominee,
+                }  # fmt: skip
+                reasons.add(result.reason)
+            sharpes = [float(np.mean(c) / np.std(c, ddof=1)) for c in legs.x.T]
+            top = int(np.argmax(sharpes))
+            assert stored["nominee"] == top
+            assert stored["u_g"] == gates.u_g(
+                legs.x, legs.candidates, legs.benchmark, top, seed
+            )
+        assert None in reasons  # Annex B ran to z_f* on a Q5 draw

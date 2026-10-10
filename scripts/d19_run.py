@@ -173,9 +173,10 @@ def dev_replication(
 
 def dev_bounds(
     defn: dict[str, Any], store: Path, gating: object, cells: list[Cell]
-) -> dict[tuple[int, int], reduce.Bounds]:
-    """The development thresholds from every cell's complete, verified
-    threshold chain; ChainError if any chain is incomplete or broken."""
+) -> dict[str, reduce.Bounds]:
+    """Each cell's development thresholds (§3.5 item 2): its `T` level's
+    pool over every cell's complete, verified threshold chain, for its `K`.
+    ChainError if any chain is incomplete or broken."""
     count = rundef.run_plan(defn["cell_manifest"])["threshold"]
     binding = rundef.definition_sha256(defn)
     chains = [
@@ -190,7 +191,8 @@ def dev_bounds(
         )
         for c in cells
     ]
-    return reduce.pooled([reduce.cell_thresholds(chain) for chain in chains])
+    pools = reduce.pooled([reduce.cell_thresholds(chain) for chain in chains])
+    return {c.cell_id: reduce.for_k(pools[c.t], c.k) for c in cells}
 
 
 def worker(
@@ -283,7 +285,7 @@ def main(argv: list[str] | None = None) -> int:
             args.namespace,
             c.cell_id,
             expected,
-            bounds.get((c.k, c.t)),
+            bounds.get(c.cell_id),
             args.raw_root,
         )  # fmt: skip
         for c in cells

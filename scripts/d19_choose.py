@@ -106,7 +106,9 @@ def main(argv: list[str] | None = None) -> int:
         }
         pooled = reduce.pooled(list(bounds.values()))
         dev = {
-            c.cell_id: development(chains["dev", c.cell_id], pooled[c.k, c.t])
+            c.cell_id: development(
+                chains["dev", c.cell_id], reduce.for_k(pooled[c.t], c.k)
+            )
             for c in cells
         }
     except (ValueError, RuntimeError) as error:  # ChainError is a RuntimeError
@@ -119,8 +121,8 @@ def main(argv: list[str] | None = None) -> int:
         if r["status"] == "qualifying"
     ]
     report["final_thresholds"] = {
-        f"K={k},T={t}": {"upper": up, "lower": lo}
-        for (k, t), (up, lo) in sorted(reduce.pooled(final).items())
+        f"T={t}": {"upper": up, "lower": lo}
+        for t, (up, lo) in sorted(reduce.pooled(final).items())
     }
     report["definition_sha256"] = rundef.definition_sha256(defn)
     if defn["cell_manifest"]["purpose"] == "pilot":  # I1R-5
