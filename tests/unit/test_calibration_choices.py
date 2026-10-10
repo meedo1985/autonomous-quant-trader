@@ -115,12 +115,15 @@ def _record(
     reason: str | None, nominee: int, u_g_nominee: int, *, k: float = 1.0,
     z: float | None = 2.0,
 ) -> dict[str, object]:  # fmt: skip
+    """A record as dev_replication writes it: an available result has every
+    field; a rules 5-6 refusal only L; any other refusal none (I1R2-1)."""
+    available = reason is None
     entry = {
         "reason": reason,
-        "nominee": nominee,
-        "z": None if z is None else _h(z),
-        "s0": _h(0.1),
-        "block": _h(3.0),
+        "nominee": nominee if available else None,
+        "z": None if z is None or not available else _h(z),
+        "s0": _h(0.1) if available else None,
+        "block": _h(3.0) if available or reason in choices.AFTER_CLASSIFIER else None,
     }
     return {
         "diagnostics": {"K": _h(k), "T": _h(9.0), "g": _h(0.5)},
@@ -158,6 +161,36 @@ def test_a_record_must_follow_from_its_thresholds_and_nominee() -> None:
     nan_z = _record(None, 0, 0, z=float("nan"))
     assert "finite" in str(choices.consistent(nan_z, ACCEPTS))
     assert "unknown" in str(choices.consistent(_record("OTHER", 0, 0), ACCEPTS))
+
+
+def _with(record: dict[str, object], **fields: object) -> dict[str, object]:
+    entry = {**record["largest"], **fields}  # type: ignore[dict-item]
+    return {**record, "largest": entry, "median": dict(entry)}
+
+
+@pytest.mark.usefixtures("toy_classifier")
+def test_fields_that_dsr_evaluate_cannot_produce_are_refused() -> None:
+    """I1R2-1: each corruption of an otherwise valid record is caught."""
+    available = _record(None, 0, 0, k=2.0)
+    assert choices.consistent(available, ACCEPTS) is None
+    for bad in (None, 2, -1, True, "0"):  # not an integer in range K = 2
+        both = {**_with(available, nominee=bad), "nominee": bad}
+        assert "nominee" in str(choices.consistent(both, ACCEPTS)), bad
+    capped = _record(choices.CAPPED, 0, 0)
+    assert choices.consistent(capped, ACCEPTS) is None
+    for field in ("z", "s0", "block"):
+        assert choices.consistent(_with(capped, **{field: _h(1.0)}), ACCEPTS)
+    assert choices.consistent(_with(capped, nominee=0), ACCEPTS)
+    refused = _record("UNSUPPORTED_LAW", 0, 0)
+    assert choices.consistent(_with(refused, block=_h(3.0)), REFUSES)
+    after = _record("INVALID_REPLICATE", 0, 0)
+    assert choices.consistent(after, ACCEPTS) is None
+    assert "L does not match" in str(
+        choices.consistent(_with(after, block=None), ACCEPTS)
+    )
+    nan_block = _with(after, block=_h(float("nan")))
+    assert "L does not match" in str(choices.consistent(nan_block, ACCEPTS))
+    assert choices.consistent(_with(after, z=_h(1.0)), ACCEPTS)
 
 
 @pytest.mark.usefixtures("toy_classifier")

@@ -92,6 +92,19 @@ def nominee(x: np.ndarray) -> int | None:
     return max(range(len(observed)), key=lambda j: (observed[j], -j))
 
 
+def column_checks(x: np.ndarray) -> list[list[bool | None]]:
+    """Per column, the raw predicates of Annex B rules 1-2 (I1R-3, I1R2-2):
+    [all values finite, nonzero sample variance]; the variance is None (not
+    evaluated) for a non-finite column. These are per-column predicates for
+    §9's rates, not the family outcome, which stops at the first rule that
+    fails for any column."""
+    out: list[list[bool | None]] = []
+    for c in x.T:
+        finite = bool(np.isfinite(c).all())
+        out.append([finite, bool(c.std(ddof=1) != 0) if finite else None])
+    return out
+
+
 def dev_replication(
     cell: Cell, anchor: str, prereg: str, rep: int, bounds: reduce.Bounds
 ) -> dict[str, object]:
@@ -111,11 +124,7 @@ def dev_replication(
     out: dict[str, object] = {
         "diagnostics": _exact(values),
         "columns": None,
-        # I1R-3: Annex B rules 1-2 per column (finite; nonzero variance), so
-        # §9's per-column failure rates cover failures before any L_j exists
-        "column_checks": [
-            [bool(np.isfinite(c).all()), bool(c.std(ddof=1) != 0)] for c in legs.x.T
-        ],
+        "column_checks": column_checks(legs.x),
     }
     for rule in ("largest", "median"):
         if rule == "median" and cell.k == 1:

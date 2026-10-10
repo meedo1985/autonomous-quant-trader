@@ -82,9 +82,11 @@ def consistent(record: dict[str, object], bounds: reduce.Bounds) -> str | None:
     with these thresholds, or None (I1-3, I1R-1, I1R-2): each cause code in
     the Annex B order (a rule 1-4 code whatever the classifier says;
     otherwise UNSUPPORTED_LAW iff the classifier refuses; a rule 5-6 code
-    only after it accepts); an available result carries a finite z_f*, S0
-    and block and nominated the U_G nominee; at K = 1 both rules are one
-    result."""
+    only after it accepts); every field is what that return of
+    `dsr.evaluate` sets (I1R2-1): an available result has finite z_f*, S0
+    and L and nominated the U_G nominee (an integer in range K); a rule 5-6
+    refusal has a finite L and nothing else; any other refusal has none of
+    them; at K = 1 both rules are one result."""
     values = reduce.decode(record["diagnostics"])
     refused = not classifier.within(values, *bounds)
     for rule in RULES:
@@ -92,17 +94,27 @@ def consistent(record: dict[str, object], bounds: reduce.Bounds) -> str | None:
         if not isinstance(entry, dict):
             return f"{rule}: malformed"
         reason = entry["reason"]
-        if reason in BEFORE_CLASSIFIER:
-            continue
-        if refused != (reason == "UNSUPPORTED_LAW"):
+        known = BEFORE_CLASSIFIER | AFTER_CLASSIFIER | {"UNSUPPORTED_LAW", None}
+        if reason not in known:
+            return f"{rule}: unknown cause code {reason!r}"
+        if reason not in BEFORE_CLASSIFIER and refused != (reason == "UNSUPPORTED_LAW"):
             return f"{rule}: classifier outcome does not follow from the thresholds"
         if reason is None:
             if not all(_finite_hex(entry[f]) for f in ("z", "s0", "block")):
                 return f"{rule}: an available result without finite z, S0 or L"
-            if entry["nominee"] != record["nominee"]:
+            j = entry["nominee"]
+            if type(j) is not int or not 0 <= j < values["K"]:
+                return f"{rule}: an available result without a valid nominee"
+            if j != record["nominee"]:
                 return f"{rule}: DSR nominee differs from the U_G nominee"
-        elif reason not in AFTER_CLASSIFIER and reason != "UNSUPPORTED_LAW":
-            return f"{rule}: unknown cause code {reason!r}"
+            continue
+        if any(entry[f] is not None for f in ("z", "s0", "nominee")):
+            return f"{rule}: a refusal carries z, S0 or a nominee"
+        has_block = entry["block"] is not None
+        if has_block != (reason in AFTER_CLASSIFIER) or (
+            has_block and not _finite_hex(entry["block"])
+        ):
+            return f"{rule}: L does not match the cause code"
     if values["K"] == 1 and record["largest"] != record["median"]:
         return "K = 1: the two rules differ"
     return None

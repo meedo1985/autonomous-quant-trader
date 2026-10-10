@@ -1153,3 +1153,15 @@ def test_a_margin_failure_exits_3_and_never_reads_as_a_choice(
     report = json.loads(report_path.read_text())
     assert report["status"] == "margin_failed"
     assert report["qualifies_before_coverage"] is False
+
+
+def test_column_checks_do_not_claim_a_variance_check_for_a_non_finite_column(
+    recorded: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """I1R2-2: [finite, nonzero variance]; the variance is None (not
+    evaluated) when the column is not finite."""
+    driver = _load_driver(recorded[0], monkeypatch)
+    x = np.column_stack([[0.1, 0.2, 0.3], [1.0, 1.0, 1.0], [0.1, np.nan, 0.3],
+                         [0.1, np.inf, 0.3]])  # fmt: skip
+    expected = [[True, True], [True, False], [False, None], [False, None]]
+    assert driver.column_checks(x) == expected
