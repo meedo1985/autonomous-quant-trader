@@ -153,3 +153,31 @@ def test_verify_refuses_an_unfinished_temporary_without_deleting_it(
     with pytest.raises(ChainError):
         chunks.verify(chain)
     assert tmp.exists()
+
+
+def test_a_second_writer_on_a_chain_is_refused(tmp_path: Path) -> None:
+    """FA-3: while one writer holds a chain, another is refused; the lock
+    is released when the first is done."""
+    chain = _chain(tmp_path)
+    chain.root.mkdir(parents=True)
+    with chunks._sole_writer(chain):
+        with pytest.raises(ChainError, match="another writer"):
+            chunks.run(chain, _compute)
+    chunks.run(chain, _compute)
+
+
+def test_the_head_is_read_back_from_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FA-4: bytes that differ on disk from what was computed stop the run
+    instead of returning a head nothing on disk supports."""
+    write = chunks._write
+
+    def torn(path: Path, record: dict[str, object]) -> None:
+        write(path, record)
+        if path.name == "chunk-0000010.json":
+            path.write_bytes(path.read_bytes()[:-9])
+
+    monkeypatch.setattr(chunks, "_write", torn)
+    with pytest.raises(ChainError, match="missing or corrupt"):
+        chunks.run(_chain(tmp_path), _compute)

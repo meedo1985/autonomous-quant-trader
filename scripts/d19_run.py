@@ -39,7 +39,7 @@ sys.pycache_prefix = tempfile.mkdtemp(prefix="d19-no-bytecode-")
 import argparse  # noqa: E402
 import multiprocessing  # noqa: E402
 import struct  # noqa: E402
-from concurrent.futures import ProcessPoolExecutor  # noqa: E402
+from concurrent.futures import FIRST_EXCEPTION, ProcessPoolExecutor, wait  # noqa: E402
 from typing import Any  # noqa: E402
 
 from calibration import chunks, classifier, rundef  # noqa: E402
@@ -115,14 +115,25 @@ def main(argv: list[str] | None = None) -> int:
         for c in cells
     ]
     # A worker that dies (killed, out of memory) breaks the executor, which
-    # then fails every pending job instead of waiting for it (DR3-1).
+    # then fails every pending job instead of waiting for it (DR3-1). The
+    # first failure in any chain stops the run at once: running workers are
+    # terminated, never left computing to the end of their chain (FA-5).
     context = multiprocessing.get_context("spawn")
+    pool = ProcessPoolExecutor(WORKERS, mp_context=context)
     try:
-        with ProcessPoolExecutor(WORKERS, mp_context=context) as pool:
-            heads = list(pool.map(worker, *zip(*jobs, strict=True)))
+        futures = [pool.submit(worker, *job) for job in jobs]
+        done, _ = wait(futures, return_when=FIRST_EXCEPTION)
+        for future in futures:
+            if future in done and (failure := future.exception()) is not None:
+                raise failure
+        heads = [future.result() for future in futures]
     except Exception as error:  # noqa: BLE001 - any worker failure stops the run
+        for child in multiprocessing.active_children():  # the pool's workers
+            child.terminate()
         print(f"run stopped: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
+    finally:
+        pool.shutdown(cancel_futures=True)
     for job, head in zip(jobs, heads, strict=True):
         print(f"{job[2]}/{job[3]}: {head}")
     return 0

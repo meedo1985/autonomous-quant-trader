@@ -20,7 +20,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -97,6 +99,38 @@ def _write(path: Path, record: dict[str, object]) -> None:
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(tmp, path)
+    _sync_dir(path.parent)
+
+
+def _sync_dir(directory: Path) -> None:
+    """Make a rename or a new entry in `directory` durable (FA-4). POSIX
+    only: Windows cannot open a directory for fsync."""
+    if sys.platform != "win32":
+        fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
+@contextmanager
+def _sole_writer(chain: Chain) -> Iterator[None]:
+    """An exclusive lock on `<cell_id>.lock` beside the chain directory, or
+    ChainError (FA-3): a second writer (relaunch, orphaned worker) is
+    refused. The lock goes with the process, so a crash leaves none."""
+    with chain.root.with_name(chain.root.name + ".lock").open("a+b") as handle:
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            raise ChainError(f"{chain.cell_id}: another writer holds it") from error
+        yield
 
 
 def _strays(chain: Chain, *, restart: bool) -> None:
@@ -113,9 +147,17 @@ def _strays(chain: Chain, *, restart: bool) -> None:
 
 def run(chain: Chain, compute: Callable[[int], object]) -> str:
     """Verify the chain, compute every missing chunk with `compute(rep)` and
-    return the final chain head. A corrupt chunk is deleted unread and
-    recomputed; a gap before an existing chunk stops the chain."""
+    return the final chain head as `verify` reads it back from disk (FA-4).
+    A corrupt chunk is deleted unread and recomputed; a gap before an
+    existing chunk stops the chain; one writer at a time (FA-3)."""
     chain.root.mkdir(parents=True, exist_ok=True)
+    _sync_dir(chain.root.parent)
+    with _sole_writer(chain):
+        _compute(chain, compute)
+        return verify(chain)
+
+
+def _compute(chain: Chain, compute: Callable[[int], object]) -> None:
     _strays(chain, restart=True)
     existing = [s for s in chain.starts() if chain.path(s).exists()]
     last = existing[-1] if existing else -1
@@ -143,7 +185,6 @@ def run(chain: Chain, compute: Callable[[int], object]) -> str:
             record["content_sha256"] = _digest(record)
             _write(path, record)
         previous = _check(chain, record, start, previous)
-    return previous
 
 
 def verify(chain: Chain) -> str:

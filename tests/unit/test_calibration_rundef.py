@@ -9,6 +9,7 @@ from __future__ import annotations
 import concurrent.futures
 import importlib.util
 import json
+import math
 import os
 import py_compile
 import shutil
@@ -25,8 +26,8 @@ from calibration import dsr, fast, gates, rundef
 ROOT = Path(__file__).resolve().parents[2]
 DIGEST = "sha256:" + "ab" * 32
 CELLS = json.dumps({"purpose": "pilot", "replications": {"threshold": 3}, "cells": [
-    {"cell_id": "c-k2", "k": 2, "t": 60, "law": "garch", "dependence": "equi0.5"},
-    {"cell_id": "c-k1", "k": 1, "t": 60, "law": "t5", "dependence": "independent"},
+    {"cell_id": "pilot-k2", "k": 2, "t": 60, "law": "garch", "dependence": "equi0.5"},
+    {"cell_id": "pilot-k1", "k": 1, "t": 60, "law": "t5", "dependence": "independent"},
 ]})  # fmt: skip
 
 
@@ -225,6 +226,26 @@ def test_reference_vectors_see_the_u_g_numerics(
     monkeypatch.setattr(fast, "mean_var", nudged)
     after = rundef.reference_vectors()
     assert before["refvec-k5-garch"] != after["refvec-k5-garch"]
+
+
+def test_reference_vectors_see_the_classifier_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FA-2: the threshold run's own numerics are in the suite."""
+    from calibration import classifier
+
+    monkeypatch.setattr(dsr, "_V_VERIFIED", True)
+    before = rundef.reference_vectors()
+    diagnostics = classifier.diagnostics
+
+    def nudged(x: object) -> dict[str, float]:
+        values = diagnostics(x)  # type: ignore[arg-type]
+        name = min(n for n, v in values.items() if math.isfinite(v))
+        return {**values, name: math.nextafter(values[name], math.inf)}
+
+    monkeypatch.setattr(classifier, "diagnostics", nudged)
+    after = rundef.reference_vectors()
+    assert all(before[c.cell_id] != after[c.cell_id] for c in rundef.REFERENCE_CASES)
 
 
 def test_load_refuses_a_file_that_is_not_a_run_definition(tmp_path: Path) -> None:
@@ -506,14 +527,16 @@ def test_the_driver_runs_one_bound_chain_per_cell_and_resumes(
     first = _driver(root, out, store, *args)
     assert first.returncode == 0, first.stderr
     defn = rundef.load(out)
-    for cell in ("c-k2", "c-k1"):
+    for cell in ("pilot-k2", "pilot-k1"):
         chunk = json.loads(
             (store / "threshold" / cell / "chunk-0000000.json").read_bytes()
         )
         assert chunk["binding"] == rundef.definition_sha256(defn)
         assert chunk["gating"] == defn["gating"]
         assert len(chunk["results"]) == 3
-    k1 = json.loads((store / "threshold" / "c-k1" / "chunk-0000000.json").read_bytes())
+    k1 = json.loads(
+        (store / "threshold" / "pilot-k1" / "chunk-0000000.json").read_bytes()
+    )
     assert set(k1["results"][0]) == classifier_fields(1)
     before = {p: p.read_bytes() for p in store.rglob("*.json")}
     second = _driver(root, out, store, *args)
@@ -560,7 +583,11 @@ def test_a_worker_runs_the_start_gate_before_any_chunk(
     store = tmp_path / "store"
     with pytest.raises(RuntimeError, match="refused in the worker"):
         driver.worker(
-            out, store, "threshold", "c-k2", rundef.definition_sha256(rundef.load(out))
+            out,
+            store,
+            "threshold",
+            "pilot-k2",
+            rundef.definition_sha256(rundef.load(out)),
         )
     assert not store.exists()
 
@@ -591,15 +618,15 @@ def test_threshold_seeds_follow_prereg_section_8(
     monkeypatch.setattr(driver.rundef, "start_gate", lambda defn, _root: defn["gating"])
     store = tmp_path / "store"
     driver.worker(
-        out, store, "threshold", "c-k2", rundef.definition_sha256(rundef.load(out))
+        out, store, "threshold", "pilot-k2", rundef.definition_sha256(rundef.load(out))
     )
     chunk = json.loads(
-        (store / "threshold" / "c-k2" / "chunk-0000000.json").read_bytes()
+        (store / "threshold" / "pilot-k2" / "chunk-0000000.json").read_bytes()
     )
     defn = rundef.load(out)
-    cell = Cell("c-k2", 2, 60, "garch", "equi0.5")
+    cell = Cell("pilot-k2", 2, 60, "garch", "equi0.5")
     for rep_, stored in enumerate(chunk["results"]):
-        seed = outer_seed(defn["prereg_sha256"], "c-k2", "d19-threshold-v1", rep_)
+        seed = outer_seed(defn["prereg_sha256"], "pilot-k2", "d19-threshold-v1", rep_)
         legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
         expected = classifier.diagnostics(legs.x)
         assert stored == {
@@ -616,10 +643,10 @@ def test_a_chain_carries_the_gating_its_worker_gate_returned(
     monkeypatch.setattr(driver.rundef, "start_gate", lambda *_: {"from": "worker gate"})
     store = tmp_path / "store"
     driver.worker(
-        out, store, "threshold", "c-k1", rundef.definition_sha256(rundef.load(out))
+        out, store, "threshold", "pilot-k1", rundef.definition_sha256(rundef.load(out))
     )
     chunk = json.loads(
-        (store / "threshold" / "c-k1" / "chunk-0000000.json").read_bytes()
+        (store / "threshold" / "pilot-k1" / "chunk-0000000.json").read_bytes()
     )
     assert chunk["gating"] == {"from": "worker gate"}
 
@@ -657,7 +684,7 @@ def test_an_interrupted_run_resumes_identically_and_a_new_plan_cannot_extend_it(
     args = ("--namespace", "threshold")
     store = tmp_path / "store"
     assert _driver(root, big, store, *args).returncode == 0
-    chain = store / "threshold" / "c-k1"
+    chain = store / "threshold" / "pilot-k1"
     whole = {p.name: p.read_bytes() for p in chain.iterdir()}
     assert sorted(whole) == ["chunk-0000000.json", "chunk-0000500.json"]
     (chain / "chunk-0000500.json").unlink()
@@ -715,6 +742,39 @@ def test_a_killed_worker_stops_the_run_instead_of_hanging(
     assert done.returncode == 1 and "BrokenProcessPool" in done.stderr, done.stderr
 
 
+def _slow_or_fail(*job: object) -> str:
+    if job[3] == "pilot-k2":
+        import time
+
+        time.sleep(600)
+    raise RuntimeError("this chain failed")
+
+
+def test_a_failing_chain_stops_the_run_without_waiting_for_earlier_ones(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """FA-5: the first cell runs for ten minutes, the second fails at once;
+    the run stops on the failure well within the timeout."""
+    root, out = recorded
+    script = str(root / "scripts" / "d19_run.py")
+    code = "\n".join([
+        "import importlib.util, sys",
+        f"sys.path[:0] = [{str(Path(__file__).parent)!r}]",
+        "import test_calibration_rundef as t",
+        f"spec = importlib.util.spec_from_file_location('drv', {script!r})",
+        "d = importlib.util.module_from_spec(spec); spec.loader.exec_module(d)",
+        "d.rundef.start_gate = lambda defn, root: defn['gating']",
+        "d.worker = t._slow_or_fail",
+        f"sys.exit(d.main(['run', '--definition', {str(out)!r}, '--store', "
+        f"{str(tmp_path / 'store')!r}, '--namespace', 'threshold']))",
+    ])  # fmt: skip
+    env = {**os.environ, "PYTHONPATH": f"{ROOT}{os.pathsep}{ROOT / 'src'}"}
+    done = subprocess.run([sys.executable, "-c", code], env=env, cwd=root,
+                          capture_output=True, text=True, timeout=180,
+                          check=False)  # fmt: skip
+    assert done.returncode == 1 and "this chain failed" in done.stderr, done.stderr
+
+
 def test_a_worker_refuses_a_definition_replaced_after_the_start(
     recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -723,7 +783,7 @@ def test_a_worker_refuses_a_definition_replaced_after_the_start(
     driver = _load_driver(root, monkeypatch)
     monkeypatch.setattr(driver.rundef, "start_gate", lambda d, _root: d["gating"])
     with pytest.raises(ValueError, match="changed after the run started"):
-        driver.worker(out, tmp_path / "store", "threshold", "c-k1", "0" * 64)
+        driver.worker(out, tmp_path / "store", "threshold", "pilot-k1", "0" * 64)
     assert not (tmp_path / "store").exists()
 
 
@@ -774,8 +834,23 @@ def test_a_malformed_cell_manifest_is_refused(manifest: object, message: str) ->
         ({"purpose": "pilot", "replications": {"threshold": 0}}, "positive"),
         ({"purpose": "pilot", "replications": {"threshold": 3, "dev": 1}}, "positive"),
         ({"purpose": "qualification", "replications": {"threshold": 3}}, "refused"),
+        (
+            {"purpose": "pilot", "replications": {"threshold": 3},
+             "cells": [{"cell_id": "c-k1"}]},
+            "must start with 'pilot-'",
+        ),
+        (
+            {"purpose": "pilot", "replications": {"threshold": 300_000},
+             "cells": [{"cell_id": "pilot-k1"}]},
+            "below the prescribed",
+        ),
+        (
+            {"purpose": "qualification", "replications": {"threshold": 300_000},
+             "cells": [{"cell_id": "pilot-k1"}]},
+            "pilot runs only",
+        ),
     ],
-)
+)  # fmt: skip
 def test_a_bad_run_plan_is_refused(manifest: object, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         rundef.run_plan(manifest)
@@ -801,7 +876,7 @@ def test_the_recorded_seed_specification_is_the_section_8_one(
     driver = _load_driver(root, monkeypatch)
     monkeypatch.setattr(driver.rundef, "start_gate", lambda d, _root: d["gating"])
     with pytest.raises(ValueError, match="seed specification"):
-        driver.worker(changed, tmp_path / "store", "threshold", "c-k1",
+        driver.worker(changed, tmp_path / "store", "threshold", "pilot-k1",
                       rundef.definition_sha256(rundef.load(changed)))  # fmt: skip
 
 

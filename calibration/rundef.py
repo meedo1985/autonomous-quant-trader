@@ -23,7 +23,7 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from calibration import dsr, gates
+from calibration import classifier, dsr, gates
 from calibration.generator import Cell, generate
 from calibration.seeds import cj, family_seed, outer_seed, sha, stream
 
@@ -65,6 +65,7 @@ def _reference_outputs(cell: Cell) -> dict[str, object]:
         "x": hashlib.sha256(legs.x.tobytes()).hexdigest(),
         "benchmark": hashlib.sha256(legs.benchmark.tobytes()).hexdigest(),
         "candidates": hashlib.sha256(legs.candidates.tobytes()).hexdigest(),
+        "diagnostics": classifier.diagnostics(legs.x),  # FA-2: threshold numerics
         "result": dataclasses.asdict(result),
         "u_g": gate,
         "u_g_trace": trace,
@@ -84,9 +85,9 @@ def _unavailable_outputs() -> dict[str, object]:
 
 
 def reference_vectors() -> dict[str, str]:
-    """The reference-vector suite: generator, method V and the gates (with
-    their intermediate numbers) on fixed synthetic cases; each value is the
-    SHA-256 of every output, bit-exact."""
+    """The reference-vector suite: generator, classifier diagnostics, method
+    V and the gates (with their intermediate numbers) on fixed synthetic
+    cases; each value is the SHA-256 of every output, bit-exact."""
     out = {c.cell_id: sha(_exact(_reference_outputs(c))) for c in REFERENCE_CASES}
     out["refvec-k2-g2-unavailable"] = sha(_exact(_unavailable_outputs()))
     return out
@@ -206,6 +207,7 @@ def loaded_outside(root: Path) -> list[str]:
 
 PRESCRIBED = {"threshold": 300_000}  # §13 rev 7g item 4
 SEED_NAMESPACES = {"threshold": "d19-threshold-v1"}  # prereg §8
+PILOT_PREFIX = "pilot-"  # FA-1
 
 
 def seed_spec(prereg_sha256: str) -> dict[str, object]:
@@ -218,7 +220,8 @@ def seed_spec(prereg_sha256: str) -> dict[str, object]:
 def run_plan(manifest: object) -> dict[str, int]:
     """Replications per namespace, from the cell manifest, or ValueError
     (DR-3). A `qualification` run uses exactly the prescribed counts; a
-    `pilot` run (the measured re-pilot) any positive count. Both are in the
+    `pilot` run (the measured re-pilot) any positive count below them, on
+    `pilot-` cell ids only (FA-1). Both are in the
     run definition, so its hash binds them and a resume cannot change them."""
     if not isinstance(manifest, dict):
         raise ValueError("cell manifest is not an object")
@@ -229,6 +232,20 @@ def run_plan(manifest: object) -> dict[str, int]:
         type(n) is int and n >= 1 for n in counts.values()
     ):
         raise ValueError(f"replications must be positive integers for {PRESCRIBED}")
+    # FA-1: pilot draws share the threshold namespace and anchor, so a pilot
+    # cell id must carry PILOT_PREFIX (never valid elsewhere) and a pilot
+    # stays below the prescribed counts: no pilot draw is a qualification draw.
+    cells = manifest.get("cells")
+    entries = cells if isinstance(cells, list) else []
+    ids = [c.get("cell_id") for c in entries if isinstance(c, dict)]
+    piloted = [isinstance(i, str) and i.startswith(PILOT_PREFIX) for i in ids]
+    if purpose == "pilot":
+        if not all(piloted):
+            raise ValueError(f"every pilot cell id must start with {PILOT_PREFIX!r}")
+        if any(n >= PRESCRIBED[ns] for ns, n in counts.items()):
+            raise ValueError(f"a pilot must stay below the prescribed {PRESCRIBED}")
+    elif any(piloted):
+        raise ValueError(f"{PILOT_PREFIX!r} cell ids are for pilot runs only")
     if purpose == "qualification":
         # DR2-1: a qualification run needs the complete frozen cell
         # manifest (every candidate cell at T = T_C2) and every generator
