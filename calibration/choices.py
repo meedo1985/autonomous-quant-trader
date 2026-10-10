@@ -273,7 +273,13 @@ def _consistent(record: dict[str, object], bounds: reduce.Bounds) -> str | None:
     if first["length_ratio"] != second["length_ratio"]:
         return "max L/T differs between the rules"
     problem = _columns_problem(record, first["reason"], k)
-    return problem if problem is not None else _derived_problem(record, values["T"])
+    if problem is not None:
+        return problem
+    if first["reason"] in NO_LENGTHS and record["nominee"] is not None:
+        # I1R6-1: a non-finite or constant column has no Sharpe ratio, so
+        # dev_replication finds no nominee and writes NO_NOMINEE.
+        return "a U_G nominee although rules 1-2 failed"
+    return _derived_problem(record, values["T"])
 
 
 def _passes(rep: Rep, z: float) -> bool:

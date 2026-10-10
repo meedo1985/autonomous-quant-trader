@@ -148,8 +148,9 @@ def _record(
         "diagnostics": {"K": _h(k), "T": _h(9.0), "g": _h(0.5)},
         "largest": entry,
         "median": dict(entry),
-        "nominee": u_g_nominee,
-        "u_g": None,
+        # rules 1-2 failed: no Sharpe ratio, so no nominee (I1R6-1)
+        "nominee": None if reason in choices.NO_LENGTHS else u_g_nominee,
+        "u_g": "NO_NOMINEE" if reason in choices.NO_LENGTHS else None,
         "columns": columns,
         "column_checks": checks,
     }
@@ -329,3 +330,21 @@ def test_equal_blocks_one_result_and_k_t_positive_integers() -> None:
     for t in (9.5, 0.0, -9.0, float("nan"), float("inf")):
         bad = {**good, "diagnostics": {**good["diagnostics"], "T": _h(t)}}  # type: ignore[dict-item]
         assert choices.consistent(bad, ACCEPTS) is not None, t
+    # I1R6-2: records coherent apart from T, so only the T check refuses
+    refused = _record("UNSUPPORTED_LAW", 0, 0, k=2.0)
+    fractional = _with(refused, length_ratio=_h(3.0 / 9.5))
+    fractional["diagnostics"] = {**fractional["diagnostics"], "T": _h(9.5)}  # type: ignore[dict-item]
+    assert "positive integer" in str(choices.consistent(fractional, REFUSES))
+    capped = _record(choices.CAPPED, 0, 0, k=2.0)  # lengths exist: max/T runs
+    zero = {**capped, "diagnostics": {**capped["diagnostics"], "T": _h(0.0)}}  # type: ignore[dict-item]
+    assert "positive integer" in str(choices.consistent(zero, ACCEPTS))  # no raise
+
+
+@pytest.mark.usefixtures("toy_classifier")
+def test_no_u_g_nominee_after_rules_1_2() -> None:
+    """I1R6-1: a constant or non-finite column has no Sharpe ratio."""
+    for code in sorted(choices.NO_LENGTHS):
+        valid = _record(code, 0, 0, k=1.0)
+        assert choices.consistent(valid, ACCEPTS) is None
+        named = {**valid, "nominee": 0, "u_g": None}
+        assert "rules 1-2" in str(choices.consistent(named, ACCEPTS)), code
