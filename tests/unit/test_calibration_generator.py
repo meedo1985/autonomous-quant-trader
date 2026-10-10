@@ -178,3 +178,21 @@ def test_alpha_s_by_independent_quadrature() -> None:
     m1, m2, m3 = (mz[i] * mv[i] for i in range(3))
     var = m2 - m1**2
     assert (m3 - 3 * m1 * m2 + 2 * m1**3) / var**1.5 == pytest.approx(1, abs=2e-4)
+
+
+def test_q5_laws_are_accepted_only_without_dependence_and_qj_is_not_yet() -> None:
+    def manifest(law: str, dependence: str = "independent") -> dict[str, object]:
+        cell = {"cell_id": "c", "k": 5, "t": 60, "law": law, "dependence": dependence}
+        return {"cells": [cell]}
+
+    for law in generator.SEMI_LAWS:
+        assert cells_from_manifest(manifest(law))[0].law == law
+        with pytest.raises(ValueError, match="no dependence level"):
+            cells_from_manifest(manifest(law, "equi0.5"))
+    with pytest.raises(ValueError, match="unknown law"):
+        cells_from_manifest(manifest("semi-joint"))
+
+
+def test_the_synthetic_generator_refuses_a_q5_cell() -> None:
+    with pytest.raises(ValueError, match="not a synthetic law"):
+        generate(Cell("c", 2, 60, "semi-trend"), stream("a", "m"), stream("a", "c"))

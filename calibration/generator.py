@@ -38,6 +38,10 @@ LAWS = (
     "gaussian", "t5", "ar0.2", "ar0.5", "garch", "skewt+", "skewt-", "unequal",
     "mixed_ar",
 )  # fmt: skip
+# Q5 (prereg §3.4): drawn by `calibration.rules.draw` from exploration data,
+# one family per cell. QJ ("semi-joint") is not accepted until its joint
+# tests are counted (engine item 2b step 2).
+SEMI_LAWS = ("semi-trend", "semi-vol")
 # Q2m and Q4 have no cross-column dependence and need two or more columns.
 INDEPENDENT_ONLY = ("unequal", "mixed_ar")
 DEPENDENCES = (
@@ -76,12 +80,14 @@ def cells_from_manifest(manifest: object) -> list[Cell]:
             raise ValueError(f"{cell.cell_id}: K must be one of {K_VALUES}")
         if type(cell.t) is not int or cell.t < 16:
             raise ValueError(f"{cell.cell_id}: T must be an integer >= 16")
-        if cell.law not in LAWS or cell.dependence not in DEPENDENCES:
+        if cell.law not in LAWS + SEMI_LAWS or cell.dependence not in DEPENDENCES:
             raise ValueError(f"{cell.cell_id}: unknown law or dependence")
         if cell.k == 1 and cell.dependence != "independent":
             raise ValueError(f"{cell.cell_id}: K = 1 has no dependence")
         if cell.dependence == "clusters" and cell.k not in (5, 20):
             raise ValueError(f"{cell.cell_id}: clusters need K = 5 or 20")
+        if cell.law in SEMI_LAWS and cell.dependence != "independent":
+            raise ValueError(f"{cell.cell_id}: {cell.law} has no dependence level")
         if cell.law in INDEPENDENT_ONLY and (
             cell.k < 2 or cell.dependence != "independent"
         ):
@@ -217,6 +223,8 @@ def benchmark_exposure(r: np.ndarray) -> np.ndarray:
 def generate(
     cell: Cell, market_rng: np.random.Generator, columns: np.random.Generator
 ) -> Legs:
+    if cell.law not in LAWS:
+        raise ValueError(f"{cell.law!r} is not a synthetic law (Q5: rules.draw)")
     t, k = cell.t, cell.k
     sigma, eps = market(market_rng, cell.law, t)
     r = sigma * eps

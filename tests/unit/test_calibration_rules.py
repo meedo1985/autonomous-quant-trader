@@ -247,3 +247,30 @@ def test_qj_shares_the_path_and_the_signs() -> None:
 def test_unknown_libraries_are_refused(family: str, k: int) -> None:
     with pytest.raises(ValueError):
         rules.library(family, k, V_BAR)
+
+
+def test_draw_uses_the_section_8_streams_for_each_kind_of_cell() -> None:
+    """A synthetic cell: "market" and "columns" into the generator. A Q5
+    cell: the "market" path and "sign" flips over the exploration source,
+    with its family's first K rules and the R-5 warm-up."""
+    from calibration.generator import Cell, generate
+    from calibration.seeds import stream
+
+    seed = "ab" * 32
+    synthetic = Cell("c", 2, 60, "garch", "equi0.5")
+    legs = rules.draw(synthetic, seed, None)
+    expected = generate(synthetic, stream(seed, "market"), stream(seed, "columns"))
+    np.testing.assert_array_equal(legs.x, expected.x)
+    source = semi.Source(R, {})
+    for family in rules.FAMILIES:
+        cell = Cell("q5", 5, 40, f"semi-{family}")
+        assert rules.family_label(cell) == family
+        got = rules.draw(cell, seed, source)
+        want = semi.semi_empirical(R, rules.library(family, 5, V_BAR),
+                                   stream(seed, "market"), stream(seed, "sign"),
+                                   40, rules.WARMUP)  # fmt: skip
+        np.testing.assert_array_equal(got.x, want.x)
+        np.testing.assert_array_equal(got.candidates, want.candidates)
+    assert rules.family_label(synthetic) == "agnostic"
+    with pytest.raises(ValueError, match="needs the exploration source"):
+        rules.draw(Cell("q5", 1, 40, "semi-vol"), seed, None)

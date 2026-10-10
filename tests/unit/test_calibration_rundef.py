@@ -1168,3 +1168,144 @@ def test_column_checks_do_not_claim_a_variance_check_for_a_non_finite_column(
                          [0.1, np.inf, 0.3]])  # fmt: skip
     expected = [[True, True], [True, False], [False, None], [False, None]]
     assert driver.column_checks(x) == expected
+
+
+Q5_CELLS = json.dumps({"purpose": "pilot", "replications": {"threshold": 3, "dev": 2},
+                       "cells": [
+    {"cell_id": "pilot-q5", "k": 2, "t": 40, "law": "semi-trend",
+     "dependence": "independent"},
+    {"cell_id": "pilot-k1", "k": 1, "t": 40, "law": "t5", "dependence": "independent"},
+]})  # fmt: skip
+
+
+def _write_raw(root: Path, drift: float = 0.0) -> None:
+    """Synthetic BTC and ETH exploration archives for January and February
+    2018 (every hour present), with Task-13-style sidecars."""
+    import hashlib
+    import io
+    import zipfile
+    from datetime import UTC, datetime, timedelta
+
+    rng = np.random.default_rng(5)
+    for symbol in ("BTCUSDT", "ETHUSDT"):
+        directory = root / "klines" / symbol / "1h"
+        directory.mkdir(parents=True, exist_ok=True)
+        price = 100.0
+        for month in (1, 2):
+            start = datetime(2018, month, 1, tzinfo=UTC)
+            hours = (datetime(2018, month + 1, 1, tzinfo=UTC) - start) // timedelta(
+                hours=1
+            )
+            lines = []
+            for i in range(hours):
+                opened = price
+                price *= math.exp(rng.normal(drift, 0.01))
+                ms = int((start + timedelta(hours=i)).timestamp()) * 1000
+                high, low = max(opened, price) * 1.001, min(opened, price) * 0.999
+                lines.append(f"{ms},{opened!r},{high!r},{low!r},{price!r},1.0,"
+                             f"{ms + 3_599_999},1,1,1,1,0")  # fmt: skip
+            name = f"{symbol}-1h-2018-{month:02d}"
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w") as handle:
+                handle.writestr(f"{name}.csv", "\n".join(lines) + "\n")
+            content = buffer.getvalue()
+            (directory / f"{name}.zip").write_bytes(content)
+            sidecar = {"name": f"{name}.zip",
+                       "sha256": hashlib.sha256(content).hexdigest()}  # fmt: skip
+            (directory / f"{name}.zip.source.json").write_text(json.dumps(sidecar))
+
+
+def test_a_q5_pilot_runs_on_recorded_exploration_data_only(tmp_path: Path) -> None:
+    """Q5 (prereg §3.4) end to end: the run definition records the source
+    identity built from the archives; the driver's threshold draws equal
+    `rules.draw` on that source with §8 seeds; a run without the archives,
+    or with archives whose returns differ, is refused before any chunk."""
+    from calibration import classifier, rules, semi
+    from calibration.generator import Cell
+    from calibration.seeds import outer_seed
+
+    root = _checkout(tmp_path)
+    raw, other = tmp_path / "raw", tmp_path / "other"
+    _write_raw(raw)
+    _write_raw(other, drift=0.001)
+    inputs = tmp_path / "in"
+    inputs.mkdir()
+    (inputs / "cells.json").write_text(Q5_CELLS)
+    (inputs / "exploration.json").write_text("{}")
+    out = inputs / "d.json"
+    base = ("record", "--out", str(out), "--prereg-commit", "HEAD",
+            "--engine-commit", _git(root, "rev-parse", "HEAD"),
+            "--cell-manifest", str(inputs / "cells.json"),
+            "--exploration-manifest", str(inputs / "exploration.json"))  # fmt: skip
+    done = _script(root, *base)
+    assert done.returncode == 1 and "Q5 cells need --raw-root" in done.stderr
+    done = _script(root, *base, "--raw-root", str(raw))
+    assert done.returncode == 0, done.stderr
+    defn = rundef.load(out)
+    source = semi.load_source(raw)
+    assert defn["exploration_source"] == source.identity
+    assert source.identity["rows"] == 30 + 28  # Jan 2-31, Feb 1-28 (no Dec 31)
+
+    store = tmp_path / "store"
+    done = _driver(root, out, store, "--namespace", "threshold")
+    assert done.returncode == 1 and "Q5 cells need --raw-root" in done.stderr
+    done = _driver(
+        root, out, store, "--namespace", "threshold", "--raw-root", str(other)
+    )
+    assert done.returncode == 1 and "exploration data differs" in done.stderr
+    assert not (store / "threshold" / "pilot-q5").exists()
+
+    done = _driver(root, out, store, "--namespace", "threshold", "--raw-root", str(raw))
+    assert done.returncode == 0, done.stderr
+    chunk = json.loads(
+        (store / "threshold" / "pilot-q5" / "chunk-0000000.json").read_bytes()
+    )
+    cell = Cell("pilot-q5", 2, 40, "semi-trend")
+    for rep_, stored in enumerate(chunk["results"]):
+        seed = outer_seed(defn["prereg_sha256"], "pilot-q5", "d19-threshold-v1", rep_)
+        expected = classifier.diagnostics(rules.draw(cell, seed, source).x)
+        assert stored == {
+            n: struct.pack(">d", v).hex() for n, v in sorted(expected.items())
+        }
+    done = _driver(root, out, store, "--namespace", "dev", "--raw-root", str(raw))
+    assert done.returncode == 0, done.stderr
+    dev = json.loads((store / "dev" / "pilot-q5" / "chunk-0000000.json").read_bytes())
+    assert len(dev["results"]) == 2
+
+
+def test_a_q5_development_draw_uses_its_family_label(
+    recorded: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§8: the inner Annex B family seed's family_id is the Q5 family."""
+    from calibration import semi
+    from calibration.generator import Cell
+
+    root, _ = recorded
+    driver = _load_driver(root, monkeypatch)
+    labels = []
+
+    class Seeded(Exception):
+        pass
+
+    def spy(seed: str, cell_id: str, family: str, *rest: object) -> str:
+        labels.append(family)
+        raise Seeded  # stop before Annex B, which needs the pinned runtime
+
+    monkeypatch.setattr(driver, "family_seed", spy)
+    source = semi.Source(np.random.default_rng(3).normal(0, 0.03, (300, 2)), {})
+    from calibration import classifier
+
+    def loose(k: int) -> tuple[dict[str, float], dict[str, float]]:
+        need = classifier.required(k)
+        upper = {n: 1e300 for n in need - set(classifier.LOWER)}
+        upper.update(K=k, T=40)
+        lower = {n: -1e300 for n in need - set(classifier.UPPER)}
+        lower.update(K=k, T=40)
+        return upper, lower
+
+    with pytest.raises(Seeded):
+        driver.dev_replication(Cell("q", 2, 40, "semi-vol"), "a" * 64, "b" * 64, 0,
+                               loose(2), source)  # fmt: skip
+    with pytest.raises(Seeded):
+        driver.dev_replication(Cell("s", 2, 40, "t5"), "a" * 64, "b" * 64, 0, loose(2))
+    assert labels == ["vol", "agnostic"]

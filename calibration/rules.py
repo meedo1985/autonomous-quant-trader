@@ -15,7 +15,9 @@ from __future__ import annotations
 import numpy as np
 
 from aqt.benchmarks.canonical import reaches_rebalance_band
-from calibration.semi import Exposures
+from calibration.generator import SEMI_LAWS, Cell, Legs, generate
+from calibration.seeds import stream
+from calibration.semi import Exposures, Source, semi_empirical
 
 FAMILIES = ("trend", "vol")
 RULES = 27
@@ -30,6 +32,7 @@ GARCH_ALPHA, GARCH_BETA = 0.10, 0.85
 HAR_BETAS = (0.35, 0.35, 0.20)  # daily, weekly (5), monthly (22)
 HAR_C = 0.10  # times v_bar
 HAR_LAGS = 22
+WARMUP = 250  # R-5
 
 
 def index(i: int) -> tuple[int, int, int]:
@@ -178,3 +181,22 @@ def joint(k: int, v_bar: float) -> Exposures:
     path; `semi_empirical` gives them one shared set of block signs."""
     trend, vol = library("trend", k, v_bar), library("vol", k, v_bar)
     return lambda path: np.hstack([trend(path), vol(path)])
+
+
+def family_label(cell: Cell) -> str:
+    """The §8 family id: the family of a Q5 cell, else "agnostic"."""
+    return cell.law.removeprefix("semi-") if cell.law in SEMI_LAWS else "agnostic"
+
+
+def draw(cell: Cell, seed: str, source: Source | None) -> Legs:
+    """One replication's legs from outer seed `seed` (§8 streams): a Q5
+    cell from the exploration source ("market" path, "sign" flips), any
+    other cell from the synthetic generator ("market", "columns")."""
+    if cell.law not in SEMI_LAWS:
+        return generate(cell, stream(seed, "market"), stream(seed, "columns"))
+    if source is None:
+        raise ValueError(f"{cell.cell_id}: a Q5 cell needs the exploration source")
+    v_bar = reference_variance(source.returns)
+    exposures = library(family_label(cell), cell.k, v_bar)
+    return semi_empirical(source.returns, exposures, stream(seed, "market"),
+                          stream(seed, "sign"), cell.t, WARMUP)  # fmt: skip

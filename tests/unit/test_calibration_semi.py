@@ -220,3 +220,26 @@ def test_benchmark_exposure_equals_the_loop_it_replaced() -> None:
         e[i] = min(1.0, 0.40 / (np.sqrt(var_hat) * np.sqrt(365)))
         var_hat = decay * var_hat + (1 - decay) * r[i] ** 2
     np.testing.assert_array_equal(generator.benchmark_exposure(r), e)
+
+
+def test_the_source_identity_binds_manifests_and_returns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+
+    def build(partition: str, symbol: str, root: Path) -> SimpleNamespace:
+        series = {"BTCUSDT": BTC, "ETHUSDT": ETH}[symbol]
+        return SimpleNamespace(
+            series=series, manifest=SimpleNamespace(manifest_sha256=symbol + "-hash")
+        )
+
+    monkeypatch.setattr(semi, "build_exploration_manifest", build)
+    source = semi.load_source(Path("raw"))
+    returns, _, left_out = semi.exploration_returns(Path("raw"))
+    np.testing.assert_array_equal(source.returns, returns)
+    assert source.identity == {
+        "manifest_sha256": {"BTCUSDT": "BTCUSDT-hash", "ETHUSDT": "ETHUSDT-hash"},
+        "returns_sha256": hashlib.sha256(returns.astype("<f8").tobytes()).hexdigest(),
+        "rows": 3,
+        "left_out_days": len(left_out),
+    }

@@ -1,7 +1,7 @@
 """D-19 run driver (prereg §13 rev 7g item 6), started by the owner's
 launcher on the calibration machine inside the pinned image.
 
-  run --definition PATH --store DIR --namespace threshold|dev
+  run --definition PATH --store DIR --namespace threshold|dev [--raw-root DIR]
       One hash-chained chain per cell of the run definition's manifest, in
       worker processes. Every worker runs the start gate itself before any
       chunk (R3-3) and builds its chain only from the run-definition hash and
@@ -10,6 +10,9 @@ launcher on the calibration machine inside the pinned image.
       The replication count comes from the run definition's plan (DR-3),
       seeds from prereg §8: namespace d19-threshold-v1 or d19-dev-v1,
       anchor = the preregistration hash recorded in the definition (DR-1).
+      Q5 cells (prereg §3.4) need --raw-root: each worker builds the daily
+      exploration returns from it and refuses unless their identity equals
+      the run definition's, before any chunk.
 
 threshold: each replication is the classifier diagnostics of one generator
 draw (§3.5).
@@ -26,7 +29,7 @@ The launcher must take AQT_IMAGE_DIGEST from `docker inspect` on the host
 To stop a run, stop the whole service (its control group), never the parent
 process alone: an orphaned worker keeps its chain's lock and computes on, and
 a relaunch is refused for that chain until it ends (FA-3, FR-5).
-Synthetic data only.
+Synthetic data, and for Q5 cells exploration data only.
 """
 
 from __future__ import annotations
@@ -54,9 +57,18 @@ from typing import Any  # noqa: E402
 
 import numpy as np  # noqa: E402
 
-from calibration import chunks, classifier, dsr, gates, reduce, rundef  # noqa: E402
-from calibration.generator import Cell, cells_from_manifest, generate  # noqa: E402
-from calibration.seeds import family_seed, outer_seed, stream  # noqa: E402
+from calibration import (  # noqa: E402
+    chunks,
+    classifier,
+    dsr,
+    gates,
+    reduce,
+    rules,
+    rundef,
+    semi,
+)
+from calibration.generator import SEMI_LAWS, Cell, cells_from_manifest  # noqa: E402
+from calibration.seeds import family_seed, outer_seed  # noqa: E402
 
 NAMESPACES = rundef.SEED_NAMESPACES  # prereg §8
 WORKERS = 2  # §13 rev 7g item 6: two workers, not a run-time choice (DR5-1)
@@ -68,10 +80,12 @@ def _exact(values: dict[str, float]) -> dict[str, str]:
     return {n: struct.pack(">d", v).hex() for n, v in sorted(values.items())}
 
 
-def threshold_replication(cell: Cell, anchor: str, rep: int) -> dict[str, str]:
+def threshold_replication(
+    cell: Cell, anchor: str, rep: int, source: semi.Source | None = None
+) -> dict[str, str]:
     """One threshold-run draw: the classifier diagnostics, bit-exact."""
     seed = outer_seed(anchor, cell.cell_id, NAMESPACES["threshold"], rep)
-    legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
+    legs = rules.draw(cell, seed, source)
     return _exact(classifier.diagnostics(legs.x))
 
 
@@ -106,7 +120,12 @@ def column_checks(x: np.ndarray) -> list[list[bool | None]]:
 
 
 def dev_replication(
-    cell: Cell, anchor: str, prereg: str, rep: int, bounds: reduce.Bounds
+    cell: Cell,
+    anchor: str,
+    prereg: str,
+    rep: int,
+    bounds: reduce.Bounds,
+    source: semi.Source | None = None,
 ) -> dict[str, object]:
     """One development replication (prereg §2), bit-exact. `anchor` keys the
     outer seed; `prereg` is the family seed's protocol_hash in every
@@ -116,11 +135,12 @@ def dev_replication(
     nominee; every column's (L_j, capped); the U_G nominee and event;
     every column's rule 1-2 checks."""
     seed = outer_seed(anchor, cell.cell_id, NAMESPACES["dev"], rep)
-    legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
+    legs = rules.draw(cell, seed, source)
     values = classifier.diagnostics(legs.x)
     upper, lower = bounds
     accept = classifier.within(values, upper, lower)
-    fam = family_seed(seed, cell.cell_id, "agnostic", cell.k, prereg, rep)
+    label = rules.family_label(cell)
+    fam = family_seed(seed, cell.cell_id, label, cell.k, prereg, rep)
     out: dict[str, object] = {
         "diagnostics": _exact(values),
         "columns": None,
@@ -180,10 +200,13 @@ def worker(
     cell_id: str,
     expected: str,
     bounds: reduce.Bounds | None = None,
+    raw_root: Path | None = None,
 ) -> str:
     """One chain, in its own process: the start gate first, then the chunks
     (R3-3, FE-5). Returns the chain head. `bounds`: the development
-    thresholds for this cell's K (dev only)."""
+    thresholds for this cell's K (dev only). `raw_root`: the exploration
+    archives, for a Q5 cell only; their returns must have the recorded
+    identity."""
     defn = rundef.load(definition)
     if rundef.definition_sha256(defn) != expected:  # DR4-1
         raise ValueError("the run definition changed after the run started")
@@ -194,6 +217,14 @@ def worker(
     if defn["seed_spec"] != rundef.seed_spec(defn["prereg_sha256"]):
         raise ValueError("seed specification is not the §8 one (DR2-2)")
     cell, anchor = cells[cell_id], defn["seed_spec"]["anchor"]
+    source = None
+    if cell.law in SEMI_LAWS:
+        if raw_root is None:
+            raise ValueError(f"{cell_id}: a Q5 cell needs --raw-root")
+        source = semi.load_source(raw_root)
+        recorded = defn.get("exploration_source")
+        if recorded is None or source.identity != recorded:
+            raise ValueError("exploration data differs from the run definition")
     chain = chunks.Chain(
         store / namespace / cell_id,
         binding=rundef.definition_sha256(defn),
@@ -209,9 +240,12 @@ def worker(
         dev = bounds
         prereg = defn["prereg_sha256"]
         return chunks.run(
-            chain, lambda rep: dev_replication(cell, anchor, prereg, rep, dev)
+            chain,
+            lambda rep: dev_replication(cell, anchor, prereg, rep, dev, source),
         )
-    return chunks.run(chain, lambda rep: threshold_replication(cell, anchor, rep))
+    return chunks.run(
+        chain, lambda rep: threshold_replication(cell, anchor, rep, source)
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -221,6 +255,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--definition", type=Path, required=True)
     run.add_argument("--store", type=Path, required=True)
     run.add_argument("--namespace", required=True)
+    run.add_argument("--raw-root", type=Path)
     args = parser.parse_args(argv)
     if args.namespace not in NAMESPACES:
         print(f"namespace {args.namespace!r} is not built", file=sys.stderr)
@@ -228,6 +263,8 @@ def main(argv: list[str] | None = None) -> int:
     defn = rundef.load(args.definition)
     try:
         cells = cells_from_manifest(defn["cell_manifest"])  # DR-2
+        if args.raw_root is None and any(c.law in SEMI_LAWS for c in cells):
+            raise ValueError("Q5 cells need --raw-root")
         rundef.run_plan(defn["cell_manifest"])  # DR-3
         gating = rundef.start_gate(defn, ROOT)  # fail fast; workers check again
         bounds = (
@@ -240,8 +277,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     expected = rundef.definition_sha256(defn)  # every worker must load this
     jobs: list[tuple[Any, ...]] = [
-        (args.definition, args.store, args.namespace, c.cell_id, expected)
-        + ((bounds[c.k],) if bounds else ())
+        (
+            args.definition,
+            args.store,
+            args.namespace,
+            c.cell_id,
+            expected,
+            bounds.get(c.k),
+            args.raw_root,
+        )  # fmt: skip
         for c in cells
     ]
     # A worker that dies (killed, out of memory) breaks the executor, which

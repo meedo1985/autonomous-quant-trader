@@ -2,16 +2,20 @@
 calibration machine inside the pinned image.
 
   record --out PATH --prereg-commit C --engine-commit C
-         --cell-manifest FILE --exploration-manifest FILE
+         --cell-manifest FILE --exploration-manifest FILE [--raw-root DIR]
       Measure this machine's gating identity and write the run definition;
       prints its SHA-256. The engine code must equal the engine commit (this
       checkout's HEAD) file by file; the preregistration is read from its
       commit. The image digest comes from AQT_IMAGE_DIGEST,
       which the launcher takes from `docker inspect` on the host (FE-4).
+      A manifest with Q5 cells needs --raw-root, the exploration archives:
+      the identity of the daily returns built from them is recorded, and
+      every worker re-checks it before computing.
   check --definition PATH
       The start gate: run on every start and resume before any chunk.
 
-Synthetic data only; computes no calibration result.
+Synthetic data, and for Q5 cells exploration data only; computes no
+calibration result.
 """
 
 from __future__ import annotations
@@ -34,8 +38,8 @@ sys.path[:0] = [str(ROOT), str(ROOT / "src")]  # this checkout's code only (RR-2
 sys.dont_write_bytecode = True
 sys.pycache_prefix = tempfile.mkdtemp(prefix="d19-no-bytecode-")
 
-from calibration import rundef  # noqa: E402
-from calibration.generator import cells_from_manifest  # noqa: E402
+from calibration import rundef, semi  # noqa: E402
+from calibration.generator import SEMI_LAWS, cells_from_manifest  # noqa: E402
 
 PREREG_PATH = (
     "review/governance-statistics-amendment/d19-preregistration/PREREGISTRATION.md"
@@ -89,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     record.add_argument("--engine-commit", required=True)
     record.add_argument("--cell-manifest", type=Path, required=True)
     record.add_argument("--exploration-manifest", type=Path, required=True)
+    record.add_argument("--raw-root", type=Path)
     check = sub.add_parser("check")
     check.add_argument("--definition", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -112,11 +117,21 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         manifest = json.loads(args.cell_manifest.read_bytes())
         try:  # DR-2, DR-3: a bad manifest never enters a run definition
-            cells_from_manifest(manifest)
+            cells = cells_from_manifest(manifest)
             rundef.run_plan(manifest)
         except ValueError as error:
             print(f"cell manifest: {error}", file=sys.stderr)
             return 1
+        source = None
+        if any(c.law in SEMI_LAWS for c in cells):
+            if args.raw_root is None:
+                print("Q5 cells need --raw-root", file=sys.stderr)
+                return 1
+            try:
+                source = semi.load_source(args.raw_root).identity
+            except ValueError as error:  # KlineError is a ValueError
+                print(f"exploration data: {error}", file=sys.stderr)
+                return 1
         code_hash = rundef.generator_sha256(ROOT)
         defn = rundef.build(
             prereg_commit=prereg_id,
@@ -128,6 +143,7 @@ def main(argv: list[str] | None = None) -> int:
             exploration_manifest_sha256=hashlib.sha256(
                 args.exploration_manifest.read_bytes()
             ).hexdigest(),
+            exploration_source=source,
         )
         # Re-check just before writing (R4-2, R5-2): HEAD, and every engine
         # file against that commit and against the hash being recorded.

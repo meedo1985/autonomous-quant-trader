@@ -24,7 +24,9 @@ and the owner's decision before any Q5/QJ cell is run."""
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -73,6 +75,27 @@ def exploration_returns(
         [b.series for b in builds], WINDOW_START, WINDOW_END_EXCLUSIVE
     )
     return returns, tuple(b.manifest.manifest_sha256 for b in builds), left_out
+
+
+@dataclass(frozen=True)
+class Source:
+    """The demeaned (BTC, ETH) daily returns and their identity, which the
+    run definition records and every worker re-checks (§3.4 item 1)."""
+
+    returns: np.ndarray
+    identity: dict[str, object]
+
+
+def load_source(raw_root: Path) -> Source:
+    returns, hashes, left_out = exploration_returns(raw_root)
+    data = np.ascontiguousarray(returns, dtype="<f8").tobytes()
+    identity: dict[str, object] = {
+        "manifest_sha256": dict(zip(SYMBOLS, hashes, strict=True)),
+        "returns_sha256": hashlib.sha256(data).hexdigest(),
+        "rows": len(returns),
+        "left_out_days": len(left_out),
+    }
+    return Source(returns, identity)
 
 
 def joint_returns(

@@ -292,8 +292,11 @@ def build(
     cell_manifest: object,
     image_digest: str,
     exploration_manifest_sha256: str,
+    exploration_source: dict[str, object] | None = None,
 ) -> dict[str, Any]:
-    """The run definition (§13 item 6), measured on this machine."""
+    """The run definition (§13 item 6), measured on this machine.
+    `exploration_source`: the identity of the Q5 source data
+    (`semi.Source.identity`), None when the manifest has no Q5 cell."""
     return {
         "record_type": RECORD_TYPE,
         "prereg_commit": prereg_commit,
@@ -303,6 +306,7 @@ def build(
         "cell_manifest": cell_manifest,
         "seed_spec": seed_spec(prereg_sha256),
         "exploration_manifest_sha256": exploration_manifest_sha256,
+        "exploration_source": exploration_source,
         "gating": gating(image_digest),
     }
 
