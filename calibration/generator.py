@@ -179,25 +179,34 @@ def _root(s: np.ndarray) -> np.ndarray:
     return (v * np.sqrt(np.clip(w, 0, None))) @ v.T
 
 
-def _sigma_path(rng: np.random.Generator, law: str, n: int) -> np.ndarray:
-    if law != "garch":
-        return np.full(n, SIGMA)
-    a, b = 0.10, 0.85
-    omega = SIGMA**2 * (1 - a - b)
-    e = _innovations(rng, "t5", (n + BURN,))
-    var, out = SIGMA**2, np.empty(n + BURN)
-    for i in range(n + BURN):
-        out[i] = np.sqrt(var)
-        var = omega + a * (out[i] * e[i]) ** 2 + b * var
-    return out[BURN:]
+def market(rng: np.random.Generator, law: str, n: int) -> tuple[np.ndarray, np.ndarray]:
+    """(sigma_t, eps_t) of the BTC market, r_t = sigma_t eps_t (§3.1). Every
+    law runs 500 days from its unconditional state and discards them
+    (I2A-3). GARCH(1,1) updates the variance with the same t5 shock that
+    drives the return (I2A-2); AR(1) laws make eps itself AR(1) from a
+    stationary start (I2A-1); Q2m and Q4 use the Gaussian market."""
+    if law == "garch":
+        a, b = 0.10, 0.85
+        omega = SIGMA**2 * (1 - a - b)
+        e = _innovations(rng, "t5", (n + BURN,))
+        var, sigma = SIGMA**2, np.empty(n + BURN)
+        for i in range(n + BURN):
+            sigma[i] = np.sqrt(var)
+            var = omega + a * (sigma[i] * e[i]) ** 2 + b * var
+        return sigma[BURN:], e[BURN:]
+    e = _innovations(rng, law, (n + BURN,))
+    if law.startswith("ar"):
+        phi = float(law[2:])
+        for i in range(1, n + BURN):
+            e[i] = phi * e[i - 1] + np.sqrt(1 - phi**2) * e[i]
+    return np.full(n, SIGMA), e[BURN:]
 
 
 def generate(
-    cell: Cell, market: np.random.Generator, columns: np.random.Generator
+    cell: Cell, market_rng: np.random.Generator, columns: np.random.Generator
 ) -> Legs:
     t, k = cell.t, cell.k
-    sigma = _sigma_path(market, cell.law, t)
-    eps = _innovations(market, cell.law, (t,))
+    sigma, eps = market(market_rng, cell.law, t)
     r = sigma * eps
     # benchmark: e_t = min(1, 0.40/(sigma_hat*sqrt(365))), EWMA half-life 7 days
     decay = 0.5 ** (1 / 7)

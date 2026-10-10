@@ -101,3 +101,80 @@ def test_the_new_laws_are_accepted_in_a_manifest() -> None:
         for i, law in enumerate(("skewt+", "skewt-", "unequal", "mixed_ar"))
     ]
     assert len(cells_from_manifest({"cells": cells})) == 4
+
+
+def test_garch_variance_is_driven_by_the_observed_return() -> None:
+    """I2A-2: sigma_{t+1}^2 = omega + a (sigma_t eps_t)^2 + b sigma_t^2 with
+    the same eps_t that makes r_t."""
+    sigma, eps = generator.market(np.random.default_rng(3), "garch", 400)
+    a, b = 0.10, 0.85
+    omega = generator.SIGMA**2 * (1 - a - b)
+    expected = omega + a * (sigma[:-1] * eps[:-1]) ** 2 + b * sigma[:-1] ** 2
+    np.testing.assert_allclose(sigma[1:] ** 2, expected, rtol=1e-12)
+
+
+def test_an_ar_market_is_ar1() -> None:
+    """I2A-1: AR(1) is a law of eps too (§3.1), unit variance."""
+    sigma, eps = generator.market(np.random.default_rng(5), "ar0.5", 60_000)
+    assert np.all(sigma == generator.SIGMA)
+    assert float(np.corrcoef(eps[1:], eps[:-1])[0, 1]) == pytest.approx(0.5, abs=0.02)
+    assert float(eps.var()) == pytest.approx(1, rel=0.03)
+
+
+@pytest.mark.parametrize("law", ["gaussian", "t5", "skewt+", "unequal", "mixed_ar"])
+def test_iid_markets_discard_the_burn_in(law: str) -> None:
+    """I2A-3: the emitted series are draws 500 onward of the market stream."""
+    _, eps = generator.market(np.random.default_rng(9), law, 50)
+    burned = generator._innovations(
+        np.random.default_rng(9), law, (50 + generator.BURN,)
+    )
+    np.testing.assert_array_equal(eps, burned[generator.BURN :])
+
+
+@pytest.mark.parametrize("law", ["unequal", "mixed_ar"])
+def test_q2m_and_q4_markets_are_gaussian_with_constant_sigma(law: str) -> None:
+    """I2A-5: interpretation 1, asserted directly."""
+    sigma, eps = generator.market(np.random.default_rng(13), law, 200_000)
+    assert np.all(sigma == generator.SIGMA)
+    kurt = float(((eps - eps.mean()) ** 4).mean() / eps.var() ** 2 - 3)
+    assert abs(kurt) < 0.05 and abs(float(eps.mean())) < 0.01
+
+
+def test_q4_columns_are_mutually_independent() -> None:
+    x = _x(Cell("q4", 5, 40_000, "mixed_ar", "independent"))
+    corr = np.corrcoef(x.T)
+    assert np.all(np.abs(corr[~np.eye(5, dtype=bool)]) < 0.03)
+
+
+def test_skew_t_draw_order_is_u0_u1_w() -> None:
+    """I2A-5: the draws, reproduced from a controlled generator."""
+    got = generator._skew_t(np.random.default_rng(17), generator.ALPHA_S, (4,))
+    rng = np.random.default_rng(17)
+    u0, u1, w = rng.standard_normal(4), rng.standard_normal(4), rng.chisquare(5, 4)
+    delta = generator.ALPHA_S / math.sqrt(1 + generator.ALPHA_S**2)
+    x = (delta * np.abs(u0) + math.sqrt(1 - delta**2) * u1) * np.sqrt(5 / w)
+    mean, var, _ = generator.skew_t_moments(generator.ALPHA_S)
+    np.testing.assert_array_equal(got, (x - mean) / math.sqrt(var))
+
+
+def test_alpha_s_by_independent_quadrature() -> None:
+    """I2A-5: skewness of the Azzalini skew-t at alpha_s computed by
+    numerical integration of the skew-normal and chi-square densities, not
+    by the closed forms in skew_t_moments."""
+    alpha, nu = generator.ALPHA_S, 5
+    z = np.linspace(-14, 14, 400_001)
+    erf = np.vectorize(math.erf)
+    sn = (
+        2
+        * np.exp(-(z**2) / 2)
+        / math.sqrt(2 * math.pi)
+        * 0.5
+        * (1 + erf(alpha * z / math.sqrt(2)))
+    )
+    w = np.linspace(1e-9, 400, 2_000_001)
+    chi = w ** (nu / 2 - 1) * np.exp(-w / 2) / (2 ** (nu / 2) * math.gamma(nu / 2))
+    mz = [float(np.trapezoid(sn * z**k, z)) for k in (1, 2, 3)]
+    mv = [float(np.trapezoid(chi * (nu / w) ** (k / 2), w)) for k in (1, 2, 3)]
+    m1, m2, m3 = (mz[i] * mv[i] for i in range(3))
+    var = m2 - m1**2
+    assert (m3 - 3 * m1 * m2 + 2 * m1**3) / var**1.5 == pytest.approx(1, abs=2e-4)

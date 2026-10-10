@@ -38,6 +38,7 @@ REFERENCE_CASES = (
     Cell("refvec-k20-factor", 20, 365, "gaussian", "factor"),
     Cell("refvec-k2-skewt", 2, 365, "skewt-", "opposites"),  # item 2a numerics
     Cell("refvec-k5-unequal", 5, 365, "unequal", "independent"),
+    Cell("refvec-k5-mixed-ar", 5, 365, "mixed_ar", "independent"),
 )
 
 

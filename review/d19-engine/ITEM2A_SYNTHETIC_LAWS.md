@@ -28,15 +28,17 @@ covers the χ² draws and the skew-t standardisation.
 ## Interpretations (AI defaults; for review and the owner)
 
 1. **Market ε in Q2m and Q4 is Gaussian with constant σ.** §3.2 specifies only the columns for these groups; the Q1 core market is used.
-2. **Q4's AR column is column 0.** §3.2 says "one AR(1) column ... among iid columns" without an index; column order carries no meaning in an exchangeable family.
+2. **Q4's AR column is column 0.** §3.2 says "one AR(1) column ... among iid columns" without an index; column 0 satisfies that text. (Corrected after review I2A: an earlier wording claimed exchangeability, which the preregistration does not establish.)
 3. **α_s is fixed by exact moments, not by simulation.** Sample skewness is not a reliable estimator at ν = 5 (the sixth moment is infinite), so the formula is validated by simulation at ν = 30 and α_s is re-derived by bisection in a test.
 
-## Noted, not changed
+## Market generator repaired after review (I2A-1..I2A-3)
 
-The existing AR(1) laws (`ar0.2`, `ar0.5`) apply AR(1) to the column
-innovations only; ε stays Gaussian. §3.1 lists AR(1) among "laws of ε and of
-the column innovations". This is reviewed code from before item 2a; whether
-ε should also be AR(1) is raised here for the reviewer and not changed.
+The first version left three pre-existing market defects, all repaired in
+`generator.market` after the GPT-6 Sol review
+(`SOL6_ITEM2A_REVIEW_93BDC60.md`, adjudication
+`ADJUDICATION_ITEM2A_93BDC60.md`): AR(1) laws now make ε itself AR(1);
+GARCH(1,1) updates the variance with the same t5 shock that drives the
+return; every market law discards a 500-day burn-in.
 
 ## Tests
 
