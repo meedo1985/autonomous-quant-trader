@@ -50,6 +50,12 @@ BTC and ETH. Every other day is left out, never filled (Constitution §6), and
 the count is reported with the source. The two columns are then demeaned
 (§3.4).
 
+Every return day of the window is accounted for: the left-out days are
+listed, leading and trailing ones included (I2B-2). Kept rows are adjacent in
+the source array even across a left-out day, so the bootstrap can join the
+two sides of a gap as it joins the array's end to its start; this is
+disclosed (alternative: restart a block at every gap).
+
 *Alternatives:* (a) use each day's last available bar; (b) chain across a
 missing day. Both fill or bridge gaps, which the rules forbid.
 

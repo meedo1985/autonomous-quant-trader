@@ -2,9 +2,12 @@
 depend on the trend and vol rule libraries (engine item 2b).
 
 1. Source: demeaned daily BTC and ETH returns of the **exploration
-   partition only** (`exploration_returns`), refused before any bar is read
-   unless both manifests are exploration manifests inside the protocol's
-   exploration window, and checked against their parsed hashes after.
+   partition only** (`exploration_returns`). Bars are read only by
+   `aqt.data.klines.build_exploration_manifest`, which refuses every other
+   partition before a file is read, opens only the exploration months'
+   archives (each checked against its sidecar) and keeps only bars inside
+   the exploration window; the two manifest hashes are returned for the
+   qualification object (§3.4 item 1).
 2. Path: a joint stationary bootstrap (mean block 20; 60 for the §3.4
    sensitivity rerun) of those rows, from the `"market"` stream.
 3. Exposures: computed causally on the resampled BTC path by the rule
@@ -14,7 +17,7 @@ depend on the trend and vol rule libraries (engine item 2b).
    `"sign"` stream, the first block starting at day 0, shared by all
    columns (and both families in QJ); X = s X~, C = b + X, so E[X] = 0.
 
-PENDING: the daily-return rule (`daily_closes`, `exploration_returns`) and
+PENDING: the daily-return rule (`daily_closes`, `joint_returns`) and
 the rule libraries are part of the rule-library proposal
 (`review/d19-engine/ITEM2B_RULE_LIBRARY_PROPOSAL.md`), which needs reviews
 and the owner's decision before any Q5/QJ cell is run."""
@@ -22,13 +25,18 @@ and the owner's decision before any Q5/QJ cell is run."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 
 from aqt.data.bars import BarSeries
-from aqt.data.klines import WINDOW_END_EXCLUSIVE, WINDOW_START
-from aqt.data.manifest import PartitionManifest, verify_partition_manifest
+from aqt.data.klines import (
+    EXPLORATION,
+    WINDOW_END_EXCLUSIVE,
+    WINDOW_START,
+    build_exploration_manifest,
+)
 from calibration.generator import Legs, benchmark_exposure
 
 SYMBOLS = ("BTCUSDT", "ETHUSDT")
@@ -54,39 +62,48 @@ def daily_closes(series: BarSeries) -> dict[date, float]:
 
 
 def exploration_returns(
-    manifests: dict[str, PartitionManifest],
-    load: Callable[[PartitionManifest], BarSeries],
-) -> tuple[np.ndarray, int]:
-    """Demeaned daily (BTC, ETH) simple returns for every day d whose close
-    and the previous day's close are complete for both symbols, and the
-    number of calendar days left out. Refuses any manifest that is not an
-    exploration manifest inside the exploration window, before reading."""
-    if set(manifests) != set(SYMBOLS):
-        raise ValueError(f"need exactly the manifests of {SYMBOLS}")
-    for symbol, manifest in manifests.items():
-        if manifest.partition != "exploration" or manifest.symbol != symbol:
-            raise ValueError(f"{symbol}: not an exploration manifest of {symbol}")
-        if (
-            manifest.window_start_utc < WINDOW_START
-            or manifest.window_end_exclusive_utc > WINDOW_END_EXCLUSIVE
-        ):
-            raise ValueError(f"{symbol}: manifest window leaves the exploration window")
-    closes = []
-    for symbol in SYMBOLS:
-        series = load(manifests[symbol])
-        verify_partition_manifest(manifests[symbol], series=series)
-        closes.append(daily_closes(series))
-    days = sorted(set(closes[0]) & set(closes[1]))
-    rows = [
-        [c[d] / c[d - timedelta(days=1)] - 1 for c in closes]
-        for d in days
-        if all(d - timedelta(days=1) in c for c in closes)
-    ]
+    raw_root: Path,
+) -> tuple[np.ndarray, tuple[str, ...], tuple[date, ...]]:
+    """The demeaned (BTC, ETH) daily returns of the exploration partition,
+    the two manifest hashes, and the left-out return days (`joint_returns`)."""
+    builds = [build_exploration_manifest(EXPLORATION, s, raw_root) for s in SYMBOLS]
+    returns, left_out = joint_returns(
+        [b.series for b in builds], WINDOW_START, WINDOW_END_EXCLUSIVE
+    )
+    return returns, tuple(b.manifest.manifest_sha256 for b in builds), left_out
+
+
+def joint_returns(
+    series: list[BarSeries], start: datetime, end_exclusive: datetime
+) -> tuple[np.ndarray, tuple[date, ...]]:
+    """Demeaned daily simple returns, one column per series in `SYMBOLS`
+    order, for every return day d of the window: d - 1 and d both lie in
+    [start, end_exclusive) as whole UTC days. Day d is kept only when d and
+    d - 1 are complete for every series; every other return day of the
+    window is left out, never filled, and listed (the first window day has
+    no predecessor and is not a return day). Kept rows are adjacent in the
+    array even across a left-out day, as across the bootstrap's wrap."""
+    if [s.symbol for s in series] != list(SYMBOLS):
+        raise ValueError(f"need the series of {SYMBOLS} in that order")
+    first, last = start.date(), (end_exclusive - timedelta(days=1)).date()
+    whole = all(
+        m.utcoffset() == timedelta(0) and not m.timestamp() % 86_400
+        for m in (start, end_exclusive)
+    )
+    if not whole or first >= last:
+        raise ValueError("the window must be at least two whole UTC days")
+    closes = [daily_closes(s) for s in series]
+    rows, left_out = [], []
+    for n in range(1, (last - first).days + 1):
+        d = first + timedelta(days=n)
+        if all(d in c and d - timedelta(days=1) in c for c in closes):
+            rows.append([c[d] / c[d - timedelta(days=1)] - 1 for c in closes])
+        else:
+            left_out.append(d)
     if len(rows) < 2:
         raise ValueError("too few complete consecutive days")
-    span = (days[-1] - days[0]).days if days else 0
     returns = np.asarray(rows, dtype=float)
-    return returns - returns.mean(axis=0), span - len(rows)
+    return returns - returns.mean(axis=0), tuple(left_out)
 
 
 def stationary_indices(

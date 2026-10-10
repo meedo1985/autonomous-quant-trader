@@ -4,24 +4,25 @@ engine item 2b). Synthetic bars inside the exploration window only."""
 from __future__ import annotations
 
 import math
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from aqt.data.bars import Bar, BarSeries
-from aqt.data.manifest import (
-    Gap,
-    PartitionManifest,
-    RawArtifact,
-    build_partition_manifest,
-    unavailable,
-)
+from aqt.data.klines import WINDOW_END_EXCLUSIVE, WINDOW_START
 from calibration import generator, semi
 
 HOUR = timedelta(hours=1)
 START = datetime(2018, 1, 1, tzinfo=UTC)  # inside the exploration window
 DAYS = 6
+END = START + timedelta(days=DAYS)
+
+
+def _day(n: int) -> date:
+    return (START + timedelta(days=n)).date()
 
 
 def _series(symbol: str, skip: range = range(0)) -> BarSeries:
@@ -37,69 +38,74 @@ def _series(symbol: str, skip: range = range(0)) -> BarSeries:
     return BarSeries(symbol=symbol, bars=tuple(bars))
 
 
-def _manifest(series: BarSeries, partition: str = "exploration") -> PartitionManifest:
-    end = START + DAYS * 24 * HOUR
-    present = {b.open_time for b in series.bars}
-    gaps = [Gap(START + i * HOUR, START + (i + 1) * HOUR)
-            for i in range(DAYS * 24) if START + i * HOUR not in present]  # fmt: skip
-    return build_partition_manifest(
-        partition=partition, series=series,
-        raw_artifacts=[RawArtifact("synthetic.zip", b"synthetic")],
-        parser_code_sha256="0" * 64, window_start_utc=START,
-        window_end_exclusive_utc=end, fees=unavailable("synthetic"),
-        exchange_filters=unavailable("synthetic"),
-        symbol_status=unavailable("synthetic"), gaps=gaps,
-    )  # fmt: skip
-
-
 BTC = _series("BTCUSDT", skip=range(50, 52))  # day 2 incomplete
 ETH = _series("ETHUSDT")
-SERIES = {"BTCUSDT": BTC, "ETHUSDT": ETH}
 
 
 def test_daily_closes_keep_only_complete_days() -> None:
     closes = semi.daily_closes(BTC)
-    assert sorted(closes) == [
-        (START + timedelta(days=d)).date() for d in (0, 1, 3, 4, 5)
-    ]
-    day0 = closes[START.date()]
-    assert day0 == BTC.bars[23].close  # the 23:00 bar
+    assert sorted(closes) == [_day(d) for d in (0, 1, 3, 4, 5)]
+    assert closes[_day(0)] == BTC.bars[23].close  # the 23:00 bar
 
 
-def test_exploration_returns_are_joint_complete_and_demeaned() -> None:
-    manifests = {s: _manifest(SERIES[s]) for s in semi.SYMBOLS}
-    returns, left_out = semi.exploration_returns(manifests, lambda m: SERIES[m.symbol])
-    # days 1..5 have a predecessor; day 2 (incomplete) and day 3 (its
-    # predecessor incomplete) are left out: days 1, 4, 5 remain
-    assert returns.shape == (3, 2)
-    np.testing.assert_allclose(returns.mean(axis=0), 0, atol=1e-15)
-    assert left_out == 5 - 3
+@pytest.mark.parametrize(
+    ("skip", "kept", "left_out"),
+    [
+        (range(50, 52), (1, 4, 5), (2, 3)),  # interior: day 2 and its successor
+        (range(0, 1), (2, 3, 4, 5), (1,)),  # leading: day 0 incomplete
+        (range(5 * 24 + 23, 6 * 24), (1, 2, 3, 4), (5,)),  # trailing: day 5
+    ],
+)
+def test_joint_returns_list_every_left_out_return_day(
+    skip: range, kept: tuple[int, ...], left_out: tuple[int, ...]
+) -> None:
+    btc = _series("BTCUSDT", skip=skip)
+    returns, out = semi.joint_returns([btc, ETH], START, END)
+    closes = [semi.daily_closes(s) for s in (btc, ETH)]
+    raw = np.array([[c[_day(d)] / c[_day(d - 1)] - 1 for c in closes] for d in kept])
+    np.testing.assert_allclose(returns, raw - raw.mean(axis=0), rtol=0, atol=1e-15)
+    assert out == tuple(_day(d) for d in left_out)
+    assert len(returns) + len(out) == DAYS - 1  # every return day accounted
 
 
-@pytest.mark.parametrize("bad", ["partition", "symbol", "window", "missing"])
-def test_non_exploration_data_is_refused_before_it_is_read(bad: str) -> None:
-    manifests = {s: _manifest(SERIES[s]) for s in semi.SYMBOLS}
-    if bad == "partition":
-        manifests["BTCUSDT"] = _manifest(BTC, partition="confirmation")
-    elif bad == "symbol":
-        manifests["BTCUSDT"] = manifests["ETHUSDT"]
-    elif bad == "window":
-        early = START.replace(year=2017, month=1)
-        manifests["BTCUSDT"] = _replace_window(manifests["BTCUSDT"], early)
-    else:
-        del manifests["ETHUSDT"]
-
-    def never(_: PartitionManifest) -> BarSeries:
-        raise AssertionError("data was read")
-
+@pytest.mark.parametrize(
+    ("series", "start", "end"),
+    [
+        ([ETH, BTC], START, END),  # symbol order
+        ([BTC, ETH], START + HOUR, END),  # not a whole UTC day
+        ([BTC, ETH], START.replace(tzinfo=None), END),  # naive
+        ([BTC, ETH], START, START + timedelta(days=1)),  # no return day
+    ],
+)
+def test_joint_returns_refuse_a_bad_window_or_order(
+    series: list[BarSeries], start: datetime, end: datetime
+) -> None:
     with pytest.raises(ValueError):
-        semi.exploration_returns(manifests, never)
+        semi.joint_returns(series, start, end)
 
 
-def _replace_window(manifest: PartitionManifest, start: datetime) -> PartitionManifest:
-    import dataclasses
+def test_exploration_returns_read_only_through_the_exploration_builder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The only reader is `klines.build_exploration_manifest` (it refuses
+    other partitions before reading and keeps only in-window bars; see
+    test_klines); the window is the protocol's exploration window."""
+    calls = []
 
-    return dataclasses.replace(manifest, window_start_utc=start)
+    def build(partition: str, symbol: str, root: Path) -> SimpleNamespace:
+        calls.append((partition, symbol, root))
+        series = {"BTCUSDT": BTC, "ETHUSDT": ETH}[symbol]
+        return SimpleNamespace(
+            series=series, manifest=SimpleNamespace(manifest_sha256=symbol + "-hash")
+        )
+
+    monkeypatch.setattr(semi, "build_exploration_manifest", build)
+    root = Path("raw")
+    returns, hashes, left_out = semi.exploration_returns(root)
+    assert calls == [("exploration", s, root) for s in semi.SYMBOLS]
+    assert hashes == ("BTCUSDT-hash", "ETHUSDT-hash")
+    return_days = (WINDOW_END_EXCLUSIVE - WINDOW_START).days - 1
+    assert returns.shape == (3, 2) and len(left_out) == return_days - 3
 
 
 def test_the_stationary_bootstrap_draw_order_and_mean_block() -> None:
@@ -129,8 +135,9 @@ def test_block_signs_are_fair_start_at_day_0_and_have_mean_block_20() -> None:
 
 
 def test_a_replication_flips_every_column_by_one_shared_sign() -> None:
-    """X = s (e - e^b) r with one sign per day for all columns, C = b + X,
-    and the warm-up days dropped."""
+    """The algebra only: X = s (e - e^b) r with one sign per day for all
+    columns, C = b + X, the warm-up days dropped. It reuses the helpers, so
+    their draws are checked by the tests below, not here."""
     source = np.random.default_rng(4).normal(0, 0.03, (500, 2))
     source -= source.mean(axis=0)
 
@@ -166,3 +173,49 @@ def test_exposures_must_cover_every_path_day() -> None:
             5,
             2,
         )
+
+
+def test_pinned_draws_of_the_bootstrap_and_the_signs() -> None:
+    """Fixed-seed vectors; a change of numpy's streams or of the draw order
+    changes them (independent of the reconstruction tests above)."""
+    got = semi.stationary_indices(np.random.default_rng(1), 50, 12, 4)
+    assert got.tolist() == [23, 24, 25, 26, 27, 28, 29, 30, 31, 43, 44, 45]
+    signs = semi.block_signs(np.random.default_rng(3), 12, 4)
+    assert signs.tolist() == [1, 1, -1, -1, -1, -1, -1, -1, -1, -1, 1, 1]
+
+
+class _Scripted:
+    """A generator whose uniforms and geometric lengths are given."""
+
+    def __init__(self, uniforms: list[float], lengths: list[int]) -> None:
+        self.uniforms, self.lengths = uniforms, lengths
+        self.calls: list[str] = []
+
+    def random(self) -> float:
+        self.calls.append("random")
+        return self.uniforms.pop(0)
+
+    def geometric(self, p: float) -> int:
+        self.calls.append(f"geometric({p})")
+        return self.lengths.pop(0)
+
+
+def test_block_signs_draw_sign_then_length_per_block() -> None:
+    """Blocks of lengths 2, 3, 1, 4 with signs +, +, -, + (the second
+    boundary keeps the sign); the last block is cut at n."""
+    rng = _Scripted([0.1, 0.3, 0.7, 0.2], [2, 3, 1, 4])
+    signs = semi.block_signs(rng, 8, 20)  # type: ignore[arg-type]
+    assert signs.tolist() == [1, 1, 1, 1, 1, -1, 1, 1]
+    assert rng.calls == ["random", "geometric(0.05)"] * 4
+
+
+def test_benchmark_exposure_equals_the_loop_it_replaced() -> None:
+    """The loop as it stood in `generate` at 5664f0c, copied verbatim."""
+    r = np.random.default_rng(7).standard_t(5, 400) * 0.035
+    t = len(r)
+    decay = 0.5 ** (1 / 7)
+    var_hat, e = generator.SIGMA**2, np.empty(t)
+    for i in range(t):
+        e[i] = min(1.0, 0.40 / (np.sqrt(var_hat) * np.sqrt(365)))
+        var_hat = decay * var_hat + (1 - decay) * r[i] ** 2
+    np.testing.assert_array_equal(generator.benchmark_exposure(r), e)
