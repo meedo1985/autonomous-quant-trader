@@ -17,6 +17,9 @@ tau/z_crit selection and the qualification object and are refused here.
 
 The launcher must take AQT_IMAGE_DIGEST from `docker inspect` on the host
 (FE-4) and run this under `nice 19` with a systemd `MemoryMax` of 2.5 GB.
+To stop a run, stop the whole service (its control group), never the parent
+process alone: an orphaned worker keeps its chain's lock and computes on, and
+a relaunch is refused for that chain until it ends (FA-3, FR-5).
 Synthetic data only.
 """
 
@@ -119,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
     # first failure in any chain stops the run at once: running workers are
     # terminated, never left computing to the end of their chain (FA-5).
     context = multiprocessing.get_context("spawn")
+    others = set(multiprocessing.active_children())  # never terminated (FR-2)
     pool = ProcessPoolExecutor(WORKERS, mp_context=context)
     try:
         futures = [pool.submit(worker, *job) for job in jobs]
@@ -127,9 +131,11 @@ def main(argv: list[str] | None = None) -> int:
             if future in done and (failure := future.exception()) is not None:
                 raise failure
         heads = [future.result() for future in futures]
-    except Exception as error:  # noqa: BLE001 - any worker failure stops the run
-        for child in multiprocessing.active_children():  # the pool's workers
-            child.terminate()
+    except BaseException as error:  # noqa: BLE001 - any failure stops the run
+        for child in set(multiprocessing.active_children()) - others:
+            child.terminate()  # the pool's workers, also on Ctrl-C (FR-3)
+        if not isinstance(error, Exception):
+            raise
         print(f"run stopped: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
     finally:

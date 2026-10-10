@@ -115,10 +115,13 @@ def _sync_dir(directory: Path) -> None:
 
 @contextmanager
 def _sole_writer(chain: Chain) -> Iterator[None]:
-    """An exclusive lock on `<cell_id>.lock` beside the chain directory, or
-    ChainError (FA-3): a second writer (relaunch, orphaned worker) is
-    refused. The lock goes with the process, so a crash leaves none."""
-    with chain.root.with_name(chain.root.name + ".lock").open("a+b") as handle:
+    """An exclusive lock on `<namespace>/.locks/<cell_id>`, or ChainError
+    (FA-3): a second writer (relaunch, orphaned worker) is refused. A cell id
+    cannot start with a dot, so the lock never collides with a chain (FR-1).
+    The lock goes with the process, so a crash leaves none."""
+    locks = chain.root.parent / ".locks"
+    locks.mkdir(exist_ok=True)
+    with (locks / chain.cell_id).open("a+b") as handle:
         try:
             if sys.platform == "win32":
                 import msvcrt
@@ -150,8 +153,10 @@ def run(chain: Chain, compute: Callable[[int], object]) -> str:
     return the final chain head as `verify` reads it back from disk (FA-4).
     A corrupt chunk is deleted unread and recomputed; a gap before an
     existing chunk stops the chain; one writer at a time (FA-3)."""
+    created = [d for d in (chain.root, *chain.root.parents) if not d.exists()]
     chain.root.mkdir(parents=True, exist_ok=True)
-    _sync_dir(chain.root.parent)
+    for directory in created:  # every new directory's entry is durable (FR-4)
+        _sync_dir(directory.parent)
     with _sole_writer(chain):
         _compute(chain, compute)
         return verify(chain)

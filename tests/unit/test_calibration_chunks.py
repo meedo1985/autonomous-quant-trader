@@ -166,6 +166,16 @@ def test_a_second_writer_on_a_chain_is_refused(tmp_path: Path) -> None:
     chunks.run(chain, _compute)
 
 
+def test_a_lock_never_collides_with_another_cells_chain(tmp_path: Path) -> None:
+    """FR-1: `x` and `x.lock` are both valid cell ids."""
+    for cell_id in ("pilot-a", "pilot-a.lock"):
+        chain = replace(
+            _chain(tmp_path), root=tmp_path / "dev" / cell_id, cell_id=cell_id
+        )
+        chunks.run(chain, _compute)
+        chunks.verify(chain)
+
+
 def test_the_head_is_read_back_from_disk(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

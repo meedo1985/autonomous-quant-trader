@@ -775,6 +775,51 @@ def test_a_failing_chain_stops_the_run_without_waiting_for_earlier_ones(
     assert done.returncode == 1 and "this chain failed" in done.stderr, done.stderr
 
 
+class _Child:
+    def __init__(self) -> None:
+        self.terminated = False
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("chain failed"), KeyboardInterrupt()])
+def test_a_failure_terminates_only_the_runs_own_workers(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    failure: BaseException,
+) -> None:  # fmt: skip
+    """FR-2/FR-3: a child that existed before the run is left alone; the
+    run's workers are terminated on a chain failure and on Ctrl-C, which
+    still propagates."""
+    root, out = recorded
+    driver = _load_driver(root, monkeypatch)
+    unrelated, own = _Child(), _Child()
+    calls = iter([[unrelated]])
+    monkeypatch.setattr(
+        driver.multiprocessing, "active_children",
+        lambda: next(calls, [unrelated, own]),
+    )  # fmt: skip
+
+    class InProcess(concurrent.futures.ThreadPoolExecutor):
+        def __init__(self, workers: int, mp_context: object = None) -> None:
+            super().__init__(workers)
+
+    def fail(*_: object) -> str:
+        raise failure
+
+    monkeypatch.setattr(driver, "ProcessPoolExecutor", InProcess)
+    monkeypatch.setattr(driver.rundef, "start_gate", lambda d, _root: d["gating"])
+    monkeypatch.setattr(driver, "worker", fail)
+    argv = ["run", "--definition", str(out), "--store", str(tmp_path / "s"),
+            "--namespace", "threshold"]  # fmt: skip
+    if isinstance(failure, Exception):
+        assert driver.main(argv) == 1
+    else:
+        with pytest.raises(KeyboardInterrupt):
+            driver.main(argv)
+    assert own.terminated and not unrelated.terminated
+
+
 def test_a_worker_refuses_a_definition_replaced_after_the_start(
     recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
