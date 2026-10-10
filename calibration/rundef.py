@@ -205,8 +205,8 @@ def loaded_outside(root: Path) -> list[str]:
     return outside
 
 
-PRESCRIBED = {"threshold": 300_000}  # §13 rev 7g item 4
-SEED_NAMESPACES = {"threshold": "d19-threshold-v1"}  # prereg §8
+PRESCRIBED = {"threshold": 300_000, "dev": 12_000}  # §13 rev 7g items 3, 4
+SEED_NAMESPACES = {"threshold": "d19-threshold-v1", "dev": "d19-dev-v1"}  # §8
 PILOT_PREFIX = "pilot-"  # FA-1
 
 

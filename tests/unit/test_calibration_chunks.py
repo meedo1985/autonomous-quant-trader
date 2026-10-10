@@ -191,3 +191,8 @@ def test_the_head_is_read_back_from_disk(
     monkeypatch.setattr(chunks, "_write", torn)
     with pytest.raises(ChainError, match="missing or corrupt"):
         chunks.run(_chain(tmp_path), _compute)
+
+
+def test_verify_refuses_a_missing_chain(tmp_path: Path) -> None:
+    with pytest.raises(ChainError, match="chain missing"):
+        chunks.verify(_chain(tmp_path))

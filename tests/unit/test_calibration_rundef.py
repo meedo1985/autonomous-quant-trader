@@ -19,13 +19,15 @@ import sys
 import types
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from calibration import dsr, fast, gates, rundef
 
 ROOT = Path(__file__).resolve().parents[2]
 DIGEST = "sha256:" + "ab" * 32
-CELLS = json.dumps({"purpose": "pilot", "replications": {"threshold": 3}, "cells": [
+CELLS = json.dumps({"purpose": "pilot", "replications": {"threshold": 3, "dev": 2},
+                    "cells": [
     {"cell_id": "pilot-k2", "k": 2, "t": 60, "law": "garch", "dependence": "equi0.5"},
     {"cell_id": "pilot-k1", "k": 1, "t": 60, "law": "t5", "dependence": "independent"},
 ]})  # fmt: skip
@@ -54,7 +56,7 @@ def _checkout(tmp: Path) -> Path:
     shutil.copytree(ROOT / "src" / "aqt", root / "src" / "aqt",
                     ignore=shutil.ignore_patterns("__pycache__"))  # fmt: skip
     (root / "scripts").mkdir()
-    for script in ("d19_run_definition.py", "d19_run.py"):
+    for script in ("d19_run_definition.py", "d19_run.py", "d19_choose.py"):
         shutil.copy(ROOT / "scripts" / script, root / "scripts")
     prereg = root / "review" / "governance-statistics-amendment"
     prereg = prereg / "d19-preregistration" / "PREREGISTRATION.md"
@@ -655,7 +657,9 @@ def _record_plan(root: Path, inputs: Path, name: str, count: int) -> Path:
     """A pilot definition with the fixture's cells and `count` draws."""
     manifest = inputs / f"{name}-cells.json"
     manifest.write_text(
-        json.dumps({**json.loads(CELLS), "replications": {"threshold": count}})
+        json.dumps(
+            {**json.loads(CELLS), "replications": {"threshold": count, "dev": 1}}
+        )
     )
     (inputs / "exploration.json").write_text("{}")
     out = inputs / f"{name}.json"
@@ -868,29 +872,32 @@ def test_a_malformed_cell_manifest_is_refused(manifest: object, message: str) ->
         cells_from_manifest(manifest)
 
 
+SMALL = {"threshold": 3, "dev": 1}
+
+
 @pytest.mark.parametrize(
     ("manifest", "message"),
     [
         ({"purpose": "pilot"}, "purpose and replications"),
         (
-            {"purpose": "x", "replications": {"threshold": 3}},
+            {"purpose": "x", "replications": {"threshold": 3, "dev": 1}},
             "purpose and replications",
         ),
-        ({"purpose": "pilot", "replications": {"threshold": 0}}, "positive"),
-        ({"purpose": "pilot", "replications": {"threshold": 3, "dev": 1}}, "positive"),
-        ({"purpose": "qualification", "replications": {"threshold": 3}}, "refused"),
+        ({"purpose": "pilot", "replications": {**SMALL, "threshold": 0}}, "positive"),
+        ({"purpose": "pilot", "replications": {**SMALL, "heldout": 1}}, "positive"),
+        ({"purpose": "qualification", "replications": SMALL}, "refused"),
         (
-            {"purpose": "pilot", "replications": {"threshold": 3},
+            {"purpose": "pilot", "replications": {"threshold": 3, "dev": 1},
              "cells": [{"cell_id": "c-k1"}]},
             "must start with 'pilot-'",
         ),
         (
-            {"purpose": "pilot", "replications": {"threshold": 300_000},
+            {"purpose": "pilot", "replications": {"threshold": 3, "dev": 12_000},
              "cells": [{"cell_id": "pilot-k1"}]},
             "below the prescribed",
         ),
         (
-            {"purpose": "qualification", "replications": {"threshold": 300_000},
+            {"purpose": "qualification", "replications": rundef.PRESCRIBED,
              "cells": [{"cell_id": "pilot-k1"}]},
             "pilot runs only",
         ),
@@ -899,7 +906,10 @@ def test_a_malformed_cell_manifest_is_refused(manifest: object, message: str) ->
 def test_a_bad_run_plan_is_refused(manifest: object, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         rundef.run_plan(manifest)
-    prescribed = {"purpose": "qualification", "replications": {"threshold": 300_000}}
+    prescribed = {
+        "purpose": "qualification",
+        "replications": {"threshold": 300_000, "dev": 12_000},
+    }
     with pytest.raises(ValueError, match="qualification runs are refused"):
         rundef.run_plan(prescribed)  # DR2-1
 
@@ -913,7 +923,7 @@ def test_the_recorded_seed_specification_is_the_section_8_one(
     defn = rundef.load(out)
     assert defn["seed_spec"] == {
         "anchor": defn["prereg_sha256"],
-        "namespaces": {"threshold": "d19-threshold-v1"},
+        "namespaces": {"threshold": "d19-threshold-v1", "dev": "d19-dev-v1"},
     }
     defn["seed_spec"]["anchor"] = "0" * 64
     changed = tmp_path / "changed.json"
@@ -956,3 +966,99 @@ def test_the_parent_hands_its_definition_hash_to_every_worker(
                         "--namespace", "threshold"])  # fmt: skip
     assert code == 1 and "changed after the run started" in capsys.readouterr().err
     assert sizes == [2] and not store.exists()
+
+
+def test_the_development_run_needs_the_threshold_run_then_follows_section_2(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """Through the real driver: development before a complete threshold run
+    is refused; after it, every development chunk holds prereg §2's record
+    (diagnostics, both block rules with z_f*, U_G) bound to the definition."""
+    root, out = recorded
+    store = tmp_path / "store"
+    early = _driver(root, out, store, "--namespace", "dev")
+    assert early.returncode == 1 and "chain missing" in early.stderr, early.stderr
+    assert _driver(root, out, store, "--namespace", "threshold").returncode == 0
+    done = _driver(root, out, store, "--namespace", "dev")
+    assert done.returncode == 0, done.stderr
+    defn = rundef.load(out)
+    for cell, k in (("pilot-k2", 2), ("pilot-k1", 1)):
+        chunk = json.loads((store / "dev" / cell / "chunk-0000000.json").read_bytes())
+        assert chunk["binding"] == rundef.definition_sha256(defn)
+        assert len(chunk["results"]) == 2
+        for record in chunk["results"]:
+            assert set(record) == {"diagnostics", "largest", "median", "u_g"}
+            assert set(record["diagnostics"]) == classifier_fields(k)
+            for rule in ("largest", "median"):
+                assert set(record[rule]) == {"reason", "z", "length_ratio"}
+    report_path = tmp_path / "choices.json"
+    command = [sys.executable, str(root / "scripts" / "d19_choose.py"), "choose",
+               "--definition", str(out), "--store", str(store),
+               "--out", str(report_path)]  # fmt: skip
+    env = {**os.environ, rundef.IMAGE_DIGEST_ENV: DIGEST}
+    chose = subprocess.run(command, env=env, cwd=root, capture_output=True,
+                           text=True, check=False)  # fmt: skip
+    assert chose.returncode == 0, chose.stderr
+    report = json.loads(report_path.read_text())
+    assert report["definition_sha256"] == rundef.definition_sha256(defn)
+    assert set(report["cells"]) == {"pilot-k1", "pilot-k2"}
+    # two development replications per cell cannot qualify anything
+    assert {c["status"] for c in report["cells"].values()} == {"demoted_cap"}
+    assert report["z_crit"] is None and report["final_thresholds"] == {}
+
+
+def test_development_records_equal_an_independent_section_2_computation(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Namespace d19-dev-v1, the pooled thresholds, both rules, U_G on the
+    highest-S trial."""
+    from calibration import classifier, gates, reduce
+    from calibration.generator import Cell, generate
+    from calibration.seeds import family_seed, outer_seed, stream
+
+    root, out = recorded
+    driver = _load_driver(root, monkeypatch)
+    monkeypatch.setattr(dsr, "_V_VERIFIED", True)
+    monkeypatch.setattr(driver.rundef, "start_gate", lambda d, _root: d["gating"])
+    defn = rundef.load(out)
+    expected = rundef.definition_sha256(defn)
+    store = tmp_path / "store"
+    cells = [Cell("pilot-k2", 2, 60, "garch", "equi0.5"),
+             Cell("pilot-k1", 1, 60, "t5", "independent")]  # fmt: skip
+    for c in cells:
+        driver.worker(out, store, "threshold", c.cell_id, expected)
+    bounds = driver.dev_bounds(defn, store, defn["gating"], cells)
+    assert set(bounds) == {1, 2}
+    cell = cells[0]
+    driver.worker(out, store, "dev", cell.cell_id, expected, bounds[2])
+    chunk = json.loads(
+        (store / "dev" / cell.cell_id / "chunk-0000000.json").read_bytes()
+    )
+    anchor = defn["prereg_sha256"]
+    for rep, stored in enumerate(chunk["results"]):
+        seed = outer_seed(anchor, cell.cell_id, "d19-dev-v1", rep)
+        legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
+        values = classifier.diagnostics(legs.x)
+        accept = classifier.within(values, *bounds[2])
+        fam = family_seed(seed, cell.cell_id, "agnostic", 2, anchor, rep)
+        for rule in ("largest", "median"):
+            result = dsr.evaluate(legs.x, fam, rule, classifier=lambda *_, a=accept: a)
+            assert stored[rule]["reason"] == result.reason
+            z = None if result.z is None else struct.pack(">d", result.z).hex()
+            assert stored[rule]["z"] == z
+        sharpes = [float(np.mean(c) / np.std(c, ddof=1)) for c in legs.x.T]
+        top = int(np.argmax(sharpes))
+        u_g = gates.u_g(legs.x, legs.candidates, legs.benchmark, top, seed)
+        assert stored["u_g"] == u_g
+        assert reduce.decode(stored["diagnostics"]) == values
+
+
+def test_the_nominee_is_the_highest_sharpe_lowest_id_on_ties(
+    recorded: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _load_driver(recorded[0], monkeypatch)
+    column = np.array([0.01, -0.02, 0.03, 0.005])
+    assert driver.nominee(np.column_stack([column, column * 2, column - 1])) == 0
+    assert driver.nominee(np.column_stack([column - 1, column])) == 1
+    assert driver.nominee(np.column_stack([column, np.ones(4)])) is None
+    assert driver.nominee(np.column_stack([column, column * np.nan])) is None

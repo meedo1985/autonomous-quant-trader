@@ -195,6 +195,8 @@ def _compute(chain: Chain, compute: Callable[[int], object]) -> None:
 def verify(chain: Chain) -> str:
     """The final chain head of a complete chain; pass or `ChainError`.
     Read-only."""
+    if not chain.root.is_dir():
+        raise ChainError(f"{chain.cell_id}: chain missing")
     _strays(chain, restart=False)
     previous = GENESIS
     for start in chain.starts():
