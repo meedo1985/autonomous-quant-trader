@@ -102,7 +102,7 @@ from calibration import rundef; rundef.gating('probe')" || rc=$?
             "not yet diagnosed; on newer AMD EPYC this has been the pinned" \
             "OpenBLAS kernel. $(grep -m1 'model name' /proc/cpuinfo)" >&2
         exit 3 ;;
-    *) echo "probe failed with exit status $rc (not a crash)" >&2
+    *) echo "probe failed with exit status $rc" >&2
         [ "$rc" = 3 ] && exit 1  # exit 3 is reserved for a crash
         exit "$rc" ;;
     esac

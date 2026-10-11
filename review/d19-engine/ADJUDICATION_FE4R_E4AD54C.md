@@ -24,3 +24,9 @@ No calibration was run.
 |---|---|---|
 | FE4R2-1 Moderate (and FE4R-1) | AGREE, repaired | Exit 3 is reserved for a segmentation fault of the measurement. Any other failure that happens to exit with 3 is remapped to 1, and its original status is printed. |
 | FE4R2-2 Moderate (and FE4R-4) | AGREE, repaired | A segfault is reported as "the measurement crashed (segmentation fault), not yet diagnosed". The runbook calls the AMD EPYC Zen 4/5 kernel crash the likely cause, not a proven one. It asks for the whole output, and says the D-20 pin becomes the owner's decision only once the cause is confirmed. The CI messages say the same and point to the printed CPU line. |
+
+## Re-review 3 (`SOL6_FE4_REREVIEW3_DAFDE47.md`: ACCEPT for re-pilot use)
+
+FE4R-1, FE4R-4, FE4R2-1 and FE4R2-2 are resolved. **FE4R3-1 Low (AGREE, repaired):** the default case now prints only "probe failed with exit status N". It no longer says "not a crash", because an abort (134) is a crash too. This change is message text only, so it was not re-reviewed.
+
+**Outcome:** FE-4 is accepted for re-pilot use. The CI at `dafde47`, the last code commit before the message fix, passed all four jobs. `calibration-launcher` passed on an AMD EPYC 7763 after two runs that landed on a 9V45 failed as inconclusive, as designed.
