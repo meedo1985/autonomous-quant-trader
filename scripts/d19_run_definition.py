@@ -120,6 +120,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"cannot read {PREREG_PATH} at {args.prereg_commit}", file=sys.stderr)
             return 1
         manifest = json.loads(args.cell_manifest.read_bytes())
+        # I2BWR2-1: read once; the bytes checked are the bytes hashed.
+        exploration = args.exploration_manifest.read_bytes()
         try:  # DR-2, DR-3: a bad manifest never enters a run definition
             cells = cells_from_manifest(manifest)
             rundef.run_plan(manifest)
@@ -138,10 +140,15 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             # I2BW-2: in a Q5 run the recorded exploration manifest must be,
             # byte for byte, the BTC exploration manifest that
-            # `scripts/build_manifests.py` writes from these archives.
+            # `scripts/build_manifests.py` writes from these archives, and
+            # (I2BWR2-1) the very manifest the loaded source was built from:
+            # archives changed between the two builds are refused.
             btc = build_exploration_manifest(EXPLORATION, "BTCUSDT", args.raw_root)
-            if args.exploration_manifest.read_bytes() != canonical_json_bytes(
-                btc.manifest.as_mapping()
+            hashes = source["manifest_sha256"]
+            if (
+                not isinstance(hashes, dict)
+                or btc.manifest.manifest_sha256 != hashes.get("BTCUSDT")
+                or exploration != canonical_json_bytes(btc.manifest.as_mapping())
             ):
                 print(
                     "--exploration-manifest is not the BTC exploration manifest "
@@ -157,9 +164,7 @@ def main(argv: list[str] | None = None) -> int:
             generator_code_sha256=code_hash,
             cell_manifest=manifest,
             image_digest=digest,
-            exploration_manifest_sha256=hashlib.sha256(
-                args.exploration_manifest.read_bytes()
-            ).hexdigest(),
+            exploration_manifest_sha256=hashlib.sha256(exploration).hexdigest(),
             exploration_source=source,
         )
         # Re-check just before writing (R4-2, R5-2): HEAD, and every engine

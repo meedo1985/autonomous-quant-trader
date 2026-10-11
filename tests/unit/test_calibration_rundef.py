@@ -1216,7 +1216,9 @@ def _write_raw(root: Path, drift: float = 0.0) -> None:
 
 
 def test_a_q5_pilot_runs_on_recorded_exploration_data_only(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Q5 (prereg §3.4) end to end: the run definition records the source
     identity built from the archives; the driver's threshold draws equal
@@ -1259,6 +1261,25 @@ def test_a_q5_pilot_runs_on_recorded_exploration_data_only(
     for wrong in ("empty.json", "other.json", "forged.json"):  # I2BW-2
         done = _script(root, *base(wrong), "--raw-root", str(raw))
         assert done.returncode == 1 and "not the BTC exploration" in done.stderr
+    assert not out.exists()
+    # I2BWR2-1: archives that change between the source load and the
+    # manifest rebuild are refused even when the supplied file matches the
+    # rebuild (simulated: the rebuild sees the other archives).
+    spec = importlib.util.spec_from_file_location(
+        "d19_run_definition_loaded", root / "scripts" / "d19_run_definition.py"
+    )
+    assert spec is not None and spec.loader is not None
+    monkeypatch.setattr(sys, "dont_write_bytecode", sys.dont_write_bytecode)
+    monkeypatch.setattr(sys, "pycache_prefix", sys.pycache_prefix)
+    recorder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(recorder)
+    rebuilt = build_exploration_manifest("exploration", "BTCUSDT", other)
+    monkeypatch.setattr(recorder, "build_exploration_manifest", lambda *_: rebuilt)
+    monkeypatch.setenv(rundef.IMAGE_DIGEST_ENV, DIGEST)
+    monkeypatch.chdir(root)
+    capsys.readouterr()
+    assert recorder.main([*base("other.json"), "--raw-root", str(raw)]) == 1
+    assert "not the BTC exploration" in capsys.readouterr().err
     assert not out.exists()
     done = _script(root, *base("btc.json"), "--raw-root", str(raw))
     assert done.returncode == 0, done.stderr
