@@ -136,3 +136,15 @@ PASS: the resumed threshold run equals the clean run
 ```
 
 **Result:** an interrupted and resumed run gives byte-identical chunks to a clean run, for every cell, on the owner's server. That includes the cell (`pilot-q2m-k2`) whose chain was cut by the killed worker.
+
+## Step G: development run, start (2026-10-11)
+
+The development run was started at `15:40:41Z`. After 12 minutes, `status` showed `Up 12 minutes`, a slice memory peak of `434622464 bytes` (about 435 MB), and no development chunk yet. The first chunk of 500 replications takes about 30–35 minutes. `docker logs` was empty, which is normal: the driver prints only at the end.
+
+**Launcher defect found:**
+- **What happened.** `memwatch` printed `FAIL: no sample showed 2 workers running` while both workers were running.
+- **Cause.** It called `docker top aqt-d19 -eo args`. `docker top` refuses `ps` output without a PID column, and its error went to `/dev/null`, so every sample counted 0 workers. `failcheck` asks for `-eo pid,args` and worked.
+- **Fixed** in the repository: `memwatch` now asks for `-eo pid,args`, and a test requires a PID column in every `docker top` call. That test fails on the old line.
+- **On the server**, the evidence is taken by hand instead: the worker count from `docker top aqt-d19 -eo pid,args | grep -c spawn_main` and the container's `memory.peak`. The server keeps the accepted kit commit. The slice peak in `status` covers the whole night.
+
+**Also fixed:** `times dev`, run before any development chunk existed, printed a confusing `find` error. It now prints `no dev chunks yet`.

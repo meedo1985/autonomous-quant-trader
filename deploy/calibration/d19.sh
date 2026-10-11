@@ -174,6 +174,7 @@ times)  # FE7-3: per chain, seconds between finished chunks = one worker's
     # namespace, read while its own (last) run is the current container;
     # FE7R3-2: the start time keeps its fraction of a second.
     case "${2:-}" in threshold | dev) ;; *) echo "usage: d19.sh times <threshold|dev>" >&2; exit 1 ;; esac
+    [ -d "$WORK/store/$2" ] || { echo "no $2 chunks yet"; exit 0; }
     started=$(date -d "$(docker inspect -f '{{.State.StartedAt}}' "$NAME")" +%s.%N)
     for d in "$WORK/store/$2"/*/; do
         find "$d" -name 'chunk-*.json' -printf '%T@\n' | sort -n |
@@ -187,7 +188,7 @@ memwatch)  # FE7-4, FE7R2-2: the run's exact memory high-water mark, with
     # evidence over 10 minutes that both workers were running
     n=0
     for _ in $(seq 60); do
-        if [ "$(docker top "$NAME" -eo args 2>/dev/null | grep -c spawn_main)" = 2 ]; then
+        if [ "$(docker top "$NAME" -eo pid,args 2>/dev/null | grep -c spawn_main)" = 2 ]; then
             n=$((n + 1))
         fi
         sleep 10
