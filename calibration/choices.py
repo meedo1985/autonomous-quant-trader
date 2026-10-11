@@ -23,6 +23,11 @@ Z_STEP = Decimal("0.001")  # §5 step 3
 Z_MAX = Decimal("20.000")  # no qualifying z_crit above this grid end
 BOUNDS = {"error": 0.025, "dsr": 0.0035, "u_g": 0.0015}  # prereg §6
 HELD_OUT = (20_000, 40_000)  # §13 item 3
+# Enumerated tests per cell (prereg §6: one per (cell, family label or
+# `agnostic` or `joint`, bound)): Q1-Q4 are agnostic and Q5 has one family,
+# 3 bounds each; QJ has 3 per family and 2 joint (`P_0(E)`, `U_proc^R`).
+TESTS_PER_CELL = 3
+TESTS_PER_JOINT_CELL = 3 + 3 + 2
 CAPPED = "BLOCK_LENGTH_CAPPED"
 # I1-6: the targets carry about 1e-9 relative error (lgamma at N = 40k);
 # a comparison closer than this is flagged, never decided silently.
@@ -50,6 +55,13 @@ class CellResult:
     error_events_at_z: int | None = None
     margin: float = float("inf")  # smallest relative |UCB - tau| / tau used
     notes: list[str] = field(default_factory=list)
+
+
+def enumerated_tests(laws: list[str]) -> int:
+    """`M`, the manifest's test count (§5 `M_max`, §6), from its cells' laws."""
+    return sum(
+        TESTS_PER_JOINT_CELL if law == "semi-joint" else TESTS_PER_CELL for law in laws
+    )
 
 
 def _ucb(x: int, n: int) -> float:

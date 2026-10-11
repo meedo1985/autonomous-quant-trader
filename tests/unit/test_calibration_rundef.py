@@ -1307,6 +1307,17 @@ def test_a_q5_pilot_runs_on_recorded_exploration_data_only(
             n: struct.pack(">d", v).hex() for n, v in sorted(expected.items())
         }
         assert choices.consistent(stored, bounds) is None
+    # Step 2 slice 1: choose accepts Q5 cells and counts 3 tests per cell.
+    report_path = tmp_path / "choices.json"
+    chose = subprocess.run(
+        [sys.executable, str(root / "scripts" / "d19_choose.py"), "choose",
+         "--definition", str(out), "--store", str(store), "--out", str(report_path)],
+        env={**os.environ, rundef.IMAGE_DIGEST_ENV: DIGEST}, cwd=root,
+        capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert chose.returncode == 0, chose.stderr
+    report = json.loads(report_path.read_text())
+    assert report["m"] == 2 * 3 and set(report["cells"]) == {"pilot-q5", "pilot-k1"}
 
 
 def test_a_q5_development_draw_uses_its_family_label(

@@ -348,3 +348,12 @@ def test_no_u_g_nominee_after_rules_1_2() -> None:
         assert choices.consistent(valid, ACCEPTS) is None
         named = {**valid, "nominee": 0, "u_g": None}
         assert "rules 1-2" in str(choices.consistent(named, ACCEPTS)), code
+
+
+def test_m_counts_three_tests_per_cell_and_eight_per_joint_cell() -> None:
+    """Prereg §6: one test per (cell, family label or agnostic or joint,
+    bound); QJ adds the two cycle-level bounds to its two families' three."""
+    assert choices.enumerated_tests(["gaussian", "t5"]) == 6
+    assert choices.enumerated_tests(["semi-trend", "semi-vol"]) == 6
+    assert choices.enumerated_tests(["semi-joint", "garch"]) == 8 + 3
+    assert choices.enumerated_tests([]) == 0

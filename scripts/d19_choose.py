@@ -34,13 +34,9 @@ from calibration import choices, chunks, reduce, rundef  # noqa: E402
 from calibration.generator import Cell, cells_from_manifest  # noqa: E402
 from calibration.seeds import sha  # noqa: E402
 
-TESTS_PER_AGNOSTIC_CELL = 3  # error, DSR availability, U_G (prereg §6)
-# I1-4: M = 3 per cell holds only for family-agnostic cells (Q1-Q4). Any other
-# law refuses here until per-family and joint tests are counted (Q5, QJ).
-AGNOSTIC_LAWS = (
-    "gaussian", "t5", "ar0.2", "ar0.5", "garch", "skewt+", "skewt-", "unequal",
-    "mixed_ar",
-)  # fmt: skip
+# QJ development records are not chosen here until its per-family records
+# and joint tests exist (item 2b step 2, slice 3); `M` already counts them.
+NOT_CHOSEN = ("semi-joint",)
 
 
 def _chain(
@@ -90,9 +86,9 @@ def main(argv: list[str] | None = None) -> int:
     defn = rundef.load(args.definition)
     try:
         cells = cells_from_manifest(defn["cell_manifest"])
-        other = sorted({c.law for c in cells} - set(AGNOSTIC_LAWS))
+        other = sorted({c.law for c in cells} & set(NOT_CHOSEN))
         if other:
-            raise ValueError(f"tests are not counted for laws {other} (I1-4)")
+            raise ValueError(f"development choices are not built for laws {other}")
         gating = rundef.start_gate(defn, ROOT)
         chains = {
             (ns, c.cell_id): _chain(defn, args.store, ns, c, gating)
@@ -114,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, RuntimeError) as error:  # ChainError is a RuntimeError
         print(error, file=sys.stderr)
         return 1
-    report = choices.choose(dev, TESTS_PER_AGNOSTIC_CELL * len(cells))
+    report = choices.choose(dev, choices.enumerated_tests([c.law for c in cells]))
     final = [
         bounds[c]
         for c, r in report["cells"].items()  # type: ignore[attr-defined]
