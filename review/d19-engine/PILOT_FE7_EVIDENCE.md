@@ -148,3 +148,24 @@ The development run was started at `15:40:41Z`. After 12 minutes, `status` showe
 - **On the server**, the evidence is taken by hand instead: the worker count from `docker top aqt-d19 -eo pid,args | grep -c spawn_main` and the container's `memory.peak`. The server keeps the accepted kit commit. The slice peak in `status` covers the whole night.
 
 **Also fixed:** `times dev`, run before any development chunk existed, printed a confusing `find` error. It now prints `no dev chunks yet`.
+
+**Manual memory and worker check during the development run**, verbatim:
+
+```
+2
+413024256
+● aqt-paper.service - aqt forward paper trading
+     Loaded: loaded (/etc/systemd/system/aqt-paper.service; enabled; preset: enabled)
+     Active: active (running) since Mon 2026-10-05 06:30:33 UTC; 6 days ago
+PID                 COMMAND
+145173              /sbin/docker-init -- nice -n 19 python /app/scripts/d19_run.py run --definition definition.json --store store --namespace dev --raw-root raw
+145186              python /app/scripts/d19_run.py run --definition definition.json --store store --namespace dev --raw-root raw
+145193              /usr/local/bin/python -B -c from multiprocessing.resource_tracker import main;main(7)
+145194              /usr/local/bin/python -B -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=8, pipe_handle=12) --multiprocessing-fork
+145197              /usr/local/bin/python -B -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=8, pipe_handle=14) --multiprocessing-fork
+```
+
+- **Workers:** exactly 2.
+- **Memory:** the run container's peak was 413 MB, about 16% of the 2.5 GB cap. The slice peak, which also covers the threshold runs, was 435 MB.
+- **Isolation:** the engine runs at `nice -n 19` under `docker-init`.
+- **Forward paper:** still running, unaffected, and up since 2026-10-05.
