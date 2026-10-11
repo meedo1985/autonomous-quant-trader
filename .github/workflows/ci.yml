@@ -18,11 +18,15 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install project and dev tools
-        run: python -m pip install -e ".[dev]"
+        # numpy as pinned in the calibration image (FE-4): the engine checks
+        # its own runtime and refuses another NumPy build (fail closed).
+        run: python -m pip install -e ".[dev]" "numpy==2.5.3"
       - run: ruff format --check .
       - run: ruff check .
       - run: mypy src
       - run: python -m pytest
+        env:
+          PYTHONFAULTHANDLER: "1"  # a crashed subprocess shows where
       - run: lint-imports
 
   # Task 30 (owner answer Q30-4): deploy/RUNBOOK.md steps 2, 3 and a refused
