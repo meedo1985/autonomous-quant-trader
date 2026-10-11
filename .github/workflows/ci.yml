@@ -164,6 +164,9 @@ jobs:
           grep -q "^all cells: 0 non-finite of" /tmp/nonfinite
           sudo sh d19.sh clean-check | tee /tmp/clean
           grep -qx "PASS: the resumed threshold run equals the clean run" /tmp/clean
+          ! sudo sh d19.sh clean-check  # FE7R-2: never reuses a clean store
+          sudo sh d19.sh times | tee /tmp/times
+          test "$(grep -c '^threshold/pilot-k[12]:' /tmp/times)" = 2
           sudo sh d19.sh status
           sudo sh d19.sh timing | tee /tmp/timing
           test "$(grep -c dsr_median /tmp/timing)" = 3

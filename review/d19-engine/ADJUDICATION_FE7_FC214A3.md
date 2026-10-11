@@ -16,3 +16,16 @@
 | FE7-8 Medium | AGREE, repaired | The copy runs only if `/var/lib/aqt-d19/raw` does not exist (`test ! -e ... &&`). A run counts as finished only when `status` shows `Exited (0)` and **all 13** cell lines of the namespace show their full chunk count. |
 
 No calibration was run.
+
+## Re-review (`SOL6_FE7_REREVIEW_A939AD0.md`: FIX)
+
+FE7-1 and FE7-5 are resolved. FE7-7 is resolved in code but not exercised end to end in CI: the CI pilot finishes in about 13 s. The owner's sheet runs `failcheck` against a real run, and the engine's unit tests cover the killed-worker path.
+
+| ID | Decision | Repair and evidence |
+|---|---|---|
+| FE7R-1 High (and FE7-2) | AGREE, repaired | `compare` now requires, for every cell, the same chunk file names in both stores, byte-identical file contents, and the same set of cells. Equal bytes mean equal content hashes, so the chain heads are the same. |
+| FE7R-2 Medium | AGREE, repaired | `clean-check` refuses if `store-clean` exists, so it always starts from an empty store. CI checks that a second `clean-check` is refused. |
+| FE7-3 | AGREE, repaired | `d19.sh times` prints, for each chain, the seconds between consecutive finished chunks. A chain runs on one worker at a time, so each interval is one worker's measured time for 500 replications. That gives 3 intervals per threshold cell and 1 per development cell. The sheet asks for it after each namespace. CI runs it. |
+| FE7-4 | AGREE, repaired | `d19.sh memwatch` samples the slice's `MemoryCurrent` every 10 s for 10 minutes during the development run. It counts only samples where `docker top` shows exactly two `spawn_main` workers, and reports their maximum and the number of samples counted. |
+| FE7-6 | DISAGREE, with evidence | In the development run, the classifier passed to Annex B is a precomputed decision: `scripts/d19_run.py:183`, `dsr.evaluate(..., classifier=lambda *_: accept)`. `accept` comes from `classifier.within(diagnostics(x), ...)`, which runs once before Annex B and is timed by the timer's `diagnostics` stage. With `accept = True` the production path is the timer's path, and with a refusal Annex B stops earlier. The timer's DSR time is therefore the production path's worst case. The reviewer did not have `dev_replication`. |
+| FE7-8 | AGREE, repaired | The sheet uses `d19.sh copy-raw`. It refuses loudly if `/var/lib/aqt-d19/raw` exists, and otherwise copies the archives, sets the owner and prints the archive count. The silent skip of `test ... &&` is gone. |

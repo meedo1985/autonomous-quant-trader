@@ -16,6 +16,9 @@
 #   sudo sh d19.sh nonfinite
 #   sudo sh d19.sh clean-check
 #   sudo sh d19.sh failcheck
+#   sudo sh d19.sh copy-raw
+#   sudo sh d19.sh times
+#   sudo sh d19.sh memwatch
 #
 # Every engine process runs in the pinned image, as uid 990, without network,
 # at `nice 19`, inside aqt-d19.slice (systemd MemoryMax 2560M, checked before
@@ -111,6 +114,12 @@ from calibration import rundef; rundef.gating('probe')" || rc=$?
         exit "$rc" ;;
     esac
     ;;
+copy-raw)  # FE7-8: forward paper's exploration archives, once; never overwrites
+    [ ! -e "$WORK/raw" ] || { echo "refused: $WORK/raw already exists" >&2; exit 1; }
+    cp -r /var/lib/aqt/data/raw "$WORK/raw"
+    chown -R 990:990 "$WORK/raw"
+    echo "Copied $(find "$WORK/raw" -name '*.zip' | wc -l) archives"
+    ;;
 manifests)  # the BTC exploration manifest that `record` needs (Task 14)
     engine --rm -e PYTHONPATH=/app/src -- build_manifests.py --raw raw \
         --out manifests --symbol BTCUSDT
@@ -149,8 +158,32 @@ nonfinite)  # FE-7, FE7-5: non-finite threshold diagnostics, per cell
     engine --rm -- d19_pilot_checks.py nonfinite store
     ;;
 clean-check)  # FE7-2: a clean threshold run equals the interrupted+resumed one
+    [ ! -e "$WORK/store-clean" ] ||
+        { echo "refused: $WORK/store-clean exists; a clean run needs an empty store" >&2; exit 1; }
     engine --rm -- d19_run.py run --definition definition.json         --store store-clean --namespace threshold --raw-root raw
     engine --rm -- d19_pilot_checks.py compare store store-clean
+    ;;
+times)  # FE7-3: per chain, seconds between finished chunks = one worker's
+    # time for 500 replications (each chain runs on one worker at a time)
+    for d in "$WORK"/store/*/*/; do
+        find "$d" -name 'chunk-*.json' -printf '%T@\n' | sort -n |
+            awk -v c="$(basename "$(dirname "$d")")/$(basename "$d")" \
+                'NR > 1 { s = s sprintf(" %.0f", $1 - p) } { p = $1 }
+                 END { print c ":" (s == "" ? " (one chunk)" : s) }'
+    done
+    ;;
+memwatch)  # FE7-4: peak memory over 10 minutes, counted only with 2 workers
+    max=0
+    n=0
+    for _ in $(seq 60); do
+        if [ "$(docker top "$NAME" -eo args 2>/dev/null | grep -c spawn_main)" = 2 ]; then
+            now=$(systemctl show "$SLICE" -p MemoryCurrent --value)
+            n=$((n + 1))
+            [ "$now" -gt "$max" ] && max=$now
+        fi
+        sleep 10
+    done
+    echo "memory with 2 workers: max $max bytes over $n of 60 samples"
     ;;
 failcheck)  # FR2-2, FE7-7: kill one worker; the run must stop, none survive
     [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" = true ] ||
@@ -173,7 +206,7 @@ failcheck)  # FR2-2, FE7-7: kill one worker; the run must stop, none survive
     docker logs --tail 3 "$NAME" 2>&1
     ;;
 *)
-    sed -n '2,18p' "$0"
+    sed -n '2,21p' "$0"
     exit 1
     ;;
 esac

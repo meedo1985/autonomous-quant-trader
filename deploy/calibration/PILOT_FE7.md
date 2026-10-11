@@ -39,11 +39,10 @@ The last line must say `"false"`.
 
 ## C. Data, cell list, run definition
 
-The copy runs only if `/var/lib/aqt-d19/raw` does not exist yet:
+`copy-raw` copies forward paper's downloaded archives once. It refuses if a copy already exists, so stop there and send me the output.
 
 ```sh
-sudo test ! -e /var/lib/aqt-d19/raw && sudo cp -r /var/lib/aqt/data/raw /var/lib/aqt-d19/raw
-sudo chown -R 990:990 /var/lib/aqt-d19/raw
+sudo sh d19.sh copy-raw
 sudo sh d19.sh manifests
 sudo install -o 990 -g 990 -m 644 /opt/aqt-d19/app/deploy/calibration/pilot-cells.json /var/lib/aqt-d19/cells.json
 sudo sh d19.sh record --out definition.json \
@@ -79,7 +78,14 @@ sudo sh d19.sh status
 sudo sh d19.sh run threshold
 ```
 
-Check now and then with `sudo sh d19.sh status`. The threshold run is finished when `status` shows `Exited (0)`, and **all 13** `threshold/...` lines show `4`. **Send me** that `status` output.
+Check now and then with `sudo sh d19.sh status`. The threshold run is finished when `status` shows `Exited (0)`, and **all 13** `threshold/...` lines show `4`. Then:
+
+```sh
+sudo sh d19.sh status
+sudo sh d19.sh times
+```
+
+**Send me** both outputs. `times` gives each cell's seconds between finished chunks. That is one worker's measured time for 500 replications.
 
 ## F. Resume check (about as long as the threshold run, under an hour)
 
@@ -95,12 +101,11 @@ It must end with `PASS: the resumed threshold run equals the clean run`. **Send 
 
 ```sh
 sudo sh d19.sh run dev
-sleep 900
-sudo sh d19.sh status
+sudo sh d19.sh memwatch
 systemctl status aqt-paper --no-pager | head -3
 ```
 
-**Send me** both outputs. They show the memory with 2 workers and that forward paper is still running.
+`memwatch` takes 10 minutes. It samples memory every 10 seconds and counts only moments when both workers are running. **Send me** both outputs: they show the peak memory with 2 workers, and that forward paper is still running.
 
 The development run is finished when `status` shows `Exited (0)` and **all 13** `dev/...` lines show `2`.
 
@@ -108,13 +113,14 @@ The development run is finished when `status` shows `Exited (0)` and **all 13** 
 
 ```sh
 sudo sh d19.sh status
+sudo sh d19.sh times
 sudo sh d19.sh choose
 sudo sh d19.sh nonfinite
 sudo cat /var/lib/aqt-d19/choices.json
 ```
 
 **Send me** all of it. Here is what each output tells me:
-- `status`: the run times and the peak memory;
+- `status` and `times`: the run times and each cell's measured time per 500 replications;
 - `nonfinite`: the non-finite threshold draws, per cell (FE-7). If any exist, how to treat them is your decision;
 - `choices.json`: the development event counts.
 

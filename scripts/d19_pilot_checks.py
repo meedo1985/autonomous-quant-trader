@@ -6,7 +6,7 @@
 `nonfinite` reads only the diagnostic values of threshold records (binary64
 hex, per family for a QJ cell) and refuses anything else (FE7-5). `compare`
 shows that an interrupted and resumed threshold run equals a clean one: the
-same chunks with the same content hashes and results (FE7-2). Run both after
+same chunk files, byte for byte (FE7-2, FE7R-1). Run both after
 `d19.sh choose`, which has verified every chain."""
 
 from __future__ import annotations
@@ -62,12 +62,18 @@ def nonfinite(store: Path) -> int:
 
 
 def compare(a: Path, b: Path) -> int:
+    """Every cell's chunk files, byte for byte (FE7R-1): equal bytes give
+    equal content hashes and so the same chain head."""
     differ = []
     for cell in _cells(a):
-        left = [(c["content_sha256"], c["results"]) for c in _chunks(a, cell)]
-        right = [(c["content_sha256"], c["results"]) for c in _chunks(b, cell)]
-        print(f"{cell}: {len(left)} chunks", "identical" if left == right else "DIFFER")
-        if left != right:
+        _chunks(b, cell)  # refuses a missing chain
+        left, right = ((s / "threshold" / cell) for s in (a, b))
+        names = sorted(f.name for f in left.glob("chunk-*.json"))
+        same = names == sorted(f.name for f in right.glob("chunk-*.json")) and all(
+            (left / n).read_bytes() == (right / n).read_bytes() for n in names
+        )
+        print(f"{cell}: {len(names)} chunks", "identical" if same else "DIFFER")
+        if not same:
             differ.append(cell)
     if differ or _cells(a) != _cells(b):
         print("FAIL: the resumed and the clean threshold runs differ")
