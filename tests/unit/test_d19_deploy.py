@@ -143,6 +143,7 @@ def test_the_pilot_checks_count_non_finite_diagnostics_and_compare_stores(
     for store in (a, b):
         chunk(store, "pilot-x", plain, "s1")
         chunk(store, "pilot-qj", qj, "s2")
+        (store / "threshold" / ".locks").mkdir()  # the chains' lock files (FA-3)
     assert checks.main(["nonfinite", str(a)]) == 0
     out = capsys.readouterr().out
     assert "pilot-x: 1 non-finite of 4" in out and "pilot-qj: 1 non-finite of 2" in out

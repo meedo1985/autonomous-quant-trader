@@ -30,7 +30,13 @@ def _chunks(store: Path, cell: str) -> list[dict[str, object]]:
 def _cells(store: Path) -> list[str]:
     root = store / "threshold"
     cells = (
-        sorted(p.name for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
+        sorted(
+            p.name
+            for p in root.iterdir()
+            if p.is_dir() and not p.name.startswith(".")  # .locks: chain locks
+        )
+        if root.is_dir()
+        else []
     )
     if not cells:
         raise SystemExit(f"no threshold chains in {store}")
