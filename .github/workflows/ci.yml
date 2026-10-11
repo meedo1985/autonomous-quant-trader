@@ -18,16 +18,32 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install project and dev tools
-        # numpy as pinned in the calibration image (FE-4): the engine checks
-        # its own runtime and refuses another NumPy build (fail closed).
-        run: python -m pip install -e ".[dev]" "numpy==2.5.3"
+        run: python -m pip install -e ".[dev]"
       - run: ruff format --check .
       - run: ruff check .
       - run: mypy src
-      - run: python -m pytest
+      # The D-19 engine is tested on its own runtime, in calibration-tests.
+      - run: python -m pytest --ignore-glob="tests/unit/test_calibration_*"
+      - run: lint-imports
+
+  # The D-19 engine's runtime is the calibration image's: Python 3.14 and
+  # numpy 2.5.3 (deploy/calibration). On hosted Python 3.12 its start checks
+  # refuse (numpy power differs from Python **) and OpenBLAS dgemm with the
+  # pinned OPENBLAS_CORETYPE segfaults (PR #45, disclosed in
+  # review/d19-engine/ADJUDICATION_FE4_1C44DB8.md).
+  calibration-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install project and dev tools with the image's numpy
+        run: python -m pip install -e ".[dev]" "numpy==2.5.3"
+      - run: python -m pytest tests/unit/test_calibration_*.py tests/unit/test_d19_deploy.py
         env:
           PYTHONFAULTHANDLER: "1"  # a crashed subprocess shows where
-      - run: lint-imports
 
   # Task 30 (owner answer Q30-4): deploy/RUNBOOK.md steps 2, 3 and a refused
   # step 5 on a fresh Ubuntu machine: the real service, started on a
