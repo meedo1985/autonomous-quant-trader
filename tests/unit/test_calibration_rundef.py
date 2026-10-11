@@ -1318,6 +1318,9 @@ def test_a_q5_pilot_runs_on_recorded_exploration_data_only(
     assert chose.returncode == 0, chose.stderr
     report = json.loads(report_path.read_text())
     assert report["m"] == 2 * 3 and set(report["cells"]) == {"pilot-q5", "pilot-k1"}
+    # slice 2: two replications qualify nothing, so every category is empty
+    assert report["coverage"] == dict.fromkeys(choices.CATEGORIES, [])
+    assert report["qualifies"] is False
 
 
 def test_a_q5_development_draw_uses_its_family_label(

@@ -357,3 +357,41 @@ def test_m_counts_three_tests_per_cell_and_eight_per_joint_cell() -> None:
     assert choices.enumerated_tests(["semi-trend", "semi-vol"]) == 6
     assert choices.enumerated_tests(["semi-joint", "garch"]) == 8 + 3
     assert choices.enumerated_tests([]) == 0
+
+
+@pytest.mark.parametrize(
+    ("law", "dependence", "k", "expected"),
+    [
+        ("gaussian", "independent", 1, {"one_trial"}),
+        ("semi-trend", "independent", 2, {"two_trial"}),
+        ("semi-joint", "independent", 2, {"two_trial", "joint_generator"}),
+        ("gaussian", "equi0.9", 5, {"high_correlation", "cross_trial_dependence"}),
+        ("gaussian", "equi0.5", 5, {"cross_trial_dependence"}),
+        ("gaussian", "exact_duplicate", 2,
+         {"two_trial", "duplicates", "cross_trial_dependence"}),
+        ("t5", "opposites", 5, {"opposites", "heavy_tails"}),
+        ("gaussian", "clusters", 20, {"unequal_clusters", "cross_trial_dependence"}),
+        ("ar0.5", "independent", 5, {"serial_dependence"}),
+        ("mixed_ar", "independent", 5, {"serial_dependence"}),
+        ("skewt+", "equi0.9", 5, {"cross_trial_dependence"}),
+        ("garch", "independent", 5, {"heavy_tails"}),
+        ("garch", "factor", 5, {"cross_trial_dependence"}),
+        ("unequal", "independent", 5, {"unequal_moments"}),
+    ],
+)  # fmt: skip
+def test_each_cell_counts_for_the_o18_4_categories_of_its_table_row(
+    law: str, dependence: str, k: int, expected: set[str]
+) -> None:
+    """Prereg §3.2 table with the owner's readings (2026-10-11, Q5)."""
+    assert choices.categories(law, dependence, k) == expected
+    assert "unequal_t" not in choices.CATEGORIES  # O18-4-T
+
+
+def test_coverage_counts_qualifying_cells_only_and_reports_an_empty_category() -> None:
+    cells = {"a": ("gaussian", "independent", 1), "b": ("unequal", "independent", 2)}
+    covered = choices.coverage(cells, {"a", "b"})
+    assert covered["one_trial"] == ["a"] and covered["unequal_moments"] == ["b"]
+    assert covered["two_trial"] == ["b"]
+    demoted = choices.coverage(cells, {"a"})  # b demoted: its categories empty
+    assert demoted["unequal_moments"] == [] and demoted["two_trial"] == []
+    assert set(covered) == set(choices.CATEGORIES)

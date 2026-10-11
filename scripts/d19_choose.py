@@ -7,8 +7,8 @@ Runs the start gate, verifies every threshold and development chain of the
 run definition's manifest (pass or fail only), then writes the report of
 `calibration.choices.choose`: `family_block_rule`, each cell's availability
 status and held-out N, `z_crit`, and the classifier thresholds of the final
-qualifying cells (§3.5 item 3, for the freeze). The coverage rule (§5
-step 4) needs the frozen cell manifest's categories and is not applied here.
+qualifying cells (§3.5 item 3, for the freeze), and the coverage rule (§5
+step 4, §3.2): `qualifies` needs every O18-4 category to keep a qualifying cell.
 Development records only; no held-out data exists or is read.
 """
 
@@ -120,6 +120,14 @@ def main(argv: list[str] | None = None) -> int:
         f"T={t}": {"upper": up, "lower": lo}
         for t, (up, lo) in sorted(reduce.pooled(final).items())
     }
+    covered = choices.coverage(
+        {c.cell_id: (c.law, c.dependence, c.k) for c in cells},
+        {c for c, r in report["cells"].items() if r["status"] == "qualifying"},  # type: ignore[attr-defined]
+    )
+    report["coverage"] = covered
+    report["qualifies"] = bool(report["qualifies_before_coverage"]) and all(
+        covered.values()
+    )
     report["definition_sha256"] = rundef.definition_sha256(defn)
     if defn["cell_manifest"]["purpose"] == "pilot":  # I1R-5
         report["measurement_only"] = (

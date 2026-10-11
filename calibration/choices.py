@@ -4,8 +4,8 @@ them for family-agnostic cells).
 
 Order: `family_block_rule` (step 1), availability with the 40k escape and
 demotion (step 2, §13 item 3), the cap rule (§3.2), `z_crit` (step 3).
-`T_min = T_C2` by §13 item 2. The coverage rule (step 4) needs each cell's
-O18-4 category from the frozen cell manifest and is not decided here.
+`T_min = T_C2` by §13 item 2. The coverage rule (step 4) is `coverage`,
+applied by `scripts/d19_choose.py` to the final qualifying cells.
 
 Targets: tau at `M` = the candidate manifest's test count (§5: `M_max`,
 conservative), each test at its own `N_i`."""
@@ -62,6 +62,55 @@ def enumerated_tests(laws: list[str]) -> int:
     return sum(
         TESTS_PER_JOINT_CELL if law == "semi-joint" else TESTS_PER_CELL for law in laws
     )
+
+
+# The coverage rule (prereg §3.2, O18-4 with O18-4-T: no "unequal T" row),
+# with the owner's readings of 2026-10-11 (OWNER_DECISION_ITEM2B_STEP2_READINGS.md
+# Q5): "rho > 0" is every positive-correlation level, not opposites; QJ at
+# K = 2 is two-trial; GARCH of Q3 and skew-t are not heavy tails. Grid
+# membership of a cell (I2A-4) is item 3's check, not this one's.
+Q2_LAWS = ("t5", "skewt+", "skewt-", "garch", "ar0.2", "ar0.5")
+POSITIVE_RHO = (
+    "equi0.5", "equi0.9", "equi0.99", "near_duplicates", "exact_duplicate",
+    "clusters", "factor",
+)  # fmt: skip
+CATEGORIES = (
+    "one_trial", "two_trial", "high_correlation", "duplicates", "opposites",
+    "unequal_clusters", "serial_dependence", "cross_trial_dependence",
+    "heavy_tails", "unequal_moments", "joint_generator",
+)  # fmt: skip
+
+
+def categories(law: str, dependence: str, k: int) -> set[str]:
+    """The O18-4 categories a cell counts for (prereg §3.2 table)."""
+    q1, q3 = law == "gaussian", law == "garch" and dependence == "factor"
+    q2 = law in Q2_LAWS and not q3
+    rows = {
+        "one_trial": k == 1,
+        "two_trial": k == 2,
+        "high_correlation": q1 and dependence in ("equi0.9", "equi0.99"),
+        "duplicates": q1 and dependence in ("near_duplicates", "exact_duplicate"),
+        "opposites": (q1 or q2) and dependence == "opposites",
+        "unequal_clusters": q1 and dependence == "clusters",
+        "serial_dependence": law in ("ar0.2", "ar0.5", "mixed_ar"),
+        "cross_trial_dependence": ((q1 or q2) and dependence in POSITIVE_RHO) or q3,
+        "heavy_tails": q2 and law in ("t5", "garch"),
+        "unequal_moments": law == "unequal",
+        "joint_generator": law == "semi-joint",
+    }
+    return {name for name, counts in rows.items() if counts}
+
+
+def coverage(
+    cells: dict[str, tuple[str, str, int]], qualifying: set[str]
+) -> dict[str, list[str]]:
+    """Per category, the qualifying cell ids that count for it; the method
+    qualifies only if none is empty (§3.2). `cells`: id -> (law, dependence, K)."""
+    out: dict[str, list[str]] = {name: [] for name in CATEGORIES}
+    for cell_id in sorted(qualifying):
+        for name in categories(*cells[cell_id]):
+            out[name].append(cell_id)
+    return out
 
 
 def _ucb(x: int, n: int) -> float:
