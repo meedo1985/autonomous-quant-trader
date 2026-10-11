@@ -12,6 +12,13 @@
 #   sudo sh d19.sh status
 #   sudo sh d19.sh stop
 #   sudo sh d19.sh choose
+#   sudo sh d19.sh timing
+#   sudo sh d19.sh nonfinite
+#   sudo sh d19.sh clean-check
+#   sudo sh d19.sh failcheck
+#   sudo sh d19.sh copy-raw
+#   sudo sh d19.sh times <threshold|dev>
+#   sudo sh d19.sh memwatch
 #
 # Every engine process runs in the pinned image, as uid 990, without network,
 # at `nice 19`, inside aqt-d19.slice (systemd MemoryMax 2560M, checked before
@@ -107,6 +114,16 @@ from calibration import rundef; rundef.gating('probe')" || rc=$?
         exit "$rc" ;;
     esac
     ;;
+copy-raw)  # FE7-8: forward paper's exploration archives, once; never overwrites
+    [ ! -e "$WORK/raw" ] || { echo "refused: $WORK/raw already exists" >&2; exit 1; }
+    # FE7R2-3: a failed copy leaves nothing behind; raw appears only complete
+    rm -rf "$WORK/raw.partial"
+    cp -r /var/lib/aqt/data/raw "$WORK/raw.partial" ||
+        { rm -rf "$WORK/raw.partial"; echo "FAIL: copy failed" >&2; exit 1; }
+    chown -R 990:990 "$WORK/raw.partial"
+    mv "$WORK/raw.partial" "$WORK/raw"
+    echo "Copied $(find "$WORK/raw" -name '*.zip' | wc -l) archives"
+    ;;
 manifests)  # the BTC exploration manifest that `record` needs (Task 14)
     engine --rm -e PYTHONPATH=/app/src -- build_manifests.py --raw raw \
         --out manifests --symbol BTCUSDT
@@ -121,8 +138,12 @@ run)
         --store store --namespace "$2" --raw-root raw
     echo "Started. Progress: sudo sh d19.sh status"
     ;;
-status)  # FE4-5, P18-6: container state and chunks per chain, nothing else
+status)  # FE4-5, P18-6: state, times, memory, chunks per chain; nothing else
     docker ps -a --filter "name=^$NAME\$" --format '{{.Status}}'
+    # FE7-3: the run's own start, finish and exit (kept until the next run)
+    docker inspect -f 'started {{.State.StartedAt}} finished {{.State.FinishedAt}} exit {{.State.ExitCode}}'         "$NAME" 2>/dev/null || true
+    # FE7-4: the capped slice's exact peak memory since it started
+    echo "slice memory peak: $(systemctl show "$SLICE" -p MemoryPeak --value) bytes"
     find "$WORK/store" -name 'chunk-*.json' 2>/dev/null |
         awk -F/ '{ n[$(NF-2) "/" $(NF-1)]++ } END { for (c in n) print n[c], c }' |
         sort -k2
@@ -134,8 +155,72 @@ choose)
     engine --rm -- d19_choose.py choose --definition definition.json \
         --store store --out choices.json
     ;;
+timing)  # re-pilot (FE-7, I1-8): seconds per stage, both block rules apart
+    engine --rm -- d19_pilot.py --reps 20
+    ;;
+nonfinite)  # FE-7, FE7-5: non-finite threshold diagnostics, per cell
+    engine --rm -- d19_pilot_checks.py nonfinite store
+    ;;
+clean-check)  # FE7-2: a clean threshold run equals the interrupted+resumed one
+    [ ! -e "$WORK/store-clean" ] ||
+        { echo "refused: $WORK/store-clean exists; a clean run needs an empty store" >&2; exit 1; }
+    engine --rm -- d19_run.py run --definition definition.json         --store store-clean --namespace threshold --raw-root raw
+    engine --rm -- d19_pilot_checks.py compare store store-clean
+    ;;
+times)  # FE7-3: per chain, seconds between finished chunks = one worker's
+    # time for 500 replications (a chain's chunks run back to back on one
+    # worker). FE7R2-1: an interval across the current run's start spans a
+    # stop and a resume, so it is marked and is no worker time. FE7R3-1: one
+    # namespace, read while its own (last) run is the current container;
+    # FE7R3-2: the start time keeps its fraction of a second.
+    case "${2:-}" in threshold | dev) ;; *) echo "usage: d19.sh times <threshold|dev>" >&2; exit 1 ;; esac
+    started=$(date -d "$(docker inspect -f '{{.State.StartedAt}}' "$NAME")" +%s.%N)
+    for d in "$WORK/store/$2"/*/; do
+        find "$d" -name 'chunk-*.json' -printf '%T@\n' | sort -n |
+            awk -v c="$(basename "$(dirname "$d")")/$(basename "$d")" -v t0="$started" \
+                'NR > 1 { s = s sprintf(" %.0f", $1 - p) (p < t0 && $1 >= t0 ? "(spans a restart)" : "") }
+                 { p = $1 }
+                 END { print c ":" (s == "" ? " (one chunk)" : s) }'
+    done
+    ;;
+memwatch)  # FE7-4, FE7R2-2: the run's exact memory high-water mark, with
+    # evidence over 10 minutes that both workers were running
+    n=0
+    for _ in $(seq 60); do
+        if [ "$(docker top "$NAME" -eo args 2>/dev/null | grep -c spawn_main)" = 2 ]; then
+            n=$((n + 1))
+        fi
+        sleep 10
+    done
+    [ "$n" -gt 0 ] || { echo "FAIL: no sample showed 2 workers running" >&2; exit 1; }
+    # the container's own cgroup, as the kernel reports it (systemd nests
+    # aqt-d19.slice inside aqt.slice: the dash means a parent slice)
+    pid=$(docker inspect -f '{{.State.Pid}}' "$NAME")
+    peak=$(cat "/sys/fs/cgroup$(cut -d: -f3 "/proc/$pid/cgroup")/memory.peak")
+    echo "2 workers in $n of 60 samples; this run's memory peak: $peak bytes"
+    ;;
+failcheck)  # FR2-2, FE7-7: kill one worker; the run must stop, none survive
+    [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" = true ] ||
+        { echo "refused: no run is going (start one with: run threshold)" >&2; exit 1; }
+    # shellcheck disable=SC2046  # the PIDs are words
+    set -- $(docker top "$NAME" -eo pid,args | awk '/spawn_main/ { print $1 }')
+    [ $# = 2 ] || { echo "refused: expected 2 workers, found $#" >&2; exit 1; }
+    echo "workers $1 and $2; killing $1"
+    kill -9 "$1"
+    for _ in $(seq 120); do
+        [ "$(docker inspect -f '{{.State.Running}}' "$NAME")" = false ] && break
+        sleep 1
+    done
+    code=$(docker inspect -f '{{.State.ExitCode}}' "$NAME")
+    [ "$(docker inspect -f '{{.State.Running}}' "$NAME")" = false ] ||
+        { echo "FAIL: the run did not stop within 120 s" >&2; exit 1; }
+    [ "$code" != 0 ] || { echo "FAIL: the run exited 0 after a killed worker" >&2; exit 1; }
+    ! kill -0 "$2" 2>/dev/null || { echo "FAIL: worker $2 outlived the run" >&2; exit 1; }
+    echo "PASS: the run stopped (exit $code) and no worker outlived it"
+    docker logs --tail 3 "$NAME" 2>&1
+    ;;
 *)
-    sed -n '2,14p' "$0"
+    sed -n '2,21p' "$0"
     exit 1
     ;;
 esac

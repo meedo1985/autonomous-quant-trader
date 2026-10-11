@@ -1,0 +1,100 @@
+{
+  "purpose": "pilot",
+  "replications": {
+    "threshold": 2000,
+    "dev": 1000
+  },
+  "cells": [
+    {
+      "cell_id": "pilot-q1-ind-k1",
+      "k": 1,
+      "t": 1247,
+      "law": "gaussian",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "pilot-q1-clusters-k20",
+      "k": 20,
+      "t": 1247,
+      "law": "gaussian",
+      "dependence": "clusters"
+    },
+    {
+      "cell_id": "pilot-q2-t5-rho-k20",
+      "k": 20,
+      "t": 1247,
+      "law": "t5",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "pilot-q2m-k20",
+      "k": 20,
+      "t": 1247,
+      "law": "unequal",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "pilot-q3-factor-k20",
+      "k": 20,
+      "t": 1247,
+      "law": "garch",
+      "dependence": "factor"
+    },
+    {
+      "cell_id": "pilot-q4-k5",
+      "k": 5,
+      "t": 1247,
+      "law": "mixed_ar",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "pilot-q5-trend-k20",
+      "k": 20,
+      "t": 1247,
+      "law": "semi-trend",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "pilot-q5-vol-k20",
+      "k": 20,
+      "t": 1247,
+      "law": "semi-vol",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "pilot-qj-k20",
+      "k": 20,
+      "t": 1247,
+      "law": "semi-joint",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "pilot-q1-clusters-k5",
+      "k": 5,
+      "t": 1247,
+      "law": "gaussian",
+      "dependence": "clusters"
+    },
+    {
+      "cell_id": "pilot-q2m-k2",
+      "k": 2,
+      "t": 1247,
+      "law": "unequal",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "pilot-q2m-k5",
+      "k": 5,
+      "t": 1247,
+      "law": "unequal",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "pilot-qj-k2",
+      "k": 2,
+      "t": 1247,
+      "law": "semi-joint",
+      "dependence": "independent"
+    }
+  ]
+}
