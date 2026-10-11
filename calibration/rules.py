@@ -177,8 +177,24 @@ def joint(k: int, v_bar: float) -> Exposures:
 
 
 def family_label(cell: Cell) -> str:
-    """The §8 family id: the family of a Q5 cell, else "agnostic"."""
+    """The §8 family id: the family of a Q5 cell, else "agnostic". A QJ cell
+    has two; see `families`."""
+    if cell.law == "semi-joint":
+        raise ValueError(f"{cell.cell_id}: a QJ cell has one label per family")
     return cell.law.removeprefix("semi-") if cell.law in SEMI_LAWS else "agnostic"
+
+
+def families(cell: Cell, legs: Legs) -> dict[str, Legs]:
+    """Per §8 family label, that family's legs: one entry, except for QJ,
+    whose first K columns are the trend rules and the next K the vol rules,
+    on the one shared path, benchmark and signs (R-6)."""
+    if cell.law != "semi-joint":
+        return {family_label(cell): legs}
+    k = cell.k
+    return {
+        family: Legs(legs.x[:, cols], legs.benchmark, legs.candidates[:, cols])
+        for family, cols in (("trend", slice(0, k)), ("vol", slice(k, 2 * k)))
+    }
 
 
 def draw(cell: Cell, seed: str, source: Source | None) -> Legs:
@@ -189,6 +205,10 @@ def draw(cell: Cell, seed: str, source: Source | None) -> Legs:
         return generate(cell, stream(seed, "market"), stream(seed, "columns"))
     if source is None:
         raise ValueError(f"{cell.cell_id}: a Q5 cell needs the exploration source")
-    exposures = library(family_label(cell), cell.k, source.v_bar)
+    exposures = (
+        joint(cell.k, source.v_bar)
+        if cell.law == "semi-joint"
+        else library(family_label(cell), cell.k, source.v_bar)
+    )
     return semi_empirical(source.returns, exposures, stream(seed, "market"),
                           stream(seed, "sign"), cell.t, WARMUP)  # fmt: skip

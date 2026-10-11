@@ -57,3 +57,33 @@ def test_for_k_makes_an_exact_k_threshold_set_from_the_pool() -> None:
     only_k1 = reduce.pooled([_cell(1, 9, 5.0, -1.0)])
     with pytest.raises(ValueError, match="no candidate cell has"):
         reduce.for_k(only_k1[9], 2)  # no correlation tails at this level
+
+
+def test_a_qj_threshold_chain_needs_one_record_per_family_on_every_draw(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """I2BS2-1: every QJ draw is exactly {"trend", "vol"}; one per family set."""
+    import types
+
+    from calibration import chunks
+
+    def draw(value: float) -> dict[str, str]:
+        return {"K": struct.pack(">d", 2.0).hex(), "T": struct.pack(">d", 9.0).hex(),
+                "max_excess_kurtosis": struct.pack(">d", value).hex()}  # fmt: skip
+
+    good = [{"trend": draw(1.0), "vol": draw(2.0)} for _ in range(3)]
+    chain = types.SimpleNamespace(cell_id="qj")
+    fitted: list[list[dict[str, float]]] = []
+
+    def fit(draws: list[dict[str, float]]) -> list[dict[str, float]]:
+        fitted.append(draws)
+        return draws
+
+    monkeypatch.setattr(classifier, "fit_thresholds", fit)
+    monkeypatch.setattr(chunks, "reduce", lambda _: good)
+    assert len(reduce.cell_thresholds(chain, joint=True)) == 2  # type: ignore[arg-type]
+    assert [d[0]["max_excess_kurtosis"] for d in fitted] == [1.0, 2.0]
+    for bad in ({**good[0], "extra": draw(3.0)}, {"trend": draw(1.0)}, draw(1.0)):
+        monkeypatch.setattr(chunks, "reduce", lambda _, b=bad: [*good, b])
+        with pytest.raises(ValueError, match="not one record per family"):
+            reduce.cell_thresholds(chain, joint=True)  # type: ignore[arg-type]

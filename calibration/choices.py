@@ -4,8 +4,8 @@ them for family-agnostic cells).
 
 Order: `family_block_rule` (step 1), availability with the 40k escape and
 demotion (step 2, §13 item 3), the cap rule (§3.2), `z_crit` (step 3).
-`T_min = T_C2` by §13 item 2. The coverage rule (step 4) needs each cell's
-O18-4 category from the frozen cell manifest and is not decided here.
+`T_min = T_C2` by §13 item 2. The coverage rule (step 4) is `coverage`,
+applied by `scripts/d19_choose.py` to the final qualifying cells.
 
 Targets: tau at `M` = the candidate manifest's test count (§5: `M_max`,
 conservative), each test at its own `N_i`."""
@@ -21,8 +21,17 @@ RULES = ("largest", "median")  # tie -> largest (§5 step 1)
 Z_SCREEN = 1.96  # §5 step 1
 Z_STEP = Decimal("0.001")  # §5 step 3
 Z_MAX = Decimal("20.000")  # no qualifying z_crit above this grid end
-BOUNDS = {"error": 0.025, "dsr": 0.0035, "u_g": 0.0015}  # prereg §6
+# prereg §6; QJ adds the cycle-level `P_0(E)` and `U_proc^R` bounds
+BOUNDS = {
+    "error": 0.025, "dsr": 0.0035, "u_g": 0.0015,
+    "error_joint": 0.05, "u_proc_joint": 0.01,
+}  # fmt: skip
 HELD_OUT = (20_000, 40_000)  # §13 item 3
+# Enumerated tests per cell (prereg §6: one per (cell, family label or
+# `agnostic` or `joint`, bound)): Q1-Q4 are agnostic and Q5 has one family,
+# 3 bounds each; QJ has 3 per family and 2 joint (`P_0(E)`, `U_proc^R`).
+TESTS_PER_CELL = 3
+TESTS_PER_JOINT_CELL = 3 + 3 + 2
 CAPPED = "BLOCK_LENGTH_CAPPED"
 # I1-6: the targets carry about 1e-9 relative error (lgamma at N = 40k);
 # a comparison closer than this is flagged, never decided silently.
@@ -50,6 +59,62 @@ class CellResult:
     error_events_at_z: int | None = None
     margin: float = float("inf")  # smallest relative |UCB - tau| / tau used
     notes: list[str] = field(default_factory=list)
+
+
+def enumerated_tests(laws: list[str]) -> int:
+    """`M`, the manifest's test count (§5 `M_max`, §6), from its cells' laws."""
+    return sum(
+        TESTS_PER_JOINT_CELL if law == "semi-joint" else TESTS_PER_CELL for law in laws
+    )
+
+
+# The coverage rule (prereg §3.2, O18-4 with O18-4-T: no "unequal T" row),
+# with the owner's readings of 2026-10-11 (OWNER_DECISION_ITEM2B_STEP2_READINGS.md
+# Q5): "rho > 0" is every positive-correlation level, not opposites; QJ at
+# K = 2 is two-trial; GARCH of Q3 and skew-t are not heavy tails. Grid
+# membership of a cell (I2A-4) is item 3's check, not this one's.
+Q2_LAWS = ("t5", "skewt+", "skewt-", "garch", "ar0.2", "ar0.5")
+POSITIVE_RHO = (
+    "equi0.5", "equi0.9", "equi0.99", "near_duplicates", "exact_duplicate",
+    "clusters", "factor",
+)  # fmt: skip
+CATEGORIES = (
+    "one_trial", "two_trial", "high_correlation", "duplicates", "opposites",
+    "unequal_clusters", "serial_dependence", "cross_trial_dependence",
+    "heavy_tails", "unequal_moments", "joint_generator",
+)  # fmt: skip
+
+
+def categories(law: str, dependence: str, k: int) -> set[str]:
+    """The O18-4 categories a cell counts for (prereg §3.2 table)."""
+    q1, q3 = law == "gaussian", law == "garch" and dependence == "factor"
+    q2 = law in Q2_LAWS and not q3
+    rows = {
+        "one_trial": k == 1,
+        "two_trial": k == 2,
+        "high_correlation": q1 and dependence in ("equi0.9", "equi0.99"),
+        "duplicates": q1 and dependence in ("near_duplicates", "exact_duplicate"),
+        "opposites": (q1 or q2) and dependence == "opposites",
+        "unequal_clusters": q1 and dependence == "clusters",
+        "serial_dependence": law in ("ar0.2", "ar0.5", "mixed_ar"),
+        "cross_trial_dependence": ((q1 or q2) and dependence in POSITIVE_RHO) or q3,
+        "heavy_tails": q2 and law in ("t5", "garch"),
+        "unequal_moments": law == "unequal",
+        "joint_generator": law == "semi-joint",
+    }
+    return {name for name, counts in rows.items() if counts}
+
+
+def coverage(
+    cells: dict[str, tuple[str, str, int]], qualifying: set[str]
+) -> dict[str, list[str]]:
+    """Per category, the qualifying cell ids that count for it; the method
+    qualifies only if none is empty (§3.2). `cells`: id -> (law, dependence, K)."""
+    out: dict[str, list[str]] = {name: [] for name in CATEGORIES}
+    for cell_id in sorted(qualifying):
+        for name in categories(*cells[cell_id]):
+            out[name].append(cell_id)
+    return out
 
 
 def _ucb(x: int, n: int) -> float:
@@ -344,20 +409,38 @@ def allowed(n: int, tau: float) -> int:
     return lo
 
 
+def _either(a: Rep, b: Rep, z: float) -> bool:
+    """E of a QJ replication: either family passes (P18-6, per cycle)."""
+    return _passes(a, z) or _passes(b, z)
+
+
+def _unavailable(rep: Rep) -> bool:
+    """A `U_proc^R` event of one family: DSR (with the classifier) or U_G."""
+    return rep.reason is not None or rep.u_g is not None
+
+
 def z_crit(
-    qualifying: dict[str, list[Rep]], tau_error: dict[str, float]
+    qualifying: dict[str, list[Rep]],
+    tau_error: dict[str, float],
+    pairs: tuple[tuple[list[Rep], list[Rep], float], ...] = (),
 ) -> Decimal | None:
     """§5 step 3: the smallest z on the 0.001 grid at which every qualifying
     cell's 90% UCB of P_0(E_f) is within its tau_err (at the cell's N_i).
     The decimal is compared as its nearest binary64 (P18-6). None if no grid
-    value up to Z_MAX qualifies."""
+    value up to Z_MAX qualifies. `pairs`: per qualifying QJ cell, its two
+    families' replications and the tau of `P_0(E)` at its N, which must
+    also hold (§5 step 3)."""
     limit = {c: allowed(len(reps), tau_error[c]) for c, reps in qualifying.items()}
+    joint = [(a, b, allowed(len(a), tau)) for a, b, tau in pairs]
 
     def ok(z: Decimal) -> bool:
         value = float(z)
         return all(
             sum(_passes(r, value) for r in reps) <= limit[c]
             for c, reps in qualifying.items()
+        ) and all(
+            sum(_either(x, y, value) for x, y in zip(a, b, strict=True)) <= cap
+            for a, b, cap in joint
         )
 
     lo, hi = 0, int(Z_MAX / Z_STEP)  # events fall as z rises: monotone
@@ -372,13 +455,57 @@ def z_crit(
     return (lo * Z_STEP).quantize(Z_STEP)
 
 
-def choose(cells: dict[str, dict[str, list[Rep]]], m: int) -> dict[str, object]:
-    """Steps 1-3 in order, as a JSON-ready report. `cells`: per cell id, the
-    replications under each block rule; `m`: the candidate manifest's test
-    count."""
+def _joint(
+    a: CellResult,
+    b: CellResult,
+    ra: list[Rep],
+    rb: list[Rep],
+    tau: dict[int, dict[str, dict[str, float]]],
+) -> dict[str, object]:
+    """A QJ cell's two families qualify together or not at all, at the
+    larger N; its cycle-level `U_proc^R` is checked like the family tests
+    (owner decision 2026-10-11, Q4), at the 20k/40k N the escape allows."""
+    events = sum(
+        _unavailable(x) or _unavailable(y) for x, y in zip(ra, rb, strict=True)
+    )
+    out: dict[str, object] = {"u_proc_events": events, "held_out": None}
+    if a.status != "qualifying" or b.status != "qualifying":
+        for r in (a, b):
+            if r.status == "qualifying":
+                r.status, r.held_out = "demoted_availability", None
+                r.notes.append("QJ: the other family is demoted")
+        return out
+    ucb = _ucb(events, len(ra))
+    for n in HELD_OUT:
+        if n >= max(a.held_out or 0, b.held_out or 0) and _within(
+            a, ucb, tau[n]["u_proc_joint"]["tau"]
+        ):
+            a.held_out = b.held_out = n
+            out["held_out"] = n
+            return out
+    for r in (a, b):
+        r.status, r.held_out = "demoted_availability", None
+        r.notes.append("QJ: joint U_proc")
+    return out
+
+
+def choose(
+    cells: dict[str, dict[str, list[Rep]]],
+    m: int,
+    joint: dict[str, tuple[str, str]] | None = None,
+) -> dict[str, object]:
+    """Steps 1-3 in order, as a JSON-ready report. `cells`: per cell id (per
+    family of a QJ cell), the replications under each block rule; `m`: the
+    candidate manifest's test count; `joint`: per QJ cell, its two family
+    ids in `cells`."""
+    joint = joint or {}
     rule, worst = block_rule(cells)
     tau = targets(m)
     results = {c: availability(c, reps[rule], tau) for c, reps in cells.items()}
+    joint_report = {
+        q: _joint(results[a], results[b], cells[a][rule], cells[b][rule], tau)
+        for q, (a, b) in sorted(joint.items())
+    }
     qualifying = {
         c: cells[c][rule] for c, r in results.items() if r.status == "qualifying"
     }
@@ -387,7 +514,26 @@ def choose(cells: dict[str, dict[str, list[Rep]]], m: int) -> dict[str, object]:
         for c, r in results.items()
         if r.held_out is not None
     }
-    chosen = z_crit(qualifying, tau_error) if qualifying else None
+    pairs = tuple(
+        (cells[a][rule], cells[b][rule], tau[ho]["error_joint"]["tau"])
+        for a, b in joint.values()
+        if (ho := results[a].held_out) is not None
+    )
+    chosen = z_crit(qualifying, tau_error, pairs) if qualifying else None
+    for q, (fa, fb) in joint.items():
+        ho = results[fa].held_out
+        if ho is None:
+            continue
+        n, tau_joint = len(cells[fa][rule]), tau[ho]["error_joint"]["tau"]
+        cap = allowed(n, tau_joint)
+        for x in (cap, cap + 1):  # as for the family limits below (I1-6)
+            if 0 <= x <= n:
+                _within(results[fa], _ucb(x, n), tau_joint)
+        if chosen is not None:
+            joint_report[q]["error_events_at_z"] = sum(
+                _either(x, y, float(chosen))
+                for x, y in zip(cells[fa][rule], cells[fb][rule], strict=True)
+            )
     for c, reps in qualifying.items():
         a = allowed(len(reps), tau_error[c])
         for x in (a, a + 1):  # the two counts the limit sits between
@@ -402,6 +548,7 @@ def choose(cells: dict[str, dict[str, list[Rep]]], m: int) -> dict[str, object]:
         "m": m,
         "targets": tau,
         "cells": {c: vars(r) for c, r in sorted(results.items())},
+        "joint": joint_report,
         "z_crit": None if chosen is None else str(chosen),
         # I1R-4: never read as a choice when a comparison is too close
         "status": "ok" if margin >= MARGIN_MIN else "margin_failed",

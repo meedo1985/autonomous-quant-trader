@@ -180,17 +180,23 @@ def test_alpha_s_by_independent_quadrature() -> None:
     assert (m3 - 3 * m1 * m2 + 2 * m1**3) / var**1.5 == pytest.approx(1, abs=2e-4)
 
 
-def test_q5_laws_are_accepted_only_without_dependence_and_qj_is_not_yet() -> None:
-    def manifest(law: str, dependence: str = "independent") -> dict[str, object]:
-        cell = {"cell_id": "c", "k": 5, "t": 60, "law": law, "dependence": dependence}
+def test_q5_and_qj_laws_are_accepted_only_without_dependence() -> None:
+    """QJ only at K in {2, 20} (§13 rev 7g item 1)."""
+
+    def manifest(
+        law: str, dependence: str = "independent", k: int = 20
+    ) -> dict[str, object]:
+        cell = {"cell_id": "c", "k": k, "t": 60, "law": law, "dependence": dependence}
         return {"cells": [cell]}
 
     for law in generator.SEMI_LAWS:
         assert cells_from_manifest(manifest(law))[0].law == law
         with pytest.raises(ValueError, match="no dependence level"):
             cells_from_manifest(manifest(law, "equi0.5"))
-    with pytest.raises(ValueError, match="unknown law"):
-        cells_from_manifest(manifest("semi-joint"))
+    assert cells_from_manifest(manifest("semi-joint", k=2))[0].k == 2
+    for k in (1, 5):
+        with pytest.raises(ValueError, match="QJ runs each family at K"):
+            cells_from_manifest(manifest("semi-joint", k=k))
 
 
 def test_the_synthetic_generator_refuses_a_q5_cell() -> None:

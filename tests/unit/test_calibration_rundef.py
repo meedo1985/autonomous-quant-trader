@@ -1175,6 +1175,8 @@ Q5_CELLS = json.dumps({"purpose": "pilot", "replications": {"threshold": 3, "dev
     {"cell_id": "pilot-q5", "k": 2, "t": 40, "law": "semi-trend",
      "dependence": "independent"},
     {"cell_id": "pilot-k1", "k": 1, "t": 40, "law": "t5", "dependence": "independent"},
+    {"cell_id": "pilot-qj", "k": 2, "t": 40, "law": "semi-joint",
+     "dependence": "independent"},
 ]})  # fmt: skip
 
 
@@ -1318,9 +1320,30 @@ def test_a_q5_pilot_runs_on_recorded_exploration_data_only(
     # write with the pooled thresholds (the d19_choose consistency check).
     from calibration import choices
 
-    bounds = _load_driver(root, monkeypatch).dev_bounds(
-        defn, store, defn["gating"], [cell, Cell("pilot-k1", 1, 40, "t5")]
-    )[cell.cell_id]
+    qj = Cell("pilot-qj", 2, 40, "semi-joint")
+    every = _load_driver(root, monkeypatch).dev_bounds(
+        defn, store, defn["gating"], [cell, Cell("pilot-k1", 1, 40, "t5"), qj]
+    )
+    bounds = every[cell.cell_id]
+    # Slice 3: a QJ chain stores one record per family (owner Q2).
+    qj_threshold = json.loads(
+        (store / "threshold" / "pilot-qj" / "chunk-0000000.json").read_bytes()
+    )
+    qj_dev = json.loads(
+        (store / "dev" / "pilot-qj" / "chunk-0000000.json").read_bytes()
+    )
+    for rep_, stored in enumerate(qj_threshold["results"]):
+        seed = outer_seed(defn["prereg_sha256"], "pilot-qj", "d19-threshold-v1", rep_)
+        parts = rules.families(qj, rules.draw(qj, seed, source))
+        assert stored == {
+            f: {n: struct.pack(">d", v).hex()
+                for n, v in sorted(classifier.diagnostics(p.x).items())}
+            for f, p in parts.items()
+        }  # fmt: skip
+    for stored in qj_dev["results"]:
+        assert set(stored) == {"trend", "vol"}
+        for record in stored.values():
+            assert choices.consistent(record, every["pilot-qj"]) is None
     for rep_, stored in enumerate(dev["results"]):
         seed = outer_seed(defn["prereg_sha256"], "pilot-q5", "d19-dev-v1", rep_)
         expected = classifier.diagnostics(rules.draw(cell, seed, source).x)
@@ -1328,6 +1351,23 @@ def test_a_q5_pilot_runs_on_recorded_exploration_data_only(
             n: struct.pack(">d", v).hex() for n, v in sorted(expected.items())
         }
         assert choices.consistent(stored, bounds) is None
+    # Step 2 slice 1: choose accepts Q5 cells and counts 3 tests per cell.
+    report_path = tmp_path / "choices.json"
+    chose = subprocess.run(
+        [sys.executable, str(root / "scripts" / "d19_choose.py"), "choose",
+         "--definition", str(out), "--store", str(store), "--out", str(report_path)],
+        env={**os.environ, rundef.IMAGE_DIGEST_ENV: DIGEST}, cwd=root,
+        capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert chose.returncode == 0, chose.stderr
+    report = json.loads(report_path.read_text())
+    assert report["m"] == 2 * 3 + 8
+    assert set(report["cells"]) == {"pilot-q5", "pilot-k1", "pilot-qj/trend",
+                                    "pilot-qj/vol"}  # fmt: skip
+    assert set(report["joint"]) == {"pilot-qj"}
+    # slice 2: two replications qualify nothing, so every category is empty
+    assert report["coverage"] == dict.fromkeys(choices.CATEGORIES, [])
+    assert report["qualifies"] is False
 
 
 def test_a_q5_development_draw_uses_its_family_label(
@@ -1416,3 +1456,46 @@ def test_a_q5_development_record_equals_an_independent_section_2_computation(
                 legs.x, legs.candidates, legs.benchmark, top, seed
             )
         assert None in reasons  # Annex B ran to z_f* on a Q5 draw
+
+
+def test_a_qj_development_record_is_each_familys_section_2_computation(
+    recorded: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Slice 3, owner decision 2026-10-11 Q2/Q3: a QJ record holds, per
+    family, Annex B on that family's K columns of the one shared draw with
+    the family seed labelled by the family, and U_G with the shared outer
+    seed."""
+    from calibration import classifier, gates, rules, semi
+    from calibration.generator import Cell
+    from calibration.seeds import family_seed, outer_seed
+
+    root, _ = recorded
+    driver = _load_driver(root, monkeypatch)
+    monkeypatch.setattr(dsr, "_V_VERIFIED", True)
+    returns = np.random.default_rng(9).normal(0, 0.035, (400, 2))
+    returns -= returns.mean(axis=0)
+    source = semi.Source(returns, {}, semi.reference_variance(returns))
+    anchor, prereg = "c" * 64, "d" * 64
+    cell = Cell("qj", 2, 120, "semi-joint")
+    need = classifier.required(2)
+    upper = {n: 1e300 for n in need - set(classifier.LOWER)} | {"K": 2, "T": 120}
+    lower = {n: -1e300 for n in need - set(classifier.UPPER)} | {"K": 2, "T": 120}
+    for rep_ in range(2):
+        stored = driver.dev_replication(cell, anchor, prereg, rep_,
+                                        (upper, lower), source)  # fmt: skip
+        assert set(stored) == {"trend", "vol"}
+        seed = outer_seed(anchor, "qj", "d19-dev-v1", rep_)
+        legs = rules.draw(cell, seed, source)
+        for family, cols in (("trend", slice(0, 2)), ("vol", slice(2, 4))):
+            x = legs.x[:, cols]
+            fam = family_seed(seed, "qj", family, 2, prereg, rep_)
+            for rule in ("largest", "median"):
+                result = dsr.evaluate(x, fam, rule, classifier=lambda *_: True)
+                assert stored[family][rule]["reason"] == result.reason
+                assert stored[family][rule]["z"] == _hex64(result.z)
+            sharpes = [float(np.mean(c) / np.std(c, ddof=1)) for c in x.T]
+            top = int(np.argmax(sharpes))
+            assert stored[family]["nominee"] == top
+            assert stored[family]["u_g"] == gates.u_g(
+                x, legs.candidates[:, cols], legs.benchmark, top, seed
+            )

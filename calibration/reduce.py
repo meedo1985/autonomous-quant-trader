@@ -12,6 +12,7 @@ stay exact checks, and the correlation tails exist only for `K >= 2`."""
 from __future__ import annotations
 
 import struct
+from typing import Any
 
 from calibration import chunks, classifier
 
@@ -25,10 +26,23 @@ def decode(values: object) -> dict[str, float]:
     return {n: struct.unpack(">d", bytes.fromhex(v))[0] for n, v in values.items()}
 
 
-def cell_thresholds(chain: chunks.Chain) -> Bounds:
-    """The cell's (upper, lower) thresholds from its whole threshold chain;
-    `ChainError` if the chain is incomplete or broken."""
-    return classifier.fit_thresholds([decode(v) for v in chunks.reduce(chain)])
+FAMILIES = ("trend", "vol")  # a QJ record's keys (one draw per family)
+
+
+def cell_thresholds(chain: chunks.Chain, joint: bool = False) -> list[Bounds]:
+    """The cell's (upper, lower) thresholds from its whole threshold chain:
+    for a QJ cell (`joint`), one set per family on its own K columns (owner
+    decision 2026-10-11, Q2), else one. `ChainError` if the chain is
+    incomplete or broken; ValueError if a QJ draw is not exactly one record
+    per family (I2BS2-1)."""
+    records: list[Any] = list(chunks.reduce(chain))
+    if not joint:
+        draws = [records]
+    elif all(isinstance(r, dict) and set(r) == set(FAMILIES) for r in records):
+        draws = [[r[f] for r in records] for f in FAMILIES]
+    else:
+        raise ValueError(f"{chain.cell_id}: a QJ draw is not one record per family")
+    return [classifier.fit_thresholds([decode(v) for v in d]) for d in draws]
 
 
 EXACT = ("K", "T")

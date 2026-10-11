@@ -274,3 +274,25 @@ def test_draw_uses_the_section_8_streams_for_each_kind_of_cell() -> None:
     assert rules.family_label(synthetic) == "agnostic"
     with pytest.raises(ValueError, match="needs the exploration source"):
         rules.draw(Cell("q5", 1, 40, "semi-vol"), seed, None)
+
+
+def test_a_qj_draw_is_both_q5_draws_on_one_path_with_one_set_of_signs() -> None:
+    """R-6, owner decision 2026-10-11 Q2: a QJ draw's trend and vol halves
+    are bit-identical to the Q5 draws from the same outer seed (one market
+    path, one sign stream, one benchmark)."""
+    from calibration.generator import Cell
+
+    seed = "cd" * 32
+    source = semi.Source(R, {}, V_BAR)
+    qj = Cell("qj", 2, 40, "semi-joint")
+    legs = rules.draw(qj, seed, source)
+    assert legs.x.shape == (40, 4)
+    parts = rules.families(qj, legs)
+    assert list(parts) == ["trend", "vol"]
+    for family, part in parts.items():
+        q5 = rules.draw(Cell("q5", 2, 40, f"semi-{family}"), seed, source)
+        np.testing.assert_array_equal(part.x, q5.x)
+        np.testing.assert_array_equal(part.candidates, q5.candidates)
+        np.testing.assert_array_equal(part.benchmark, q5.benchmark)
+    with pytest.raises(ValueError, match="one label per family"):
+        rules.family_label(qj)

@@ -348,3 +348,133 @@ def test_no_u_g_nominee_after_rules_1_2() -> None:
         assert choices.consistent(valid, ACCEPTS) is None
         named = {**valid, "nominee": 0, "u_g": None}
         assert "rules 1-2" in str(choices.consistent(named, ACCEPTS)), code
+
+
+def test_m_counts_three_tests_per_cell_and_eight_per_joint_cell() -> None:
+    """Prereg §6: one test per (cell, family label or agnostic or joint,
+    bound); QJ adds the two cycle-level bounds to its two families' three."""
+    assert choices.enumerated_tests(["gaussian", "t5"]) == 6
+    assert choices.enumerated_tests(["semi-trend", "semi-vol"]) == 6
+    assert choices.enumerated_tests(["semi-joint", "garch"]) == 8 + 3
+    assert choices.enumerated_tests([]) == 0
+
+
+@pytest.mark.parametrize(
+    ("law", "dependence", "k", "expected"),
+    [
+        ("gaussian", "independent", 1, {"one_trial"}),
+        ("semi-trend", "independent", 2, {"two_trial"}),
+        ("semi-joint", "independent", 2, {"two_trial", "joint_generator"}),
+        ("gaussian", "equi0.9", 5, {"high_correlation", "cross_trial_dependence"}),
+        ("gaussian", "equi0.5", 5, {"cross_trial_dependence"}),
+        ("gaussian", "exact_duplicate", 2,
+         {"two_trial", "duplicates", "cross_trial_dependence"}),
+        ("t5", "opposites", 5, {"opposites", "heavy_tails"}),
+        ("gaussian", "clusters", 20, {"unequal_clusters", "cross_trial_dependence"}),
+        ("ar0.5", "independent", 5, {"serial_dependence"}),
+        ("mixed_ar", "independent", 5, {"serial_dependence"}),
+        ("skewt+", "equi0.9", 5, {"cross_trial_dependence"}),
+        ("garch", "independent", 5, {"heavy_tails"}),
+        ("garch", "factor", 5, {"cross_trial_dependence"}),
+        ("unequal", "independent", 5, {"unequal_moments"}),
+    ],
+)  # fmt: skip
+def test_each_cell_counts_for_the_o18_4_categories_of_its_table_row(
+    law: str, dependence: str, k: int, expected: set[str]
+) -> None:
+    """Prereg §3.2 table with the owner's readings (2026-10-11, Q5)."""
+    assert choices.categories(law, dependence, k) == expected
+    assert "unequal_t" not in choices.CATEGORIES  # O18-4-T
+
+
+def test_coverage_counts_qualifying_cells_only_and_reports_an_empty_category() -> None:
+    cells = {"a": ("gaussian", "independent", 1), "b": ("unequal", "independent", 2)}
+    covered = choices.coverage(cells, {"a", "b"})
+    assert covered["one_trial"] == ["a"] and covered["unequal_moments"] == ["b"]
+    assert covered["two_trial"] == ["b"]
+    demoted = choices.coverage(cells, {"a"})  # b demoted: its categories empty
+    assert demoted["unequal_moments"] == [] and demoted["two_trial"] == []
+    assert set(covered) == set(choices.CATEGORIES)
+
+
+def test_a_qj_cells_families_qualify_together_at_the_larger_n() -> None:
+    """Owner decision 2026-10-11 Q4: one family's 40k escape moves the
+    whole QJ cell to 40k; a demoted family demotes the other."""
+    joint = {"qj": ("qj/trend", "qj/vol")}
+    cells = {
+        "qj/trend": {r: _reps(u_g=1) for r in choices.RULES},
+        "qj/vol": {r: _reps() for r in choices.RULES},
+    }
+    report = choices.choose(cells, 322, joint)
+    held = {c: r["held_out"] for c, r in report["cells"].items()}  # type: ignore[attr-defined]
+    assert held == {"qj/trend": 40_000, "qj/vol": 40_000}
+    assert report["joint"]["qj"]["held_out"] == 40_000  # type: ignore[index]
+    cells["qj/trend"] = {r: _reps(dsr=10) for r in choices.RULES}
+    report = choices.choose(cells, 322, joint)
+    vol = report["cells"]["qj/vol"]  # type: ignore[index]
+    assert vol["status"] == "demoted_availability" and vol["held_out"] is None
+    assert vol["notes"] == ["QJ: the other family is demoted"]
+
+
+def test_the_joint_u_proc_check_demotes_both_families() -> None:
+    """At M = 322 and 12k development replications the joint limit (57
+    events) cannot bind while each family passes (at most 9 + 2 each), so
+    the check is shown with a tight tau."""
+    a, b = (
+        choices.availability("a", _reps(), TAU),
+        choices.availability("b", _reps(), TAU),
+    )
+    ra, rb = _reps(dsr=5), _reps(u_g=2)  # disjoint: 7 joint events
+    tight = {n: {**TAU[n], "u_proc_joint": {"tau": choices._ucb(6, N)}} for n in TAU}
+    out = choices._joint(a, b, ra, rb, tight)
+    assert out["u_proc_events"] == 7 and out["held_out"] is None
+    assert a.status == b.status == "demoted_availability"
+    assert a.notes == b.notes == ["QJ: joint U_proc"]
+
+
+def test_z_crit_also_meets_the_joint_limit_on_either_family_passing() -> None:
+    """Disjoint passes add up in P_0(E): the joint limit raises z_crit."""
+    trend = [Rep(None, 3.0 if i < 10 else -1.0, None) for i in range(N)]
+    vol = [Rep(None, 3.0 if i >= N - 10 else -1.0, None) for i in range(N)]
+    loose = choices._ucb(10, N)  # each family alone: 10 events allowed
+    alone = choices.z_crit({"t": trend, "v": vol}, {"t": loose, "v": loose})
+    assert alone == Decimal("0.000")
+    tight = choices._ucb(15, N)  # either family passing: 20 events > 15
+    both = choices.z_crit(
+        {"t": trend, "v": vol}, {"t": loose, "v": loose}, ((trend, vol, tight),)
+    )
+    assert both == Decimal("3.001")
+
+
+def test_a_successful_choice_covers_every_category_until_qj_is_demoted() -> None:
+    """I2BS2-2: a qualifying manifest with one cell per category gives full
+    coverage; demoting one QJ family removes `joint_generator`."""
+    cells = {
+        "k1": ("gaussian", "independent", 1),
+        "rho": ("gaussian", "equi0.9", 5),
+        "dup": ("gaussian", "exact_duplicate", 5),
+        "opp": ("gaussian", "opposites", 5),
+        "clu": ("gaussian", "clusters", 5),
+        "ar": ("ar0.5", "independent", 5),
+        "t5": ("t5", "independent", 5),
+        "unq": ("unequal", "independent", 5),
+        "qj/trend": ("semi-joint", "independent", 2),
+        "qj/vol": ("semi-joint", "independent", 2),
+    }
+    joint = {"qj": ("qj/trend", "qj/vol")}
+
+    def run(trend: list[Rep]) -> dict[str, list[str]]:
+        reps = {c: {r: _reps() for r in choices.RULES} for c in cells}
+        reps["qj/trend"] = {r: trend for r in choices.RULES}
+        report = choices.choose(reps, 322, joint)  # M as in TAU
+        qualifying = {
+            c for c, r in report["cells"].items()  # type: ignore[attr-defined]
+            if r["status"] == "qualifying"
+        }  # fmt: skip
+        return choices.coverage(cells, qualifying)
+
+    full = run(_reps())
+    assert all(full.values()), [n for n, ids in full.items() if not ids]
+    assert full["joint_generator"] == ["qj/trend", "qj/vol"]
+    demoted = run(_reps(dsr=10))
+    assert demoted["joint_generator"] == [] and demoted["two_trial"] == []

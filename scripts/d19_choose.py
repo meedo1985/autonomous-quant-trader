@@ -7,8 +7,8 @@ Runs the start gate, verifies every threshold and development chain of the
 run definition's manifest (pass or fail only), then writes the report of
 `calibration.choices.choose`: `family_block_rule`, each cell's availability
 status and held-out N, `z_crit`, and the classifier thresholds of the final
-qualifying cells (§3.5 item 3, for the freeze). The coverage rule (§5
-step 4) needs the frozen cell manifest's categories and is not applied here.
+qualifying cells (§3.5 item 3, for the freeze), and the coverage rule (§5
+step 4, §3.2): `qualifies` needs every O18-4 category to keep a qualifying cell.
 Development records only; no held-out data exists or is read.
 """
 
@@ -34,14 +34,6 @@ from calibration import choices, chunks, reduce, rundef  # noqa: E402
 from calibration.generator import Cell, cells_from_manifest  # noqa: E402
 from calibration.seeds import sha  # noqa: E402
 
-TESTS_PER_AGNOSTIC_CELL = 3  # error, DSR availability, U_G (prereg §6)
-# I1-4: M = 3 per cell holds only for family-agnostic cells (Q1-Q4). Any other
-# law refuses here until per-family and joint tests are counted (Q5, QJ).
-AGNOSTIC_LAWS = (
-    "gaussian", "t5", "ar0.2", "ar0.5", "garch", "skewt+", "skewt-", "unequal",
-    "mixed_ar",
-)  # fmt: skip
-
 
 def _chain(
     defn: dict[str, Any], store: Path, ns: str, cell: Cell, gating: object
@@ -62,20 +54,32 @@ def _float(value: object) -> float | None:
 
 
 def development(
-    chain: chunks.Chain, bounds: reduce.Bounds
-) -> dict[str, list[choices.Rep]]:
-    """A verified development chain as replications per block rule; every
+    chain: chunks.Chain, bounds: reduce.Bounds, joint: bool = False
+) -> list[dict[str, list[choices.Rep]]]:
+    """A verified development chain as replications per block rule: one
+    entry, or one per family (`reduce.FAMILIES` order) of a QJ cell. Every
     record must follow from the development thresholds (I1-3)."""
-    out: dict[str, list[choices.Rep]] = {rule: [] for rule in choices.RULES}
-    for rep, record in enumerate(chunks.reduce(chain)):
-        if not isinstance(record, dict):
+    families: tuple[str | None, ...] = reduce.FAMILIES if joint else (None,)
+    out: list[dict[str, list[choices.Rep]]] = [
+        {rule: [] for rule in choices.RULES} for _ in families
+    ]
+    for rep, stored in enumerate(chunks.reduce(chain)):
+        if not isinstance(stored, dict) or (
+            joint and set(stored) != set(reduce.FAMILIES)
+        ):
             raise ValueError(f"{chain.cell_id} rep {rep}: malformed record")
-        problem = choices.consistent(record, bounds)
-        if problem is not None:
-            raise ValueError(f"{chain.cell_id} rep {rep}: {problem}")
-        for rule in choices.RULES:
-            r = record[rule]
-            out[rule].append(choices.Rep(r["reason"], _float(r["z"]), record["u_g"]))
+        for per, family in zip(out, families, strict=True):
+            record = stored if family is None else stored[family]
+            if not isinstance(record, dict):
+                raise ValueError(f"{chain.cell_id} rep {rep}: malformed record")
+            problem = choices.consistent(record, bounds)
+            if problem is not None:
+                raise ValueError(f"{chain.cell_id} rep {rep} {family}: {problem}")
+            for rule in choices.RULES:
+                r = record[rule]
+                per[rule].append(
+                    choices.Rep(r["reason"], _float(r["z"]), record["u_g"])
+                )
     return out
 
 
@@ -90,9 +94,6 @@ def main(argv: list[str] | None = None) -> int:
     defn = rundef.load(args.definition)
     try:
         cells = cells_from_manifest(defn["cell_manifest"])
-        other = sorted({c.law for c in cells} - set(AGNOSTIC_LAWS))
-        if other:
-            raise ValueError(f"tests are not counted for laws {other} (I1-4)")
         gating = rundef.start_gate(defn, ROOT)
         chains = {
             (ns, c.cell_id): _chain(defn, args.store, ns, c, gating)
@@ -100,21 +101,37 @@ def main(argv: list[str] | None = None) -> int:
             for c in cells
         }
         heads = {f"{ns}/{c}": chunks.verify(chain) for (ns, c), chain in chains.items()}
-        bounds = {
-            c.cell_id: reduce.cell_thresholds(chains["threshold", c.cell_id])
-            for c in cells
-        }
-        pooled = reduce.pooled(list(bounds.values()))
-        dev = {
-            c.cell_id: development(
-                chains["dev", c.cell_id], reduce.for_k(pooled[c.t], c.k)
+        # Per unit: a cell, or one family of a QJ cell ("<cell>/<family>";
+        # cell ids never hold "/").
+        bounds: dict[str, reduce.Bounds] = {}
+        units: dict[str, Cell] = {}
+        joint: dict[str, tuple[str, str]] = {}
+        for c in cells:
+            sets = reduce.cell_thresholds(
+                chains["threshold", c.cell_id], c.law == "semi-joint"
             )
-            for c in cells
-        }
+            names = [c.cell_id]
+            if c.law == "semi-joint":
+                names = [f"{c.cell_id}/{f}" for f in reduce.FAMILIES]
+                joint[c.cell_id] = (names[0], names[1])
+            bounds.update(zip(names, sets, strict=True))
+            units.update(dict.fromkeys(names, c))
+        pooled = reduce.pooled(list(bounds.values()))
+        dev: dict[str, dict[str, list[choices.Rep]]] = {}
+        for c in cells:
+            per = development(
+                chains["dev", c.cell_id],
+                reduce.for_k(pooled[c.t], c.k),
+                c.law == "semi-joint",
+            )
+            names = list(joint.get(c.cell_id, (c.cell_id,)))
+            dev.update(zip(names, per, strict=True))
     except (ValueError, RuntimeError) as error:  # ChainError is a RuntimeError
         print(error, file=sys.stderr)
         return 1
-    report = choices.choose(dev, TESTS_PER_AGNOSTIC_CELL * len(cells))
+    report = choices.choose(
+        dev, choices.enumerated_tests([c.law for c in cells]), joint
+    )
     final = [
         bounds[c]
         for c, r in report["cells"].items()  # type: ignore[attr-defined]
@@ -124,6 +141,14 @@ def main(argv: list[str] | None = None) -> int:
         f"T={t}": {"upper": up, "lower": lo}
         for t, (up, lo) in sorted(reduce.pooled(final).items())
     }
+    covered = choices.coverage(
+        {u: (c.law, c.dependence, c.k) for u, c in units.items()},
+        {c for c, r in report["cells"].items() if r["status"] == "qualifying"},  # type: ignore[attr-defined]
+    )
+    report["coverage"] = covered
+    report["qualifies"] = bool(report["qualifies_before_coverage"]) and all(
+        covered.values()
+    )
     report["definition_sha256"] = rundef.definition_sha256(defn)
     if defn["cell_manifest"]["purpose"] == "pilot":  # I1R-5
         report["measurement_only"] = (
