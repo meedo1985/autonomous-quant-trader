@@ -167,6 +167,10 @@ jobs:
           ! sudo sh d19.sh clean-check  # FE7R-2: never reuses a clean store
           sudo sh d19.sh times | tee /tmp/times
           test "$(grep -c '^threshold/pilot-k[12]:' /tmp/times)" = 2
+          # FE7R2-2: a running container's memory.peak is where memwatch reads it
+          cid=$(sudo docker run -d --network none --cgroup-parent aqt-d19.slice "aqt-d19:$COMMIT" sleep 30)
+          sudo test -s "/sys/fs/cgroup/aqt-d19.slice/docker-$cid.scope/memory.peak"
+          sudo docker rm -f "$cid"
           sudo sh d19.sh status
           sudo sh d19.sh timing | tee /tmp/timing
           test "$(grep -c dsr_median /tmp/timing)" = 3

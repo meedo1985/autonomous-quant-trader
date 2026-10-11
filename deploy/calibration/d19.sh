@@ -116,8 +116,12 @@ from calibration import rundef; rundef.gating('probe')" || rc=$?
     ;;
 copy-raw)  # FE7-8: forward paper's exploration archives, once; never overwrites
     [ ! -e "$WORK/raw" ] || { echo "refused: $WORK/raw already exists" >&2; exit 1; }
-    cp -r /var/lib/aqt/data/raw "$WORK/raw"
-    chown -R 990:990 "$WORK/raw"
+    # FE7R2-3: a failed copy leaves nothing behind; raw appears only complete
+    rm -rf "$WORK/raw.partial"
+    cp -r /var/lib/aqt/data/raw "$WORK/raw.partial" ||
+        { rm -rf "$WORK/raw.partial"; echo "FAIL: copy failed" >&2; exit 1; }
+    chown -R 990:990 "$WORK/raw.partial"
+    mv "$WORK/raw.partial" "$WORK/raw"
     echo "Copied $(find "$WORK/raw" -name '*.zip' | wc -l) archives"
     ;;
 manifests)  # the BTC exploration manifest that `record` needs (Task 14)
@@ -164,26 +168,31 @@ clean-check)  # FE7-2: a clean threshold run equals the interrupted+resumed one
     engine --rm -- d19_pilot_checks.py compare store store-clean
     ;;
 times)  # FE7-3: per chain, seconds between finished chunks = one worker's
-    # time for 500 replications (each chain runs on one worker at a time)
+    # time for 500 replications (a chain's chunks run back to back on one
+    # worker). FE7R2-1: an interval across the current run's start spans a
+    # stop and a resume, so it is marked and is no worker time.
+    started=$(date -d "$(docker inspect -f '{{.State.StartedAt}}' "$NAME")" +%s)
     for d in "$WORK"/store/*/*/; do
         find "$d" -name 'chunk-*.json' -printf '%T@\n' | sort -n |
-            awk -v c="$(basename "$(dirname "$d")")/$(basename "$d")" \
-                'NR > 1 { s = s sprintf(" %.0f", $1 - p) } { p = $1 }
+            awk -v c="$(basename "$(dirname "$d")")/$(basename "$d")" -v t0="$started" \
+                'NR > 1 { s = s sprintf(" %.0f", $1 - p) (p < t0 && $1 >= t0 ? "(spans a restart)" : "") }
+                 { p = $1 }
                  END { print c ":" (s == "" ? " (one chunk)" : s) }'
     done
     ;;
-memwatch)  # FE7-4: peak memory over 10 minutes, counted only with 2 workers
-    max=0
+memwatch)  # FE7-4, FE7R2-2: the run's exact memory high-water mark, with
+    # evidence over 10 minutes that both workers were running
     n=0
     for _ in $(seq 60); do
         if [ "$(docker top "$NAME" -eo args 2>/dev/null | grep -c spawn_main)" = 2 ]; then
-            now=$(systemctl show "$SLICE" -p MemoryCurrent --value)
             n=$((n + 1))
-            [ "$now" -gt "$max" ] && max=$now
         fi
         sleep 10
     done
-    echo "memory with 2 workers: max $max bytes over $n of 60 samples"
+    [ "$n" -gt 0 ] || { echo "FAIL: no sample showed 2 workers running" >&2; exit 1; }
+    cid=$(docker inspect -f '{{.Id}}' "$NAME")
+    peak=$(cat "/sys/fs/cgroup/$SLICE/docker-$cid.scope/memory.peak")
+    echo "2 workers in $n of 60 samples; this run's memory peak: $peak bytes"
     ;;
 failcheck)  # FR2-2, FE7-7: kill one worker; the run must stop, none survive
     [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" = true ] ||

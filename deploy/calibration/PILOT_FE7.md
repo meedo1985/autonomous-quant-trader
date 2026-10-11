@@ -8,7 +8,7 @@ In the commands:
 - `<commit>` is the engine commit id I give you in the chat;
 - the preregistration commit is already filled in.
 
-Where a step says **send me**, paste the output into the chat. If any command prints `refused` or `FAIL`, stop there and send me the output.
+Where a step says **send me**, paste the output into the chat. **If any command fails or prints an error, `refused` or `FAIL`, stop there and send me the output.** Do not go on to the next command.
 
 **Time:** about 45 minutes of your attention. The development run then takes one night, about 10 hours.
 
@@ -85,7 +85,7 @@ sudo sh d19.sh status
 sudo sh d19.sh times
 ```
 
-**Send me** both outputs. `times` gives each cell's seconds between finished chunks. That is one worker's measured time for 500 replications.
+**Send me** both outputs. `times` gives each cell's seconds between finished chunks, one worker's time for 500 replications. An interval marked `(spans a restart)` crosses the failcheck stop, so it is not used.
 
 ## F. Resume check (about as long as the threshold run, under an hour)
 
@@ -105,7 +105,7 @@ sudo sh d19.sh memwatch
 systemctl status aqt-paper --no-pager | head -3
 ```
 
-`memwatch` takes 10 minutes. It samples memory every 10 seconds and counts only moments when both workers are running. **Send me** both outputs: they show the peak memory with 2 workers, and that forward paper is still running.
+`memwatch` takes 10 minutes. It checks every 10 seconds that both workers are running, then reads the run's exact memory high-water mark from the kernel. **Send me** both outputs: they show the peak memory with 2 workers, and that forward paper is still running.
 
 The development run is finished when `status` shows `Exited (0)` and **all 13** `dev/...` lines show `2`.
 
