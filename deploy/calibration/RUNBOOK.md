@@ -25,16 +25,33 @@ The run is tied to the image's id. The launcher reads that id itself with `docke
 
 ## 1. Install (once per engine commit)
 
+Clone the repository and check out the commit you chose. The commit id is a hash of every file in it, so the script you then run as root is exactly that commit's script (FE4-6):
+
 ```sh
-curl -fsSLO https://raw.githubusercontent.com/meedo1985/autonomous-quant-trader/<commit>/deploy/calibration/d19.sh
-sudo sh d19.sh install https://github.com/meedo1985/autonomous-quant-trader.git <commit>
-sudo sh d19.sh build
+git clone https://github.com/meedo1985/autonomous-quant-trader.git /tmp/aqt-d19-src
+git -C /tmp/aqt-d19-src checkout <commit>
+git -C /tmp/aqt-d19-src rev-parse HEAD    # must print <commit>
+sudo sh /tmp/aqt-d19-src/deploy/calibration/d19.sh install https://github.com/meedo1985/autonomous-quant-trader.git <commit>
+sudo sh /opt/aqt-d19/app/deploy/calibration/d19.sh build
 ```
 
-`build` prints the image id. Check that automatic reboots are off for the run:
+`build` prints the image id. From here on, run the installed copy from its folder:
 
 ```sh
-grep -r Automatic-Reboot /etc/apt/apt.conf.d/ || echo "not set (default: off)"
+cd /opt/aqt-d19/app/deploy/calibration
+```
+
+Switch automatic reboots off for the run (§13 item 6). Security updates still install:
+
+```sh
+echo 'Unattended-Upgrade::Automatic-Reboot "false";' | sudo tee /etc/apt/apt.conf.d/99aqt-d19-no-reboot
+apt-config dump | grep Automatic-Reboot    # the last line must say "false"
+```
+
+When the calibration is over, switch them back:
+
+```sh
+sudo rm /etc/apt/apt.conf.d/99aqt-d19-no-reboot
 ```
 
 ## 2. Exploration data (once)
@@ -63,7 +80,7 @@ It prints the run-definition hash. Nothing has run yet.
 
 ```sh
 sudo sh d19.sh run threshold     # starts in the background
-sudo sh d19.sh status            # running or not, last log lines, chunks per cell
+sudo sh d19.sh status            # running or not, and chunks per cell
 sudo sh d19.sh stop              # stops; finished chunks are kept
 sudo sh d19.sh run threshold     # resumes from the last finished chunk
 ```
@@ -74,4 +91,14 @@ When `threshold` has finished, run `dev` the same way, then:
 sudo sh d19.sh choose            # writes /var/lib/aqt-d19/choices.json
 ```
 
-`status` shows only counts. It never opens a chunk's content.
+`status` shows only the container state and counts. It never opens a chunk's content.
+
+Every start first checks that the memory cap really applies. Docker must use systemd's cgroup driver, `aqt-d19.slice` must have `MemoryMax` 2560M, and a test container must land in that slice. If any check fails, nothing starts and the reason is printed.
+
+If `status` shows `Exited (1)`, the run stopped on an error. To see why:
+
+```sh
+sudo docker logs --tail 20 aqt-d19
+```
+
+This applies to threshold and development runs only. The held-out run, which is not built yet, will have its own rule.

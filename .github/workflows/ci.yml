@@ -71,21 +71,47 @@ jobs:
           test "$(systemctl show aqt-paper -p NRestarts --value)" = 0
           sudo grep REFUSE_START /var/lib/aqt/data/forward/deployment_refusals.jsonl | grep "checkout differs"
 
-  # FE-4: the D-19 calibration image builds from its pinned base and lock,
-  # and the engine starts in it as deploy/calibration/d19.sh runs it.
-  calibration-image:
+  # FE-4, FE4-8: the D-19 calibration image builds from its pinned base and
+  # lock, and the real launcher (deploy/calibration/RUNBOOK.md) installs,
+  # records a tiny pilot definition, runs, stops and resumes the threshold
+  # run, runs development and chooses, with every start gate passing.
+  calibration-launcher:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - name: Build the image
-        run: docker build -t aqt-d19:ci deploy/calibration
-      - name: The memory-cap slice is valid
-        run: systemd-analyze verify deploy/calibration/aqt-d19.slice
-      - name: The engine starts in the image as the launcher runs it
+        with:
+          fetch-depth: 0  # the bundle needs the history and the prereg branch
+      - name: Package this commit and the preregistration branch
         run: |
-          docker run --rm --init --user 990:990 --network none --read-only             --tmpfs /tmp -e HOME=/tmp -v "$GITHUB_WORKSPACE:/app:ro" -w /tmp             aqt-d19:ci nice -n 19 sh -c '
-              git -C /app rev-parse --verify HEAD &&
-              OPENBLAS_NUM_THREADS=1 OPENBLAS_CORETYPE=Haswell python -c "
-          import sys; sys.path[:0] = [\"/app\", \"/app/src\"]
-          from calibration import dsr
-          print(dsr.runtime_identity()); print(dsr.canaries())"'
+          git branch -f ci-engine HEAD
+          git branch -f ci-prereg origin/docs/d19-recommendation
+          git bundle create /tmp/app.bundle ci-engine ci-prereg
+          echo "COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "PREREG=$(git rev-parse origin/docs/d19-recommendation)" >> "$GITHUB_ENV"
+      - name: Install and build
+        run: |
+          cd /tmp
+          sudo sh "$GITHUB_WORKSPACE/deploy/calibration/d19.sh" install /tmp/app.bundle "$COMMIT"
+          sudo systemd-analyze verify /etc/systemd/system/aqt-d19.slice
+          sudo sh /opt/aqt-d19/app/deploy/calibration/d19.sh build
+      - name: Record a pilot run definition
+        run: |
+          cd /opt/aqt-d19/app/deploy/calibration
+          printf '%s' '{"purpose": "pilot", "replications": {"threshold": 3, "dev": 2}, "cells": [{"cell_id": "pilot-k2", "k": 2, "t": 40, "law": "gaussian", "dependence": "independent"}, {"cell_id": "pilot-k1", "k": 1, "t": 40, "law": "t5", "dependence": "independent"}]}' | sudo tee /var/lib/aqt-d19/cells.json
+          echo '{}' | sudo tee /var/lib/aqt-d19/exploration.json
+          sudo chown 990:990 /var/lib/aqt-d19/cells.json /var/lib/aqt-d19/exploration.json
+          sudo sh d19.sh record --out definition.json --prereg-commit "$PREREG"             --engine-commit "$COMMIT" --cell-manifest cells.json             --exploration-manifest exploration.json
+      - name: Run, stop, resume; then development and choices
+        run: |
+          cd /opt/aqt-d19/app/deploy/calibration
+          sudo sh d19.sh run threshold
+          sudo sh d19.sh stop
+          sudo sh d19.sh run threshold
+          test "$(sudo docker wait aqt-d19)" = 0 || { sudo docker logs aqt-d19; exit 1; }
+          sudo sh d19.sh status | tee /tmp/status
+          grep -qx "1 threshold/pilot-k1" /tmp/status
+          grep -qx "1 threshold/pilot-k2" /tmp/status
+          sudo sh d19.sh run dev
+          test "$(sudo docker wait aqt-d19)" = 0 || { sudo docker logs aqt-d19; exit 1; }
+          sudo sh d19.sh choose
+          sudo test -s /var/lib/aqt-d19/choices.json

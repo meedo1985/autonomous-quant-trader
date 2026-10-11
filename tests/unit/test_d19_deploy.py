@@ -1,4 +1,5 @@
-"""The D-19 calibration image and launcher (prereg §13 rev 7g item 6; FE-4)."""
+"""The D-19 calibration image and launcher (prereg §13 rev 7g item 6; FE-4).
+The CI job `calibration-launcher` runs the real launcher end to end."""
 
 from __future__ import annotations
 
@@ -45,26 +46,37 @@ def test_the_engine_loads_no_third_party_package_but_numpy() -> None:
 
 def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
     launcher = (DEPLOY / "d19.sh").read_text(encoding="utf-8")
-    # FE-4: the digest comes from the host's inspection, never typed.
-    assert re.findall(r"^\s*digest=(.*)$", launcher, re.M) == [
-        """$(docker image inspect --format '{{.Id}}' "$(image)")"""
+    # FE-4, FE4-1: one id from the host's inspection, never typed; the same
+    # id is both AQT_IMAGE_DIGEST and the image docker starts.
+    assert re.findall(r"^\s*id=(.*)$", launcher, re.M) == [
+        """$(docker image inspect --format '{{.Id}}' "$(tag)")"""
     ]
-    assert '-e AQT_IMAGE_DIGEST="$digest"' in launcher
-    assert "AQT_IMAGE_DIGEST=" not in launcher.replace('AQT_IMAGE_DIGEST="$digest"', "")
+    run = launcher[launcher.index("    docker run $opts") :]
+    run = run[: run.index("\n}")]
+    assert '-e AQT_IMAGE_DIGEST="$id"' in run
+    assert re.search(r'"\$id" nice -n 19 python', run)
+    assert launcher.count("AQT_IMAGE_DIGEST=") == 1
     flags = [
         "--network none",
         "--user 990:990",
         "--read-only",
         "--init",
-        "--cgroup-parent aqt-d19.slice",
-        "nice -n 19",
+        '--cgroup-parent "$SLICE"',
+        "--memory 2560m",
         '"$APP:/app:ro"',
     ]
     for flag in flags:
-        assert flag in launcher, flag
+        assert flag in run, flag
     assert "/opt/aqt/" not in launcher  # never the forward-paper checkout
+    assert "umask 022" in launcher  # FE4-4
+    # FE4-2: every start first checks the systemd cap and slice placement.
+    assert re.search(r'^\s*capped "\$id"$', launcher, re.M)
+    assert "MEMORY_MAX=2684354560" in launcher and 2560 * 2**20 == 2684354560
     slice_ = (DEPLOY / "aqt-d19.slice").read_text(encoding="utf-8")
     assert re.search(r"^MemoryMax=2560M$", slice_, re.M)
+    # FE4-5, P18-6: status shows state and counts, never logs or content.
+    status = launcher[launcher.index("status)") : launcher.index("stop)")]
+    assert "docker logs" not in status and "cat " not in status
 
 
 @pytest.mark.skipif(shutil.which("sh") is None, reason="no POSIX sh")
