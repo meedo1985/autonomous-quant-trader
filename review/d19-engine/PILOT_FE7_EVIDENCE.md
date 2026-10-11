@@ -37,3 +37,43 @@ BTCUSDT: 38166 bars, 31 gaps (186 h), 0 missing archives, manifest 5f92ec5041c95
 The last line is the run-definition hash.
 
 **Kit correction:** the sheet now has the download step before `copy-raw`.
+
+## Session note: dropped connections
+
+The owner's SSH connection dropped ("client_loop: send disconnect: Connection reset") during commands that print nothing for minutes. The `timing` call was cut off this way. The owner then reconnected with `ServerAliveInterval=30` and worked inside `tmux`. No run state was affected.
+
+## Step D (timing, I1-8): seconds per development replication, 20 reps per cell
+
+The first line (K = 20) was cut off at the top of the paste. The other two, verbatim from the visible part:
+
+```
+...ostics": 0.0010419080790597945, "dsr_largest": 0.998796815314563, "dsr_median": 1.0481745122931898, "u_g": 1.8370973435521591}, "total": 3.888638045499101}
+{"cell": "pilot-timing-k2", "K": 2, "T": 1247, "reps": 20, "seconds_per_rep": {"generate": 0.0040810030070133506, "diagnostics": 0.0008503639954142272, "dsr_largest": 1.0417208006430883, "dsr_median": 1.083452005503932, "u_g": 1.861180728394538}, "total": 3.991284901543986}
+```
+
+The first of these two lines is the K = 5 cell; its start was cut off.
+
+## Step E: threshold run and the failing-chain check (FR2-2), verbatim
+
+```
+4f634461417e236ad39100a0b165c7f68d05f70cc67320f62c5b6670548a03a4
+Started. Progress: sudo sh d19.sh status
+workers 143028 and 143031; killing 143028
+PASS: the run stopped (exit 1) and no worker outlived it
+run stopped: BrokenProcessPool: A process in the process pool was terminated abruptly while the future was running or pending.
+Exited (1) About a minute ago
+started 2026-10-11T13:40:31.514643626Z finished 2026-10-11T13:43:54.876846368Z exit 1
+slice memory peak: 254787584 bytes
+4 threshold/pilot-q1-clusters-k20
+4 threshold/pilot-q1-clusters-k5
+4 threshold/pilot-q1-ind-k1
+2 threshold/pilot-q2m-k2
+4 threshold/pilot-q2m-k20
+4 threshold/pilot-q2-t5-rho-k20
+4 threshold/pilot-q3-factor-k20
+4 threshold/pilot-q4-k5
+4 threshold/pilot-q5-trend-k20
+4 threshold/pilot-q5-vol-k20
+```
+
+**FR2-2 on a Linux host: PASS.** Killing one worker stopped the whole run with exit code 1 and a clear `BrokenProcessPool` reason, and no worker outlived it. Ten of the 13 cells had finished their 2,000 threshold draws within 3 min 23 s, before the kill.
