@@ -169,7 +169,8 @@ jobs:
           test "$(grep -c '^threshold/pilot-k[12]:' /tmp/times)" = 2
           # FE7R2-2: a running container's memory.peak is where memwatch reads it
           cid=$(sudo docker run -d --network none --cgroup-parent aqt-d19.slice "aqt-d19:$COMMIT" sleep 30)
-          sudo test -s "/sys/fs/cgroup/aqt-d19.slice/docker-$cid.scope/memory.peak"
+          peak=$(sudo cat "/sys/fs/cgroup/aqt-d19.slice/docker-$cid.scope/memory.peak")
+          echo "memory.peak $peak"; test "$peak" -gt 0  # cgroup files have size 0
           sudo docker rm -f "$cid"
           sudo sh d19.sh status
           sudo sh d19.sh timing | tee /tmp/timing
