@@ -46,3 +46,7 @@ FE7-1 and FE7-5 are resolved. FE7-7 is resolved in code but not exercised end to
 | FE7R3-2 Low | AGREE, repaired | The start time keeps its fraction (`date ... +%s.%N`), so a chunk finished in the same second as the restart is still compared correctly. |
 
 **Found by CI after re-review 3:** systemd nests `aqt-d19.slice` inside `aqt.slice`, because a dash in a slice name means a parent slice. So `memory.peak` is not at `/sys/fs/cgroup/aqt-d19.slice/...`. `memwatch` now reads the run container's own cgroup path from `/proc/<pid>/cgroup` and takes `memory.peak` there. CI does the same with a running container, and also requires the path to lie inside `aqt-d19.slice`.
+
+## Re-review 4 (`SOL6_FE7_REREVIEW4_3A88A22.md`): ACCEPT, no findings
+
+FE7R3-1, FE7R3-2 and the `memory.peak` path are resolved. **Outcome:** the FE-7 re-pilot kit is accepted for giving to the owner. CI at `3a88a22` passed all four jobs, with `calibration-launcher` on AMD EPYC 7763. **Not exercised before the owner's run:** a multi-chunk restart interval in `times`, the full 10-minute `memwatch` window, and `failcheck` against a live run. The owner's run exercises all three, and their outputs are among those he sends back.
