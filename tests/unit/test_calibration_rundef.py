@@ -885,7 +885,7 @@ SMALL = {"threshold": 3, "dev": 1}
         ),
         ({"purpose": "pilot", "replications": {**SMALL, "threshold": 0}}, "positive"),
         ({"purpose": "pilot", "replications": {**SMALL, "heldout": 1}}, "positive"),
-        ({"purpose": "qualification", "replications": SMALL}, "refused"),
+        ({"purpose": "qualification", "replications": SMALL}, "exactly the prescribed"),
         (
             {"purpose": "pilot", "replications": {"threshold": 3, "dev": 1},
              "cells": [{"cell_id": "c-k1"}]},
@@ -906,12 +906,11 @@ SMALL = {"threshold": 3, "dev": 1}
 def test_a_bad_run_plan_is_refused(manifest: object, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         rundef.run_plan(manifest)
-    prescribed = {
-        "purpose": "qualification",
-        "replications": {"threshold": 300_000, "dev": 12_000},
-    }
+    from calibration import grid
+
+    prescribed = grid.manifest(1200, {"threshold": 300_000, "dev": 12_000})
     with pytest.raises(ValueError, match="qualification runs are refused"):
-        rundef.run_plan(prescribed)  # DR2-1
+        rundef.run_plan(prescribed)  # DR2-1: even the exact grid
 
 
 def test_the_recorded_seed_specification_is_the_section_8_one(

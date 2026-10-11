@@ -23,8 +23,8 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from calibration import classifier, dsr, gates
-from calibration.generator import Cell, generate
+from calibration import classifier, dsr, gates, grid
+from calibration.generator import Cell, cells_from_manifest, generate
 from calibration.seeds import cj, family_seed, outer_seed, sha, stream
 
 RECORD_TYPE = "aqt.d19.run_definition.v1"
@@ -250,12 +250,21 @@ def run_plan(manifest: object) -> dict[str, int]:
     elif any(piloted):
         raise ValueError(f"{PILOT_PREFIX!r} cell ids are for pilot runs only")
     if purpose == "qualification":
-        # DR2-1: a qualification run needs the complete frozen cell
-        # manifest (every candidate cell at T = T_C2) and every generator
-        # (skew-t, Q2m, Q5, QJ); neither exists yet, so none is accepted.
+        if counts != PRESCRIBED:
+            raise ValueError(
+                f"a qualification run uses exactly the prescribed {PRESCRIBED}"
+            )
+        # I2A-4, FA-1: exactly the qualifying grid at one T, canonical ids.
+        problem = grid.problem(cells_from_manifest(manifest))
+        if problem is not None:
+            raise ValueError(problem)
+        # DR2-1: still refused. T_C2 needs `g` from gap_embargo.rule, the
+        # accepted preregistration hash is pinned only after the owner's key
+        # record, and the container image and re-pilot (FE-4, FE-7) are not
+        # done; the owner's go-ahead follows the re-pilot (§4 step 2).
         raise ValueError(
-            "qualification runs are refused until the frozen cell manifest "
-            "and all generators are built and verified"
+            "qualification runs are refused until T_C2, the accepted "
+            "preregistration hash, the container image and the re-pilot exist"
         )
     return dict(counts)
 
