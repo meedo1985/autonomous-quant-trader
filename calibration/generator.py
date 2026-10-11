@@ -39,9 +39,10 @@ LAWS = (
     "mixed_ar",
 )  # fmt: skip
 # Q5 (prereg §3.4): drawn by `calibration.rules.draw` from exploration data,
-# one family per cell. QJ ("semi-joint") is not accepted until its joint
-# tests are counted (engine item 2b step 2).
-SEMI_LAWS = ("semi-trend", "semi-vol")
+# one family per cell; QJ ("semi-joint") is both families on one path, each
+# at K in {2, 20} (§13 rev 7g item 1).
+SEMI_LAWS = ("semi-trend", "semi-vol", "semi-joint")
+JOINT_K = (2, 20)
 # Q2m and Q4 have no cross-column dependence and need two or more columns.
 INDEPENDENT_ONLY = ("unequal", "mixed_ar")
 DEPENDENCES = (
@@ -88,6 +89,8 @@ def cells_from_manifest(manifest: object) -> list[Cell]:
             raise ValueError(f"{cell.cell_id}: clusters need K = 5 or 20")
         if cell.law in SEMI_LAWS and cell.dependence != "independent":
             raise ValueError(f"{cell.cell_id}: {cell.law} has no dependence level")
+        if cell.law == "semi-joint" and cell.k not in JOINT_K:
+            raise ValueError(f"{cell.cell_id}: QJ runs each family at K in {JOINT_K}")
         if cell.law in INDEPENDENT_ONLY and (
             cell.k < 2 or cell.dependence != "independent"
         ):

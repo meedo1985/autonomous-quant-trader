@@ -395,3 +395,52 @@ def test_coverage_counts_qualifying_cells_only_and_reports_an_empty_category() -
     demoted = choices.coverage(cells, {"a"})  # b demoted: its categories empty
     assert demoted["unequal_moments"] == [] and demoted["two_trial"] == []
     assert set(covered) == set(choices.CATEGORIES)
+
+
+def test_a_qj_cells_families_qualify_together_at_the_larger_n() -> None:
+    """Owner decision 2026-10-11 Q4: one family's 40k escape moves the
+    whole QJ cell to 40k; a demoted family demotes the other."""
+    joint = {"qj": ("qj/trend", "qj/vol")}
+    cells = {
+        "qj/trend": {r: _reps(u_g=1) for r in choices.RULES},
+        "qj/vol": {r: _reps() for r in choices.RULES},
+    }
+    report = choices.choose(cells, 322, joint)
+    held = {c: r["held_out"] for c, r in report["cells"].items()}  # type: ignore[attr-defined]
+    assert held == {"qj/trend": 40_000, "qj/vol": 40_000}
+    assert report["joint"]["qj"]["held_out"] == 40_000  # type: ignore[index]
+    cells["qj/trend"] = {r: _reps(dsr=10) for r in choices.RULES}
+    report = choices.choose(cells, 322, joint)
+    vol = report["cells"]["qj/vol"]  # type: ignore[index]
+    assert vol["status"] == "demoted_availability" and vol["held_out"] is None
+    assert vol["notes"] == ["QJ: the other family is demoted"]
+
+
+def test_the_joint_u_proc_check_demotes_both_families() -> None:
+    """At M = 322 and 12k development replications the joint limit (57
+    events) cannot bind while each family passes (at most 9 + 2 each), so
+    the check is shown with a tight tau."""
+    a, b = (
+        choices.availability("a", _reps(), TAU),
+        choices.availability("b", _reps(), TAU),
+    )
+    ra, rb = _reps(dsr=5), _reps(u_g=2)  # disjoint: 7 joint events
+    tight = {n: {**TAU[n], "u_proc_joint": {"tau": choices._ucb(6, N)}} for n in TAU}
+    out = choices._joint(a, b, ra, rb, tight)
+    assert out["u_proc_events"] == 7 and out["held_out"] is None
+    assert a.status == b.status == "demoted_availability"
+    assert a.notes == b.notes == ["QJ: joint U_proc"]
+
+
+def test_z_crit_also_meets_the_joint_limit_on_either_family_passing() -> None:
+    """Disjoint passes add up in P_0(E): the joint limit raises z_crit."""
+    trend = [Rep(None, 3.0 if i < 10 else -1.0, None) for i in range(N)]
+    vol = [Rep(None, 3.0 if i >= N - 10 else -1.0, None) for i in range(N)]
+    loose = choices._ucb(10, N)  # each family alone: 10 events allowed
+    alone = choices.z_crit({"t": trend, "v": vol}, {"t": loose, "v": loose})
+    assert alone == Decimal("0.000")
+    tight = choices._ucb(15, N)  # either family passing: 20 events > 15
+    both = choices.z_crit(
+        {"t": trend, "v": vol}, {"t": loose, "v": loose}, ((trend, vol, tight),)
+    )
+    assert both == Decimal("3.001")

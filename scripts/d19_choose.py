@@ -34,10 +34,6 @@ from calibration import choices, chunks, reduce, rundef  # noqa: E402
 from calibration.generator import Cell, cells_from_manifest  # noqa: E402
 from calibration.seeds import sha  # noqa: E402
 
-# QJ development records are not chosen here until its per-family records
-# and joint tests exist (item 2b step 2, slice 3); `M` already counts them.
-NOT_CHOSEN = ("semi-joint",)
-
 
 def _chain(
     defn: dict[str, Any], store: Path, ns: str, cell: Cell, gating: object
@@ -58,20 +54,32 @@ def _float(value: object) -> float | None:
 
 
 def development(
-    chain: chunks.Chain, bounds: reduce.Bounds
-) -> dict[str, list[choices.Rep]]:
-    """A verified development chain as replications per block rule; every
+    chain: chunks.Chain, bounds: reduce.Bounds, joint: bool = False
+) -> list[dict[str, list[choices.Rep]]]:
+    """A verified development chain as replications per block rule: one
+    entry, or one per family (`reduce.FAMILIES` order) of a QJ cell. Every
     record must follow from the development thresholds (I1-3)."""
-    out: dict[str, list[choices.Rep]] = {rule: [] for rule in choices.RULES}
-    for rep, record in enumerate(chunks.reduce(chain)):
-        if not isinstance(record, dict):
+    families: tuple[str | None, ...] = reduce.FAMILIES if joint else (None,)
+    out: list[dict[str, list[choices.Rep]]] = [
+        {rule: [] for rule in choices.RULES} for _ in families
+    ]
+    for rep, stored in enumerate(chunks.reduce(chain)):
+        if not isinstance(stored, dict) or (
+            joint and set(stored) != set(reduce.FAMILIES)
+        ):
             raise ValueError(f"{chain.cell_id} rep {rep}: malformed record")
-        problem = choices.consistent(record, bounds)
-        if problem is not None:
-            raise ValueError(f"{chain.cell_id} rep {rep}: {problem}")
-        for rule in choices.RULES:
-            r = record[rule]
-            out[rule].append(choices.Rep(r["reason"], _float(r["z"]), record["u_g"]))
+        for per, family in zip(out, families, strict=True):
+            record = stored if family is None else stored[family]
+            if not isinstance(record, dict):
+                raise ValueError(f"{chain.cell_id} rep {rep}: malformed record")
+            problem = choices.consistent(record, bounds)
+            if problem is not None:
+                raise ValueError(f"{chain.cell_id} rep {rep} {family}: {problem}")
+            for rule in choices.RULES:
+                r = record[rule]
+                per[rule].append(
+                    choices.Rep(r["reason"], _float(r["z"]), record["u_g"])
+                )
     return out
 
 
@@ -86,9 +94,6 @@ def main(argv: list[str] | None = None) -> int:
     defn = rundef.load(args.definition)
     try:
         cells = cells_from_manifest(defn["cell_manifest"])
-        other = sorted({c.law for c in cells} & set(NOT_CHOSEN))
-        if other:
-            raise ValueError(f"development choices are not built for laws {other}")
         gating = rundef.start_gate(defn, ROOT)
         chains = {
             (ns, c.cell_id): _chain(defn, args.store, ns, c, gating)
@@ -96,21 +101,35 @@ def main(argv: list[str] | None = None) -> int:
             for c in cells
         }
         heads = {f"{ns}/{c}": chunks.verify(chain) for (ns, c), chain in chains.items()}
-        bounds = {
-            c.cell_id: reduce.cell_thresholds(chains["threshold", c.cell_id])
-            for c in cells
-        }
+        # Per unit: a cell, or one family of a QJ cell ("<cell>/<family>";
+        # cell ids never hold "/").
+        bounds: dict[str, reduce.Bounds] = {}
+        units: dict[str, Cell] = {}
+        joint: dict[str, tuple[str, str]] = {}
+        for c in cells:
+            sets = reduce.cell_thresholds(chains["threshold", c.cell_id])
+            names = [c.cell_id]
+            if c.law == "semi-joint":
+                names = [f"{c.cell_id}/{f}" for f in reduce.FAMILIES]
+                joint[c.cell_id] = (names[0], names[1])
+            bounds.update(zip(names, sets, strict=True))
+            units.update(dict.fromkeys(names, c))
         pooled = reduce.pooled(list(bounds.values()))
-        dev = {
-            c.cell_id: development(
-                chains["dev", c.cell_id], reduce.for_k(pooled[c.t], c.k)
+        dev: dict[str, dict[str, list[choices.Rep]]] = {}
+        for c in cells:
+            per = development(
+                chains["dev", c.cell_id],
+                reduce.for_k(pooled[c.t], c.k),
+                c.law == "semi-joint",
             )
-            for c in cells
-        }
+            names = list(joint.get(c.cell_id, (c.cell_id,)))
+            dev.update(zip(names, per, strict=True))
     except (ValueError, RuntimeError) as error:  # ChainError is a RuntimeError
         print(error, file=sys.stderr)
         return 1
-    report = choices.choose(dev, choices.enumerated_tests([c.law for c in cells]))
+    report = choices.choose(
+        dev, choices.enumerated_tests([c.law for c in cells]), joint
+    )
     final = [
         bounds[c]
         for c, r in report["cells"].items()  # type: ignore[attr-defined]
@@ -121,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
         for t, (up, lo) in sorted(reduce.pooled(final).items())
     }
     covered = choices.coverage(
-        {c.cell_id: (c.law, c.dependence, c.k) for c in cells},
+        {u: (c.law, c.dependence, c.k) for u, c in units.items()},
         {c for c, r in report["cells"].items() if r["status"] == "qualifying"},  # type: ignore[attr-defined]
     )
     report["coverage"] = covered

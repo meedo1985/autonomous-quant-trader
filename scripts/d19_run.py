@@ -67,7 +67,12 @@ from calibration import (  # noqa: E402
     rundef,
     semi,
 )
-from calibration.generator import SEMI_LAWS, Cell, cells_from_manifest  # noqa: E402
+from calibration.generator import (  # noqa: E402
+    SEMI_LAWS,
+    Cell,
+    Legs,
+    cells_from_manifest,
+)
 from calibration.seeds import family_seed, outer_seed  # noqa: E402
 
 NAMESPACES = rundef.SEED_NAMESPACES  # prereg §8
@@ -82,11 +87,17 @@ def _exact(values: dict[str, float]) -> dict[str, str]:
 
 def threshold_replication(
     cell: Cell, anchor: str, rep: int, source: semi.Source | None = None
-) -> dict[str, str]:
-    """One threshold-run draw: the classifier diagnostics, bit-exact."""
+) -> dict[str, Any]:
+    """One threshold-run draw: the classifier diagnostics, bit-exact; for a
+    QJ cell, per family on its own K columns."""
     seed = outer_seed(anchor, cell.cell_id, NAMESPACES["threshold"], rep)
     legs = rules.draw(cell, seed, source)
-    return _exact(classifier.diagnostics(legs.x))
+    if cell.law != "semi-joint":
+        return _exact(classifier.diagnostics(legs.x))
+    return {
+        family: _exact(classifier.diagnostics(part.x))
+        for family, part in rules.families(cell, legs).items()
+    }
 
 
 def _hex(value: float | None) -> str | None:
@@ -126,20 +137,38 @@ def dev_replication(
     rep: int,
     bounds: reduce.Bounds,
     source: semi.Source | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """One development replication (prereg §2), bit-exact. `anchor` keys the
     outer seed; `prereg` is the family seed's protocol_hash in every
     namespace (§8, I1-5). A gate not computed counts as unavailable (P18-7),
     so no nominee is a U_G event. Recorded (§2 step 6, §9): the diagnostics;
     per block rule the cause code, z_f*, L, S0, max L_j/T and the DSR
     nominee; every column's (L_j, capped); the U_G nominee and event;
-    every column's rule 1-2 checks."""
+    every column's rule 1-2 checks. A QJ cell gives one such record per
+    family, on the family's own K columns of the one shared draw, with the
+    family's own family seed and the shared outer seed for U_G (owner
+    decision 2026-10-11, Q2 and Q3)."""
     seed = outer_seed(anchor, cell.cell_id, NAMESPACES["dev"], rep)
-    legs = rules.draw(cell, seed, source)
+    parts = rules.families(cell, rules.draw(cell, seed, source))
+    records = {
+        label: _family_record(cell, label, legs, seed, prereg, rep, bounds)
+        for label, legs in parts.items()
+    }
+    return records if cell.law == "semi-joint" else records[rules.family_label(cell)]
+
+
+def _family_record(
+    cell: Cell,
+    label: str,
+    legs: Legs,
+    seed: str,
+    prereg: str,
+    rep: int,
+    bounds: reduce.Bounds,
+) -> dict[str, object]:
     values = classifier.diagnostics(legs.x)
     upper, lower = bounds
     accept = classifier.within(values, upper, lower)
-    label = rules.family_label(cell)
     fam = family_seed(seed, cell.cell_id, label, cell.k, prereg, rep)
     out: dict[str, object] = {
         "diagnostics": _exact(values),
@@ -191,7 +220,9 @@ def dev_bounds(
         )
         for c in cells
     ]
-    pools = reduce.pooled([reduce.cell_thresholds(chain) for chain in chains])
+    pools = reduce.pooled(
+        [b for chain in chains for b in reduce.cell_thresholds(chain)]
+    )
     return {c.cell_id: reduce.for_k(pools[c.t], c.k) for c in cells}
 
 

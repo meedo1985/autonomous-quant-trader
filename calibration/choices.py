@@ -21,7 +21,11 @@ RULES = ("largest", "median")  # tie -> largest (§5 step 1)
 Z_SCREEN = 1.96  # §5 step 1
 Z_STEP = Decimal("0.001")  # §5 step 3
 Z_MAX = Decimal("20.000")  # no qualifying z_crit above this grid end
-BOUNDS = {"error": 0.025, "dsr": 0.0035, "u_g": 0.0015}  # prereg §6
+# prereg §6; QJ adds the cycle-level `P_0(E)` and `U_proc^R` bounds
+BOUNDS = {
+    "error": 0.025, "dsr": 0.0035, "u_g": 0.0015,
+    "error_joint": 0.05, "u_proc_joint": 0.01,
+}  # fmt: skip
 HELD_OUT = (20_000, 40_000)  # §13 item 3
 # Enumerated tests per cell (prereg §6: one per (cell, family label or
 # `agnostic` or `joint`, bound)): Q1-Q4 are agnostic and Q5 has one family,
@@ -405,20 +409,38 @@ def allowed(n: int, tau: float) -> int:
     return lo
 
 
+def _either(a: Rep, b: Rep, z: float) -> bool:
+    """E of a QJ replication: either family passes (P18-6, per cycle)."""
+    return _passes(a, z) or _passes(b, z)
+
+
+def _unavailable(rep: Rep) -> bool:
+    """A `U_proc^R` event of one family: DSR (with the classifier) or U_G."""
+    return rep.reason is not None or rep.u_g is not None
+
+
 def z_crit(
-    qualifying: dict[str, list[Rep]], tau_error: dict[str, float]
+    qualifying: dict[str, list[Rep]],
+    tau_error: dict[str, float],
+    pairs: tuple[tuple[list[Rep], list[Rep], float], ...] = (),
 ) -> Decimal | None:
     """§5 step 3: the smallest z on the 0.001 grid at which every qualifying
     cell's 90% UCB of P_0(E_f) is within its tau_err (at the cell's N_i).
     The decimal is compared as its nearest binary64 (P18-6). None if no grid
-    value up to Z_MAX qualifies."""
+    value up to Z_MAX qualifies. `pairs`: per qualifying QJ cell, its two
+    families' replications and the tau of `P_0(E)` at its N, which must
+    also hold (§5 step 3)."""
     limit = {c: allowed(len(reps), tau_error[c]) for c, reps in qualifying.items()}
+    joint = [(a, b, allowed(len(a), tau)) for a, b, tau in pairs]
 
     def ok(z: Decimal) -> bool:
         value = float(z)
         return all(
             sum(_passes(r, value) for r in reps) <= limit[c]
             for c, reps in qualifying.items()
+        ) and all(
+            sum(_either(x, y, value) for x, y in zip(a, b, strict=True)) <= cap
+            for a, b, cap in joint
         )
 
     lo, hi = 0, int(Z_MAX / Z_STEP)  # events fall as z rises: monotone
@@ -433,13 +455,57 @@ def z_crit(
     return (lo * Z_STEP).quantize(Z_STEP)
 
 
-def choose(cells: dict[str, dict[str, list[Rep]]], m: int) -> dict[str, object]:
-    """Steps 1-3 in order, as a JSON-ready report. `cells`: per cell id, the
-    replications under each block rule; `m`: the candidate manifest's test
-    count."""
+def _joint(
+    a: CellResult,
+    b: CellResult,
+    ra: list[Rep],
+    rb: list[Rep],
+    tau: dict[int, dict[str, dict[str, float]]],
+) -> dict[str, object]:
+    """A QJ cell's two families qualify together or not at all, at the
+    larger N; its cycle-level `U_proc^R` is checked like the family tests
+    (owner decision 2026-10-11, Q4), at the 20k/40k N the escape allows."""
+    events = sum(
+        _unavailable(x) or _unavailable(y) for x, y in zip(ra, rb, strict=True)
+    )
+    out: dict[str, object] = {"u_proc_events": events, "held_out": None}
+    if a.status != "qualifying" or b.status != "qualifying":
+        for r in (a, b):
+            if r.status == "qualifying":
+                r.status, r.held_out = "demoted_availability", None
+                r.notes.append("QJ: the other family is demoted")
+        return out
+    ucb = _ucb(events, len(ra))
+    for n in HELD_OUT:
+        if n >= max(a.held_out or 0, b.held_out or 0) and _within(
+            a, ucb, tau[n]["u_proc_joint"]["tau"]
+        ):
+            a.held_out = b.held_out = n
+            out["held_out"] = n
+            return out
+    for r in (a, b):
+        r.status, r.held_out = "demoted_availability", None
+        r.notes.append("QJ: joint U_proc")
+    return out
+
+
+def choose(
+    cells: dict[str, dict[str, list[Rep]]],
+    m: int,
+    joint: dict[str, tuple[str, str]] | None = None,
+) -> dict[str, object]:
+    """Steps 1-3 in order, as a JSON-ready report. `cells`: per cell id (per
+    family of a QJ cell), the replications under each block rule; `m`: the
+    candidate manifest's test count; `joint`: per QJ cell, its two family
+    ids in `cells`."""
+    joint = joint or {}
     rule, worst = block_rule(cells)
     tau = targets(m)
     results = {c: availability(c, reps[rule], tau) for c, reps in cells.items()}
+    joint_report = {
+        q: _joint(results[a], results[b], cells[a][rule], cells[b][rule], tau)
+        for q, (a, b) in sorted(joint.items())
+    }
     qualifying = {
         c: cells[c][rule] for c, r in results.items() if r.status == "qualifying"
     }
@@ -448,7 +514,26 @@ def choose(cells: dict[str, dict[str, list[Rep]]], m: int) -> dict[str, object]:
         for c, r in results.items()
         if r.held_out is not None
     }
-    chosen = z_crit(qualifying, tau_error) if qualifying else None
+    pairs = tuple(
+        (cells[a][rule], cells[b][rule], tau[ho]["error_joint"]["tau"])
+        for a, b in joint.values()
+        if (ho := results[a].held_out) is not None
+    )
+    chosen = z_crit(qualifying, tau_error, pairs) if qualifying else None
+    for q, (fa, fb) in joint.items():
+        ho = results[fa].held_out
+        if ho is None:
+            continue
+        n, tau_joint = len(cells[fa][rule]), tau[ho]["error_joint"]["tau"]
+        cap = allowed(n, tau_joint)
+        for x in (cap, cap + 1):  # as for the family limits below (I1-6)
+            if 0 <= x <= n:
+                _within(results[fa], _ucb(x, n), tau_joint)
+        if chosen is not None:
+            joint_report[q]["error_events_at_z"] = sum(
+                _either(x, y, float(chosen))
+                for x, y in zip(cells[fa][rule], cells[fb][rule], strict=True)
+            )
     for c, reps in qualifying.items():
         a = allowed(len(reps), tau_error[c])
         for x in (a, a + 1):  # the two counts the limit sits between
@@ -463,6 +548,7 @@ def choose(cells: dict[str, dict[str, list[Rep]]], m: int) -> dict[str, object]:
         "m": m,
         "targets": tau,
         "cells": {c: vars(r) for c, r in sorted(results.items())},
+        "joint": joint_report,
         "z_crit": None if chosen is None else str(chosen),
         # I1R-4: never read as a choice when a comparison is too close
         "status": "ok" if margin >= MARGIN_MIN else "margin_failed",

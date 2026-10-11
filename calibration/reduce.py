@@ -12,6 +12,7 @@ stay exact checks, and the correlation tails exist only for `K >= 2`."""
 from __future__ import annotations
 
 import struct
+from typing import Any
 
 from calibration import chunks, classifier
 
@@ -25,10 +26,20 @@ def decode(values: object) -> dict[str, float]:
     return {n: struct.unpack(">d", bytes.fromhex(v))[0] for n, v in values.items()}
 
 
-def cell_thresholds(chain: chunks.Chain) -> Bounds:
-    """The cell's (upper, lower) thresholds from its whole threshold chain;
-    `ChainError` if the chain is incomplete or broken."""
-    return classifier.fit_thresholds([decode(v) for v in chunks.reduce(chain)])
+FAMILIES = ("trend", "vol")  # a QJ record's keys (one draw per family)
+
+
+def cell_thresholds(chain: chunks.Chain) -> list[Bounds]:
+    """The cell's (upper, lower) thresholds from its whole threshold chain,
+    one set per family of a QJ cell (each family's own K columns; owner
+    decision 2026-10-11, Q2), else one; `ChainError` if the chain is
+    incomplete or broken."""
+    records: list[Any] = list(chunks.reduce(chain))
+    if records and isinstance(records[0], dict) and set(records[0]) == set(FAMILIES):
+        draws = [[r[f] for r in records] for f in FAMILIES]
+    else:
+        draws = [records]
+    return [classifier.fit_thresholds([decode(v) for v in d]) for d in draws]
 
 
 EXACT = ("K", "T")
