@@ -39,6 +39,12 @@ The last line must say `"false"`.
 
 ## C. Data, cell list, run definition
 
+If the server has never downloaded the exploration archives, download them first. This is the server runbook's step 4, and it reports `unavailable: 0` when complete:
+
+```sh
+sudo -u aqt sh -c 'cd /var/lib/aqt && /opt/aqt/app/.venv/bin/python /opt/aqt/app/scripts/download_market_data.py --root data/raw'
+```
+
 `copy-raw` copies forward paper's downloaded archives once. It refuses if a copy already exists, so stop there and send me the output.
 
 ```sh
