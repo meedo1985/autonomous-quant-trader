@@ -18,7 +18,6 @@ re-reviewed yet.
 
 No calibration was run.
 
-## Checks after repair
 ## Checks on `44c9859` (2026-10-11, Windows local venv, Python 3.14.7)
 
 | Command | Exit | Result |
@@ -31,4 +30,4 @@ No calibration was run.
 | `.venv/Scripts/lint-imports.exe` | 0 | 6 contracts kept, 0 broken |
 | bundled `pwsh.exe -NoProfile -File review/task6/verify_frozen.ps1` | 0 | 28/28 trusted bytes and inventory, 14/14 sidecars, Constitution self-hash, 7/7 bindings, nested bindings pass |
 
-The suite ran in one sequential run, without interruption. The total is 1980 tests, against 1978 at `b6edc5c`. The difference is the two new tests in the reduce file, while the I2BW-5 test replaced an earlier one.
+The suite ran in one sequential run, without interruption. The total is 1980 tests, against 1978 at `b6edc5c`. The two added tests are `test_for_k_makes_an_exact_k_threshold_set_from_the_pool` (the pooled test was rewritten, not added) and `test_a_q5_development_record_equals_an_independent_section_2_computation`.
