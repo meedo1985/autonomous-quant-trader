@@ -14,6 +14,8 @@
 #   sudo sh d19.sh choose
 #   sudo sh d19.sh timing
 #   sudo sh d19.sh nonfinite
+#   sudo sh d19.sh clean-check
+#   sudo sh d19.sh failcheck
 #
 # Every engine process runs in the pinned image, as uid 990, without network,
 # at `nice 19`, inside aqt-d19.slice (systemd MemoryMax 2560M, checked before
@@ -123,8 +125,12 @@ run)
         --store store --namespace "$2" --raw-root raw
     echo "Started. Progress: sudo sh d19.sh status"
     ;;
-status)  # FE4-5, P18-6: container state and chunks per chain, nothing else
+status)  # FE4-5, P18-6: state, times, memory, chunks per chain; nothing else
     docker ps -a --filter "name=^$NAME\$" --format '{{.Status}}'
+    # FE7-3: the run's own start, finish and exit (kept until the next run)
+    docker inspect -f 'started {{.State.StartedAt}} finished {{.State.FinishedAt}} exit {{.State.ExitCode}}'         "$NAME" 2>/dev/null || true
+    # FE7-4: the capped slice's exact peak memory since it started
+    echo "slice memory peak: $(systemctl show "$SLICE" -p MemoryPeak --value) bytes"
     find "$WORK/store" -name 'chunk-*.json' 2>/dev/null |
         awk -F/ '{ n[$(NF-2) "/" $(NF-1)]++ } END { for (c in n) print n[c], c }' |
         sort -k2
@@ -139,13 +145,35 @@ choose)
 timing)  # re-pilot (FE-7, I1-8): seconds per stage, both block rules apart
     engine --rm -- d19_pilot.py --reps 20
     ;;
-nonfinite)  # FE-7: non-finite threshold draws (binary64 exponent all ones),
-    # counted over the stored diagnostics only; prints a number, nothing else
-    find "$WORK/store/threshold" -name 'chunk-*.json' -exec cat {} + |
-        grep -oE '"[0-9a-f]{16}"' | grep -cE '"(7ff|fff)' || true
+nonfinite)  # FE-7, FE7-5: non-finite threshold diagnostics, per cell
+    engine --rm -- d19_pilot_checks.py nonfinite store
+    ;;
+clean-check)  # FE7-2: a clean threshold run equals the interrupted+resumed one
+    engine --rm -- d19_run.py run --definition definition.json         --store store-clean --namespace threshold --raw-root raw
+    engine --rm -- d19_pilot_checks.py compare store store-clean
+    ;;
+failcheck)  # FR2-2, FE7-7: kill one worker; the run must stop, none survive
+    [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" = true ] ||
+        { echo "refused: no run is going (start one with: run threshold)" >&2; exit 1; }
+    # shellcheck disable=SC2046  # the PIDs are words
+    set -- $(docker top "$NAME" -eo pid,args | awk '/spawn_main/ { print $1 }')
+    [ $# = 2 ] || { echo "refused: expected 2 workers, found $#" >&2; exit 1; }
+    echo "workers $1 and $2; killing $1"
+    kill -9 "$1"
+    for _ in $(seq 120); do
+        [ "$(docker inspect -f '{{.State.Running}}' "$NAME")" = false ] && break
+        sleep 1
+    done
+    code=$(docker inspect -f '{{.State.ExitCode}}' "$NAME")
+    [ "$(docker inspect -f '{{.State.Running}}' "$NAME")" = false ] ||
+        { echo "FAIL: the run did not stop within 120 s" >&2; exit 1; }
+    [ "$code" != 0 ] || { echo "FAIL: the run exited 0 after a killed worker" >&2; exit 1; }
+    ! kill -0 "$2" 2>/dev/null || { echo "FAIL: worker $2 outlived the run" >&2; exit 1; }
+    echo "PASS: the run stopped (exit $code) and no worker outlived it"
+    docker logs --tail 3 "$NAME" 2>&1
     ;;
 *)
-    sed -n '2,16p' "$0"
+    sed -n '2,18p' "$0"
     exit 1
     ;;
 esac

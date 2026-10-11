@@ -86,8 +86,8 @@ def test_the_launcher_is_valid_sh() -> None:
 
 
 def test_the_re_pilot_manifest_is_a_valid_pilot_covering_every_group() -> None:
-    """FE-7: one cell of each group Q1-Q5 and QJ, plus the thin categories
-    (Q1 clusters, Q2m, QJ); a pilot by its ids and counts (FA-1)."""
+    """FE-7: one cell of each group Q1-Q5 and QJ, and every cell of the thin
+    categories (Q1 clusters, Q2m, QJ); a pilot by its ids and counts (FA-1)."""
     import json
 
     sys.path[:0] = [str(ROOT), str(ROOT / "src")]
@@ -103,3 +103,52 @@ def test_the_re_pilot_manifest_is_a_valid_pilot_covering_every_group() -> None:
     assert ("garch", "factor") in {(c.law, c.dependence) for c in cells}  # Q3
     assert ("gaussian", "clusters") in {(c.law, c.dependence) for c in cells}
     assert {c.t for c in cells} == {1247}
+    # FE7-1: every cell of each thin category (prereg §13 item 3)
+    from calibration import grid
+
+    for law, dep in (("gaussian", "clusters"), ("unequal", "independent"),
+                     ("semi-joint", "independent")):  # fmt: skip
+        ks = sorted(k for la, de, k in grid.GRID if (la, de) == (law, dep))
+        assert sorted(c.k for c in cells if (c.law, c.dependence) == (law, dep)) == ks
+
+
+def test_the_pilot_checks_count_non_finite_diagnostics_and_compare_stores(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """FE7-5: only threshold diagnostic values, per family for QJ; FE7-2:
+    two stores' threshold chains equal or not."""
+    import importlib.util
+    import json
+    import struct
+
+    spec = importlib.util.spec_from_file_location(
+        "d19_pilot_checks", ROOT / "scripts" / "d19_pilot_checks.py"
+    )
+    assert spec is not None and spec.loader is not None
+    checks = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checks)
+
+    def hx(x: float) -> str:
+        return struct.pack(">d", x).hex()
+
+    def chunk(store: Path, cell: str, results: list[object], sha: str) -> None:
+        d = store / "threshold" / cell
+        d.mkdir(parents=True, exist_ok=True)
+        record = {"content_sha256": sha, "results": results}
+        (d / "chunk-0000000.json").write_text(json.dumps(record))
+
+    plain = [{"g2": hx(1.0), "K": hx(2.0)}, {"g2": hx(float("nan")), "K": hx(2.0)}]
+    qj = [{"trend": {"g2": hx(float("inf"))}, "vol": {"g2": hx(-1.0)}}]
+    a, b = tmp_path / "a", tmp_path / "b"
+    for store in (a, b):
+        chunk(store, "pilot-x", plain, "s1")
+        chunk(store, "pilot-qj", qj, "s2")
+    assert checks.main(["nonfinite", str(a)]) == 0
+    out = capsys.readouterr().out
+    assert "pilot-x: 1 non-finite of 4" in out and "pilot-qj: 1 non-finite of 2" in out
+    assert "all cells: 2 non-finite of 6" in out
+    assert checks.main(["compare", str(a), str(b)]) == 0
+    chunk(b, "pilot-x", plain[:1], "s1")
+    assert checks.main(["compare", str(a), str(b)]) == 1
+    with pytest.raises(SystemExit, match="no threshold chains"):
+        checks.main(["nonfinite", str(tmp_path / "empty")])

@@ -1,7 +1,9 @@
 """D-19 re-pilot timing (FE-7, I1-8): per replication, the time of each
 stage of a development replication, with the two Annex B block rules timed
 separately, on representative grid cells at T = 1247 (the T_C2 upper bound,
-so the cost is not understated).
+so the cost is not understated). Every window is accepted, so Annex B
+always runs to the end: an upper bound on a replication's DSR cost. Q5 and
+QJ cells are timed by the development run itself (`d19.sh status` times).
 
 Synthetic data only, own seed namespace (never a run's); produces timings,
 never a calibration result. Run inside the calibration image:
@@ -49,7 +51,8 @@ def one(cell: Cell, rep: int) -> dict[str, float]:
         result = dsr.evaluate(legs.x, fam, rule, classifier=lambda *_: True)
         nominee = nominee if nominee is not None else result.nominee
         t.append(time.perf_counter())
-    gates.u_g(legs.x, legs.candidates, legs.benchmark, nominee or 0, seed)
+    if nominee is not None:  # as the run: no nominee, no U_G (FE7-6)
+        gates.u_g(legs.x, legs.candidates, legs.benchmark, nominee, seed)
     t.append(time.perf_counter())
     names = ("generate", "diagnostics", "dsr_largest", "dsr_median", "u_g")
     return {n: t[i + 1] - t[i] for i, n in enumerate(names)}

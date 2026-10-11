@@ -67,6 +67,34 @@
       "t": 1247,
       "law": "semi-joint",
       "dependence": "independent"
+    },
+    {
+      "cell_id": "pilot-q1-clusters-k5",
+      "k": 5,
+      "t": 1247,
+      "law": "gaussian",
+      "dependence": "clusters"
+    },
+    {
+      "cell_id": "pilot-q2m-k2",
+      "k": 2,
+      "t": 1247,
+      "law": "unequal",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "pilot-q2m-k5",
+      "k": 5,
+      "t": 1247,
+      "law": "unequal",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "pilot-qj-k2",
+      "k": 2,
+      "t": 1247,
+      "law": "semi-joint",
+      "dependence": "independent"
     }
   ]
 }

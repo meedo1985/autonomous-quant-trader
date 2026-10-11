@@ -160,6 +160,10 @@ jobs:
           test "$(sudo docker wait aqt-d19)" = 0 || { sudo docker logs aqt-d19; exit 1; }
           sudo sh d19.sh choose
           sudo test -s /var/lib/aqt-d19/choices.json
-          test "$(sudo sh d19.sh nonfinite)" -ge 0
+          sudo sh d19.sh nonfinite | tee /tmp/nonfinite
+          grep -q "^all cells: 0 non-finite of" /tmp/nonfinite
+          sudo sh d19.sh clean-check | tee /tmp/clean
+          grep -qx "PASS: the resumed threshold run equals the clean run" /tmp/clean
+          sudo sh d19.sh status
           sudo sh d19.sh timing | tee /tmp/timing
           test "$(grep -c dsr_median /tmp/timing)" = 3

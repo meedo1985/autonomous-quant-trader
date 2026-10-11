@@ -1,14 +1,18 @@
 # D-19 re-pilot (FE-7): your command sheet
 
-You run these on the server, logged in as root as usual. Copy each block exactly. Forward paper keeps running and is never touched.
+You run these on the server, logged in as root as usual. Copy each block exactly. Forward paper keeps running, and nothing here touches it.
 
 The re-pilot is a measurement only. It qualifies nothing and decides nothing. The engine refuses qualification runs in code.
 
-Where a step says **send me**, paste the output into the chat. In the commands:
+In the commands:
 - `<commit>` is the engine commit id I give you in the chat;
 - the preregistration commit is already filled in.
 
-**Time:** about 30 minutes of your attention, then an overnight run of about 5–8 hours.
+Where a step says **send me**, paste the output into the chat. If any command prints `refused` or `FAIL`, stop there and send me the output.
+
+**Time:** about 45 minutes of your attention. The development run then takes one night, about 10 hours.
+
+**What you run:** 13 cells. There is one cell from each group. Every cell of the thin categories is included: 2 Q1 clusters, 3 Q2m and 2 QJ. Each cell runs 2,000 threshold and 1,000 development replications at T = 1247. This is your choice of 2026-10-11 (`OWNER_DECISION_FE7_PILOT_SIZE.md`).
 
 ## A. Install, build, probe (about 15 minutes)
 
@@ -22,9 +26,7 @@ sudo sh d19.sh build
 sudo sh d19.sh probe
 ```
 
-The third line must print `<commit>`. **Send me** the last line of `probe`.
-
-**If `probe` refuses, stop here.** Nothing else is run until we have diagnosed it.
+The third line must print `<commit>`. **Send me** the last line of `probe`. If `probe` does not print `This CPU runs the pinned runtime.`, stop here.
 
 ## B. Switch automatic reboots off for the run
 
@@ -37,8 +39,10 @@ The last line must say `"false"`.
 
 ## C. Data, cell list, run definition
 
+The copy runs only if `/var/lib/aqt-d19/raw` does not exist yet:
+
 ```sh
-sudo cp -r /var/lib/aqt/data/raw /var/lib/aqt-d19/raw
+sudo test ! -e /var/lib/aqt-d19/raw && sudo cp -r /var/lib/aqt/data/raw /var/lib/aqt-d19/raw
 sudo chown -R 990:990 /var/lib/aqt-d19/raw
 sudo sh d19.sh manifests
 sudo install -o 990 -g 990 -m 644 /opt/aqt-d19/app/deploy/calibration/pilot-cells.json /var/lib/aqt-d19/cells.json
@@ -58,61 +62,62 @@ sudo sh d19.sh timing
 
 **Send me** the three lines it prints.
 
-## E. Threshold run and the failing-chain check (FR2-2)
+## E. Threshold run, with the failing-chain check (FR2-2)
+
+Start the run and let it work for two minutes. Then `failcheck` kills one of its two workers and checks that the whole run stops and that no worker survives:
 
 ```sh
 sudo sh d19.sh run threshold
-sleep 60
-sudo docker top aqt-d19 -eo pid,args
-```
-
-The list shows the run's processes. Two of them contain `spawn_main`: those are the two workers. Kill **one** of them, putting its number in place of `<PID>`:
-
-```sh
-sudo kill -9 <PID>
-sleep 30
+sleep 120
+sudo sh d19.sh failcheck
 sudo sh d19.sh status
-sudo docker top aqt-d19
-sudo docker logs --tail 5 aqt-d19
 ```
 
-`status` should now say `Exited`. `docker top` should say the container is not running, which shows that no worker outlived the run. **Send me** all three outputs. Then resume:
+`failcheck` must print `PASS: ...`. **Send me** both outputs. Then resume, which continues from the last finished chunk:
 
 ```sh
 sudo sh d19.sh run threshold
 ```
 
-Check now and then with `sudo sh d19.sh status`. The threshold run is finished when the status says `Exited (0)` and every `threshold/...` line shows `4`.
+Check now and then with `sudo sh d19.sh status`. The threshold run is finished when `status` shows `Exited (0)`, and **all 13** `threshold/...` lines show `4`. **Send me** that `status` output.
 
-## F. Development run (overnight)
+## F. Resume check (about as long as the threshold run, under an hour)
+
+This runs the threshold namespace again from scratch, in a separate folder, and compares it with the interrupted-and-resumed one:
+
+```sh
+sudo sh d19.sh clean-check
+```
+
+It must end with `PASS: the resumed threshold run equals the clean run`. **Send me** the output.
+
+## G. Development run (overnight)
 
 ```sh
 sudo sh d19.sh run dev
-sleep 600
-sudo docker stats --no-stream aqt-d19
-free -m
+sleep 900
+sudo sh d19.sh status
 systemctl status aqt-paper --no-pager | head -3
 ```
 
-**Send me** these three outputs. They show the memory with 2 workers and that forward paper is still running.
+**Send me** both outputs. They show the memory with 2 workers and that forward paper is still running.
 
-The development run is finished when the status says `Exited (0)` and every `dev/...` line shows `2`.
+The development run is finished when `status` shows `Exited (0)` and **all 13** `dev/...` lines show `2`.
 
-## G. Results (the next day)
+## H. Results (the next day)
 
 ```sh
 sudo sh d19.sh status
-sudo sh d19.sh nonfinite
-sudo ls -l --time-style=+%s /var/lib/aqt-d19/store/threshold/* /var/lib/aqt-d19/store/dev/*
 sudo sh d19.sh choose
+sudo sh d19.sh nonfinite
 sudo cat /var/lib/aqt-d19/choices.json
 ```
 
 **Send me** all of it. Here is what each output tells me:
-- `nonfinite`: the number of non-finite threshold draws (FE-7);
-- the file times: the speed per replication;
+- `status`: the run times and the peak memory;
+- `nonfinite`: the non-finite threshold draws, per cell (FE-7). If any exist, how to treat them is your decision;
 - `choices.json`: the development event counts.
 
-Every number here is development or threshold data. Nothing held-out exists.
+Every number here comes from development or threshold data. Nothing held-out exists.
 
 When we are done, I will tell you whether to switch automatic reboots back on, or to keep them off for the full run.
