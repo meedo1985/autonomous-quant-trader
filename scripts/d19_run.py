@@ -18,8 +18,9 @@ threshold: each replication is the classifier diagnostics of one generator
 draw (§3.5).
 
 dev: each replication is prereg §2 on one generator draw: the classifier
-with the development thresholds (per K, the extreme over every cell's
-complete threshold chain, §3.5 item 2), Annex B under both family block
+with the development thresholds (per T level, each tail's extreme over
+every cell's complete threshold chain, of any K, §3.5 item 2; owner decision
+2026-10-11 on I2BW-1), Annex B under both family block
 rules (§5 step 1) with z_f* stored, and U_G on the nominee. The threshold
 run must be complete first. Held-out needs the qualification object and is
 not built.
