@@ -83,3 +83,23 @@ def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
 @pytest.mark.skipif(shutil.which("sh") is None, reason="no POSIX sh")
 def test_the_launcher_is_valid_sh() -> None:
     subprocess.run(["sh", "-n", str(DEPLOY / "d19.sh")], check=True)
+
+
+def test_the_re_pilot_manifest_is_a_valid_pilot_covering_every_group() -> None:
+    """FE-7: one cell of each group Q1-Q5 and QJ, plus the thin categories
+    (Q1 clusters, Q2m, QJ); a pilot by its ids and counts (FA-1)."""
+    import json
+
+    sys.path[:0] = [str(ROOT), str(ROOT / "src")]
+    from calibration import choices, rundef
+    from calibration.generator import cells_from_manifest
+
+    manifest = json.loads((DEPLOY / "pilot-cells.json").read_text(encoding="utf-8"))
+    cells = cells_from_manifest(manifest)
+    assert rundef.run_plan(manifest) == {"threshold": 2000, "dev": 1000}
+    laws = {c.law for c in cells}
+    assert {"gaussian", "unequal", "mixed_ar", "semi-trend", "semi-vol",
+            "semi-joint"} <= laws and laws & set(choices.Q2_LAWS)  # fmt: skip
+    assert ("garch", "factor") in {(c.law, c.dependence) for c in cells}  # Q3
+    assert ("gaussian", "clusters") in {(c.law, c.dependence) for c in cells}
+    assert {c.t for c in cells} == {1247}

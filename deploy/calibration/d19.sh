@@ -12,6 +12,8 @@
 #   sudo sh d19.sh status
 #   sudo sh d19.sh stop
 #   sudo sh d19.sh choose
+#   sudo sh d19.sh timing
+#   sudo sh d19.sh nonfinite
 #
 # Every engine process runs in the pinned image, as uid 990, without network,
 # at `nice 19`, inside aqt-d19.slice (systemd MemoryMax 2560M, checked before
@@ -134,8 +136,16 @@ choose)
     engine --rm -- d19_choose.py choose --definition definition.json \
         --store store --out choices.json
     ;;
+timing)  # re-pilot (FE-7, I1-8): seconds per stage, both block rules apart
+    engine --rm -- d19_pilot.py --reps 20
+    ;;
+nonfinite)  # FE-7: non-finite threshold draws (binary64 exponent all ones),
+    # counted over the stored diagnostics only; prints a number, nothing else
+    find "$WORK/store/threshold" -name 'chunk-*.json' -exec cat {} + |
+        grep -oE '"[0-9a-f]{16}"' | grep -cE '"(7ff|fff)' || true
+    ;;
 *)
-    sed -n '2,14p' "$0"
+    sed -n '2,16p' "$0"
     exit 1
     ;;
 esac
