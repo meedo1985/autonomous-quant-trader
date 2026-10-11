@@ -70,3 +70,22 @@ jobs:
           test "$(systemctl show aqt-paper -p ExecMainStatus --value)" = 2
           test "$(systemctl show aqt-paper -p NRestarts --value)" = 0
           sudo grep REFUSE_START /var/lib/aqt/data/forward/deployment_refusals.jsonl | grep "checkout differs"
+
+  # FE-4: the D-19 calibration image builds from its pinned base and lock,
+  # and the engine starts in it as deploy/calibration/d19.sh runs it.
+  calibration-image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the image
+        run: docker build -t aqt-d19:ci deploy/calibration
+      - name: The memory-cap slice is valid
+        run: systemd-analyze verify deploy/calibration/aqt-d19.slice
+      - name: The engine starts in the image as the launcher runs it
+        run: |
+          docker run --rm --init --user 990:990 --network none --read-only             --tmpfs /tmp -e HOME=/tmp -v "$GITHUB_WORKSPACE:/app:ro" -w /tmp             aqt-d19:ci nice -n 19 sh -c '
+              git -C /app rev-parse --verify HEAD &&
+              OPENBLAS_NUM_THREADS=1 OPENBLAS_CORETYPE=Haswell python -c "
+          import sys; sys.path[:0] = [\"/app\", \"/app/src\"]
+          from calibration import dsr
+          print(dsr.runtime_identity()); print(dsr.canaries())"'
