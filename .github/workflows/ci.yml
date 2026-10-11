@@ -53,7 +53,7 @@ jobs:
           rc=0
           OPENBLAS_NUM_THREADS=1 OPENBLAS_CORETYPE=Haswell python -B -c "import sys; sys.path[:0] = ['.', 'src']
           from calibration import rundef; rundef.gating('probe')" || rc=$?
-          if [ "$rc" = 139 ]; then echo "::error::inconclusive: this runner's CPU crashes the pinned OpenBLAS kernel; rerun the job"; fi
+          if [ "$rc" = 139 ]; then echo "::error::inconclusive: the probe segfaulted (seen only on AMD EPYC Zen 4/5 runners, under the pinned OpenBLAS kernel); check the CPU line above and rerun the job"; fi
           exit "$rc"
       - name: Engine tests
         run: python -m pytest tests/unit/test_calibration_*.py tests/unit/test_d19_deploy.py
@@ -137,7 +137,7 @@ jobs:
         run: |
           rc=0
           sudo sh /opt/aqt-d19/app/deploy/calibration/d19.sh probe || rc=$?
-          if [ "$rc" = 3 ]; then echo "::error::inconclusive: this runner's CPU crashes the pinned OpenBLAS kernel; rerun the job"; fi
+          if [ "$rc" = 3 ]; then echo "::error::inconclusive: the probe segfaulted (seen only on AMD EPYC Zen 4/5 runners, under the pinned OpenBLAS kernel); check the CPU line above and rerun the job"; fi
           exit "$rc"
       - name: Record a pilot run definition
         run: |

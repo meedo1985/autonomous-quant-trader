@@ -17,3 +17,10 @@
 - **Reboots other than unattended upgrades.** These are not covered by the runbook step. The owner's server has no other automatic reboot that the AI knows of. This is to be confirmed at the re-pilot walkthrough.
 
 No calibration was run.
+
+## Re-review 2 (`SOL6_FE4_REREVIEW2_BC43CC8.md`: FIX; FE4R-2/3 resolved, FE4R-4 partly)
+
+| ID | Decision | Repair |
+|---|---|---|
+| FE4R2-1 Moderate (and FE4R-1) | AGREE, repaired | Exit 3 is reserved for a segmentation fault of the measurement. Any other failure that happens to exit with 3 is remapped to 1, and its original status is printed. |
+| FE4R2-2 Moderate (and FE4R-4) | AGREE, repaired | A segfault is reported as "the measurement crashed (segmentation fault), not yet diagnosed". The runbook calls the AMD EPYC Zen 4/5 kernel crash the likely cause, not a proven one. It asks for the whole output, and says the D-20 pin becomes the owner's decision only once the cause is confirmed. The CI messages say the same and point to the printed CPU line. |

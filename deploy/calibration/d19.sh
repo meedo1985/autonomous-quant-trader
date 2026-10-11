@@ -83,8 +83,10 @@ build)
 probe)  # can this CPU run the pinned runtime? (V_BINDING: OPENBLAS_CORETYPE=Haswell)
     # The engine's own measurement (canaries and reference vectors), once,
     # under the run's own bounds (FE4R-3). On AMD EPYC Zen 4/5 runners it
-    # crashed in OpenBLAS dgemm (PR #45). Exit 3 means exactly that crash
-    # (FE4R-1); any other failure keeps its own exit status.
+    # crashed in OpenBLAS dgemm (PR #45). Exit 3 means a segmentation fault
+    # in the measurement, and only that (FE4R-1, FE4R2-1). It is reported
+    # as unclassified until diagnosed (FE4R2-2): the AMD crash is the likely
+    # cause, not a proven one.
     id=$(docker image inspect --format '{{.Id}}' "$(tag)")
     capped "$id"
     rc=0
@@ -96,10 +98,12 @@ probe)  # can this CPU run the pinned runtime? (V_BINDING: OPENBLAS_CORETYPE=Has
 from calibration import rundef; rundef.gating('probe')" || rc=$?
     case $rc in
     0) echo "This CPU runs the pinned runtime." ;;
-    139) echo "refused: this CPU crashes the pinned OpenBLAS kernel" \
-            "(segmentation fault). $(grep -m1 'model name' /proc/cpuinfo)" >&2
+    139) echo "refused: the measurement crashed (segmentation fault)," \
+            "not yet diagnosed; on newer AMD EPYC this has been the pinned" \
+            "OpenBLAS kernel. $(grep -m1 'model name' /proc/cpuinfo)" >&2
         exit 3 ;;
-    *) echo "probe failed with exit status $rc (not the known CPU crash)" >&2
+    *) echo "probe failed with exit status $rc (not a crash)" >&2
+        [ "$rc" = 3 ] && exit 1  # exit 3 is reserved for a crash
         exit "$rc" ;;
     esac
     ;;

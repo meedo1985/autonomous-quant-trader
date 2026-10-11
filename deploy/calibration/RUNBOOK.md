@@ -49,7 +49,7 @@ sudo sh d19.sh probe
 
 It prints `This CPU runs the pinned runtime.`, or it stops with one of two results:
 
-- **Exit 3, "refused: this CPU crashes the pinned OpenBLAS kernel".** This server's processor is one the pinned math kernel crashes on. In tests that happened on newer AMD EPYC (Zen 4/5). Stop and send me the line it prints. Changing the pin is your decision (D-20 binding).
+- **Exit 3, "refused: the measurement crashed (segmentation fault)".** The engine's measurement crashed on this server. On newer AMD EPYC (Zen 4/5) that has been the pinned math kernel, but the cause here is not proven until it is diagnosed. Stop and send me the whole output. Only once the cause is confirmed is changing the pin a decision for you (D-20 binding).
 - **Any other error.** Stop and send me the whole output and the exit status. Nothing is decided from it until it is diagnosed.
 
 Switch automatic reboots off for the run (§13 item 6). Security updates still install:
