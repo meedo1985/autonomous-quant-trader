@@ -47,7 +47,10 @@ Check that this server's CPU can run the pinned runtime:
 sudo sh d19.sh probe
 ```
 
-It prints `This CPU runs the pinned runtime.` or refuses. The pinned OpenBLAS kernel crashed on newer AMD EPYC processors (Zen 4/5) in tests. If it refuses, stop here and send me the CPU model it prints. Changing the pin is your decision (D-20 binding).
+It prints `This CPU runs the pinned runtime.`, or it stops with one of two results:
+
+- **Exit 3, "refused: this CPU crashes the pinned OpenBLAS kernel".** This server's processor is one the pinned math kernel crashes on. In tests that happened on newer AMD EPYC (Zen 4/5). Stop and send me the line it prints. Changing the pin is your decision (D-20 binding).
+- **Any other error.** Stop and send me the whole output and the exit status. Nothing is decided from it until it is diagnosed.
 
 Switch automatic reboots off for the run (§13 item 6). Security updates still install:
 

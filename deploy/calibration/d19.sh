@@ -81,21 +81,26 @@ build)
     echo "Next: sudo sh d19.sh probe"
     ;;
 probe)  # can this CPU run the pinned runtime? (V_BINDING: OPENBLAS_CORETYPE=Haswell)
-    # The engine's own measurement (canaries and reference vectors), once.
-    # On AMD EPYC Zen 4/5 runners it crashed in OpenBLAS dgemm (PR #45).
+    # The engine's own measurement (canaries and reference vectors), once,
+    # under the run's own bounds (FE4R-3). On AMD EPYC Zen 4/5 runners it
+    # crashed in OpenBLAS dgemm (PR #45). Exit 3 means exactly that crash
+    # (FE4R-1); any other failure keeps its own exit status.
+    id=$(docker image inspect --format '{{.Id}}' "$(tag)")
+    capped "$id"
     rc=0
     docker run --rm --init --user 990:990 --network none --read-only \
-        --tmpfs /tmp -e HOME=/tmp -e OPENBLAS_NUM_THREADS=1 \
-        -e OPENBLAS_CORETYPE=Haswell -v "$APP:/app:ro" \
-        "$(docker image inspect --format '{{.Id}}' "$(tag)")" python -B -c \
+        --tmpfs /tmp --cgroup-parent "$SLICE" --memory 2560m \
+        -e HOME=/tmp -e OPENBLAS_NUM_THREADS=1 -e OPENBLAS_CORETYPE=Haswell \
+        -v "$APP:/app:ro" "$id" nice -n 19 python -B -c \
         "import sys; sys.path[:0] = ['/app', '/app/src']
 from calibration import rundef; rundef.gating('probe')" || rc=$?
     case $rc in
     0) echo "This CPU runs the pinned runtime." ;;
-    139) echo "refused: this CPU crashes the pinned OpenBLAS kernel;" \
-            "do not run. Report: $(grep -m1 'model name' /proc/cpuinfo)" >&2
-        exit 1 ;;
-    *) exit "$rc" ;;
+    139) echo "refused: this CPU crashes the pinned OpenBLAS kernel" \
+            "(segmentation fault). $(grep -m1 'model name' /proc/cpuinfo)" >&2
+        exit 3 ;;
+    *) echo "probe failed with exit status $rc (not the known CPU crash)" >&2
+        exit "$rc" ;;
     esac
     ;;
 manifests)  # the BTC exploration manifest that `record` needs (Task 14)
