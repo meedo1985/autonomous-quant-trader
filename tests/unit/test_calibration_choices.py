@@ -444,3 +444,37 @@ def test_z_crit_also_meets_the_joint_limit_on_either_family_passing() -> None:
         {"t": trend, "v": vol}, {"t": loose, "v": loose}, ((trend, vol, tight),)
     )
     assert both == Decimal("3.001")
+
+
+def test_a_successful_choice_covers_every_category_until_qj_is_demoted() -> None:
+    """I2BS2-2: a qualifying manifest with one cell per category gives full
+    coverage; demoting one QJ family removes `joint_generator`."""
+    cells = {
+        "k1": ("gaussian", "independent", 1),
+        "rho": ("gaussian", "equi0.9", 5),
+        "dup": ("gaussian", "exact_duplicate", 5),
+        "opp": ("gaussian", "opposites", 5),
+        "clu": ("gaussian", "clusters", 5),
+        "ar": ("ar0.5", "independent", 5),
+        "t5": ("t5", "independent", 5),
+        "unq": ("unequal", "independent", 5),
+        "qj/trend": ("semi-joint", "independent", 2),
+        "qj/vol": ("semi-joint", "independent", 2),
+    }
+    joint = {"qj": ("qj/trend", "qj/vol")}
+
+    def run(trend: list[Rep]) -> dict[str, list[str]]:
+        reps = {c: {r: _reps() for r in choices.RULES} for c in cells}
+        reps["qj/trend"] = {r: trend for r in choices.RULES}
+        report = choices.choose(reps, 322, joint)  # M as in TAU
+        qualifying = {
+            c for c, r in report["cells"].items()  # type: ignore[attr-defined]
+            if r["status"] == "qualifying"
+        }  # fmt: skip
+        return choices.coverage(cells, qualifying)
+
+    full = run(_reps())
+    assert all(full.values()), [n for n, ids in full.items() if not ids]
+    assert full["joint_generator"] == ["qj/trend", "qj/vol"]
+    demoted = run(_reps(dsr=10))
+    assert demoted["joint_generator"] == [] and demoted["two_trial"] == []

@@ -29,16 +29,19 @@ def decode(values: object) -> dict[str, float]:
 FAMILIES = ("trend", "vol")  # a QJ record's keys (one draw per family)
 
 
-def cell_thresholds(chain: chunks.Chain) -> list[Bounds]:
-    """The cell's (upper, lower) thresholds from its whole threshold chain,
-    one set per family of a QJ cell (each family's own K columns; owner
-    decision 2026-10-11, Q2), else one; `ChainError` if the chain is
-    incomplete or broken."""
+def cell_thresholds(chain: chunks.Chain, joint: bool = False) -> list[Bounds]:
+    """The cell's (upper, lower) thresholds from its whole threshold chain:
+    for a QJ cell (`joint`), one set per family on its own K columns (owner
+    decision 2026-10-11, Q2), else one. `ChainError` if the chain is
+    incomplete or broken; ValueError if a QJ draw is not exactly one record
+    per family (I2BS2-1)."""
     records: list[Any] = list(chunks.reduce(chain))
-    if records and isinstance(records[0], dict) and set(records[0]) == set(FAMILIES):
+    if not joint:
+        draws = [records]
+    elif all(isinstance(r, dict) and set(r) == set(FAMILIES) for r in records):
         draws = [[r[f] for r in records] for f in FAMILIES]
     else:
-        draws = [records]
+        raise ValueError(f"{chain.cell_id}: a QJ draw is not one record per family")
     return [classifier.fit_thresholds([decode(v) for v in d]) for d in draws]
 
 

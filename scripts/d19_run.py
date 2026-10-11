@@ -222,7 +222,11 @@ def dev_bounds(
         for c in cells
     ]
     pools = reduce.pooled(
-        [b for chain in chains for b in reduce.cell_thresholds(chain)]
+        [
+            b
+            for c, chain in zip(cells, chains, strict=True)
+            for b in reduce.cell_thresholds(chain, c.law == "semi-joint")
+        ]
     )
     return {c.cell_id: reduce.for_k(pools[c.t], c.k) for c in cells}
 

@@ -107,7 +107,9 @@ def main(argv: list[str] | None = None) -> int:
         units: dict[str, Cell] = {}
         joint: dict[str, tuple[str, str]] = {}
         for c in cells:
-            sets = reduce.cell_thresholds(chains["threshold", c.cell_id])
+            sets = reduce.cell_thresholds(
+                chains["threshold", c.cell_id], c.law == "semi-joint"
+            )
             names = [c.cell_id]
             if c.law == "semi-joint":
                 names = [f"{c.cell_id}/{f}" for f in reduce.FAMILIES]
