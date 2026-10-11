@@ -22,8 +22,43 @@ jobs:
       - run: ruff format --check .
       - run: ruff check .
       - run: mypy src
-      - run: python -m pytest
+      # The D-19 engine is tested on its own runtime, in calibration-tests.
+      - run: python -m pytest --ignore-glob="tests/unit/test_calibration_*"
       - run: lint-imports
+
+  # The D-19 engine's runtime is the calibration image's: Python 3.14 and
+  # numpy 2.5.3 (deploy/calibration). On hosted Python 3.12 its start checks
+  # refuse (numpy power differs from Python **) and OpenBLAS dgemm with the
+  # pinned OPENBLAS_CORETYPE segfaults (PR #45, disclosed in
+  # review/d19-engine/ADJUDICATION_FE4_1C44DB8.md).
+  calibration-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Runner CPU (the engine pins OPENBLAS_CORETYPE=Haswell)
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          grep -m1 '^flags' /proc/cpuinfo | grep -owE 'avx2|fma|avx512f|avx512_bf16|amx_tile' | xargs
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install project and dev tools with the image's numpy
+        run: python -m pip install -e ".[dev]" "numpy==2.5.3"
+      # FE4R-2: no skip. On a CPU that crashes the pinned kernel (AMD EPYC
+      # Zen 4/5) this job fails as inconclusive; rerun it to get a runner
+      # that can run the engine. A green run always tested the engine.
+      - name: Probe the pinned OpenBLAS kernel on this CPU
+        run: |
+          rc=0
+          OPENBLAS_NUM_THREADS=1 OPENBLAS_CORETYPE=Haswell python -B -c "import sys; sys.path[:0] = ['.', 'src']
+          from calibration import rundef; rundef.gating('probe')" || rc=$?
+          if [ "$rc" = 139 ]; then echo "::error::inconclusive: the probe segfaulted (seen only on AMD EPYC Zen 4/5 runners, under the pinned OpenBLAS kernel); check the CPU line above and rerun the job"; fi
+          exit "$rc"
+      - name: Engine tests
+        run: python -m pytest tests/unit/test_calibration_*.py tests/unit/test_d19_deploy.py
+        env:
+          PYTHONFAULTHANDLER: "1"  # a crashed subprocess shows where
 
   # Task 30 (owner answer Q30-4): deploy/RUNBOOK.md steps 2, 3 and a refused
   # step 5 on a fresh Ubuntu machine: the real service, started on a
@@ -70,3 +105,58 @@ jobs:
           test "$(systemctl show aqt-paper -p ExecMainStatus --value)" = 2
           test "$(systemctl show aqt-paper -p NRestarts --value)" = 0
           sudo grep REFUSE_START /var/lib/aqt/data/forward/deployment_refusals.jsonl | grep "checkout differs"
+
+  # FE-4, FE4-8: the D-19 calibration image builds from its pinned base and
+  # lock, and the real launcher (deploy/calibration/RUNBOOK.md) installs,
+  # records a tiny pilot definition, runs, stops and resumes the threshold
+  # run, runs development and chooses, with every start gate passing.
+  calibration-launcher:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Runner CPU (the engine pins OPENBLAS_CORETYPE=Haswell)
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          grep -m1 '^flags' /proc/cpuinfo | grep -owE 'avx2|fma|avx512f|avx512_bf16|amx_tile' | xargs
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # the bundle needs the history and the prereg branch
+      - name: Package this commit and the preregistration branch
+        run: |
+          git branch -f ci-engine HEAD
+          git branch -f ci-prereg origin/docs/d19-recommendation
+          git bundle create /tmp/app.bundle ci-engine ci-prereg
+          echo "COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "PREREG=$(git rev-parse origin/docs/d19-recommendation)" >> "$GITHUB_ENV"
+      - name: Install and build
+        run: |
+          cd /tmp
+          sudo sh "$GITHUB_WORKSPACE/deploy/calibration/d19.sh" install /tmp/app.bundle "$COMMIT"
+          sudo systemd-analyze verify /etc/systemd/system/aqt-d19.slice
+          sudo sh /opt/aqt-d19/app/deploy/calibration/d19.sh build
+      - name: Probe the pinned OpenBLAS kernel on this CPU (FE4R-2, no skip)
+        run: |
+          rc=0
+          sudo sh /opt/aqt-d19/app/deploy/calibration/d19.sh probe || rc=$?
+          if [ "$rc" = 3 ]; then echo "::error::inconclusive: the probe segfaulted (seen only on AMD EPYC Zen 4/5 runners, under the pinned OpenBLAS kernel); check the CPU line above and rerun the job"; fi
+          exit "$rc"
+      - name: Record a pilot run definition
+        run: |
+          cd /opt/aqt-d19/app/deploy/calibration
+          printf '%s' '{"purpose": "pilot", "replications": {"threshold": 3, "dev": 2}, "cells": [{"cell_id": "pilot-k2", "k": 2, "t": 40, "law": "gaussian", "dependence": "independent"}, {"cell_id": "pilot-k1", "k": 1, "t": 40, "law": "t5", "dependence": "independent"}]}' | sudo tee /var/lib/aqt-d19/cells.json
+          echo '{}' | sudo tee /var/lib/aqt-d19/exploration.json
+          sudo chown 990:990 /var/lib/aqt-d19/cells.json /var/lib/aqt-d19/exploration.json
+          sudo sh d19.sh record --out definition.json --prereg-commit "$PREREG"             --engine-commit "$COMMIT" --cell-manifest cells.json             --exploration-manifest exploration.json
+      - name: Run, stop, resume; then development and choices
+        run: |
+          cd /opt/aqt-d19/app/deploy/calibration
+          sudo sh d19.sh run threshold
+          sudo sh d19.sh stop
+          sudo sh d19.sh run threshold
+          test "$(sudo docker wait aqt-d19)" = 0 || { sudo docker logs aqt-d19; exit 1; }
+          sudo sh d19.sh status | tee /tmp/status
+          grep -qx "1 threshold/pilot-k1" /tmp/status
+          grep -qx "1 threshold/pilot-k2" /tmp/status
+          sudo sh d19.sh run dev
+          test "$(sudo docker wait aqt-d19)" = 0 || { sudo docker logs aqt-d19; exit 1; }
+          sudo sh d19.sh choose
+          sudo test -s /var/lib/aqt-d19/choices.json
