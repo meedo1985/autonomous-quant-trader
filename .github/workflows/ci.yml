@@ -34,6 +34,10 @@ jobs:
   calibration-tests:
     runs-on: ubuntu-24.04
     steps:
+      - name: Runner CPU (the engine pins OPENBLAS_CORETYPE=Haswell)
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          grep -m1 '^flags' /proc/cpuinfo | grep -owE 'avx2|fma|avx512f|avx512_bf16|amx_tile' | xargs
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
@@ -98,6 +102,10 @@ jobs:
   calibration-launcher:
     runs-on: ubuntu-24.04
     steps:
+      - name: Runner CPU (the engine pins OPENBLAS_CORETYPE=Haswell)
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          grep -m1 '^flags' /proc/cpuinfo | grep -owE 'avx2|fma|avx512f|avx512_bf16|amx_tile' | xargs
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # the bundle needs the history and the prereg branch
