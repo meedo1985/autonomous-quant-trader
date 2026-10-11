@@ -41,6 +41,14 @@ sudo sh /opt/aqt-d19/app/deploy/calibration/d19.sh build
 cd /opt/aqt-d19/app/deploy/calibration
 ```
 
+Check that this server's CPU can run the pinned runtime:
+
+```sh
+sudo sh d19.sh probe
+```
+
+It prints `This CPU runs the pinned runtime.` or refuses. The pinned OpenBLAS kernel crashed on newer AMD EPYC processors (Zen 4/5) in tests. If it refuses, stop here and send me the CPU model it prints. Changing the pin is your decision (D-20 binding).
+
 Switch automatic reboots off for the run (§13 item 6). Security updates still install:
 
 ```sh

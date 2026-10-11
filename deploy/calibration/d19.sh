@@ -5,6 +5,7 @@
 #
 #   sudo sh d19.sh install <repository URL> <engine commit>
 #   sudo sh d19.sh build
+#   sudo sh d19.sh probe
 #   sudo sh d19.sh manifests
 #   sudo sh d19.sh record <d19_run_definition.py record arguments>
 #   sudo sh d19.sh run <threshold|dev>
@@ -77,6 +78,25 @@ install)
 build)
     docker build --pull -t "$(tag)" "$APP/deploy/calibration"
     echo "Image $(tag) id $(docker image inspect --format '{{.Id}}' "$(tag)")"
+    echo "Next: sudo sh d19.sh probe"
+    ;;
+probe)  # can this CPU run the pinned runtime? (V_BINDING: OPENBLAS_CORETYPE=Haswell)
+    # The engine's own measurement (canaries and reference vectors), once.
+    # On AMD EPYC Zen 4/5 runners it crashed in OpenBLAS dgemm (PR #45).
+    rc=0
+    docker run --rm --init --user 990:990 --network none --read-only \
+        --tmpfs /tmp -e HOME=/tmp -e OPENBLAS_NUM_THREADS=1 \
+        -e OPENBLAS_CORETYPE=Haswell -v "$APP:/app:ro" \
+        "$(docker image inspect --format '{{.Id}}' "$(tag)")" python -B -c \
+        "import sys; sys.path[:0] = ['/app', '/app/src']
+from calibration import rundef; rundef.gating('probe')" || rc=$?
+    case $rc in
+    0) echo "This CPU runs the pinned runtime." ;;
+    139) echo "refused: this CPU crashes the pinned OpenBLAS kernel;" \
+            "do not run. Report: $(grep -m1 'model name' /proc/cpuinfo)" >&2
+        exit 1 ;;
+    *) exit "$rc" ;;
+    esac
     ;;
 manifests)  # the BTC exploration manifest that `record` needs (Task 14)
     engine --rm -e PYTHONPATH=/app/src -- build_manifests.py --raw raw \
@@ -106,7 +126,7 @@ choose)
         --store store --out choices.json
     ;;
 *)
-    sed -n '2,13p' "$0"
+    sed -n '2,14p' "$0"
     exit 1
     ;;
 esac

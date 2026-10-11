@@ -25,3 +25,25 @@ a resume deletes an incomplete chunk unread. The CI stop-and-resume step
 exercises that path.
 
 No calibration was run.
+
+## Found by CI after the repairs (draft PR #45): the pinned OpenBLAS kernel and the CPU
+
+PR #45 was the first time the engine's tests ran on Linux CI. Three things were found.
+
+1. **Hosted Python 3.12 is not the engine's runtime.** On hosted Python 3.12 the engine's own check refuses NumPy 2.5.4: "NumPy power no longer matches Python **". With NumPy 2.5.3, `record` segfaults in `dsr._replicates_v` (`counts @ y`, OpenBLAS dgemm), as the fault handler showed. The engine's runtime is the image's (Python 3.14, NumPy 2.5.3). CI now tests the engine there, in the `calibration-tests` job. The general job (Python 3.12, the forward-paper runtime) skips the calibration tests.
+
+2. **The crash follows the CPU, not the Python version.** Four re-runs of run `38125927410` printed the runner CPU:
+
+   | CPU | AVX-512 | Engine tests and launcher |
+   |---|---|---|
+   | AMD EPYC 9V45 / 9V74 (Zen 4/5) | yes, with `avx512_bf16` | segfault, 2 of 2 jobs |
+   | AMD EPYC 7763 (Zen 3) | no | pass, 7 of 7 jobs |
+   | Intel Xeon Platinum 8573C | yes | pass, 1 of 1 jobs |
+
+   The pinned environment `OPENBLAS_CORETYPE=Haswell` (D-20 `V_BINDING.md`, part of the decided A-V1 identity) crashes OpenBLAS dgemm on the newest AMD EPYC processors. The failure is closed: the definition recorder and the start gate never get past the reference vectors, so no chunk is ever written. But the calibration cannot run on such a CPU.
+
+3. **What was done.**
+   - `d19.sh probe` runs the engine's own `rundef.gating` once in the image. On a crash it refuses with the CPU model. The runbook has the owner run it right after `build`.
+   - Both CI calibration jobs probe first. On a crashing CPU they skip with a warning, and any other probe failure still fails CI.
+
+**For the owner, only if his server's CPU is affected (`probe` refuses):** changing the pin is a change to the D-20 binding, so it is his decision. The AI will not change it. The re-pilot answers this on his actual server.
