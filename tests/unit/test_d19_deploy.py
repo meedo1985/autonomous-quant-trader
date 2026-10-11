@@ -77,9 +77,13 @@ def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
     assert re.search(r"^MemoryMax=2560M$", slice_, re.M)
     # FE4-5, P18-6: status shows state and counts, never logs or content.
     # docker top needs a PID column to work at all (found on the owner's server)
-    assert "docker top" in launcher
-    for call in re.findall(r"docker top \"\$NAME\"[^|)]*", launcher):
+    calls = re.findall(r"docker top \"\$NAME\"[^|)]*", launcher)
+    assert calls and len(calls) == launcher.count("docker top")  # FE7F-2
+    for call in calls:
         assert "-eo pid," in call, call
+    # FE7F-1: times waits for a chunk file, not for the namespace folder
+    times = launcher[launcher.index("times)") : launcher.index("memwatch)")]
+    assert "-print -quit" in times and "NR == 0" in times
     status = launcher[launcher.index("status)") : launcher.index("stop)")]
     assert "docker logs" not in status and "cat " not in status
 
