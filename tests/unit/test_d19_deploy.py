@@ -48,9 +48,10 @@ def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
     launcher = (DEPLOY / "d19.sh").read_text(encoding="utf-8")
     # FE-4, FE4-1: one id from the host's inspection, never typed; the same
     # id is both AQT_IMAGE_DIGEST and the image docker starts.
-    assert re.findall(r"^\s*id=(.*)$", launcher, re.M) == [
+    ids = re.findall(r"^\s*id=(.*)$", launcher, re.M)  # engine() and probe
+    assert ids and set(ids) == {
         """$(docker image inspect --format '{{.Id}}' "$(tag)")"""
-    ]
+    }
     run = launcher[launcher.index("    docker run $opts") :]
     run = run[: run.index("\n}")]
     assert '-e AQT_IMAGE_DIGEST="$id"' in run
