@@ -1,0 +1,15 @@
+<!-- Recorded verbatim from codex exec (OpenAI Codex v0.162.1) on 2026-10-11. CLI banner: model gpt-6-sol, reasoning effort high, sandbox read-only, session 01a129b5-4257-7691-ab8f-904266e101da. Tokens used: 57,186. Made from a packet (Codex's command runner fails here): review/d19-engine/ITEM2B_STEP2_REVIEW_PROMPT.md, ITEM2B_STEP2_PLAN.md, OWNER_DECISION_ITEM2B_STEP2_READINGS.md, accepted preregistration (fff4e5f) lines 40-80, 120-170, 280-330, 440-520, git diff 0d7baa2..3b6b684 -- calibration scripts tests, and the text at 3b6b684 of calibration/choices.py, rules.py, reduce.py, generator.py, scripts/d19_run.py, scripts/d19_choose.py. -->
+
+# GPT-6 Sol review of D-19 item 2b step 2 at 3b6b684
+
+**Model metadata:** Codex, GPT-6 family. The exact model ID and effort setting were not exposed to me.
+
+**Verdict for measurement-only pilot use: ACCEPT.** On the supplied attachments, I found no under-counted test, wrong coverage category for a valid preregistered cell, or anti-conservative QJ event definition. I could not inspect the checkout or run tests because the local command runner failed; this is an attachment-based review.
+
+1. **I2BS2-1 — Low — `calibration/reduce.py:31`.** QJ threshold decoding infers the record shape from the first draw and does not require exact `trend` and `vol` keys on every later draw. A later draw with an extra outer key is silently accepted; a missing key raises an uncaught error instead of a controlled validation failure. **Minimal fix:** pass the expected cell type to `cell_thresholds` and validate every draw’s exact outer shape. **Owner decision:** No.
+
+2. **I2BS2-2 — Low — `tests/unit/test_calibration_rundef.py:1358`.** The chooser integration test uses two development replications, so all cells demote. It never tests a successful QJ choice or positive coverage result. The tight-τ unit tests do exercise the joint branches, but do not establish that those limits bind at the actual targets. **Minimal fix:** add a synthetic successful-choice test that checks positive coverage, then demotes QJ and checks that `joint_generator` disappears. **Owner decision:** No.
+
+**Checks against the requested rules:** `M` is 3 per agnostic or Q5 cell and 8 per QJ cell. For valid cells, the coverage rows match the supplied table and owner readings, including removal of unequal `T`; joint demotion removes both QJ family units. QJ uses one draw and benchmark, splits the same path and signs into K-column families, uses distinct family seeds and the shared outer seed for `U_G`, and pairs records by replication index. `E` is either family passing; joint `U_proc^R` is either family’s DSR/classifier or `U_G` event. The 20k/40k escape, joint demotion, and joint `z_crit` check follow the stated readings. `choices.consistent` runs on each QJ development family.
+
+One boundary remains: the supplied code notes that full preregistered grid validation is deferred to item 3. This verdict does **not** establish that an off-grid manifest is safe for certification.
