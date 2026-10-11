@@ -17,7 +17,7 @@
 #   sudo sh d19.sh clean-check
 #   sudo sh d19.sh failcheck
 #   sudo sh d19.sh copy-raw
-#   sudo sh d19.sh times
+#   sudo sh d19.sh times <threshold|dev>
 #   sudo sh d19.sh memwatch
 #
 # Every engine process runs in the pinned image, as uid 990, without network,
@@ -170,9 +170,12 @@ clean-check)  # FE7-2: a clean threshold run equals the interrupted+resumed one
 times)  # FE7-3: per chain, seconds between finished chunks = one worker's
     # time for 500 replications (a chain's chunks run back to back on one
     # worker). FE7R2-1: an interval across the current run's start spans a
-    # stop and a resume, so it is marked and is no worker time.
-    started=$(date -d "$(docker inspect -f '{{.State.StartedAt}}' "$NAME")" +%s)
-    for d in "$WORK"/store/*/*/; do
+    # stop and a resume, so it is marked and is no worker time. FE7R3-1: one
+    # namespace, read while its own (last) run is the current container;
+    # FE7R3-2: the start time keeps its fraction of a second.
+    case "${2:-}" in threshold | dev) ;; *) echo "usage: d19.sh times <threshold|dev>" >&2; exit 1 ;; esac
+    started=$(date -d "$(docker inspect -f '{{.State.StartedAt}}' "$NAME")" +%s.%N)
+    for d in "$WORK/store/$2"/*/; do
         find "$d" -name 'chunk-*.json' -printf '%T@\n' | sort -n |
             awk -v c="$(basename "$(dirname "$d")")/$(basename "$d")" -v t0="$started" \
                 'NR > 1 { s = s sprintf(" %.0f", $1 - p) (p < t0 && $1 >= t0 ? "(spans a restart)" : "") }

@@ -37,3 +37,10 @@ FE7-1 and FE7-5 are resolved. FE7-7 is resolved in code but not exercised end to
 | FE7R2-1 High (and FE7-3) | AGREE IN PART, repaired | A chain's chunks run back to back on one worker (`chunks.run`). An interval between two of its chunks is therefore that worker's time for 500 replications, unless it crosses a stop and resume. `times` now reads the current run's `StartedAt` and marks any interval that crosses it as "(spans a restart)". The sheet says such intervals are not used. The development run is never interrupted, so all its intervals are worker times. **Not done:** timing inside the worker. That would change the engine driver for a pilot measurement. The marked intervals give the same figure for every uninterrupted interval. |
 | FE7R2-2 Medium (and FE7-4) | AGREE, repaired | `memwatch` now reports the run container's exact kernel high-water mark, `memory.peak` of its cgroup scope under `aqt-d19.slice`, which no spike can escape. Its samples are only evidence that both workers ran. It refuses with `FAIL` if no sample saw 2 workers. CI starts a container in the slice and requires `memory.peak` at exactly the path `memwatch` reads. |
 | FE7R2-3 Medium | AGREE, repaired | `copy-raw` copies into `raw.partial`, removes it if the copy fails, and renames it to `raw` only after success. The sheet now tells the owner to stop on any failed command or error output, not only on `refused` or `FAIL`. |
+
+## Re-review 3 (`SOL6_FE7_REREVIEW3_AF7805A.md`: FIX; FE7R2-2 and FE7R2-3 resolved; the "AGREE IN PART" on FE7R2-1 judged justified in principle)
+
+| ID | Decision | Repair |
+|---|---|---|
+| FE7R3-1 Medium | AGREE, repaired | `times` now takes the namespace: `times threshold` or `times dev`. It is read while that namespace's last run is the current container, so the restart it compares against is that run's own. The sheet asks for `times threshold` in step E, right after the resumed threshold run, and `times dev` in step H. CI runs `times threshold`. |
+| FE7R3-2 Low | AGREE, repaired | The start time keeps its fraction (`date ... +%s.%N`), so a chunk finished in the same second as the restart is still compared correctly. |

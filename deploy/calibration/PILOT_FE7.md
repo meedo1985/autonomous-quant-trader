@@ -82,7 +82,7 @@ Check now and then with `sudo sh d19.sh status`. The threshold run is finished w
 
 ```sh
 sudo sh d19.sh status
-sudo sh d19.sh times
+sudo sh d19.sh times threshold
 ```
 
 **Send me** both outputs. `times` gives each cell's seconds between finished chunks, one worker's time for 500 replications. An interval marked `(spans a restart)` crosses the failcheck stop, so it is not used.
@@ -113,14 +113,14 @@ The development run is finished when `status` shows `Exited (0)` and **all 13** 
 
 ```sh
 sudo sh d19.sh status
-sudo sh d19.sh times
+sudo sh d19.sh times dev
 sudo sh d19.sh choose
 sudo sh d19.sh nonfinite
 sudo cat /var/lib/aqt-d19/choices.json
 ```
 
 **Send me** all of it. Here is what each output tells me:
-- `status` and `times`: the run times and each cell's measured time per 500 replications;
+- `status` and `times dev`: the run times and each cell's measured development time per 500 replications (the threshold ones came in step E);
 - `nonfinite`: the non-finite threshold draws, per cell (FE-7). If any exist, how to treat them is your decision;
 - `choices.json`: the development event counts.
 
