@@ -193,8 +193,10 @@ memwatch)  # FE7-4, FE7R2-2: the run's exact memory high-water mark, with
         sleep 10
     done
     [ "$n" -gt 0 ] || { echo "FAIL: no sample showed 2 workers running" >&2; exit 1; }
-    cid=$(docker inspect -f '{{.Id}}' "$NAME")
-    peak=$(cat "/sys/fs/cgroup/$SLICE/docker-$cid.scope/memory.peak")
+    # the container's own cgroup, as the kernel reports it (systemd nests
+    # aqt-d19.slice inside aqt.slice: the dash means a parent slice)
+    pid=$(docker inspect -f '{{.State.Pid}}' "$NAME")
+    peak=$(cat "/sys/fs/cgroup$(cut -d: -f3 "/proc/$pid/cgroup")/memory.peak")
     echo "2 workers in $n of 60 samples; this run's memory peak: $peak bytes"
     ;;
 failcheck)  # FR2-2, FE7-7: kill one worker; the run must stop, none survive

@@ -44,3 +44,5 @@ FE7-1 and FE7-5 are resolved. FE7-7 is resolved in code but not exercised end to
 |---|---|---|
 | FE7R3-1 Medium | AGREE, repaired | `times` now takes the namespace: `times threshold` or `times dev`. It is read while that namespace's last run is the current container, so the restart it compares against is that run's own. The sheet asks for `times threshold` in step E, right after the resumed threshold run, and `times dev` in step H. CI runs `times threshold`. |
 | FE7R3-2 Low | AGREE, repaired | The start time keeps its fraction (`date ... +%s.%N`), so a chunk finished in the same second as the restart is still compared correctly. |
+
+**Found by CI after re-review 3:** systemd nests `aqt-d19.slice` inside `aqt.slice`, because a dash in a slice name means a parent slice. So `memory.peak` is not at `/sys/fs/cgroup/aqt-d19.slice/...`. `memwatch` now reads the run container's own cgroup path from `/proc/<pid>/cgroup` and takes `memory.peak` there. CI does the same with a running container, and also requires the path to lie inside `aqt-d19.slice`.
