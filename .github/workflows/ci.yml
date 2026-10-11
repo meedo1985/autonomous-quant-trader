@@ -156,6 +156,9 @@ jobs:
           sudo sh d19.sh status | tee /tmp/status
           grep -qx "1 threshold/pilot-k1" /tmp/status
           grep -qx "1 threshold/pilot-k2" /tmp/status
+          # FE7FR-1: a chain folder without a chunk is not a timing
+          sudo install -d -o 990 -g 990 /var/lib/aqt-d19/store/dev /var/lib/aqt-d19/store/dev/pilot-k2
+          test "$(sudo sh d19.sh times dev)" = "no dev chunks yet"
           sudo sh d19.sh run dev
           test "$(sudo docker wait aqt-d19)" = 0 || { sudo docker logs aqt-d19; exit 1; }
           sudo sh d19.sh choose
