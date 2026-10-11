@@ -77,3 +77,62 @@ slice memory peak: 254787584 bytes
 ```
 
 **FR2-2 on a Linux host: PASS.** Killing one worker stopped the whole run with exit code 1 and a clear `BrokenProcessPool` reason, and no worker outlived it. Ten of the 13 cells had finished their 2,000 threshold draws within 3 min 23 s, before the kill.
+
+## Step E (continued): resumed threshold run, verbatim
+
+```
+Exited (0) 59 seconds ago
+started 2026-10-11T14:37:23.399563915Z finished 2026-10-11T14:40:49.50115742Z exit 0
+slice memory peak: 273391616 bytes
+4 threshold/pilot-q1-clusters-k20
+4 threshold/pilot-q1-clusters-k5
+4 threshold/pilot-q1-ind-k1
+4 threshold/pilot-q2m-k2
+4 threshold/pilot-q2m-k20
+4 threshold/pilot-q2m-k5
+4 threshold/pilot-q2-t5-rho-k20
+4 threshold/pilot-q3-factor-k20
+4 threshold/pilot-q4-k5
+4 threshold/pilot-q5-trend-k20
+4 threshold/pilot-q5-vol-k20
+4 threshold/pilot-qj-k2
+4 threshold/pilot-qj-k20
+threshold/pilot-q1-clusters-k20: 3 3 3
+threshold/pilot-q1-clusters-k5: 2 2 2
+threshold/pilot-q1-ind-k1: 2 2 2
+threshold/pilot-q2-t5-rho-k20: 4 4 4
+threshold/pilot-q2m-k2: 2 3262(spans a restart) 2
+threshold/pilot-q2m-k20: 4 4 4
+threshold/pilot-q2m-k5: 2 2 2
+threshold/pilot-q3-factor-k20: 5 4 5
+threshold/pilot-q4-k5: 5 5 5
+threshold/pilot-q5-trend-k20: 24 24 25
+threshold/pilot-q5-vol-k20: 19 18 19
+threshold/pilot-qj-k2: 7 7 7
+threshold/pilot-qj-k20: 40 40 40
+```
+
+Each `times` value is one worker's seconds per 500 threshold draws (FE7-3). The marked 3262 s is the gap between the failcheck kill (13:43:54) and the resume (14:37:23), so it is excluded as designed.
+
+## Step F: resume identity (§13 item 6 "Before the full run"), verbatim
+
+The `clean-check` output: the 13 chain heads of the clean run (`threshold/<cell>: <hash>`), then:
+
+```
+pilot-q1-clusters-k20: 4 chunks identical
+pilot-q1-clusters-k5: 4 chunks identical
+pilot-q1-ind-k1: 4 chunks identical
+pilot-q2-t5-rho-k20: 4 chunks identical
+pilot-q2m-k2: 4 chunks identical
+pilot-q2m-k20: 4 chunks identical
+pilot-q2m-k5: 4 chunks identical
+pilot-q3-factor-k20: 4 chunks identical
+pilot-q4-k5: 4 chunks identical
+pilot-q5-trend-k20: 4 chunks identical
+pilot-q5-vol-k20: 4 chunks identical
+pilot-qj-k2: 4 chunks identical
+pilot-qj-k20: 4 chunks identical
+PASS: the resumed threshold run equals the clean run
+```
+
+**Result:** an interrupted and resumed run gives byte-identical chunks to a clean run, for every cell, on the owner's server. That includes the cell (`pilot-q2m-k2`) whose chain was cut by the killed worker.
