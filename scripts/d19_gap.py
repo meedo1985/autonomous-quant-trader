@@ -26,6 +26,9 @@ def main() -> int:
     parser.add_argument("--raw-root", type=Path, required=True)
     args = parser.parse_args()
     build = build_exploration_manifest(EXPLORATION, "BTCUSDT", args.raw_root)
+    if build.missing_archives:  # GAP-5: never a gap from a shortened series
+        print(f"refused: missing archives {build.missing_archives}", file=sys.stderr)
+        return 1
     record = gap.gap(build.series)
     record["T_C2"] = C2_DAYS - record["g"]  # type: ignore[operator]
     record["exploration_manifest_sha256"] = build.manifest.manifest_sha256

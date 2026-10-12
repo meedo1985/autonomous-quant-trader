@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import random
+import statistics
 from datetime import UTC, date, datetime, timedelta
 
 import numpy as np
@@ -70,6 +71,20 @@ def test_a_return_never_spans_a_missing_hour() -> None:
     assert t300 not in sigma and t301 not in sigma  # no return ends there
     t299 = START + 299 * timedelta(hours=1)
     assert sigma[t299] == full[t299]
+
+
+def test_volatility_follows_the_cost_model_recursion() -> None:  # GAP-6
+    prices = _walk(400, seed=7)
+    r = [math.log(b / a) for a, b in zip(prices, prices[1:], strict=False)]
+    decay = 0.5 ** (1 / 168)
+    var = statistics.variance(r[:168])
+    for x in r[168:]:
+        var = decay * var + (1 - decay) * x * x
+    sigma = gap.hourly_volatility(_series(prices))
+    assert math.isclose(sigma[START + 399 * timedelta(hours=1)], math.sqrt(var),
+                        rel_tol=1e-12)  # fmt: skip
+    first = statistics.stdev(r[:2])  # start-up: sample sd of returns so far
+    assert math.isclose(sigma[START + 2 * timedelta(hours=1)], first, rel_tol=1e-12)
 
 
 def test_daily_target_follows_the_protocol_formula() -> None:

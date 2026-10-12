@@ -23,3 +23,5 @@
 - The early targets use the cost model's start-up rule: a sample standard deviation over the first 168 returns.
 
 Tests: `tests/unit/test_calibration_gap.py` (synthetic data only), 6 passed. ruff, `mypy calibration`, `mypy src` and import-linter (6 kept) are clean.
+
+**After Sol review (`SOL6_GAP_REVIEW_7333F1C.md`).** Only the cutoff reading (GAP-1) changes `g`: the last significant lag gives 7, and the first lag of the non-significant tail gives 8. The other readings leave `g = 7` at every daily decision hour (`gap_sensitivity.py`). The owner chooses the GAP-1 reading.
