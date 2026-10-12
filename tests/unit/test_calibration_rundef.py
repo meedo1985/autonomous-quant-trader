@@ -1012,7 +1012,8 @@ def test_the_development_run_needs_the_threshold_run_then_follows_section_2(
     }
     assert set(report["chain_heads"]) == heads
     assert report["margin_ok"] is True and report["status"] == "ok"
-    assert "not qualification decisions" in report["measurement_only"]  # I1R-5
+    assert "qualifies is always false" in report["measurement_only"]  # S16-1
+    assert report["qualifies"] is report["qualifies_before_coverage"] is False
     assert chose.stdout.startswith("z_crit None")
 
 

@@ -12,15 +12,15 @@ conservative), each test at its own `N_i`."""
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 
 from calibration import binomial, classifier, dsr, reduce
 
 RULES = ("largest", "median")  # tie -> largest (§5 step 1)
 Z_SCREEN = 1.96  # §5 step 1
 Z_STEP = Decimal("0.001")  # §5 step 3
-Z_MAX = Decimal("20.000")  # no qualifying z_crit above this grid end
 # prereg §6; QJ adds the cycle-level `P_0(E)` and `U_proc^R` bounds
 BOUNDS = {
     "error": 0.025, "dsr": 0.0035, "u_g": 0.0015,
@@ -427,9 +427,10 @@ def z_crit(
     """§5 step 3: the smallest z on the 0.001 grid at which every qualifying
     cell's 90% UCB of P_0(E_f) is within its tau_err (at the cell's N_i).
     The decimal is compared as its nearest binary64 (P18-6). None if no grid
-    value up to Z_MAX qualifies. `pairs`: per qualifying QJ cell, its two
-    families' replications and the tau of `P_0(E)` at its N, which must
-    also hold (§5 step 3)."""
+    value qualifies (S16-3: §5 sets no ceiling; above every stored finite
+    `z_f*` no event remains, so the search ends there). `pairs`: per
+    qualifying QJ cell, its two families' replications and the tau of
+    `P_0(E)` at its N, which must also hold (§5 step 3)."""
     limit = {c: allowed(len(reps), tau_error[c]) for c, reps in qualifying.items()}
     joint = [(a, b, allowed(len(a), tau)) for a, b, tau in pairs]
 
@@ -443,7 +444,14 @@ def z_crit(
             for a, b, cap in joint
         )
 
-    lo, hi = 0, int(Z_MAX / Z_STEP)  # events fall as z rises: monotone
+    stored = [
+        r.z
+        for reps in [*qualifying.values(), *(x for a, b, _ in pairs for x in (a, b))]
+        for r in reps
+        if r.z is not None and math.isfinite(r.z)
+    ]
+    top = Decimal(max(stored, default=0.0)) / Z_STEP
+    lo, hi = 0, int(top.to_integral_value(ROUND_CEILING)) + 1  # monotone in z
     if not ok(hi * Z_STEP):
         return None
     while lo < hi:

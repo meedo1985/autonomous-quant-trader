@@ -150,11 +150,12 @@ def main(argv: list[str] | None = None) -> int:
         covered.values()
     )
     report["definition_sha256"] = rundef.definition_sha256(defn)
-    if defn["cell_manifest"]["purpose"] == "pilot":  # I1R-5
+    if defn["cell_manifest"]["purpose"] == "pilot":  # I1R-5, S16-1
+        report["qualifies"] = report["qualifies_before_coverage"] = False
         report["measurement_only"] = (
-            "pilot run: development counts below about 7,700 per cell demote "
-            "every cell by the cap rule, so these statuses, z_crit and final "
-            "thresholds are not qualification decisions; read the event counts"
+            "pilot run: no status, z_crit or final threshold here is a "
+            "qualification decision, and qualifies is always false; read the "
+            "event counts"
         )
     report["chain_heads"] = heads  # I1-3: the chains this report was made from
     report["dev_thresholds_sha256"] = sha(

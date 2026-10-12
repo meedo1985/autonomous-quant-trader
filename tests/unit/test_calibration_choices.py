@@ -96,8 +96,14 @@ def test_z_crit_is_the_smallest_grid_value_meeting_every_cells_target() -> None:
 
 
 def test_no_grid_value_means_no_qualifying_choice() -> None:
-    reps = _reps(z=[99.0] * 500)
+    reps = _reps(z=[float("inf")] * 500)
     assert choices.z_crit({"a": reps}, {"a": TAU[20_000]["error"]["tau"]}) is None
+
+
+def test_z_crit_has_no_ceiling() -> None:  # S16-3: §5 sets none
+    reps = _reps(z=[99.0] * 500)
+    tau = {"a": TAU[20_000]["error"]["tau"]}
+    assert choices.z_crit({"a": reps}, tau) == Decimal("99.001")
 
 
 def test_choose_reports_every_step() -> None:

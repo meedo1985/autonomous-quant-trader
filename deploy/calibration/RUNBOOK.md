@@ -87,6 +87,8 @@ sudo sh d19.sh record --out definition.json --prereg-commit <prereg commit> \
 
 It prints the run-definition hash. Nothing has run yet.
 
+**Commit it before step 4 (§13 item 6, S16-2).** Send the hash and the file (`sudo cat /var/lib/aqt-d19/definition.json`). It is committed to the repository and pushed, and you get the commit id back. Start `run threshold` only after that. The commit's time, before the first threshold chunk, is the record that this definition came first; the qualification object checks it at the freeze.
+
 ## 4. Run, watch, stop, resume
 
 ```sh
