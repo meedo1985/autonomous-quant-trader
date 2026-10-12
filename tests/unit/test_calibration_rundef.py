@@ -1,0 +1,1501 @@
+"""D-19 run definition and start gate (prereg §13 rev 7g item 6, D19CR-4,
+FE-1..FE-4, FE-8): recorded from a clean pinned checkout in one fresh
+process, re-checked in another; a change to the code, the runtime identity,
+the image digest, a canary or a reference vector stops the start. Synthetic
+data only."""
+
+from __future__ import annotations
+
+import concurrent.futures
+import importlib.util
+import json
+import math
+import os
+import py_compile
+import shutil
+import struct
+import subprocess
+import sys
+import types
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from calibration import dsr, fast, gates, rundef
+
+ROOT = Path(__file__).resolve().parents[2]
+DIGEST = "sha256:" + "ab" * 32
+CELLS = json.dumps({"purpose": "pilot", "replications": {"threshold": 3, "dev": 2},
+                    "cells": [
+    {"cell_id": "pilot-k2", "k": 2, "t": 60, "law": "garch", "dependence": "equi0.5"},
+    {"cell_id": "pilot-k1", "k": 1, "t": 60, "law": "t5", "dependence": "independent"},
+]})  # fmt: skip
+
+
+def _git(root: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True,
+                          text=True, check=True).stdout.strip()  # fmt: skip
+
+
+def _script(
+    root: Path, *args: str, digest: str = DIGEST
+) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, rundef.IMAGE_DIGEST_ENV: digest,
+           "PYTHONPATH": f"{root}{os.pathsep}{root / 'src'}"}  # fmt: skip
+    script = root / "scripts" / "d19_run_definition.py"
+    return subprocess.run([sys.executable, str(script), *args], env=env, cwd=root,
+                          capture_output=True, text=True, check=False)  # fmt: skip
+
+
+def _checkout(tmp: Path) -> Path:
+    """A clean git checkout holding only what the engine runs."""
+    root = tmp / "engine"
+    shutil.copytree(ROOT / "calibration", root / "calibration",
+                    ignore=shutil.ignore_patterns("__pycache__"))  # fmt: skip
+    shutil.copytree(ROOT / "src" / "aqt", root / "src" / "aqt",
+                    ignore=shutil.ignore_patterns("__pycache__"))  # fmt: skip
+    (root / "scripts").mkdir()
+    for script in ("d19_run_definition.py", "d19_run.py", "d19_choose.py"):
+        shutil.copy(ROOT / "scripts" / script, root / "scripts")
+    prereg = root / "review" / "governance-statistics-amendment"
+    prereg = prereg / "d19-preregistration" / "PREREGISTRATION.md"
+    prereg.parent.mkdir(parents=True)
+    prereg.write_text("# prereg\n")
+    (root / ".gitignore").write_text("__pycache__/\n")
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "e")
+    return root
+
+
+def _record(root: Path, out: Path, commit: str) -> subprocess.CompletedProcess[str]:
+    inputs = out.parent
+    for name, text in (("cells", CELLS), ("seeds", '{"anchor": "x"}'),
+                       ("exploration", "{}")):  # fmt: skip
+        (inputs / f"{name}.json").write_text(text)
+    return _script(
+        root, "record", "--out", str(out), "--prereg-commit", "HEAD",
+        "--engine-commit", commit,
+        "--cell-manifest", str(inputs / "cells.json"),
+        "--exploration-manifest", str(inputs / "exploration.json"),
+    )  # fmt: skip
+
+
+@pytest.fixture(scope="module")
+def recorded(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
+    tmp = tmp_path_factory.mktemp("rundef")
+    root = _checkout(tmp)
+    out = tmp / "run_definition.json"
+    done = _record(root, out, _git(root, "rev-parse", "HEAD"))
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == rundef.definition_sha256(rundef.load(out))
+    return root, out
+
+
+def test_the_start_gate_passes_on_the_recording_checkout(
+    recorded: tuple[Path, Path],
+) -> None:
+    root, out = recorded
+    defn = rundef.load(out)
+    assert set(defn["gating"]) == {
+        "identity",
+        "image_digest",
+        "canaries",
+        "reference_vectors",
+    }
+    assert len(defn["gating"]["reference_vectors"]) == len(rundef.REFERENCE_CASES) + 1
+    assert defn["prereg_sha256"] and defn["engine_commit"] == _git(
+        root, "rev-parse", "HEAD"
+    )
+    done = _script(root, "check", "--definition", str(out))
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == f"start gate passed: {rundef.definition_sha256(defn)}"
+
+
+def test_record_refuses_another_commit_or_a_dirty_checkout(tmp_path: Path) -> None:
+    """FE-1: the recorded engine commit is the code that runs."""
+    root = _checkout(tmp_path)
+    (tmp_path / "in").mkdir()
+    done = _record(root, tmp_path / "in" / "d.json", "0" * 40)
+    assert done.returncode == 1 and "is not this checkout's HEAD" in done.stderr
+    with (root / "calibration" / "seeds.py").open("a") as handle:
+        handle.write("\n")
+    done = _record(root, tmp_path / "in" / "d.json", _git(root, "rev-parse", "HEAD"))
+    assert done.returncode == 1 and "engine code differs from HEAD" in done.stderr
+
+
+@pytest.mark.parametrize("hide", ["skip-worktree", "ignored-extra"])
+def test_record_sees_changes_git_status_would_hide(tmp_path: Path, hide: str) -> None:
+    """RR-3: the code is compared with HEAD's blobs, not through git status."""
+    root = _checkout(tmp_path)
+    (tmp_path / "in").mkdir()
+    if hide == "skip-worktree":
+        _git(root, "update-index", "--skip-worktree", "calibration/seeds.py")
+        with (root / "calibration" / "seeds.py").open("a") as handle:
+            handle.write("\n")
+    else:
+        (root / ".gitignore").write_text("__pycache__/\ncalibration/extra.py\n")
+        _git(root, "add", ".gitignore")
+        _git(
+            root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "i"
+        )
+        (root / "calibration" / "extra.py").write_text("X = 1\n")
+    assert _git(root, "status", "--porcelain") == ""  # git status sees nothing
+    done = _record(root, tmp_path / "in" / "d.json", _git(root, "rev-parse", "HEAD"))
+    assert done.returncode == 1 and "engine code differs from HEAD" in done.stderr
+
+
+def test_the_code_hash_is_the_same_for_crlf_and_lf_checkouts(tmp_path: Path) -> None:
+    """RR-4: one commit, one identity on Windows and Linux."""
+    lf, crlf = tmp_path / "lf", tmp_path / "crlf"
+    for root in (lf, crlf):
+        shutil.copytree(ROOT / "calibration", root / "calibration",
+                        ignore=shutil.ignore_patterns("__pycache__"))  # fmt: skip
+    for path in (lf / "calibration").glob("*.py"):
+        path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n"))
+    for path in (crlf / "calibration").glob("*.py"):
+        text = path.read_bytes().replace(b"\r\n", b"\n")
+        path.write_bytes(text.replace(b"\n", b"\r\n"))
+    assert rundef.generator_sha256(lf) == rundef.generator_sha256(crlf)
+
+
+def test_engine_modules_loaded_from_elsewhere_are_reported(tmp_path: Path) -> None:
+    """RR-2: this test process loaded `aqt` and `calibration` from the
+    repository, so for any other root they are outside it."""
+    engine = ("aqt", "calibration")
+    assert not [m for m in rundef.loaded_outside(ROOT) if m.split(".")[0] in engine]
+    assert __name__ in rundef.loaded_outside(ROOT)  # not hashed code
+    outside = rundef.loaded_outside(tmp_path)
+    assert "calibration.rundef" in outside and "aqt.metrics.statistics" in outside
+
+
+def test_a_code_change_after_recording_stops_the_start(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """FE-1/FE-2: a later edit of the engine or of `src/aqt` it calls."""
+    root, out = recorded
+    for edited in ("calibration/seeds.py", "src/aqt/metrics/statistics.py"):
+        copy = tmp_path / edited.replace("/", "_")
+        shutil.copytree(root, copy)
+        with (copy / edited).open("a") as handle:
+            handle.write("\n")
+        done = _script(copy, "check", "--definition", str(out))
+        assert done.returncode == 1 and "engine code differs" in done.stderr
+
+
+def test_another_image_digest_stops_the_start(recorded: tuple[Path, Path]) -> None:
+    root, out = recorded
+    done = _script(root, "check", "--definition", str(out), digest="sha256:other")
+    assert done.returncode == 1 and "U_ops: start gate: image digest" in done.stderr
+
+
+@pytest.mark.parametrize(
+    ("part", "message"),
+    [
+        ("reference_vectors", "reference vectors differ"),
+        ("canaries", "canary"),
+        ("identity", "runtime differs"),
+    ],
+)
+def test_a_changed_recorded_value_stops_the_start(
+    recorded: tuple[Path, Path], tmp_path: Path, part: str, message: str
+) -> None:
+    root, out = recorded
+    defn = rundef.load(out)
+    first = next(iter(defn["gating"][part]))
+    defn["gating"][part][first] = "0" * 64
+    changed = tmp_path / "changed.json"
+    rundef.write(changed, defn)
+    done = _script(root, "check", "--definition", str(changed))
+    assert done.returncode == 1 and "U_ops" in done.stderr
+    assert message in done.stderr
+
+
+def test_reference_vectors_see_the_u_g_numerics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FE-3: a change in G-1's replicate arithmetic that flips no
+    availability still changes the suite."""
+    monkeypatch.setattr(dsr, "_V_VERIFIED", True)
+    before = rundef.reference_vectors()
+    mean_var = fast.mean_var
+
+    def nudged(values: object) -> tuple[float, float]:
+        mean, var = mean_var(values)  # type: ignore[arg-type]
+        return mean + 1e-15, var
+
+    monkeypatch.setattr(fast, "mean_var", nudged)
+    after = rundef.reference_vectors()
+    assert before["refvec-k5-garch"] != after["refvec-k5-garch"]
+
+
+def test_reference_vectors_see_the_classifier_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FA-2: the threshold run's own numerics are in the suite."""
+    from calibration import classifier
+
+    monkeypatch.setattr(dsr, "_V_VERIFIED", True)
+    before = rundef.reference_vectors()
+    diagnostics = classifier.diagnostics
+
+    def nudged(x: object) -> dict[str, float]:
+        values = diagnostics(x)  # type: ignore[arg-type]
+        name = min(n for n, v in values.items() if math.isfinite(v))
+        return {**values, name: math.nextafter(values[name], math.inf)}
+
+    monkeypatch.setattr(classifier, "diagnostics", nudged)
+    after = rundef.reference_vectors()
+    assert all(before[c.cell_id] != after[c.cell_id] for c in rundef.REFERENCE_CASES)
+
+
+def test_load_refuses_a_file_that_is_not_a_run_definition(tmp_path: Path) -> None:
+    path = tmp_path / "x.json"
+    path.write_text(json.dumps({"record_type": "something.else"}))
+    with pytest.raises(ValueError, match="not a D-19 run definition"):
+        rundef.load(path)
+
+
+def test_every_gate_runs_after_an_earlier_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RR-1: a fault in a later gate is never hidden by an earlier refusal."""
+    monkeypatch.setattr(dsr, "_V_VERIFIED", True)
+
+    def broken(*_: object, **__: object) -> str | None:
+        raise ArithmeticError("engine fault in G-12")
+
+    monkeypatch.setattr(gates, "g12", broken)
+    with pytest.raises(ArithmeticError, match="G-12"):
+        rundef._unavailable_outputs()  # noqa: SLF001 - G-2 refuses first
+
+
+def test_reference_outputs_cover_every_trace_branch_and_the_benchmark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RR-5: G-1 block and replicates, G-10 variances (K = 20), G-12 ESS per
+    horizon, the benchmark leg, and the unavailable case's cause."""
+    monkeypatch.setattr(dsr, "_V_VERIFIED", True)
+    k20 = rundef._reference_outputs(rundef.REFERENCE_CASES[3])  # noqa: SLF001
+    kinds = {entry[0] for entry in k20["u_g_trace"]}  # type: ignore[union-attr,index]
+    assert kinds == {"g1_block", "g1_replicate", "g10_var", "g12_ess"}
+    horizons = [e[1] for e in k20["u_g_trace"] if e[0] == "g12_ess"]  # type: ignore[union-attr,index]
+    assert horizons == [24, 72, 168]
+    assert set(k20) >= {"x", "benchmark", "candidates", "result", "u_g"}
+    unavailable = rundef._unavailable_outputs()  # noqa: SLF001
+    assert unavailable["u_g"] == "INVALID_SERIES"
+
+
+@pytest.mark.parametrize("gate", ["g10", "g12"])
+def test_reference_vectors_see_g10_and_g12_numerics(
+    monkeypatch: pytest.MonkeyPatch, gate: str
+) -> None:
+    """RR-5: a change in a traced G-10 or G-12 number that flips no
+    availability changes the K = 20 vector."""
+    monkeypatch.setattr(dsr, "_V_VERIFIED", True)
+    case = rundef.REFERENCE_CASES[3]
+    before = rundef._reference_outputs(case)  # noqa: SLF001
+    original = getattr(gates, gate)
+
+    def nudged(values: object, trace: list[object] | None = None) -> str | None:
+        reason = original(values, trace)
+        if trace:
+            trace[-1] = (*trace[-1][:-1], "changed")  # type: ignore[index]
+        return reason
+
+    final = rundef.reference_vectors()[case.cell_id]
+    monkeypatch.setattr(gates, gate, nudged)
+    after = rundef._reference_outputs(case)  # noqa: SLF001
+    assert after["u_g"] == before["u_g"] and after["u_g_trace"] != before["u_g_trace"]
+    assert rundef.reference_vectors()[case.cell_id] != final  # R3-4: final hash
+
+
+def test_the_recorded_prereg_commit_is_a_full_id(recorded: tuple[Path, Path]) -> None:
+    """R3-1: "HEAD" on the command line is stored as the commit it named."""
+    root, out = recorded
+    assert rundef.load(out)["prereg_commit"] == _git(root, "rev-parse", "HEAD")
+
+
+def test_the_code_inventory_holds_the_d19_entry_points() -> None:
+    inventory = rundef.code_inventory(ROOT)
+    assert "scripts/d19_run_definition.py" in inventory
+    assert "scripts/d19_pilot.py" in inventory
+    assert not any(
+        rel.startswith("scripts/") and "/d19_" not in rel for rel in inventory
+    )
+
+
+def test_an_entry_script_outside_the_hashed_code_stops_the_start(
+    recorded: tuple[Path, Path],
+) -> None:
+    """R3-2: a driver or launcher that is not hashed code cannot pass."""
+    root, out = recorded
+    other = root / "launcher.py"
+    shutil.copy(root / "scripts" / "d19_run_definition.py", other)
+    text = other.read_text(encoding="utf-8").replace("parents[1]", "parents[0]")
+    other.write_text(text, encoding="utf-8")
+    env = {**os.environ, rundef.IMAGE_DIGEST_ENV: DIGEST}
+    command = [sys.executable, str(other), "check", "--definition", str(out)]
+    done = subprocess.run(command, env=env, cwd=root, capture_output=True,
+                          text=True, check=False)  # fmt: skip
+    other.unlink()
+    assert done.returncode == 1 and "entry point is not hashed code" in done.stderr
+
+
+def test_the_start_gate_refuses_modules_loaded_outside_the_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R3-2/R3-4: `start_gate` itself refuses, not only the helper."""
+    (tmp_path / "scripts").mkdir()
+    entry = tmp_path / "scripts" / "d19_driver.py"
+    entry.write_text("")
+    monkeypatch.setattr(sys.modules["__main__"], "__file__", str(entry))
+    with pytest.raises(RuntimeError, match="loaded outside the checkout"):
+        rundef.start_gate({"generator_sha256": "", "gating": {}}, tmp_path)
+
+
+def test_a_nested_helper_inside_the_checkout_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R4-1: a module loaded from inside the checkout but outside the hashed
+    code (here `calibration/extra/worker.py`, added after recording)."""
+    helper = tmp_path / "calibration" / "extra" / "worker.py"
+    helper.parent.mkdir(parents=True)
+    helper.write_text("X = 1\n")
+    spec = importlib.util.spec_from_file_location("d19_extra_worker", helper)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setitem(sys.modules, "d19_extra_worker", module)
+    assert "d19_extra_worker" in rundef.loaded_outside(tmp_path)
+    assert "calibration/extra/worker.py" not in rundef.code_inventory(tmp_path)
+
+
+def test_a_git_replacement_ref_cannot_stand_in_for_the_engine_commit(
+    tmp_path: Path,
+) -> None:
+    """R4-2: with `refs/replace` mapping commit A to B, plain `ls-tree`/`show`
+    of A read B's tree; the working tree matches B, the record says A."""
+    root = _checkout(tmp_path)
+    (tmp_path / "in").mkdir()
+    a = _git(root, "rev-parse", "HEAD")
+    with (root / "calibration" / "seeds.py").open("a") as handle:
+        handle.write("# B\n")
+    ident = ["-c", "user.name=t", "-c", "user.email=t@t"]
+    _git(root, *ident, "commit", "-q", "-am", "B")
+    b = _git(root, "rev-parse", "HEAD")
+    _git(root, "checkout", "-q", a)
+    _git(root, "checkout", b, "--", "calibration/seeds.py")  # worktree as B
+    _git(root, "replace", a, b)
+    assert _git(root, "show", f"{a}:calibration/seeds.py").endswith("# B")
+    done = _record(root, tmp_path / "in" / "d.json", a)
+    assert done.returncode == 1 and "engine code differs from HEAD" in done.stderr
+
+
+def test_an_engine_module_inside_the_runtime_installation_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R5-1: an `aqt`/`calibration` module under `sys.prefix` (the virtual
+    environment) is not covered by the code hash, so it is reported."""
+    fake = types.ModuleType("aqt.d19_fake")
+    fake.__file__ = str(
+        Path(sys.prefix) / "Lib" / "site-packages" / "aqt" / "d19_fake.py"
+    )
+    monkeypatch.setitem(sys.modules, "aqt.d19_fake", fake)
+    assert "aqt.d19_fake" in rundef.loaded_outside(ROOT)
+
+
+def test_record_refuses_a_file_changed_while_recording(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R5-2: an engine file edited after the first check and before writing
+    leaves nothing written."""
+    root = _checkout(tmp_path)
+    spec = importlib.util.spec_from_file_location(
+        "d19_record_under_test", root / "scripts" / "d19_run_definition.py"
+    )
+    assert spec is not None and spec.loader is not None
+    # the script switches bytecode caching off process-wide: restore after
+    monkeypatch.setattr(sys, "dont_write_bytecode", sys.dont_write_bytecode)
+    monkeypatch.setattr(sys, "pycache_prefix", sys.pycache_prefix)
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+
+    def build_while_editing(**_: object) -> dict[str, object]:
+        with (root / "calibration" / "seeds.py").open("a") as handle:
+            handle.write("# edited during recording\n")
+        return {"record_type": rundef.RECORD_TYPE}
+
+    monkeypatch.setattr(script.rundef, "build", build_while_editing)
+    monkeypatch.setenv(rundef.IMAGE_DIGEST_ENV, DIGEST)
+    inputs = tmp_path / "in"
+    inputs.mkdir()
+    for name in ("cells", "seeds", "exploration"):
+        (inputs / f"{name}.json").write_text("{}")
+    out = inputs / "d.json"
+    code = script.main([
+        "record", "--out", str(out), "--prereg-commit", "HEAD",
+        "--engine-commit", _git(root, "rev-parse", "HEAD"),
+        "--cell-manifest", str(inputs / "cells.json"),
+        "--exploration-manifest", str(inputs / "exploration.json"),
+    ])  # fmt: skip
+    assert code == 1 and not out.exists()
+
+
+def test_a_planted_bytecode_file_never_runs(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """R6-1: an unchecked-hash `.pyc` for `calibration/seeds.py` that would
+    run different code is never read; the gate passes on the source."""
+    root, out = recorded
+    copy = tmp_path / "engine"
+    shutil.copytree(root, copy)
+    seeds = copy / "calibration" / "seeds.py"
+    planted = tmp_path / "planted.py"
+    planted.write_text(seeds.read_text(encoding="utf-8") + "\nprint('PLANTED')\n")
+    py_compile.compile(
+        str(planted),
+        cfile=importlib.util.cache_from_source(str(seeds)),
+        dfile=str(seeds),
+        invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH,
+    )
+    done = _script(copy, "check", "--definition", str(out))
+    assert "PLANTED" not in done.stdout + done.stderr
+    assert done.returncode == 0, done.stderr
+
+
+def test_the_start_gate_needs_bytecode_disabled() -> None:
+    """R6-1: this pytest process caches bytecode, so the gate's check fails."""
+    assert rundef.bytecode_problem() is not None
+
+
+def test_a_git_dir_override_cannot_record_another_repository(tmp_path: Path) -> None:
+    """R6-2: GIT_DIR/GIT_WORK_TREE pointing at another repository whose
+    engine files match are ignored; its HEAD is not this checkout's."""
+    root = _checkout(tmp_path / "a")
+    other = _checkout(tmp_path / "b")
+    ident = ["-c", "user.name=t", "-c", "user.email=t@t"]
+    _git(other, *ident, "commit", "-q", "--allow-empty", "-m", "other")
+    (tmp_path / "in").mkdir()
+    inputs = tmp_path / "in"
+    for name in ("cells", "seeds", "exploration"):
+        (inputs / f"{name}.json").write_text("{}")
+    env = {**os.environ, rundef.IMAGE_DIGEST_ENV: DIGEST,
+           "GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other)}  # fmt: skip
+    command = [
+        sys.executable, str(root / "scripts" / "d19_run_definition.py"), "record",
+        "--out", str(inputs / "d.json"), "--prereg-commit", "HEAD",
+        "--engine-commit", _git(other, "rev-parse", "HEAD"),
+        "--cell-manifest", str(inputs / "cells.json"),
+        "--exploration-manifest", str(inputs / "exploration.json"),
+    ]  # fmt: skip
+    done = subprocess.run(command, env=env, cwd=root, capture_output=True,
+                          text=True, check=False)  # fmt: skip
+    assert done.returncode == 1 and "is not this checkout's HEAD" in done.stderr
+
+
+def test_the_start_gate_itself_refuses_cached_bytecode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R7-1: `start_gate` calls the bytecode check (this pytest process
+    caches bytecode), not only the helper."""
+    entry = ROOT / "scripts" / "d19_run_definition.py"
+    monkeypatch.setattr(sys.modules["__main__"], "__file__", str(entry))
+    monkeypatch.setattr(rundef, "loaded_outside", lambda _root: [])
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
+    with pytest.raises(RuntimeError, match="bytecode caching is not disabled"):
+        rundef.start_gate({"generator_sha256": "", "gating": {}}, ROOT)
+
+
+def _driver(root: Path, out: Path, store: Path, *args: str,
+            digest: str = DIGEST) -> subprocess.CompletedProcess[str]:  # fmt: skip
+    env = {**os.environ, rundef.IMAGE_DIGEST_ENV: digest}
+    command = [sys.executable, str(root / "scripts" / "d19_run.py"), "run",
+               "--definition", str(out), "--store", str(store), *args]  # fmt: skip
+    return subprocess.run(command, env=env, cwd=root, capture_output=True,
+                          text=True, check=False)  # fmt: skip
+
+
+def test_the_driver_runs_one_bound_chain_per_cell_and_resumes(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """Two workers, one chain per manifest cell; every chunk carries the
+    run-definition hash and the gating the start gate returned (FE-5); a
+    second run computes nothing new and ends at the same heads."""
+    root, out = recorded
+    store = tmp_path / "store"
+    args = ("--namespace", "threshold")
+    first = _driver(root, out, store, *args)
+    assert first.returncode == 0, first.stderr
+    defn = rundef.load(out)
+    for cell in ("pilot-k2", "pilot-k1"):
+        chunk = json.loads(
+            (store / "threshold" / cell / "chunk-0000000.json").read_bytes()
+        )
+        assert chunk["binding"] == rundef.definition_sha256(defn)
+        assert chunk["gating"] == defn["gating"]
+        assert len(chunk["results"]) == 3
+    k1 = json.loads(
+        (store / "threshold" / "pilot-k1" / "chunk-0000000.json").read_bytes()
+    )
+    assert set(k1["results"][0]) == classifier_fields(1)
+    before = {p: p.read_bytes() for p in store.rglob("*.json")}
+    second = _driver(root, out, store, *args)
+    assert second.returncode == 0, second.stderr
+    assert second.stdout == first.stdout
+    assert {p: p.read_bytes() for p in store.rglob("*.json")} == before
+
+
+def classifier_fields(k: int) -> set[str]:
+    from calibration import classifier
+
+    return set(classifier.required(k))
+
+
+def test_the_driver_refuses_unbuilt_namespaces_and_a_failed_gate(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    root, out = recorded
+    store = tmp_path / "store"
+    done = _driver(root, out, store, "--namespace", "heldout")
+    assert done.returncode == 1 and "is not built" in done.stderr
+    done = _driver(root, out, store, "--namespace", "threshold", digest="sha256:other")
+    assert done.returncode == 1 and "image digest differs" in done.stderr
+    assert not store.exists()
+
+
+def test_a_worker_runs_the_start_gate_before_any_chunk(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R3-3: the worker itself gates; a refusal there writes nothing."""
+    root, out = recorded
+    script = root / "scripts" / "d19_run.py"
+    spec = importlib.util.spec_from_file_location("d19_run_under_test", script)
+    assert spec is not None and spec.loader is not None
+    monkeypatch.setattr(sys, "dont_write_bytecode", sys.dont_write_bytecode)
+    monkeypatch.setattr(sys, "pycache_prefix", sys.pycache_prefix)
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+
+    def refused(*_: object) -> dict[str, object]:
+        raise RuntimeError("U_ops: start gate: refused in the worker")
+
+    monkeypatch.setattr(driver.rundef, "start_gate", refused)
+    store = tmp_path / "store"
+    with pytest.raises(RuntimeError, match="refused in the worker"):
+        driver.worker(
+            out,
+            store,
+            "threshold",
+            "pilot-k2",
+            rundef.definition_sha256(rundef.load(out)),
+        )
+    assert not store.exists()
+
+
+def _load_driver(root: Path, monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "d19_run_loaded", root / "scripts" / "d19_run.py"
+    )
+    assert spec is not None and spec.loader is not None
+    monkeypatch.setattr(sys, "dont_write_bytecode", sys.dont_write_bytecode)
+    monkeypatch.setattr(sys, "pycache_prefix", sys.pycache_prefix)
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    return driver
+
+
+def test_threshold_seeds_follow_prereg_section_8(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DR-1/DR-5: namespace d19-threshold-v1, anchor = the recorded
+    preregistration hash; every stored draw equals that computation."""
+    from calibration import classifier
+    from calibration.generator import Cell, generate
+    from calibration.seeds import outer_seed, stream
+
+    root, out = recorded
+    driver = _load_driver(root, monkeypatch)
+    monkeypatch.setattr(driver.rundef, "start_gate", lambda defn, _root: defn["gating"])
+    store = tmp_path / "store"
+    driver.worker(
+        out, store, "threshold", "pilot-k2", rundef.definition_sha256(rundef.load(out))
+    )
+    chunk = json.loads(
+        (store / "threshold" / "pilot-k2" / "chunk-0000000.json").read_bytes()
+    )
+    defn = rundef.load(out)
+    cell = Cell("pilot-k2", 2, 60, "garch", "equi0.5")
+    for rep_, stored in enumerate(chunk["results"]):
+        seed = outer_seed(defn["prereg_sha256"], "pilot-k2", "d19-threshold-v1", rep_)
+        legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
+        expected = classifier.diagnostics(legs.x)
+        assert stored == {
+            n: struct.pack(">d", v).hex() for n, v in sorted(expected.items())
+        }
+
+
+def test_a_chain_carries_the_gating_its_worker_gate_returned(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FE-5/DR-5: not the definition's copy, the worker gate's return."""
+    root, out = recorded
+    driver = _load_driver(root, monkeypatch)
+    monkeypatch.setattr(driver.rundef, "start_gate", lambda *_: {"from": "worker gate"})
+    store = tmp_path / "store"
+    driver.worker(
+        out, store, "threshold", "pilot-k1", rundef.definition_sha256(rundef.load(out))
+    )
+    chunk = json.loads(
+        (store / "threshold" / "pilot-k1" / "chunk-0000000.json").read_bytes()
+    )
+    assert chunk["gating"] == {"from": "worker gate"}
+
+
+def _record_plan(root: Path, inputs: Path, name: str, count: int) -> Path:
+    """A pilot definition with the fixture's cells and `count` draws."""
+    manifest = inputs / f"{name}-cells.json"
+    manifest.write_text(
+        json.dumps(
+            {**json.loads(CELLS), "replications": {"threshold": count, "dev": 1}}
+        )
+    )
+    (inputs / "exploration.json").write_text("{}")
+    out = inputs / f"{name}.json"
+    done = _script(
+        root, "record", "--out", str(out), "--prereg-commit", "HEAD",
+        "--engine-commit", _git(root, "rev-parse", "HEAD"),
+        "--cell-manifest", str(manifest),
+        "--exploration-manifest", str(inputs / "exploration.json"),
+    )  # fmt: skip
+    assert done.returncode == 0, done.stderr
+    return out
+
+
+def test_an_interrupted_run_resumes_identically_and_a_new_plan_cannot_extend_it(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """DR-3/DR3-2: a 501-draw plan (two chunks): the second chunk deleted as
+    if the run stopped, then resumed byte-identically. A finished 500-draw
+    run cannot be extended by a 501-draw definition: its chunk covers the
+    same range 0-500, so only the definition hash (the count) refuses it."""
+    root, _ = recorded
+    inputs = tmp_path / "in"
+    inputs.mkdir()
+    big = _record_plan(root, inputs, "big", 501)
+    exact = _record_plan(root, inputs, "exact", 500)
+    args = ("--namespace", "threshold")
+    store = tmp_path / "store"
+    assert _driver(root, big, store, *args).returncode == 0
+    chain = store / "threshold" / "pilot-k1"
+    whole = {p.name: p.read_bytes() for p in chain.iterdir()}
+    assert sorted(whole) == ["chunk-0000000.json", "chunk-0000500.json"]
+    (chain / "chunk-0000500.json").unlink()
+    (chain / "chunk-0000500.tmp").write_bytes(b"torn")
+    assert _driver(root, big, store, *args).returncode == 0
+    assert {p.name: p.read_bytes() for p in chain.iterdir()} == whole
+    finished = tmp_path / "finished"
+    assert _driver(root, exact, finished, *args).returncode == 0
+    extended = _driver(root, big, finished, *args)
+    assert extended.returncode == 1 and "binding does not match" in extended.stderr
+
+
+def test_the_driver_refuses_a_malformed_definition_before_any_store(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """DR3-3: through the driver, not only the validator."""
+    root, out = recorded
+    defn = rundef.load(out)
+    cells = defn["cell_manifest"]["cells"]
+    defn["cell_manifest"]["cells"] = [cells[0], cells[0]]
+    bad = tmp_path / "bad.json"
+    rundef.write(bad, defn)
+    store = tmp_path / "store"
+    done = _driver(root, bad, store, "--namespace", "threshold")
+    assert done.returncode == 1 and "duplicate cell id" in done.stderr
+    assert not store.exists()
+
+
+def _die(*_: object) -> str:
+    os._exit(3)  # a worker killed mid-run (DR3-1)
+
+
+def test_a_killed_worker_stops_the_run_instead_of_hanging(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """DR3-1/DR4-2: in a separate process with a timeout, so a regression to a
+    hanging pool fails promptly instead of hanging the test run."""
+    root, out = recorded
+    script = str(root / "scripts" / "d19_run.py")
+    code = "\n".join([
+        "import importlib.util, sys",
+        f"sys.path[:0] = [{str(Path(__file__).parent)!r}]",
+        "import test_calibration_rundef as t",
+        f"spec = importlib.util.spec_from_file_location('drv', {script!r})",
+        "d = importlib.util.module_from_spec(spec); spec.loader.exec_module(d)",
+        "d.rundef.start_gate = lambda defn, root: defn['gating']",
+        "d.worker = t._die",
+        f"sys.exit(d.main(['run', '--definition', {str(out)!r}, '--store', "
+        f"{str(tmp_path / 'store')!r}, '--namespace', 'threshold']))",
+    ])  # fmt: skip
+    env = {**os.environ, "PYTHONPATH": f"{ROOT}{os.pathsep}{ROOT / 'src'}"}
+    command = [sys.executable, "-c", code]
+    done = subprocess.run(command, env=env, cwd=root, capture_output=True,
+                          text=True, timeout=180, check=False)  # fmt: skip
+    assert done.returncode == 1 and "BrokenProcessPool" in done.stderr, done.stderr
+
+
+def _slow_or_fail(*job: object) -> str:
+    if job[3] == "pilot-k2":
+        import time
+
+        time.sleep(600)
+    raise RuntimeError("this chain failed")
+
+
+def test_a_failing_chain_stops_the_run_without_waiting_for_earlier_ones(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """FA-5: the first cell runs for ten minutes, the second fails at once;
+    the run stops on the failure well within the timeout."""
+    root, out = recorded
+    script = str(root / "scripts" / "d19_run.py")
+    code = "\n".join([
+        "import importlib.util, sys",
+        f"sys.path[:0] = [{str(Path(__file__).parent)!r}]",
+        "import test_calibration_rundef as t",
+        f"spec = importlib.util.spec_from_file_location('drv', {script!r})",
+        "d = importlib.util.module_from_spec(spec); spec.loader.exec_module(d)",
+        "d.rundef.start_gate = lambda defn, root: defn['gating']",
+        "d.worker = t._slow_or_fail",
+        f"sys.exit(d.main(['run', '--definition', {str(out)!r}, '--store', "
+        f"{str(tmp_path / 'store')!r}, '--namespace', 'threshold']))",
+    ])  # fmt: skip
+    env = {**os.environ, "PYTHONPATH": f"{ROOT}{os.pathsep}{ROOT / 'src'}"}
+    done = subprocess.run([sys.executable, "-c", code], env=env, cwd=root,
+                          capture_output=True, text=True, timeout=180,
+                          check=False)  # fmt: skip
+    assert done.returncode == 1 and "this chain failed" in done.stderr, done.stderr
+
+
+class _Child:
+    def __init__(self) -> None:
+        self.terminated = False
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("chain failed"), KeyboardInterrupt()])
+def test_a_failure_terminates_only_the_runs_own_workers(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    failure: BaseException,
+) -> None:  # fmt: skip
+    """FR-2/FR-3: a child that existed before the run is left alone; the
+    run's workers are terminated on a chain failure and on Ctrl-C, which
+    still propagates."""
+    root, out = recorded
+    driver = _load_driver(root, monkeypatch)
+    unrelated, own = _Child(), _Child()
+    calls = iter([[unrelated]])
+    monkeypatch.setattr(
+        driver.multiprocessing, "active_children",
+        lambda: next(calls, [unrelated, own]),
+    )  # fmt: skip
+
+    class InProcess(concurrent.futures.ThreadPoolExecutor):
+        def __init__(self, workers: int, mp_context: object = None) -> None:
+            super().__init__(workers)
+
+    def fail(*_: object) -> str:
+        raise failure
+
+    monkeypatch.setattr(driver, "ProcessPoolExecutor", InProcess)
+    monkeypatch.setattr(driver.rundef, "start_gate", lambda d, _root: d["gating"])
+    monkeypatch.setattr(driver, "worker", fail)
+    argv = ["run", "--definition", str(out), "--store", str(tmp_path / "s"),
+            "--namespace", "threshold"]  # fmt: skip
+    if isinstance(failure, Exception):
+        assert driver.main(argv) == 1
+    else:
+        with pytest.raises(KeyboardInterrupt):
+            driver.main(argv)
+    assert own.terminated and not unrelated.terminated
+
+
+def test_a_worker_refuses_a_definition_replaced_after_the_start(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DR4-1: the worker reloads the file; a different hash is refused."""
+    root, out = recorded
+    driver = _load_driver(root, monkeypatch)
+    monkeypatch.setattr(driver.rundef, "start_gate", lambda d, _root: d["gating"])
+    with pytest.raises(ValueError, match="changed after the run started"):
+        driver.worker(out, tmp_path / "store", "threshold", "pilot-k1", "0" * 64)
+    assert not (tmp_path / "store").exists()
+
+
+@pytest.mark.parametrize(
+    ("manifest", "message"),
+    [
+        ({"cells": "x"}, "no list of cells"),
+        ({"cells": []}, "no cells"),
+        ({"cells": [{"cell_id": "a", "k": 2, "t": 60, "law": "gaussian"}]}, "exactly"),
+        (
+            {
+                "cells": [
+                    _c := {
+                        "cell_id": "a",
+                        "k": 2,
+                        "t": 60,
+                        "law": "gaussian",
+                        "dependence": "independent",
+                    },
+                    _c,
+                ]
+            },
+            "duplicate",
+        ),  # fmt: skip
+        ({"cells": [{**_c, "cell_id": "../x"}]}, "path-safe"),
+        ({"cells": [{**_c, "k": 3}]}, "K must be"),
+        ({"cells": [{**_c, "t": 8}]}, "T must be"),
+        ({"cells": [{**_c, "law": "cauchy"}]}, "unknown law"),
+        ({"cells": [{**_c, "k": 1, "dependence": "equi0.5"}]}, "K = 1"),
+        ({"cells": [{**_c, "dependence": "clusters"}]}, "clusters"),
+    ],
+)
+def test_a_malformed_cell_manifest_is_refused(manifest: object, message: str) -> None:
+    from calibration.generator import cells_from_manifest
+
+    with pytest.raises(ValueError, match=message):
+        cells_from_manifest(manifest)
+
+
+SMALL = {"threshold": 3, "dev": 1}
+
+
+@pytest.mark.parametrize(
+    ("manifest", "message"),
+    [
+        ({"purpose": "pilot"}, "purpose and replications"),
+        (
+            {"purpose": "x", "replications": {"threshold": 3, "dev": 1}},
+            "purpose and replications",
+        ),
+        ({"purpose": "pilot", "replications": {**SMALL, "threshold": 0}}, "positive"),
+        ({"purpose": "pilot", "replications": {**SMALL, "heldout": 1}}, "positive"),
+        ({"purpose": "qualification", "replications": SMALL}, "exactly the prescribed"),
+        (
+            {"purpose": "pilot", "replications": {"threshold": 3, "dev": 1},
+             "cells": [{"cell_id": "c-k1"}]},
+            "must start with 'pilot-'",
+        ),
+        (
+            {"purpose": "pilot", "replications": {"threshold": 3, "dev": 12_000},
+             "cells": [{"cell_id": "pilot-k1"}]},
+            "below the prescribed",
+        ),
+        (
+            {"purpose": "qualification", "replications": rundef.PRESCRIBED,
+             "cells": [{"cell_id": "pilot-k1"}]},
+            "pilot runs only",
+        ),
+    ],
+)  # fmt: skip
+def test_a_bad_run_plan_is_refused(manifest: object, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        rundef.run_plan(manifest)
+    from calibration import grid
+
+    prescribed = grid.manifest(1200, {"threshold": 300_000, "dev": 12_000})
+    with pytest.raises(ValueError, match="qualification runs are refused"):
+        rundef.run_plan(prescribed)  # DR2-1: even the exact grid
+
+
+def test_the_recorded_seed_specification_is_the_section_8_one(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DR2-2: derived from the preregistration hash; a definition carrying
+    another one is refused by the worker."""
+    root, out = recorded
+    defn = rundef.load(out)
+    assert defn["seed_spec"] == {
+        "anchor": defn["prereg_sha256"],
+        "namespaces": {"threshold": "d19-threshold-v1", "dev": "d19-dev-v1"},
+    }
+    defn["seed_spec"]["anchor"] = "0" * 64
+    changed = tmp_path / "changed.json"
+    rundef.write(changed, defn)
+    driver = _load_driver(root, monkeypatch)
+    monkeypatch.setattr(driver.rundef, "start_gate", lambda d, _root: d["gating"])
+    with pytest.raises(ValueError, match="seed specification"):
+        driver.worker(changed, tmp_path / "store", "threshold", "pilot-k1",
+                      rundef.definition_sha256(rundef.load(changed)))  # fmt: skip
+
+
+def test_the_parent_hands_its_definition_hash_to_every_worker(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:  # fmt: skip
+    """DR5-1/DR5-2: `main` runs exactly two workers and passes the hash of the
+    definition it gated; the file replaced after the parent's gate (here,
+    inside that gate) is refused by the real worker. Threads stand in for
+    processes so the replacement and the pool size can be observed."""
+    root, out = recorded
+    copy = tmp_path / "definition.json"
+    shutil.copy(out, copy)
+    driver = _load_driver(root, monkeypatch)
+    sizes: list[int] = []
+
+    class InProcess(concurrent.futures.ThreadPoolExecutor):
+        def __init__(self, workers: int, mp_context: object = None) -> None:
+            sizes.append(workers)
+            super().__init__(workers)
+
+    def gate_then_replace(defn: dict[str, object], _root: Path) -> object:
+        replaced = {**defn, "engine_commit": "f" * 40}
+        rundef.write(copy, replaced)  # a different definition, same path
+        return defn["gating"]
+
+    monkeypatch.setattr(driver, "ProcessPoolExecutor", InProcess)
+    monkeypatch.setattr(driver.rundef, "start_gate", gate_then_replace)
+    store = tmp_path / "store"
+    code = driver.main(["run", "--definition", str(copy), "--store", str(store),
+                        "--namespace", "threshold"])  # fmt: skip
+    assert code == 1 and "changed after the run started" in capsys.readouterr().err
+    assert sizes == [2] and not store.exists()
+
+
+def test_the_development_run_needs_the_threshold_run_then_follows_section_2(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """Through the real driver: development before a complete threshold run
+    is refused; after it, every development chunk holds prereg §2's record
+    (diagnostics, both block rules with z_f*, U_G) bound to the definition."""
+    root, out = recorded
+    store = tmp_path / "store"
+    early = _driver(root, out, store, "--namespace", "dev")
+    assert early.returncode == 1 and "chain missing" in early.stderr, early.stderr
+    assert _driver(root, out, store, "--namespace", "threshold").returncode == 0
+    done = _driver(root, out, store, "--namespace", "dev")
+    assert done.returncode == 0, done.stderr
+    defn = rundef.load(out)
+    for cell, k in (("pilot-k2", 2), ("pilot-k1", 1)):
+        chunk = json.loads((store / "dev" / cell / "chunk-0000000.json").read_bytes())
+        assert chunk["binding"] == rundef.definition_sha256(defn)
+        assert len(chunk["results"]) == 2
+        for record in chunk["results"]:
+            assert set(record) == {"diagnostics", "columns", "column_checks",
+                                   "largest", "median",
+                                   "nominee", "u_g"}  # fmt: skip
+            assert set(record["diagnostics"]) == classifier_fields(k)
+            for rule in ("largest", "median"):
+                assert set(record[rule]) == {"reason", "z", "block", "s0",
+                                             "length_ratio", "nominee"}  # fmt: skip
+    report_path = tmp_path / "choices.json"
+    command = [sys.executable, str(root / "scripts" / "d19_choose.py"), "choose",
+               "--definition", str(out), "--store", str(store),
+               "--out", str(report_path)]  # fmt: skip
+    env = {**os.environ, rundef.IMAGE_DIGEST_ENV: DIGEST}
+    chose = subprocess.run(command, env=env, cwd=root, capture_output=True,
+                           text=True, check=False)  # fmt: skip
+    assert chose.returncode == 0, chose.stderr
+    report = json.loads(report_path.read_text())
+    assert report["definition_sha256"] == rundef.definition_sha256(defn)
+    assert set(report["cells"]) == {"pilot-k1", "pilot-k2"}
+    # two development replications per cell cannot qualify anything
+    assert {c["status"] for c in report["cells"].values()} == {"demoted_cap"}
+    assert report["z_crit"] is None and report["final_thresholds"] == {}
+    heads = {
+        f"{ns}/{c}" for ns in ("threshold", "dev") for c in ("pilot-k1", "pilot-k2")
+    }
+    assert set(report["chain_heads"]) == heads
+    assert report["margin_ok"] is True and report["status"] == "ok"
+    assert "qualifies is always false" in report["measurement_only"]  # S16-1
+    assert report["qualifies"] is report["qualifies_before_coverage"] is False
+    assert chose.stdout.startswith("z_crit None")
+
+
+def _hex64(value: float | None) -> str | None:
+    return None if value is None else struct.pack(">d", value).hex()
+
+
+def _widened(bounds: tuple[dict[str, float], dict[str, float]], by: float) -> object:
+    """Every tail moved outward by `by` (inward if negative); K, T exact."""
+    upper, lower = bounds
+    return (
+        {n: v if n in ("K", "T") else v + by for n, v in upper.items()},
+        {n: v if n in ("K", "T") else v - by for n, v in lower.items()},
+    )
+
+
+@pytest.mark.parametrize("cell_id", ["pilot-k2", "pilot-k1"])
+def test_development_records_equal_an_independent_section_2_computation(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    cell_id: str,
+) -> None:  # fmt: skip
+    """I1-1: namespace d19-dev-v1, protocol_hash = the preregistration hash,
+    both rules through the bootstrap (thresholds widened so the classifier
+    accepts), and the refused path (thresholds that accept nothing)."""
+    from calibration import classifier, gates
+    from calibration.generator import Cell, generate
+    from calibration.seeds import family_seed, outer_seed, stream
+
+    root, out = recorded
+    driver = _load_driver(root, monkeypatch)
+    monkeypatch.setattr(dsr, "_V_VERIFIED", True)
+    monkeypatch.setattr(driver.rundef, "start_gate", lambda d, _root: d["gating"])
+    defn = rundef.load(out)
+    expected = rundef.definition_sha256(defn)
+    cells = {"pilot-k2": Cell("pilot-k2", 2, 60, "garch", "equi0.5"),
+             "pilot-k1": Cell("pilot-k1", 1, 60, "t5", "independent")}  # fmt: skip
+    cell = cells[cell_id]
+    store = tmp_path / "store"
+    for c in cells.values():
+        driver.worker(out, store, "threshold", c.cell_id, expected)
+    pooled = driver.dev_bounds(defn, store, defn["gating"], list(cells.values()))
+    wide, none = _widened(pooled[cell_id], 1e6), _widened(pooled[cell_id], -1e6)
+    anchor = defn["prereg_sha256"]
+    accepted = 0
+    for name, bounds in (("wide", wide), ("none", none)):
+        driver.worker(out, store / name, "dev", cell_id, expected, bounds)
+        chunk = json.loads(
+            (store / name / "dev" / cell_id / "chunk-0000000.json").read_bytes()
+        )
+        for rep, stored in enumerate(chunk["results"]):
+            seed = outer_seed(anchor, cell_id, "d19-dev-v1", rep)
+            legs = generate(cell, stream(seed, "market"), stream(seed, "columns"))
+            values = classifier.diagnostics(legs.x)
+            accept = classifier.within(values, *bounds)
+            assert accept is (name == "wide")
+            fam = family_seed(seed, cell_id, "agnostic", cell.k, anchor, rep)
+            blocks = set()
+            for rule in ("largest", "median"):
+                result = dsr.evaluate(
+                    legs.x, fam, rule, classifier=lambda *_, a=accept: a
+                )
+                assert stored[rule] == {
+                    "reason": result.reason, "z": _hex64(result.z),
+                    "block": _hex64(result.block), "s0": _hex64(result.s0),
+                    "length_ratio": _hex64(result.length_ratio),
+                    "nominee": result.nominee,
+                }  # fmt: skip
+                accepted += result.z is not None
+                blocks.add(result.block)
+            if name == "wide" and cell.k == 2 and None not in blocks:
+                assert len(blocks) == 2  # the two rules really differ
+            sharpes = [float(np.mean(c) / np.std(c, ddof=1)) for c in legs.x.T]
+            top = int(np.argmax(sharpes))
+            assert stored["nominee"] == top
+            u_g = gates.u_g(legs.x, legs.candidates, legs.benchmark, top, seed)
+            assert stored["u_g"] == u_g
+            assert reduce_decode(stored["diagnostics"]) == values
+            assert stored["columns"] is not None and len(stored["columns"]) == cell.k
+            from calibration import choices  # real records pass the check (I1R3)
+
+            assert choices.consistent(stored, bounds) is None
+    assert accepted > 0  # the bootstrap path and z_f* were exercised
+
+
+def reduce_decode(values: object) -> dict[str, float]:
+    from calibration import reduce
+
+    return reduce.decode(values)
+
+
+def test_the_nominee_is_the_highest_sharpe_lowest_id_on_ties(
+    recorded: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _load_driver(recorded[0], monkeypatch)
+    column = np.array([0.01, -0.02, 0.03, 0.005])
+    assert driver.nominee(np.column_stack([column, column * 2, column - 1])) == 0
+    assert driver.nominee(np.column_stack([column - 1, column])) == 1
+    assert driver.nominee(np.column_stack([column, np.ones(4)])) is None
+    assert driver.nominee(np.column_stack([column, column * np.nan])) is None
+
+
+def test_a_margin_failure_exits_3_and_never_reads_as_a_choice(
+    recorded: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:  # fmt: skip
+    """I1R-4: through the real script, a target comparison inside the
+    margin writes a report marked margin_failed and exits 3 without the
+    z_crit line."""
+    from calibration import choices
+    from calibration.generator import Cell
+
+    root, out = recorded
+    driver = _load_driver(root, monkeypatch)
+    monkeypatch.setattr(dsr, "_V_VERIFIED", True)
+    monkeypatch.setattr(driver.rundef, "start_gate", lambda d, _root: d["gating"])
+    defn = rundef.load(out)
+    expected = rundef.definition_sha256(defn)
+    cells = [Cell("pilot-k2", 2, 60, "garch", "equi0.5"),
+             Cell("pilot-k1", 1, 60, "t5", "independent")]  # fmt: skip
+    store = tmp_path / "store"
+    for c in cells:
+        driver.worker(out, store, "threshold", c.cell_id, expected)
+    pooled = driver.dev_bounds(defn, store, defn["gating"], cells)
+    for c in cells:
+        driver.worker(out, store, "dev", c.cell_id, expected, pooled[c.cell_id])
+    spec = importlib.util.spec_from_file_location(
+        "d19_choose_loaded", root / "scripts" / "d19_choose.py"
+    )
+    assert spec is not None and spec.loader is not None
+    chooser = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(chooser)
+    monkeypatch.setattr(chooser.rundef, "start_gate", lambda d, _root: d["gating"])
+    monkeypatch.setattr(choices, "MARGIN_MIN", 1e300)
+    report_path = tmp_path / "report.json"
+    code = chooser.main(["choose", "--definition", str(out), "--store", str(store),
+                         "--out", str(report_path)])  # fmt: skip
+    captured = capsys.readouterr()
+    assert code == 3 and "margin_failed" in captured.err
+    assert "z_crit" not in captured.out
+    report = json.loads(report_path.read_text())
+    assert report["status"] == "margin_failed"
+    assert report["qualifies_before_coverage"] is False
+
+
+def test_column_checks_do_not_claim_a_variance_check_for_a_non_finite_column(
+    recorded: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """I1R2-2: [finite, nonzero variance]; the variance is None (not
+    evaluated) when the column is not finite."""
+    driver = _load_driver(recorded[0], monkeypatch)
+    x = np.column_stack([[0.1, 0.2, 0.3], [1.0, 1.0, 1.0], [0.1, np.nan, 0.3],
+                         [0.1, np.inf, 0.3]])  # fmt: skip
+    expected = [[True, True], [True, False], [False, None], [False, None]]
+    assert driver.column_checks(x) == expected
+
+
+Q5_CELLS = json.dumps({"purpose": "pilot", "replications": {"threshold": 3, "dev": 2},
+                       "cells": [
+    {"cell_id": "pilot-q5", "k": 2, "t": 40, "law": "semi-trend",
+     "dependence": "independent"},
+    {"cell_id": "pilot-k1", "k": 1, "t": 40, "law": "t5", "dependence": "independent"},
+    {"cell_id": "pilot-qj", "k": 2, "t": 40, "law": "semi-joint",
+     "dependence": "independent"},
+]})  # fmt: skip
+
+
+def _write_raw(root: Path, drift: float = 0.0) -> None:
+    """Synthetic BTC and ETH exploration archives for January and February
+    2018 (every hour present), with Task-13-style sidecars."""
+    import hashlib
+    import io
+    import zipfile
+    from datetime import UTC, datetime, timedelta
+
+    rng = np.random.default_rng(5)
+    for symbol in ("BTCUSDT", "ETHUSDT"):
+        directory = root / "klines" / symbol / "1h"
+        directory.mkdir(parents=True, exist_ok=True)
+        price = 100.0
+        for month in (1, 2):
+            start = datetime(2018, month, 1, tzinfo=UTC)
+            hours = (datetime(2018, month + 1, 1, tzinfo=UTC) - start) // timedelta(
+                hours=1
+            )
+            lines = []
+            for i in range(hours):
+                opened = price
+                price *= math.exp(rng.normal(drift, 0.01))
+                ms = int((start + timedelta(hours=i)).timestamp()) * 1000
+                high, low = max(opened, price) * 1.001, min(opened, price) * 0.999
+                lines.append(f"{ms},{opened!r},{high!r},{low!r},{price!r},1.0,"
+                             f"{ms + 3_599_999},1,1,1,1,0")  # fmt: skip
+            name = f"{symbol}-1h-2018-{month:02d}"
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w") as handle:
+                handle.writestr(f"{name}.csv", "\n".join(lines) + "\n")
+            content = buffer.getvalue()
+            (directory / f"{name}.zip").write_bytes(content)
+            sidecar = {"name": f"{name}.zip",
+                       "sha256": hashlib.sha256(content).hexdigest()}  # fmt: skip
+            (directory / f"{name}.zip.source.json").write_text(json.dumps(sidecar))
+
+
+def test_a_q5_pilot_runs_on_recorded_exploration_data_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Q5 (prereg §3.4) end to end: the run definition records the source
+    identity built from the archives; the driver's threshold draws equal
+    `rules.draw` on that source with §8 seeds; a run without the archives,
+    or with archives whose returns differ, is refused before any chunk."""
+    from calibration import classifier, rules, semi
+    from calibration.generator import Cell
+    from calibration.seeds import outer_seed
+
+    root = _checkout(tmp_path)
+    raw, other = tmp_path / "raw", tmp_path / "other"
+    _write_raw(raw)
+    _write_raw(other, drift=0.001)
+    inputs = tmp_path / "in"
+    inputs.mkdir()
+    (inputs / "cells.json").write_text(Q5_CELLS)
+    from aqt.data.klines import build_exploration_manifest
+    from aqt.data.manifest import canonical_json_bytes
+
+    for name, path in (("btc", raw), ("other", other)):
+        built = build_exploration_manifest("exploration", "BTCUSDT", path)
+        (inputs / f"{name}.json").write_bytes(
+            canonical_json_bytes(built.manifest.as_mapping())
+        )
+    (inputs / "empty.json").write_text("{}")
+    real = json.loads((inputs / "btc.json").read_bytes())
+    forged = {k: real[k] for k in ("manifest_type", "partition", "symbol",
+                                   "manifest_sha256")}  # fmt: skip
+    (inputs / "forged.json").write_text(json.dumps(forged))
+    out = inputs / "d.json"
+
+    def base(manifest: str) -> tuple[str, ...]:
+        return ("record", "--out", str(out), "--prereg-commit", "HEAD",
+                "--engine-commit", _git(root, "rev-parse", "HEAD"),
+                "--cell-manifest", str(inputs / "cells.json"),
+                "--exploration-manifest", str(inputs / manifest))  # fmt: skip
+
+    done = _script(root, *base("btc.json"))
+    assert done.returncode == 1 and "Q5 cells need --raw-root" in done.stderr
+    for wrong in ("empty.json", "other.json", "forged.json"):  # I2BW-2
+        done = _script(root, *base(wrong), "--raw-root", str(raw))
+        assert done.returncode == 1 and "not the BTC exploration" in done.stderr
+    assert not out.exists()
+    # I2BWR2-1: archives that change between the source load and the
+    # manifest rebuild are refused even when the supplied file matches the
+    # rebuild (simulated: the rebuild sees the other archives).
+    spec = importlib.util.spec_from_file_location(
+        "d19_run_definition_loaded", root / "scripts" / "d19_run_definition.py"
+    )
+    assert spec is not None and spec.loader is not None
+    monkeypatch.setattr(sys, "dont_write_bytecode", sys.dont_write_bytecode)
+    monkeypatch.setattr(sys, "pycache_prefix", sys.pycache_prefix)
+    recorder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(recorder)
+    rebuilt = build_exploration_manifest("exploration", "BTCUSDT", other)
+    monkeypatch.setattr(recorder, "build_exploration_manifest", lambda *_: rebuilt)
+    monkeypatch.setenv(rundef.IMAGE_DIGEST_ENV, DIGEST)
+    monkeypatch.chdir(root)
+    capsys.readouterr()
+    assert recorder.main([*base("other.json"), "--raw-root", str(raw)]) == 1
+    assert "not the BTC exploration" in capsys.readouterr().err
+    assert not out.exists()
+    done = _script(root, *base("btc.json"), "--raw-root", str(raw))
+    assert done.returncode == 0, done.stderr
+    defn = rundef.load(out)
+    source = semi.load_source(raw)
+    assert defn["exploration_source"] == source.identity
+    assert source.identity["rows"] == 30 + 28  # Jan 2-31, Feb 1-28 (no Dec 31)
+
+    store = tmp_path / "store"
+    done = _driver(root, out, store, "--namespace", "threshold")
+    assert done.returncode == 1 and "Q5 cells need --raw-root" in done.stderr
+    done = _driver(
+        root, out, store, "--namespace", "threshold", "--raw-root", str(other)
+    )
+    assert done.returncode == 1 and "exploration data differs" in done.stderr
+    assert not (store / "threshold" / "pilot-q5").exists()
+
+    done = _driver(root, out, store, "--namespace", "threshold", "--raw-root", str(raw))
+    assert done.returncode == 0, done.stderr
+    chunk = json.loads(
+        (store / "threshold" / "pilot-q5" / "chunk-0000000.json").read_bytes()
+    )
+    cell = Cell("pilot-q5", 2, 40, "semi-trend")
+    for rep_, stored in enumerate(chunk["results"]):
+        seed = outer_seed(defn["prereg_sha256"], "pilot-q5", "d19-threshold-v1", rep_)
+        expected = classifier.diagnostics(rules.draw(cell, seed, source).x)
+        assert stored == {
+            n: struct.pack(">d", v).hex() for n, v in sorted(expected.items())
+        }
+    done = _driver(root, out, store, "--namespace", "dev", "--raw-root", str(raw))
+    assert done.returncode == 0, done.stderr
+    dev = json.loads((store / "dev" / "pilot-q5" / "chunk-0000000.json").read_bytes())
+    assert len(dev["results"]) == 2
+    # I2BW-5: the stored development draws are this source's Q5 draws under
+    # the dev namespace, and each record is one `dev_replication` could
+    # write with the pooled thresholds (the d19_choose consistency check).
+    from calibration import choices
+
+    qj = Cell("pilot-qj", 2, 40, "semi-joint")
+    every = _load_driver(root, monkeypatch).dev_bounds(
+        defn, store, defn["gating"], [cell, Cell("pilot-k1", 1, 40, "t5"), qj]
+    )
+    bounds = every[cell.cell_id]
+    # Slice 3: a QJ chain stores one record per family (owner Q2).
+    qj_threshold = json.loads(
+        (store / "threshold" / "pilot-qj" / "chunk-0000000.json").read_bytes()
+    )
+    qj_dev = json.loads(
+        (store / "dev" / "pilot-qj" / "chunk-0000000.json").read_bytes()
+    )
+    for rep_, stored in enumerate(qj_threshold["results"]):
+        seed = outer_seed(defn["prereg_sha256"], "pilot-qj", "d19-threshold-v1", rep_)
+        parts = rules.families(qj, rules.draw(qj, seed, source))
+        assert stored == {
+            f: {n: struct.pack(">d", v).hex()
+                for n, v in sorted(classifier.diagnostics(p.x).items())}
+            for f, p in parts.items()
+        }  # fmt: skip
+    for stored in qj_dev["results"]:
+        assert set(stored) == {"trend", "vol"}
+        for record in stored.values():
+            assert choices.consistent(record, every["pilot-qj"]) is None
+    for rep_, stored in enumerate(dev["results"]):
+        seed = outer_seed(defn["prereg_sha256"], "pilot-q5", "d19-dev-v1", rep_)
+        expected = classifier.diagnostics(rules.draw(cell, seed, source).x)
+        assert stored["diagnostics"] == {
+            n: struct.pack(">d", v).hex() for n, v in sorted(expected.items())
+        }
+        assert choices.consistent(stored, bounds) is None
+    # Step 2 slice 1: choose accepts Q5 cells and counts 3 tests per cell.
+    report_path = tmp_path / "choices.json"
+    chose = subprocess.run(
+        [sys.executable, str(root / "scripts" / "d19_choose.py"), "choose",
+         "--definition", str(out), "--store", str(store), "--out", str(report_path)],
+        env={**os.environ, rundef.IMAGE_DIGEST_ENV: DIGEST}, cwd=root,
+        capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert chose.returncode == 0, chose.stderr
+    report = json.loads(report_path.read_text())
+    assert report["m"] == 2 * 3 + 8
+    assert set(report["cells"]) == {"pilot-q5", "pilot-k1", "pilot-qj/trend",
+                                    "pilot-qj/vol"}  # fmt: skip
+    assert set(report["joint"]) == {"pilot-qj"}
+    # slice 2: two replications qualify nothing, so every category is empty
+    assert report["coverage"] == dict.fromkeys(choices.CATEGORIES, [])
+    assert report["qualifies"] is False
+
+
+def test_a_q5_development_draw_uses_its_family_label(
+    recorded: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§8: the inner Annex B family seed's family_id is the Q5 family."""
+    from calibration import semi
+    from calibration.generator import Cell
+
+    root, _ = recorded
+    driver = _load_driver(root, monkeypatch)
+    labels = []
+
+    class Seeded(Exception):
+        pass
+
+    def spy(seed: str, cell_id: str, family: str, *rest: object) -> str:
+        labels.append(family)
+        raise Seeded  # stop before Annex B, which needs the pinned runtime
+
+    monkeypatch.setattr(driver, "family_seed", spy)
+    returns = np.random.default_rng(3).normal(0, 0.03, (300, 2))
+    source = semi.Source(returns, {}, semi.reference_variance(returns))
+    from calibration import classifier
+
+    def loose(k: int) -> tuple[dict[str, float], dict[str, float]]:
+        need = classifier.required(k)
+        upper = {n: 1e300 for n in need - set(classifier.LOWER)}
+        upper.update(K=k, T=40)
+        lower = {n: -1e300 for n in need - set(classifier.UPPER)}
+        lower.update(K=k, T=40)
+        return upper, lower
+
+    with pytest.raises(Seeded):
+        driver.dev_replication(Cell("q", 2, 40, "semi-vol"), "a" * 64, "b" * 64, 0,
+                               loose(2), source)  # fmt: skip
+    with pytest.raises(Seeded):
+        driver.dev_replication(Cell("s", 2, 40, "t5"), "a" * 64, "b" * 64, 0, loose(2))
+    assert labels == ["vol", "agnostic"]
+
+
+def test_a_q5_development_record_equals_an_independent_section_2_computation(
+    recorded: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """I2BW-5: one Q5 development replication, recomputed from its parts:
+    the dev-namespace draw on the source, Annex B under both block rules with
+    the family seed labelled by the family, the P18-4 nominee and U_G."""
+    from calibration import classifier, gates, rules, semi
+    from calibration.generator import Cell
+    from calibration.seeds import family_seed, outer_seed
+
+    root, _ = recorded
+    driver = _load_driver(root, monkeypatch)
+    monkeypatch.setattr(dsr, "_V_VERIFIED", True)
+    returns = np.random.default_rng(8).normal(0, 0.035, (400, 2))
+    returns -= returns.mean(axis=0)
+    source = semi.Source(returns, {}, semi.reference_variance(returns))
+    anchor, prereg = "c" * 64, "d" * 64
+    for family in rules.FAMILIES:
+        cell = Cell(f"q5-{family}", 2, 120, f"semi-{family}")
+        need = classifier.required(2)
+        upper = {n: 1e300 for n in need - set(classifier.LOWER)} | {"K": 2, "T": 120}
+        lower = {n: -1e300 for n in need - set(classifier.UPPER)} | {"K": 2, "T": 120}
+        reasons = set()
+        for rep_ in range(3):
+            stored = driver.dev_replication(cell, anchor, prereg, rep_,
+                                            (upper, lower), source)  # fmt: skip
+            seed = outer_seed(anchor, cell.cell_id, "d19-dev-v1", rep_)
+            legs = rules.draw(cell, seed, source)
+            accept = classifier.within(classifier.diagnostics(legs.x), upper, lower)
+            assert accept
+            fam = family_seed(seed, cell.cell_id, family, 2, prereg, rep_)
+            for rule in ("largest", "median"):
+                result = dsr.evaluate(legs.x, fam, rule, classifier=lambda *_: True)
+                assert stored[rule] == {
+                    "reason": result.reason, "z": _hex64(result.z),
+                    "block": _hex64(result.block), "s0": _hex64(result.s0),
+                    "length_ratio": _hex64(result.length_ratio),
+                    "nominee": result.nominee,
+                }  # fmt: skip
+                reasons.add(result.reason)
+            sharpes = [float(np.mean(c) / np.std(c, ddof=1)) for c in legs.x.T]
+            top = int(np.argmax(sharpes))
+            assert stored["nominee"] == top
+            assert stored["u_g"] == gates.u_g(
+                legs.x, legs.candidates, legs.benchmark, top, seed
+            )
+        assert None in reasons  # Annex B ran to z_f* on a Q5 draw
+
+
+def test_a_qj_development_record_is_each_familys_section_2_computation(
+    recorded: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Slice 3, owner decision 2026-10-11 Q2/Q3: a QJ record holds, per
+    family, Annex B on that family's K columns of the one shared draw with
+    the family seed labelled by the family, and U_G with the shared outer
+    seed."""
+    from calibration import classifier, gates, rules, semi
+    from calibration.generator import Cell
+    from calibration.seeds import family_seed, outer_seed
+
+    root, _ = recorded
+    driver = _load_driver(root, monkeypatch)
+    monkeypatch.setattr(dsr, "_V_VERIFIED", True)
+    returns = np.random.default_rng(9).normal(0, 0.035, (400, 2))
+    returns -= returns.mean(axis=0)
+    source = semi.Source(returns, {}, semi.reference_variance(returns))
+    anchor, prereg = "c" * 64, "d" * 64
+    cell = Cell("qj", 2, 120, "semi-joint")
+    need = classifier.required(2)
+    upper = {n: 1e300 for n in need - set(classifier.LOWER)} | {"K": 2, "T": 120}
+    lower = {n: -1e300 for n in need - set(classifier.UPPER)} | {"K": 2, "T": 120}
+    for rep_ in range(2):
+        stored = driver.dev_replication(cell, anchor, prereg, rep_,
+                                        (upper, lower), source)  # fmt: skip
+        assert set(stored) == {"trend", "vol"}
+        seed = outer_seed(anchor, "qj", "d19-dev-v1", rep_)
+        legs = rules.draw(cell, seed, source)
+        for family, cols in (("trend", slice(0, 2)), ("vol", slice(2, 4))):
+            x = legs.x[:, cols]
+            fam = family_seed(seed, "qj", family, 2, prereg, rep_)
+            for rule in ("largest", "median"):
+                result = dsr.evaluate(x, fam, rule, classifier=lambda *_: True)
+                assert stored[family][rule]["reason"] == result.reason
+                assert stored[family][rule]["z"] == _hex64(result.z)
+            sharpes = [float(np.mean(c) / np.std(c, ddof=1)) for c in x.T]
+            top = int(np.argmax(sharpes))
+            assert stored[family]["nominee"] == top
+            assert stored[family]["u_g"] == gates.u_g(
+                x, legs.candidates[:, cols], legs.benchmark, top, seed
+            )

@@ -1,0 +1,495 @@
+"""D-19 development choices (prereg §5 with §13 rev 7g item 3) on
+synthetic development records: block rule, availability with the 40k
+escape and demotion, the cap rule, and z_crit on the 0.001 grid."""
+
+from __future__ import annotations
+
+import struct
+import sys
+from decimal import Decimal, localcontext
+
+import pytest
+
+from calibration import choices
+from calibration.choices import Rep
+
+N = 12_000
+TAU = choices.targets(322)
+
+
+def _reps(
+    *, dsr: int = 0, u_g: int = 0, capped: int = 0, z: list[float] | None = None
+) -> list[Rep]:
+    reps = [Rep(None, -1.0, None) for _ in range(N)]
+    for i in range(capped):
+        reps[i] = Rep(choices.CAPPED, None, None)
+    for i in range(capped, capped + dsr):
+        reps[i] = Rep("UNSUPPORTED_LAW", None, None)
+    for i in range(u_g):
+        reps[-1 - i] = Rep(reps[-1 - i].reason, reps[-1 - i].z, "G-1")
+    for i, value in enumerate(z or []):
+        reps[N // 2 + i] = Rep(None, value, None)
+    return reps
+
+
+@pytest.mark.parametrize(
+    ("u_g", "status", "held_out"),
+    [(0, "qualifying", 20_000), (1, "qualifying", 40_000),
+     (2, "qualifying", 40_000), (3, "demoted_availability", None)],
+)  # fmt: skip
+def test_u_g_events_choose_20k_the_40k_escape_or_demotion(
+    u_g: int, status: str, held_out: int | None
+) -> None:
+    """§13 item 3: 0 events need 20k, 1-2 need 40k, 3 or more fail."""
+    result = choices.availability("c", _reps(u_g=u_g), TAU)
+    assert (result.status, result.held_out) == (status, held_out)
+
+
+@pytest.mark.parametrize(
+    ("dsr", "status"), [(9, "qualifying"), (10, "demoted_availability")]
+)
+def test_more_than_nine_dsr_events_demote(dsr: int, status: str) -> None:
+    """§13 item 3: DSR availability demotes at more than 9 events."""
+    assert choices.availability("c", _reps(dsr=dsr), TAU).status == status
+
+
+@pytest.mark.parametrize(("capped", "status"), [(0, "qualifying"), (1, "demoted_cap")])
+def test_the_cap_rule_compares_the_cap_rate_ucb_with_a_quarter_of_tau_dsr(
+    capped: int, status: str
+) -> None:
+    """§3.2: UCB(0 of 12k) = 1.92e-4 <= 3.0e-4 < UCB(1 of 12k) = 3.24e-4."""
+    assert choices.availability("c", _reps(capped=capped), TAU).status == status
+
+
+def test_the_block_rule_with_the_smaller_worst_cell_rate_wins_ties_to_largest() -> None:
+    hot = _reps(z=[3.0] * 300)
+    cold = _reps(z=[3.0] * 200)
+    cells = {
+        "a": {"largest": hot, "median": cold},
+        "b": {"largest": cold, "median": cold},
+    }
+    assert choices.block_rule(cells)[0] == "median"
+    tie = {"a": {"largest": cold, "median": cold}}
+    assert choices.block_rule(tie)[0] == "largest"
+
+
+def test_z_crit_is_the_smallest_grid_value_meeting_every_cells_target() -> None:
+    """Brute force over the grid agrees with the search."""
+    zs = [1.5 + i / 400 for i in range(400)]  # 400 available z values above 1.5
+    qualifying = {"a": _reps(z=zs), "b": _reps(z=zs[::2])}
+    tau = {"a": TAU[20_000]["error"]["tau"], "b": TAU[40_000]["error"]["tau"]}
+    chosen = choices.z_crit(qualifying, tau)
+    limit = {c: choices.allowed(N, tau[c]) for c in qualifying}
+
+    def ok(z: Decimal) -> bool:
+        return all(
+            sum(
+                r.z is not None and r.reason is None and r.z >= float(z)
+                for r in qualifying[c]
+            )
+            <= limit[c]
+            for c in qualifying
+        )
+
+    grid = [Decimal(m) / 1000 for m in range(1400, 2600)]
+    assert chosen == next(z for z in grid if ok(z))
+    assert ok(chosen) and not ok(chosen - choices.Z_STEP)
+
+
+def test_no_grid_value_means_no_qualifying_choice() -> None:
+    reps = _reps(z=[float("inf")] * 500)
+    assert choices.z_crit({"a": reps}, {"a": TAU[20_000]["error"]["tau"]}) is None
+
+
+def test_z_crit_has_no_ceiling() -> None:  # S16-3: §5 sets none
+    reps = _reps(z=[99.0] * 500)
+    tau = {"a": TAU[20_000]["error"]["tau"]}
+    assert choices.z_crit({"a": reps}, tau) == Decimal("99.001")
+    big = choices.z_crit({"a": _reps(z=[2.0**50] * 500)}, tau)  # S16R-1
+    assert big is not None and float(big) > 2.0**50
+    assert float(big - choices.Z_STEP) == 2.0**50
+    for z in (2.0**100, sys.float_info.max):  # S16R2-2, S16R2-1
+        chosen = choices.z_crit({"a": _reps(z=[z] * 500)}, tau)
+        assert chosen is not None and chosen.as_tuple().exponent == -3
+        with localcontext(prec=400):  # exact grid arithmetic at any size
+            assert float(chosen) > z and not float(chosen - choices.Z_STEP) > z
+
+
+def test_choose_reports_every_step() -> None:
+    report = choices.choose({"a": {r: _reps(z=[2.5] * 50) for r in choices.RULES}}, 3)
+    assert report["family_block_rule"] == "largest"
+    assert report["z_crit"] is not None
+    assert report["cells"]["a"]["status"] == "qualifying"
+
+
+def _h(value: float) -> str:
+    return struct.pack(">d", value).hex()
+
+
+def _record(
+    reason: str | None, nominee: int, u_g_nominee: int, *, k: float = 1.0,
+    z: float | None = 2.0,
+) -> dict[str, object]:  # fmt: skip
+    """A whole record as dev_replication writes it for this cause code
+    (I1R2-1, I1R3-2): z, S0 and a nominee only when available; L from rule 5
+    on; max L/T from rule 4 on; per-column lengths from rule 3 on; per-column
+    checks matching rules 1-2; a missing length for rule 3, a cap for rule 4."""
+    available = reason is None
+    has_lengths = reason not in choices.NO_LENGTHS
+    entry = {
+        "reason": reason,
+        "nominee": nominee if available else None,
+        "z": None if z is None or not available else _h(z),
+        "s0": _h(0.1) if available else None,
+        "block": _h(3.0) if available or reason in choices.AFTER_CLASSIFIER else None,
+        "length_ratio": _h(3.0 / 9.0)  # max(L_j) / T
+        if has_lengths and reason != "BLOCK_LENGTH_UNAVAILABLE"
+        else None,
+    }
+    n = int(k)
+    checks: list[list[bool | None]] = [[True, True] for _ in range(n)]
+    if reason == "INVALID_SERIES":
+        checks[0] = [False, None]
+    if reason == "ZERO_VARIANCE_COLUMN":
+        checks[0] = [True, False]
+    columns: list[list[object]] | None = (
+        [[_h(3.0), False] for _ in range(n)] if has_lengths else None
+    )
+    if columns is not None and reason == "BLOCK_LENGTH_UNAVAILABLE":
+        columns[0][0] = None
+    if columns is not None and reason == choices.CAPPED:
+        columns[0][1] = True
+    return {
+        "diagnostics": {"K": _h(k), "T": _h(9.0), "g": _h(0.5)},
+        "largest": entry,
+        "median": dict(entry),
+        # rules 1-2 failed: no Sharpe ratio, so no nominee (I1R6-1)
+        "nominee": None if reason in choices.NO_LENGTHS else u_g_nominee,
+        "u_g": "NO_NOMINEE" if reason in choices.NO_LENGTHS else None,
+        "columns": columns,
+        "column_checks": checks,
+    }
+
+
+@pytest.fixture
+def toy_classifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(choices.classifier, "within", lambda v, u, lo: v["g"] <= u["g"])
+
+
+ACCEPTS, REFUSES = ({"g": 1.0}, {}), ({"g": 0.0}, {})
+
+
+@pytest.mark.usefixtures("toy_classifier")
+def test_a_record_must_follow_from_its_thresholds_and_nominee() -> None:
+    """I1-3, I1R-1: the classifier outcome, the Annex B order of cause
+    codes, the fields of an available result, and the nominee."""
+    for code in choices.BEFORE_CLASSIFIER:  # rules 1-4 stop first, either way
+        assert choices.consistent(_record(code, 0, 0), ACCEPTS) is None
+        assert choices.consistent(_record(code, 0, 0), REFUSES) is None
+    for code in choices.AFTER_CLASSIFIER:  # rules 5-6 only after acceptance
+        assert choices.consistent(_record(code, 0, 0), ACCEPTS) is None
+        assert "classifier" in str(choices.consistent(_record(code, 0, 0), REFUSES))
+    assert choices.consistent(_record(None, 0, 0), ACCEPTS) is None
+    assert choices.consistent(_record("UNSUPPORTED_LAW", 0, 0), REFUSES) is None
+    assert "classifier" in str(choices.consistent(_record(None, 0, 0), REFUSES))
+    unsupported = _record("UNSUPPORTED_LAW", 0, 0)
+    assert "classifier" in str(choices.consistent(unsupported, ACCEPTS))
+    assert "nominee" in str(choices.consistent(_record(None, 1, 0), ACCEPTS))
+    assert "z does not match" in str(
+        choices.consistent(_record(None, 0, 0, z=None), ACCEPTS)
+    )
+    nan_z = _record(None, 0, 0, z=float("nan"))
+    assert "z does not match" in str(choices.consistent(nan_z, ACCEPTS))
+    assert "unknown" in str(choices.consistent(_record("OTHER", 0, 0), ACCEPTS))
+
+
+def _with(record: dict[str, object], **fields: object) -> dict[str, object]:
+    entry = {**record["largest"], **fields}  # type: ignore[dict-item]
+    return {**record, "largest": entry, "median": dict(entry)}
+
+
+@pytest.mark.usefixtures("toy_classifier")
+def test_fields_that_dsr_evaluate_cannot_produce_are_refused() -> None:
+    """I1R2-1: each corruption of an otherwise valid record is caught."""
+    available = _record(None, 0, 0, k=2.0)
+    assert choices.consistent(available, ACCEPTS) is None
+    for bad in (None, 2, -1, True, "0"):  # not an integer in range K = 2
+        both = {**_with(available, nominee=bad), "nominee": bad}
+        assert "nominee" in str(choices.consistent(both, ACCEPTS)), bad
+    capped = _record(choices.CAPPED, 0, 0)
+    assert choices.consistent(capped, ACCEPTS) is None
+    for field in ("z", "s0", "block"):
+        assert choices.consistent(_with(capped, **{field: _h(1.0)}), ACCEPTS)
+    assert choices.consistent(_with(capped, nominee=0), ACCEPTS)
+    refused = _record("UNSUPPORTED_LAW", 0, 0)
+    assert choices.consistent(_with(refused, block=_h(3.0)), REFUSES)
+    after = _record("INVALID_REPLICATE", 0, 0)
+    assert choices.consistent(after, ACCEPTS) is None
+    assert "L does not match" in str(
+        choices.consistent(_with(after, block=None), ACCEPTS)
+    )
+    nan_block = _with(after, block=_h(float("nan")))
+    assert "L does not match" in str(choices.consistent(nan_block, ACCEPTS))
+    assert choices.consistent(_with(after, z=_h(1.0)), ACCEPTS)
+
+
+@pytest.mark.usefixtures("toy_classifier")
+def test_at_k_1_both_rules_must_be_one_result() -> None:
+    """I1R-2: dev_replication reuses one result at K = 1."""
+    record = _record(None, 0, 0)
+    record["median"] = {**record["median"], "z": _h(2.5)}  # type: ignore[dict-item]
+    assert "K = 1" in str(choices.consistent(record, ACCEPTS))
+    two = _record(None, 0, 0, k=2.0)  # lengths 2 and 4: blocks 4 and 3
+    two["columns"] = [[_h(2.0), False], [_h(4.0), False]]
+    ratio = _h(4.0 / 9.0)
+    two["largest"] = {**two["largest"], "block": _h(4.0), "length_ratio": ratio}  # type: ignore[dict-item]
+    two["median"] = {**two["median"], "block": _h(3.0), "length_ratio": ratio,  # type: ignore[dict-item]
+                     "z": _h(2.5)}  # fmt: skip
+    assert choices.consistent(two, ACCEPTS) is None  # different blocks may differ
+
+
+def test_a_target_comparison_inside_the_margin_is_flagged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """I1-6: every UCB-tau comparison records its margin; too close fails."""
+    cells = {"a": {r: _reps(z=[2.5] * 50) for r in choices.RULES}}
+    report = choices.choose(cells, 3)
+    assert report["margin_ok"] is True and 0 < report["smallest_margin"] < 1
+    assert report["status"] == "ok" and report["qualifies_before_coverage"] is True
+    monkeypatch.setattr(choices, "MARGIN_MIN", 1.0)
+    failed = choices.choose(cells, 3)
+    assert failed["margin_ok"] is False and failed["status"] == "margin_failed"
+    assert failed["qualifies_before_coverage"] is False  # I1R-4
+
+
+@pytest.mark.usefixtures("toy_classifier")
+def test_outcomes_before_the_block_rule_and_column_fields_must_agree() -> None:
+    """I1R3-1, I1R3-2: rule-free outcomes are one result across rules; max
+    L/T is rule-free; per-column fields match rules 1-4."""
+    for code in (*choices.BEFORE_CLASSIFIER, None, *choices.AFTER_CLASSIFIER):
+        valid = _record(code, 0, 0, k=2.0)
+        assert choices.consistent(valid, ACCEPTS) is None, code
+    early = _record("INVALID_SERIES", 0, 0, k=2.0)
+    early["median"] = {**early["median"], "reason": "ZERO_VARIANCE_COLUMN"}  # type: ignore[dict-item]
+    assert "before the block rule" in str(choices.consistent(early, ACCEPTS))
+    ratio = _record(None, 0, 0, k=2.0)
+    ratio["median"] = {**ratio["median"], "length_ratio": _h(0.06)}  # type: ignore[dict-item]
+    assert "max L/T differs" in str(choices.consistent(ratio, ACCEPTS))
+    refused = _record("UNSUPPORTED_LAW", 0, 0, k=2.0)
+    assert choices.consistent(refused, REFUSES) is None
+    assert "max L/T" in str(
+        choices.consistent(_with(refused, length_ratio=None), REFUSES)
+    )
+    assert "columns malformed" in str(
+        choices.consistent({**refused, "columns": None}, REFUSES)
+    )
+    series = _record("INVALID_SERIES", 0, 0, k=2.0)
+    with_lengths = {**series, "columns": [[_h(3.0), False], [_h(3.0), False]]}
+    assert "before rule 3" in str(choices.consistent(with_lengths, ACCEPTS))
+    all_finite = {**series, "column_checks": [[True, True], [True, True]]}
+    assert "rule 1" in str(choices.consistent(all_finite, ACCEPTS))
+    variance = _record("ZERO_VARIANCE_COLUMN", 0, 0, k=2.0)
+    no_zero = {**variance, "column_checks": [[True, True], [True, True]]}
+    assert "rule 2" in str(choices.consistent(no_zero, ACCEPTS))
+    capped = _record(choices.CAPPED, 0, 0, k=2.0)
+    uncapped = {**capped, "columns": [[_h(3.0), False], [_h(3.0), False]]}
+    assert "rule 4" in str(choices.consistent(uncapped, ACCEPTS))
+    missing = _record("BLOCK_LENGTH_UNAVAILABLE", 0, 0, k=2.0)
+    complete = {**missing, "columns": [[_h(3.0), False], [_h(3.0), False]]}
+    assert "rule 3" in str(choices.consistent(complete, ACCEPTS))
+    available = _record(None, 0, 0, k=2.0)
+    stray_cap = {**available, "columns": [[_h(3.0), True], [_h(3.0), False]]}
+    assert "rule 4" in str(choices.consistent(stray_cap, ACCEPTS))
+
+
+@pytest.mark.usefixtures("toy_classifier")
+def test_derived_values_and_the_record_schema_are_checked() -> None:
+    """I1R4-1: max L/T and each rule's block L are recomputed from the
+    column lengths. I1R4-2: exact keys and field shapes; a malformed record
+    is a reported problem, never an exception."""
+    good = _record(None, 0, 0, k=2.0)
+    assert choices.consistent(good, ACCEPTS) is None
+    ratio = _with(good, length_ratio=_h(0.05))
+    assert "max(L_j)/T" in str(choices.consistent(ratio, ACCEPTS))
+    block = {**good, "median": {**good["median"], "block": _h(4.0)}}  # type: ignore[dict-item]
+    assert "family block" in str(choices.consistent(block, ACCEPTS))
+    odd = {**good, "column_checks": [[True, None], [True, True]]}
+    assert "column_checks malformed" in str(choices.consistent(odd, ACCEPTS))
+    no_u_g = {n: v for n, v in good.items() if n != "u_g"}
+    assert "record keys" in str(choices.consistent(no_u_g, ACCEPTS))
+    extra = _with(good, extra=1)
+    assert "entry keys" in str(choices.consistent(extra, ACCEPTS))
+    lost = {**good, "nominee": None}
+    assert "NO_NOMINEE" in str(choices.consistent(lost, ACCEPTS))
+    for broken in (
+        {**good, "columns": [[1]]},
+        {**good, "column_checks": "x"},
+        {**good, "diagnostics": {"K": "zz"}},
+        {**good, "largest": None},
+        {},
+    ):
+        assert choices.consistent(broken, ACCEPTS) is not None  # no exception
+
+
+@pytest.mark.usefixtures("toy_classifier")
+def test_equal_blocks_one_result_and_k_t_positive_integers() -> None:
+    """I1R5-1: equal blocks under both rules mean one result. I1R5-2/3: K
+    and T are positive integers; T = 0 is a reported problem, not an error."""
+    good = _record(None, 0, 0, k=2.0)  # lengths 3, 3: both blocks are 3
+    split = {
+        **good,
+        "median": {**good["median"], "reason": "INVALID_REPLICATE", "z": None,  # type: ignore[dict-item]
+                   "s0": None, "nominee": None},
+    }  # fmt: skip
+    assert "share a block" in str(choices.consistent(split, ACCEPTS))
+    for t in (9.5, 0.0, -9.0, float("nan"), float("inf")):
+        bad = {**good, "diagnostics": {**good["diagnostics"], "T": _h(t)}}  # type: ignore[dict-item]
+        assert choices.consistent(bad, ACCEPTS) is not None, t
+    # I1R6-2: records coherent apart from T, so only the T check refuses
+    refused = _record("UNSUPPORTED_LAW", 0, 0, k=2.0)
+    fractional = _with(refused, length_ratio=_h(3.0 / 9.5))
+    fractional["diagnostics"] = {**fractional["diagnostics"], "T": _h(9.5)}  # type: ignore[dict-item]
+    assert "positive integer" in str(choices.consistent(fractional, REFUSES))
+    capped = _record(choices.CAPPED, 0, 0, k=2.0)  # lengths exist: max/T runs
+    zero = {**capped, "diagnostics": {**capped["diagnostics"], "T": _h(0.0)}}  # type: ignore[dict-item]
+    assert "positive integer" in str(choices.consistent(zero, ACCEPTS))  # no raise
+
+
+@pytest.mark.usefixtures("toy_classifier")
+def test_no_u_g_nominee_after_rules_1_2() -> None:
+    """I1R6-1: a constant or non-finite column has no Sharpe ratio."""
+    for code in sorted(choices.NO_LENGTHS):
+        valid = _record(code, 0, 0, k=1.0)
+        assert choices.consistent(valid, ACCEPTS) is None
+        named = {**valid, "nominee": 0, "u_g": None}
+        assert "rules 1-2" in str(choices.consistent(named, ACCEPTS)), code
+
+
+def test_m_counts_three_tests_per_cell_and_eight_per_joint_cell() -> None:
+    """Prereg §6: one test per (cell, family label or agnostic or joint,
+    bound); QJ adds the two cycle-level bounds to its two families' three."""
+    assert choices.enumerated_tests(["gaussian", "t5"]) == 6
+    assert choices.enumerated_tests(["semi-trend", "semi-vol"]) == 6
+    assert choices.enumerated_tests(["semi-joint", "garch"]) == 8 + 3
+    assert choices.enumerated_tests([]) == 0
+
+
+@pytest.mark.parametrize(
+    ("law", "dependence", "k", "expected"),
+    [
+        ("gaussian", "independent", 1, {"one_trial"}),
+        ("semi-trend", "independent", 2, {"two_trial"}),
+        ("semi-joint", "independent", 2, {"two_trial", "joint_generator"}),
+        ("gaussian", "equi0.9", 5, {"high_correlation", "cross_trial_dependence"}),
+        ("gaussian", "equi0.5", 5, {"cross_trial_dependence"}),
+        ("gaussian", "exact_duplicate", 2,
+         {"two_trial", "duplicates", "cross_trial_dependence"}),
+        ("t5", "opposites", 5, {"opposites", "heavy_tails"}),
+        ("gaussian", "clusters", 20, {"unequal_clusters", "cross_trial_dependence"}),
+        ("ar0.5", "independent", 5, {"serial_dependence"}),
+        ("mixed_ar", "independent", 5, {"serial_dependence"}),
+        ("skewt+", "equi0.9", 5, {"cross_trial_dependence"}),
+        ("garch", "independent", 5, {"heavy_tails"}),
+        ("garch", "factor", 5, {"cross_trial_dependence"}),
+        ("unequal", "independent", 5, {"unequal_moments"}),
+    ],
+)  # fmt: skip
+def test_each_cell_counts_for_the_o18_4_categories_of_its_table_row(
+    law: str, dependence: str, k: int, expected: set[str]
+) -> None:
+    """Prereg §3.2 table with the owner's readings (2026-10-11, Q5)."""
+    assert choices.categories(law, dependence, k) == expected
+    assert "unequal_t" not in choices.CATEGORIES  # O18-4-T
+
+
+def test_coverage_counts_qualifying_cells_only_and_reports_an_empty_category() -> None:
+    cells = {"a": ("gaussian", "independent", 1), "b": ("unequal", "independent", 2)}
+    covered = choices.coverage(cells, {"a", "b"})
+    assert covered["one_trial"] == ["a"] and covered["unequal_moments"] == ["b"]
+    assert covered["two_trial"] == ["b"]
+    demoted = choices.coverage(cells, {"a"})  # b demoted: its categories empty
+    assert demoted["unequal_moments"] == [] and demoted["two_trial"] == []
+    assert set(covered) == set(choices.CATEGORIES)
+
+
+def test_a_qj_cells_families_qualify_together_at_the_larger_n() -> None:
+    """Owner decision 2026-10-11 Q4: one family's 40k escape moves the
+    whole QJ cell to 40k; a demoted family demotes the other."""
+    joint = {"qj": ("qj/trend", "qj/vol")}
+    cells = {
+        "qj/trend": {r: _reps(u_g=1) for r in choices.RULES},
+        "qj/vol": {r: _reps() for r in choices.RULES},
+    }
+    report = choices.choose(cells, 322, joint)
+    held = {c: r["held_out"] for c, r in report["cells"].items()}  # type: ignore[attr-defined]
+    assert held == {"qj/trend": 40_000, "qj/vol": 40_000}
+    assert report["joint"]["qj"]["held_out"] == 40_000  # type: ignore[index]
+    cells["qj/trend"] = {r: _reps(dsr=10) for r in choices.RULES}
+    report = choices.choose(cells, 322, joint)
+    vol = report["cells"]["qj/vol"]  # type: ignore[index]
+    assert vol["status"] == "demoted_availability" and vol["held_out"] is None
+    assert vol["notes"] == ["QJ: the other family is demoted"]
+
+
+def test_the_joint_u_proc_check_demotes_both_families() -> None:
+    """At M = 322 and 12k development replications the joint limit (57
+    events) cannot bind while each family passes (at most 9 + 2 each), so
+    the check is shown with a tight tau."""
+    a, b = (
+        choices.availability("a", _reps(), TAU),
+        choices.availability("b", _reps(), TAU),
+    )
+    ra, rb = _reps(dsr=5), _reps(u_g=2)  # disjoint: 7 joint events
+    tight = {n: {**TAU[n], "u_proc_joint": {"tau": choices._ucb(6, N)}} for n in TAU}
+    out = choices._joint(a, b, ra, rb, tight)
+    assert out["u_proc_events"] == 7 and out["held_out"] is None
+    assert a.status == b.status == "demoted_availability"
+    assert a.notes == b.notes == ["QJ: joint U_proc"]
+
+
+def test_z_crit_also_meets_the_joint_limit_on_either_family_passing() -> None:
+    """Disjoint passes add up in P_0(E): the joint limit raises z_crit."""
+    trend = [Rep(None, 3.0 if i < 10 else -1.0, None) for i in range(N)]
+    vol = [Rep(None, 3.0 if i >= N - 10 else -1.0, None) for i in range(N)]
+    loose = choices._ucb(10, N)  # each family alone: 10 events allowed
+    alone = choices.z_crit({"t": trend, "v": vol}, {"t": loose, "v": loose})
+    assert alone == Decimal("0.000")
+    tight = choices._ucb(15, N)  # either family passing: 20 events > 15
+    both = choices.z_crit(
+        {"t": trend, "v": vol}, {"t": loose, "v": loose}, ((trend, vol, tight),)
+    )
+    assert both == Decimal("3.001")
+
+
+def test_a_successful_choice_covers_every_category_until_qj_is_demoted() -> None:
+    """I2BS2-2: a qualifying manifest with one cell per category gives full
+    coverage; demoting one QJ family removes `joint_generator`."""
+    cells = {
+        "k1": ("gaussian", "independent", 1),
+        "rho": ("gaussian", "equi0.9", 5),
+        "dup": ("gaussian", "exact_duplicate", 5),
+        "opp": ("gaussian", "opposites", 5),
+        "clu": ("gaussian", "clusters", 5),
+        "ar": ("ar0.5", "independent", 5),
+        "t5": ("t5", "independent", 5),
+        "unq": ("unequal", "independent", 5),
+        "qj/trend": ("semi-joint", "independent", 2),
+        "qj/vol": ("semi-joint", "independent", 2),
+    }
+    joint = {"qj": ("qj/trend", "qj/vol")}
+
+    def run(trend: list[Rep]) -> dict[str, list[str]]:
+        reps = {c: {r: _reps() for r in choices.RULES} for c in cells}
+        reps["qj/trend"] = {r: trend for r in choices.RULES}
+        report = choices.choose(reps, 322, joint)  # M as in TAU
+        qualifying = {
+            c for c, r in report["cells"].items()  # type: ignore[attr-defined]
+            if r["status"] == "qualifying"
+        }  # fmt: skip
+        return choices.coverage(cells, qualifying)
+
+    full = run(_reps())
+    assert all(full.values()), [n for n, ids in full.items() if not ids]
+    assert full["joint_generator"] == ["qj/trend", "qj/vol"]
+    demoted = run(_reps(dsr=10))
+    assert demoted["joint_generator"] == [] and demoted["two_trial"] == []

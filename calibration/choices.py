@@ -1,0 +1,584 @@
+"""Development choices of prereg §5 with §13 rev 7g item 3, from decoded
+development records (one per replication, as `scripts/d19_run.py` stores
+them for family-agnostic cells).
+
+Order: `family_block_rule` (step 1), availability with the 40k escape and
+demotion (step 2, §13 item 3), the cap rule (§3.2), `z_crit` (step 3).
+`T_min = T_C2` by §13 item 2. The coverage rule (step 4) is `coverage`,
+applied by `scripts/d19_choose.py` to the final qualifying cells.
+
+Targets: tau at `M` = the candidate manifest's test count (§5: `M_max`,
+conservative), each test at its own `N_i`."""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+from decimal import Context, Decimal
+from fractions import Fraction
+
+from calibration import binomial, classifier, dsr, reduce
+
+RULES = ("largest", "median")  # tie -> largest (§5 step 1)
+Z_SCREEN = 1.96  # §5 step 1
+Z_STEP = Decimal("0.001")  # §5 step 3
+# prereg §6; QJ adds the cycle-level `P_0(E)` and `U_proc^R` bounds
+BOUNDS = {
+    "error": 0.025, "dsr": 0.0035, "u_g": 0.0015,
+    "error_joint": 0.05, "u_proc_joint": 0.01,
+}  # fmt: skip
+HELD_OUT = (20_000, 40_000)  # §13 item 3
+# Enumerated tests per cell (prereg §6: one per (cell, family label or
+# `agnostic` or `joint`, bound)): Q1-Q4 are agnostic and Q5 has one family,
+# 3 bounds each; QJ has 3 per family and 2 joint (`P_0(E)`, `U_proc^R`).
+TESTS_PER_CELL = 3
+TESTS_PER_JOINT_CELL = 3 + 3 + 2
+CAPPED = "BLOCK_LENGTH_CAPPED"
+# I1-6: the targets carry about 1e-9 relative error (lgamma at N = 40k);
+# a comparison closer than this is flagged, never decided silently.
+MARGIN_MIN = 1e-6
+
+
+@dataclass(frozen=True, slots=True)
+class Rep:
+    """One development replication of one cell, for one block rule."""
+
+    reason: str | None  # DSR availability: None = available (A_f)
+    z: float | None  # z_f* when available
+    u_g: str | None  # None = every U_G gate available
+
+
+@dataclass
+class CellResult:
+    cell_id: str
+    n: int
+    dsr_events: int
+    u_g_events: int
+    capped: int
+    status: str  # "qualifying" | "demoted_availability" | "demoted_cap"
+    held_out: int | None  # 20k or 40k when qualifying
+    error_events_at_z: int | None = None
+    margin: float = float("inf")  # smallest relative |UCB - tau| / tau used
+    notes: list[str] = field(default_factory=list)
+
+
+def enumerated_tests(laws: list[str]) -> int:
+    """`M`, the manifest's test count (§5 `M_max`, §6), from its cells' laws."""
+    return sum(
+        TESTS_PER_JOINT_CELL if law == "semi-joint" else TESTS_PER_CELL for law in laws
+    )
+
+
+# The coverage rule (prereg §3.2, O18-4 with O18-4-T: no "unequal T" row),
+# with the owner's readings of 2026-10-11 (OWNER_DECISION_ITEM2B_STEP2_READINGS.md
+# Q5): "rho > 0" is every positive-correlation level, not opposites; QJ at
+# K = 2 is two-trial; GARCH of Q3 and skew-t are not heavy tails. Grid
+# membership of a cell (I2A-4) is item 3's check, not this one's.
+Q2_LAWS = ("t5", "skewt+", "skewt-", "garch", "ar0.2", "ar0.5")
+POSITIVE_RHO = (
+    "equi0.5", "equi0.9", "equi0.99", "near_duplicates", "exact_duplicate",
+    "clusters", "factor",
+)  # fmt: skip
+CATEGORIES = (
+    "one_trial", "two_trial", "high_correlation", "duplicates", "opposites",
+    "unequal_clusters", "serial_dependence", "cross_trial_dependence",
+    "heavy_tails", "unequal_moments", "joint_generator",
+)  # fmt: skip
+
+
+def categories(law: str, dependence: str, k: int) -> set[str]:
+    """The O18-4 categories a cell counts for (prereg §3.2 table)."""
+    q1, q3 = law == "gaussian", law == "garch" and dependence == "factor"
+    q2 = law in Q2_LAWS and not q3
+    rows = {
+        "one_trial": k == 1,
+        "two_trial": k == 2,
+        "high_correlation": q1 and dependence in ("equi0.9", "equi0.99"),
+        "duplicates": q1 and dependence in ("near_duplicates", "exact_duplicate"),
+        "opposites": (q1 or q2) and dependence == "opposites",
+        "unequal_clusters": q1 and dependence == "clusters",
+        "serial_dependence": law in ("ar0.2", "ar0.5", "mixed_ar"),
+        "cross_trial_dependence": ((q1 or q2) and dependence in POSITIVE_RHO) or q3,
+        "heavy_tails": q2 and law in ("t5", "garch"),
+        "unequal_moments": law == "unequal",
+        "joint_generator": law == "semi-joint",
+    }
+    return {name for name, counts in rows.items() if counts}
+
+
+def coverage(
+    cells: dict[str, tuple[str, str, int]], qualifying: set[str]
+) -> dict[str, list[str]]:
+    """Per category, the qualifying cell ids that count for it; the method
+    qualifies only if none is empty (§3.2). `cells`: id -> (law, dependence, K)."""
+    out: dict[str, list[str]] = {name: [] for name in CATEGORIES}
+    for cell_id in sorted(qualifying):
+        for name in categories(*cells[cell_id]):
+            out[name].append(cell_id)
+    return out
+
+
+def _ucb(x: int, n: int) -> float:
+    return binomial.upper(x, n, binomial.DEVELOPMENT_CONFIDENCE)
+
+
+def _within(result: CellResult, ucb: float, tau: float) -> bool:
+    """ucb <= tau, recording the relative margin of the comparison (I1-6)."""
+    result.margin = min(result.margin, abs(ucb - tau) / tau)
+    return ucb <= tau
+
+
+# Annex B §2.5 order (dsr.evaluate): rules 1-4 stop before the classifier,
+# the classifier refuses with UNSUPPORTED_LAW, rules 5-6 can fail after it.
+BEFORE_CLASSIFIER = frozenset(
+    {"INVALID_SERIES", "ZERO_VARIANCE_COLUMN", "BLOCK_LENGTH_UNAVAILABLE", CAPPED}
+)
+AFTER_CLASSIFIER = frozenset({"INVALID_REPLICATE", "INVALID_ARITHMETIC"})
+
+
+def _finite_hex(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    number = reduce.decode({"v": value})["v"]
+    return number == number and abs(number) != float("inf")
+
+
+NO_LENGTHS = frozenset({"INVALID_SERIES", "ZERO_VARIANCE_COLUMN"})  # rules 1-2
+# Outcomes reached before the block rule is applied: the same for both rules.
+RULE_FREE = BEFORE_CLASSIFIER | {"UNSUPPORTED_LAW"}
+
+
+def _entry_problem(
+    entry: object, refused: bool, k: float, u_g_nominee: object
+) -> str | None:
+    """Why one rule's entry is not a return of `dsr.evaluate` as
+    `dev_replication` encodes it, or None."""
+    if not isinstance(entry, dict):
+        return "malformed"
+    reason = entry["reason"]
+    if reason not in BEFORE_CLASSIFIER | AFTER_CLASSIFIER | {"UNSUPPORTED_LAW", None}:
+        return f"unknown cause code {reason!r}"
+    if reason not in BEFORE_CLASSIFIER and refused != (reason == "UNSUPPORTED_LAW"):
+        return "classifier outcome does not follow from the thresholds"
+    has_ratio = reason not in NO_LENGTHS and reason != "BLOCK_LENGTH_UNAVAILABLE"
+    if not _present(entry["length_ratio"], has_ratio):
+        return "max L/T does not match the cause code"
+    available = reason is None
+    for name in ("z", "s0"):
+        if not _present(entry[name], available):
+            return f"{name} does not match the cause code"
+    if not _present(entry["block"], available or reason in AFTER_CLASSIFIER):
+        return "L does not match the cause code"
+    j = entry["nominee"]
+    if not available:
+        return None if j is None else "a refusal carries a nominee"
+    if type(j) is not int or not 0 <= j < k:
+        return "an available result without a valid nominee"
+    return None if j == u_g_nominee else "DSR nominee differs from the U_G nominee"
+
+
+def _present(value: object, expected: bool) -> bool:
+    """A finite binary64 hex when expected, else None."""
+    return _finite_hex(value) if expected else value is None
+
+
+def _columns_problem(record: dict[str, object], reason: object, k: float) -> str | None:
+    """`columns` and `column_checks` against the cause code (I1R3-2): rule 1
+    fails iff a column is not finite, rule 2 iff all are and one has zero
+    variance; lengths exist from rule 3 on, one is missing iff rule 3 fails,
+    and some column is capped iff rule 4 fails."""
+    checks = record["column_checks"]
+    if not isinstance(checks, list) or len(checks) != k:
+        return "column_checks malformed"
+    finite = [c[0] for c in checks]
+    if (not all(finite)) != (reason == "INVALID_SERIES"):
+        return "column_checks do not match rule 1"
+    if all(finite) and any(c[1] is False for c in checks) != (
+        reason == "ZERO_VARIANCE_COLUMN"
+    ):
+        return "column_checks do not match rule 2"
+    columns = record["columns"]
+    if reason in NO_LENGTHS:
+        return None if columns is None else "lengths recorded before rule 3"
+    if not isinstance(columns, list) or len(columns) != k:
+        return "columns malformed"
+    lengths = [c[0] for c in columns]
+    if any(v is not None and not _finite_hex(v) for v in lengths):
+        return "a column length is not finite"
+    if (None in lengths) != (reason == "BLOCK_LENGTH_UNAVAILABLE"):
+        return "columns do not match rule 3"
+    if None not in lengths and any(c[1] for c in columns) != (reason == CAPPED):
+        return "columns do not match rule 4"
+    return None
+
+
+RECORD_KEYS = frozenset(
+    {"diagnostics", "columns", "column_checks", "largest", "median", "nominee", "u_g"}
+)
+ENTRY_KEYS = frozenset({"reason", "z", "block", "s0", "length_ratio", "nominee"})
+
+
+def _shape_problem(record: dict[str, object], k: int) -> str | None:
+    """The exact keys and field types `dev_replication` writes (I1R4-2)."""
+    if set(record) != RECORD_KEYS:
+        return "record keys differ from the driver's"
+    for rule in RULES:
+        entry = record[rule]
+        if not isinstance(entry, dict) or set(entry) != ENTRY_KEYS:
+            return f"{rule}: entry keys differ from the driver's"
+    checks = record["column_checks"]
+    if not isinstance(checks, list) or len(checks) != k:
+        return "column_checks malformed"
+    for c in checks:
+        if not (isinstance(c, list) and len(c) == 2 and type(c[0]) is bool):
+            return "column_checks malformed"
+        if (type(c[1]) is not bool) if c[0] else (c[1] is not None):
+            return "column_checks malformed"
+    columns = record["columns"]
+    if columns is not None and not (
+        isinstance(columns, list)
+        and len(columns) == k
+        and all(
+            isinstance(c, list)
+            and len(c) == 2
+            and (c[0] is None or isinstance(c[0], str))
+            and type(c[1]) is bool
+            for c in columns
+        )
+    ):
+        return "columns malformed"
+    j, u_g = record["nominee"], record["u_g"]
+    if j is None:
+        return None if u_g == "NO_NOMINEE" else "no U_G nominee without NO_NOMINEE"
+    if type(j) is not int or not 0 <= j < k:
+        return "U_G nominee is not an integer in range K"
+    if u_g is not None and (not isinstance(u_g, str) or u_g == "NO_NOMINEE"):
+        return "U_G event malformed"
+    return None
+
+
+def _derived_problem(record: dict[str, object], t: float) -> str | None:
+    """Fields `dsr.evaluate` computes from the column lengths (I1R4-1): max
+    L_j/T and, per rule, the family block L."""
+    columns = record["columns"]
+    if not isinstance(columns, list) or any(c[0] is None for c in columns):
+        return None  # no lengths, or rule 3 failed: nothing derived
+    lengths = [reduce.decode({"v": c[0]})["v"] for c in columns]
+    for rule in RULES:
+        entry = record[rule]
+        assert isinstance(entry, dict)
+        if (
+            entry["length_ratio"] is not None
+            and reduce.decode({"v": entry["length_ratio"]})["v"] != max(lengths) / t
+        ):
+            return f"{rule}: max L/T is not max(L_j)/T"
+        if entry["block"] is not None and reduce.decode({"v": entry["block"]})[
+            "v"
+        ] != dsr.family_block(lengths, rule):
+            return f"{rule}: L is not the family block of the column lengths"
+    # I1R5-1: one input, family seed, classifier result and block give one
+    # dsr.evaluate result, so equal blocks mean identical rule entries.
+    same = dsr.family_block(lengths, "largest") == dsr.family_block(lengths, "median")
+    if same and record["largest"] != record["median"]:
+        return "the rules share a block but differ in result"
+    return None
+
+
+def consistent(record: dict[str, object], bounds: reduce.Bounds) -> str | None:
+    """Why a development record cannot have come from `dev_replication`
+    with these thresholds, or None (I1-3, I1R-1/2, I1R2-1, I1R3-1/2,
+    I1R4-1/2). Any malformed record is a reported problem, never an error.
+
+    Checked: the exact keys and field types the driver writes; per rule,
+    every field present or null as that return of `dsr.evaluate` sets it, in
+    the Annex B order (a rule 1-4 code whatever the classifier says, else
+    UNSUPPORTED_LAW iff the classifier refuses, a rule 5-6 code only after
+    it accepts); across rules, outcomes before the block rule applies are
+    one result and at K = 1 the rules are identical; the per-column fields
+    match rules 1-4; and every value derived from the column lengths (max
+    L_j/T, each rule's family block L) equals its recomputation.
+
+    Not checked, by design: z_f*, S0, which trial is nominated and the U_G
+    outcome need the bootstrap or the gates to recompute. They are bound by
+    the chain hashes and reproduce from the §8 seeds; this check does not
+    claim them."""
+    try:
+        return _consistent(record, bounds)
+    except (
+        KeyError,
+        TypeError,
+        IndexError,
+        ValueError,
+        AttributeError,
+        ArithmeticError,
+    ) as error:
+        return f"malformed record: {type(error).__name__}"
+
+
+def _consistent(record: dict[str, object], bounds: reduce.Bounds) -> str | None:
+    values = reduce.decode(record["diagnostics"])
+    k = values["K"]
+    if not all(v == int(v) and v >= 1 for v in (k, values["T"])):  # I1R5-2/3
+        return "K or T is not a positive integer"
+    problem = _shape_problem(record, int(k))
+    if problem is not None:
+        return problem
+    refused = not classifier.within(values, *bounds)
+    for rule in RULES:
+        problem = _entry_problem(record[rule], refused, k, record["nominee"])
+        if problem is not None:
+            return f"{rule}: {problem}"
+    first, second = record["largest"], record["median"]
+    assert isinstance(first, dict) and isinstance(second, dict)
+    if k == 1 and first != second:
+        return "K = 1: the two rules differ"
+    if (first["reason"] in RULE_FREE or second["reason"] in RULE_FREE) and (
+        first != second
+    ):
+        return "the rules differ before the block rule is applied"
+    if first["length_ratio"] != second["length_ratio"]:
+        return "max L/T differs between the rules"
+    problem = _columns_problem(record, first["reason"], k)
+    if problem is not None:
+        return problem
+    if first["reason"] in NO_LENGTHS and record["nominee"] is not None:
+        # I1R6-1: a non-finite or constant column has no Sharpe ratio, so
+        # dev_replication finds no nominee and writes NO_NOMINEE.
+        return "a U_G nominee although rules 1-2 failed"
+    return _derived_problem(record, values["T"])
+
+
+def _passes(rep: Rep, z: float) -> bool:
+    """E_f: available and z_f* >= z (P18-6 comparison)."""
+    return rep.reason is None and rep.z is not None and rep.z >= z
+
+
+def block_rule(cells: dict[str, dict[str, list[Rep]]]) -> tuple[str, dict[str, float]]:
+    """§5 step 1: the rule with the smaller worst-cell P^_0(E_f) at 1.96."""
+    worst = {
+        rule: max(
+            sum(_passes(r, Z_SCREEN) for r in reps[rule]) / len(reps[rule])
+            for reps in cells.values()
+        )
+        for rule in RULES
+    }
+    return min(RULES, key=lambda rule: (worst[rule], RULES.index(rule))), worst
+
+
+def targets(m: int) -> dict[int, dict[str, dict[str, float]]]:
+    """tau per test kind at each held-out N."""
+    return {n: binomial.targets(m, BOUNDS, n) for n in HELD_OUT}
+
+
+def availability(
+    cell_id: str, reps: list[Rep], tau: dict[int, dict[str, dict[str, float]]]
+) -> CellResult:
+    """§13 item 3 step 2 and the §3.2 cap rule for one cell."""
+    n = len(reps)
+    dsr_events = sum(r.reason is not None for r in reps)
+    u_g_events = sum(r.u_g is not None for r in reps)
+    capped = sum(r.reason == CAPPED for r in reps)
+    result = CellResult(cell_id, n, dsr_events, u_g_events, capped, "", None)
+    tau_dsr = tau[20_000]["dsr"]["tau"]
+    if not _within(result, _ucb(capped, n), tau_dsr / 4):
+        result.status = "demoted_cap"
+        return result
+    if not _within(result, _ucb(dsr_events, n), tau_dsr):
+        result.status = "demoted_availability"
+        result.notes.append("DSR availability")
+        return result
+    u_g = _ucb(u_g_events, n)
+    for held_out in HELD_OUT:
+        if _within(result, u_g, tau[held_out]["u_g"]["tau"]):
+            result.status, result.held_out = "qualifying", held_out
+            return result
+    result.status = "demoted_availability"
+    result.notes.append("U_G")
+    return result
+
+
+def allowed(n: int, tau: float) -> int:
+    """The largest event count whose 90% UCB at `n` is within `tau`, or -1
+    (the UCB rises with the count)."""
+    lo, hi = -1, n
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if _ucb(mid, n) <= tau:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
+
+
+def _either(a: Rep, b: Rep, z: float) -> bool:
+    """E of a QJ replication: either family passes (P18-6, per cycle)."""
+    return _passes(a, z) or _passes(b, z)
+
+
+def _unavailable(rep: Rep) -> bool:
+    """A `U_proc^R` event of one family: DSR (with the classifier) or U_G."""
+    return rep.reason is not None or rep.u_g is not None
+
+
+def z_crit(
+    qualifying: dict[str, list[Rep]],
+    tau_error: dict[str, float],
+    pairs: tuple[tuple[list[Rep], list[Rep], float], ...] = (),
+) -> Decimal | None:
+    """§5 step 3: the smallest z on the 0.001 grid at which every qualifying
+    cell's 90% UCB of P_0(E_f) is within its tau_err (at the cell's N_i).
+    The decimal is compared as its nearest binary64 (P18-6). None if no grid
+    value qualifies (S16-3: §5 sets no ceiling; above every stored finite
+    `z_f*` no event remains, so the search ends there). `pairs`: per
+    qualifying QJ cell, its two families' replications and the tau of
+    `P_0(E)` at its N, which must also hold (§5 step 3)."""
+    limit = {c: allowed(len(reps), tau_error[c]) for c, reps in qualifying.items()}
+    joint = [(a, b, allowed(len(a), tau)) for a, b, tau in pairs]
+
+    def ok(i: int) -> bool:  # i: grid index, z = i * Z_STEP
+        value = _nearest(i)
+        return all(
+            sum(_passes(r, value) for r in reps) <= limit[c]
+            for c, reps in qualifying.items()
+        ) and all(
+            sum(_either(x, y, value) for x, y in zip(a, b, strict=True)) <= cap
+            for a, b, cap in joint
+        )
+
+    stored = [
+        r.z
+        for reps in [*qualifying.values(), *(x for a, b, _ in pairs for x in (a, b))]
+        for r in reps
+        if r.z is not None and math.isfinite(r.z)
+    ]
+    # S16R-1, S16R2-1/2: exact integer grid indices, no Decimal context. A
+    # grid value at or above the next binary64 after the largest z_f* still
+    # compares above it after rounding (rounding is monotone); past the
+    # largest finite float that next value is the overflow point 2**1024.
+    above = math.nextafter(max(stored, default=0.0), math.inf)
+    top = Fraction(above) if math.isfinite(above) else Fraction(2**1024)
+    lo, hi = 0, math.ceil(top * _GRID)  # events fall as z rises: monotone
+    if not ok(hi):
+        return None
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if ok(mid):
+            hi = mid
+        else:
+            lo = mid + 1
+    return Decimal(lo).scaleb(-3, Context(prec=len(str(lo)) + 3))
+
+
+_GRID = 1000  # grid points per unit: Z_STEP = 1 / _GRID
+
+
+def _nearest(i: int) -> float:
+    """The nearest binary64 of the grid value i / _GRID (P18-6); beyond the
+    largest finite float, IEEE rounding gives infinity."""
+    try:
+        return float(Fraction(i, _GRID))
+    except OverflowError:
+        return math.inf
+
+
+def _joint(
+    a: CellResult,
+    b: CellResult,
+    ra: list[Rep],
+    rb: list[Rep],
+    tau: dict[int, dict[str, dict[str, float]]],
+) -> dict[str, object]:
+    """A QJ cell's two families qualify together or not at all, at the
+    larger N; its cycle-level `U_proc^R` is checked like the family tests
+    (owner decision 2026-10-11, Q4), at the 20k/40k N the escape allows."""
+    events = sum(
+        _unavailable(x) or _unavailable(y) for x, y in zip(ra, rb, strict=True)
+    )
+    out: dict[str, object] = {"u_proc_events": events, "held_out": None}
+    if a.status != "qualifying" or b.status != "qualifying":
+        for r in (a, b):
+            if r.status == "qualifying":
+                r.status, r.held_out = "demoted_availability", None
+                r.notes.append("QJ: the other family is demoted")
+        return out
+    ucb = _ucb(events, len(ra))
+    for n in HELD_OUT:
+        if n >= max(a.held_out or 0, b.held_out or 0) and _within(
+            a, ucb, tau[n]["u_proc_joint"]["tau"]
+        ):
+            a.held_out = b.held_out = n
+            out["held_out"] = n
+            return out
+    for r in (a, b):
+        r.status, r.held_out = "demoted_availability", None
+        r.notes.append("QJ: joint U_proc")
+    return out
+
+
+def choose(
+    cells: dict[str, dict[str, list[Rep]]],
+    m: int,
+    joint: dict[str, tuple[str, str]] | None = None,
+) -> dict[str, object]:
+    """Steps 1-3 in order, as a JSON-ready report. `cells`: per cell id (per
+    family of a QJ cell), the replications under each block rule; `m`: the
+    candidate manifest's test count; `joint`: per QJ cell, its two family
+    ids in `cells`."""
+    joint = joint or {}
+    rule, worst = block_rule(cells)
+    tau = targets(m)
+    results = {c: availability(c, reps[rule], tau) for c, reps in cells.items()}
+    joint_report = {
+        q: _joint(results[a], results[b], cells[a][rule], cells[b][rule], tau)
+        for q, (a, b) in sorted(joint.items())
+    }
+    qualifying = {
+        c: cells[c][rule] for c, r in results.items() if r.status == "qualifying"
+    }
+    tau_error = {
+        c: tau[r.held_out]["error"]["tau"]
+        for c, r in results.items()
+        if r.held_out is not None
+    }
+    pairs = tuple(
+        (cells[a][rule], cells[b][rule], tau[ho]["error_joint"]["tau"])
+        for a, b in joint.values()
+        if (ho := results[a].held_out) is not None
+    )
+    chosen = z_crit(qualifying, tau_error, pairs) if qualifying else None
+    for q, (fa, fb) in joint.items():
+        ho = results[fa].held_out
+        if ho is None:
+            continue
+        n, tau_joint = len(cells[fa][rule]), tau[ho]["error_joint"]["tau"]
+        cap = allowed(n, tau_joint)
+        for x in (cap, cap + 1):  # as for the family limits below (I1-6)
+            if 0 <= x <= n:
+                _within(results[fa], _ucb(x, n), tau_joint)
+        if chosen is not None:
+            joint_report[q]["error_events_at_z"] = sum(
+                _either(x, y, float(chosen))
+                for x, y in zip(cells[fa][rule], cells[fb][rule], strict=True)
+            )
+    for c, reps in qualifying.items():
+        a = allowed(len(reps), tau_error[c])
+        for x in (a, a + 1):  # the two counts the limit sits between
+            if 0 <= x <= len(reps):
+                _within(results[c], _ucb(x, len(reps)), tau_error[c])
+        if chosen is not None:
+            results[c].error_events_at_z = sum(_passes(r, float(chosen)) for r in reps)
+    margin = min((r.margin for r in results.values()), default=float("inf"))
+    return {
+        "family_block_rule": rule,
+        "worst_cell_rate_at_1.96": worst,
+        "m": m,
+        "targets": tau,
+        "cells": {c: vars(r) for c, r in sorted(results.items())},
+        "joint": joint_report,
+        "z_crit": None if chosen is None else str(chosen),
+        # I1R-4: never read as a choice when a comparison is too close
+        "status": "ok" if margin >= MARGIN_MIN else "margin_failed",
+        "qualifies_before_coverage": chosen is not None and margin >= MARGIN_MIN,
+        "smallest_margin": margin,
+        "margin_ok": margin >= MARGIN_MIN,
+    }

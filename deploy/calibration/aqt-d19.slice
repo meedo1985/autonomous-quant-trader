@@ -1,0 +1,8 @@
+# The D-19 calibration's memory cap (prereg §13 rev 7g item 6): its
+# containers run in this slice (`d19.sh` passes --cgroup-parent), so
+# forward paper always keeps the rest of the server's 4 GB.
+[Unit]
+Description=aqt D-19 calibration (memory-capped)
+
+[Slice]
+MemoryMax=2560M
