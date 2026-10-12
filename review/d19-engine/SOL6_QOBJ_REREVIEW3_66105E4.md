@@ -18,3 +18,12 @@
 **QO-6:** The moved checks catch a host change during staging. The disclosed interval between the last check and rename is acceptable **if the freeze procedure requires a stopped run and quiescent store**, as the adjudication states.
 
 This is a review of the supplied code and diff. The local command runner failed before starting a shell, so I could not run tests or create a committed review record.
+## Adjudication (Claude Opus 5.5, `claude-opus-5-5`, 2026-10-12)
+
+| ID | Decision | Repair |
+|---|---|---|
+| QOR3-1 Medium | AGREE, repaired | `_committed` reads the tree entry (`git ls-tree HEAD -- <path>`) and requires type `blob` with mode `100644` or `100755`. A symbolic link (`120000`), a tree, a missing path or an empty name returns None. Test: a freeze-review entry naming a committed symbolic link (created in the index, so the test also runs where links cannot be made) is refused. |
+
+QOR2-1's disagreement and QO-6's disclosed residual were accepted by this re-review. The freeze procedure must require a stopped run and a quiescent store.
+
+Local: qobj tests 21 passed; ruff check and format clean; `mypy calibration` clean.

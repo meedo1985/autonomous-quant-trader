@@ -234,6 +234,29 @@ def _review_record_is_a_directory(k, p):  # type: ignore[no-untyped-def]
     _commit_all(k["root"])
 
 
+def _review_record_is_a_symlink(k, p):  # type: ignore[no-untyped-def]
+    # a committed symbolic link (mode 120000) to a missing file, built in the
+    # index directly so the test runs where links cannot be created (QOR3-1)
+    link = _git(k["root"], "hash-object", "-w", "--stdin")  # empty blob
+    _git(k["root"], "update-index", "--add", "--cacheinfo",
+         f"120000,{link},review/link.md")  # fmt: skip
+    reviews = json.loads((k["root"] / qobj.FREEZE_REVIEWS).read_bytes())
+    reviews["screen.py"]["record"] = "review/link.md"
+    (k["root"] / qobj.FREEZE_REVIEWS).write_bytes(cj(reviews))
+    _git(k["root"], "add", qobj.FREEZE_REVIEWS)
+    _git(
+        k["root"],
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-q",
+        "-m",
+        "z",
+    )
+
+
 def _report_lacks_z_crit(k, p):  # type: ignore[no-untyped-def]
     report = json.loads((p / "choices.json").read_bytes())
     del report["z_crit"]
@@ -258,6 +281,7 @@ def _other_counts(k, p):  # type: ignore[no-untyped-def]
         (_unreviewed_screen, "not the reviewed version"),
         (_no_review_record, "no committed review record"),
         (_review_record_is_a_directory, "no committed review record"),
+        (_review_record_is_a_symlink, "no committed review record"),
         (_report_lacks_z_crit, "lacks"),
         (_short_test_manifest, "M tests"),
         (_uncommitted_mapping, "not committed as it stands"),

@@ -163,13 +163,19 @@ def _heads(chains: dict[str, chunks.Chain], expected: dict[str, str]) -> None:
 
 
 def _committed(root: Path, path: str) -> bytes | None:
-    """The file `path` as committed at HEAD in `root`, or None (QO-5): a
-    directory, a missing path or an empty name is not a file (QOR2-2)."""
-    kind = subprocess.run(["git", "-C", str(root), "cat-file", "-t", f"HEAD:{path}"],
-                          capture_output=True, text=True, check=False)  # fmt: skip
-    if not path or kind.returncode != 0 or kind.stdout.strip() != "blob":
+    """The regular file `path` as committed at HEAD in `root`, or None
+    (QO-5): a directory, a symbolic link, a missing path or an empty name is
+    not a committed file (QOR2-2, QOR3-1: git stores a link as a blob too,
+    so the tree entry's mode is checked)."""
+    entry = subprocess.run(["git", "-C", str(root), "ls-tree", "HEAD", "--", path],
+                           capture_output=True, text=True, check=False)  # fmt: skip
+    fields = entry.stdout.split("\t")[0].split()
+    if not path or entry.returncode != 0 or len(fields) != 3:
         return None
-    return _git(root, "cat-file", "blob", f"HEAD:{path}")
+    mode, kind, obj = fields
+    if kind != "blob" or mode not in ("100644", "100755"):
+        return None
+    return _git(root, "cat-file", "blob", obj)
 
 
 def _reviewed(root: Path, files: dict[str, bytes]) -> None:
