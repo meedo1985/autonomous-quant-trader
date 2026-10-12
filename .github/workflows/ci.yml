@@ -48,12 +48,20 @@ jobs:
       # FE4R-2: no skip. On a CPU that crashes the pinned kernel (AMD EPYC
       # Zen 4/5) this job fails as inconclusive; rerun it to get a runner
       # that can run the engine. A green run always tested the engine.
+      # On Intel AVX-512 runners (Xeon 8573C, 8370C) numpy's power differs
+      # from Python ** and the engine refuses; that too is inconclusive, and
+      # is caught here in seconds (CI_FINDING_XEON_8573C_AMX.md).
       - name: Probe the pinned OpenBLAS kernel on this CPU
         run: |
           rc=0
           OPENBLAS_NUM_THREADS=1 OPENBLAS_CORETYPE=Haswell python -B -c "import sys; sys.path[:0] = ['.', 'src']
-          from calibration import rundef; rundef.gating('probe')" || rc=$?
+          from calibration import fast, rundef; rundef.gating('probe')
+          try:
+              fast.self_check()
+          except RuntimeError as error:
+              print(error); sys.exit(4)" || rc=$?
           if [ "$rc" = 139 ]; then echo "::error::inconclusive: the probe segfaulted (seen only on AMD EPYC Zen 4/5 runners, under the pinned OpenBLAS kernel); check the CPU line above and rerun the job"; fi
+          if [ "$rc" = 4 ]; then echo "::error::inconclusive: numpy power differs from Python ** on this CPU (seen on Intel AVX-512 runners), so the engine refuses; check the CPU line above and rerun the job"; fi
           exit "$rc"
       - name: Engine tests
         run: python -m pytest tests/unit/test_calibration_*.py tests/unit/test_d19_deploy.py
