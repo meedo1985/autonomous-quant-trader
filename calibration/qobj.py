@@ -167,10 +167,16 @@ def _committed(root: Path, path: str) -> bytes | None:
     (QO-5): a directory, a symbolic link, a missing path or an empty name is
     not a committed file (QOR2-2, QOR3-1: git stores a link as a blob too,
     so the tree entry's mode is checked)."""
-    entry = subprocess.run(["git", "-C", str(root), "ls-tree", "HEAD", "--", path],
-                           capture_output=True, text=True, check=False)  # fmt: skip
-    fields = entry.stdout.split("\t")[0].split()
-    if not path or entry.returncode != 0 or len(fields) != 3:
+    entry = subprocess.run(
+        ["git", "-C", str(root), "ls-tree", "HEAD", "--", f":(literal){path}"],
+        capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    lines = entry.stdout.splitlines()
+    if not path or entry.returncode != 0 or len(lines) != 1:
+        return None
+    meta, _, name = lines[0].partition("\t")
+    fields = meta.split()
+    if name != path or len(fields) != 3:  # QOR4-1: exactly this path
         return None
     mode, kind, obj = fields
     if kind != "blob" or mode not in ("100644", "100755"):

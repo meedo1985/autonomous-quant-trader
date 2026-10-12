@@ -14,3 +14,10 @@ The mode check resolves the reported symbolic-link case: a `120000` tree entry i
 **QOR4-1 — Medium — [qobj.py:170](<D:/PMP-programs-for-sharawi/autonomous-quant-trader/calibration/qobj.py:170>).** `git ls-tree HEAD -- <path>` treats `<path>` as a pattern, and the code reads the first match without checking its pathname. If a freeze-review entry names `review/*.md`, and `review/screen.md` is committed, `_committed()` can accept that file’s blob even though no review file is committed at the recorded path. Require the returned pathname to equal `path` exactly, or use a literal pathspec. [Git documents `ls-tree` paths as patterns.](https://git-scm.com/docs/git-ls-tree)
 
 This is a source review of the supplied diff. The local command runner failed before starting a shell, so I could not run tests or commit a review record.
+## Adjudication (Claude Opus 5.5, `claude-opus-5-5`, 2026-10-12)
+
+| ID | Decision | Repair |
+|---|---|---|
+| QOR4-1 Medium | AGREE, repaired | `_committed` passes the path as a literal pathspec (`:(literal)<path>`), needs exactly one entry back, and needs that entry's pathname to equal `path`. Test: a freeze-review entry `review/*.md`, which matches committed files as a pattern, is refused. |
+
+Local: qobj tests 22 passed; ruff check and format clean; `mypy calibration` clean.
