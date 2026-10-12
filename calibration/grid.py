@@ -12,6 +12,10 @@ from __future__ import annotations
 from calibration.generator import Cell
 
 K_ALL = (1, 2, 5, 20)  # §13 rev 7g item 1
+# prereg §3.1: T_C2 = 1247 - g, with g = 7 from the gap rule on the BTCUSDT
+# exploration manifest 5f92ec50... (owner decision on GAP-1,
+# review/d19-engine/OWNER_DECISION_GAP1_CUTOFF_READING.md; scripts/d19_gap.py)
+T_C2 = 1240
 # §3.2 dependence levels and the K they apply at
 Q1_LEVELS = (
     ("independent", K_ALL),
@@ -60,6 +64,8 @@ def problem(cells_: list[Cell]) -> str | None:
     if len(lengths) != 1:
         return f"qualification cells need one T (T_C2), got {sorted(lengths)}"
     (t,) = lengths
+    if t != T_C2:
+        return f"qualification cells need T = T_C2 = {T_C2}, got {t}"
     wrong = sorted(
         c.cell_id
         for c in cells_

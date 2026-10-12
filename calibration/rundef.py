@@ -258,13 +258,13 @@ def run_plan(manifest: object) -> dict[str, int]:
         problem = grid.problem(cells_from_manifest(manifest))
         if problem is not None:
             raise ValueError(problem)
-        # DR2-1: still refused. T_C2 needs `g` from gap_embargo.rule, the
-        # accepted preregistration hash is pinned only after the owner's key
-        # record, and the container image and re-pilot (FE-4, FE-7) are not
-        # done; the owner's go-ahead follows the re-pilot (§4 step 2).
+        # DR2-1: still refused. The accepted preregistration hash is pinned
+        # only after the owner's key record, and the qualification object
+        # (with the S16-2 and S16-4 obligations) is not built. T_C2 is fixed
+        # (grid.T_C2); the image, re-pilot and go-ahead are done (FE-4, FE-7).
         raise ValueError(
-            "qualification runs are refused until T_C2, the accepted "
-            "preregistration hash, the container image and the re-pilot exist"
+            "qualification runs are refused until the accepted preregistration "
+            "hash and the qualification object exist"
         )
     return dict(counts)
 

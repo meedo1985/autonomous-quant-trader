@@ -908,7 +908,7 @@ def test_a_bad_run_plan_is_refused(manifest: object, message: str) -> None:
         rundef.run_plan(manifest)
     from calibration import grid
 
-    prescribed = grid.manifest(1200, {"threshold": 300_000, "dev": 12_000})
+    prescribed = grid.manifest(grid.T_C2, {"threshold": 300_000, "dev": 12_000})
     with pytest.raises(ValueError, match="qualification runs are refused"):
         rundef.run_plan(prescribed)  # DR2-1: even the exact grid
 
