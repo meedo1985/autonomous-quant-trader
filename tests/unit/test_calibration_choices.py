@@ -104,6 +104,9 @@ def test_z_crit_has_no_ceiling() -> None:  # S16-3: §5 sets none
     reps = _reps(z=[99.0] * 500)
     tau = {"a": TAU[20_000]["error"]["tau"]}
     assert choices.z_crit({"a": reps}, tau) == Decimal("99.001")
+    big = choices.z_crit({"a": _reps(z=[2.0**50] * 500)}, tau)  # S16R-1
+    assert big is not None and float(big) > 2.0**50
+    assert float(big - choices.Z_STEP) == 2.0**50
 
 
 def test_choose_reports_every_step() -> None:

@@ -450,8 +450,10 @@ def z_crit(
         for r in reps
         if r.z is not None and math.isfinite(r.z)
     ]
-    top = Decimal(max(stored, default=0.0)) / Z_STEP
-    lo, hi = 0, int(top.to_integral_value(ROUND_CEILING)) + 1  # monotone in z
+    # S16R-1: a grid value at or above the next binary64 after the largest
+    # z_f* still compares above it after rounding (rounding is monotone)
+    top = Decimal(math.nextafter(max(stored, default=0.0), math.inf)) / Z_STEP
+    lo, hi = 0, int(top.to_integral_value(ROUND_CEILING))  # monotone in z
     if not ok(hi * Z_STEP):
         return None
     while lo < hi:
