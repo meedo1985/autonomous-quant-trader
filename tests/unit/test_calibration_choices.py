@@ -493,3 +493,14 @@ def test_a_successful_choice_covers_every_category_until_qj_is_demoted() -> None
     assert full["joint_generator"] == ["qj/trend", "qj/vol"]
     demoted = run(_reps(dsr=10))
     assert demoted["joint_generator"] == [] and demoted["two_trial"] == []
+
+
+def test_the_test_manifest_lists_every_enumerated_test() -> None:  # QO-4
+    cells = [("a", "gaussian"), ("b", "semi-vol"), ("c", "semi-joint")]
+    tests = choices.test_manifest(cells)
+    assert len(tests) == choices.enumerated_tests([law for _, law in cells])
+    assert tests[:3] == [["a", "agnostic", "error"], ["a", "agnostic", "dsr"],
+                         ["a", "agnostic", "u_g"]]  # fmt: skip
+    assert ["b", "vol", "u_g"] in tests and ["c/trend", "trend", "dsr"] in tests
+    assert tests[-2:] == [["c", "joint", "error_joint"], ["c", "joint", "u_proc_joint"]]
+    assert len({tuple(t) for t in tests}) == len(tests)

@@ -31,7 +31,7 @@ import json  # noqa: E402
 from typing import Any  # noqa: E402
 
 from calibration import choices, chunks, reduce, rundef  # noqa: E402
-from calibration.generator import Cell, cells_from_manifest  # noqa: E402
+from calibration.generator import ALPHA_S, Cell, cells_from_manifest  # noqa: E402
 from calibration.seeds import sha  # noqa: E402
 
 
@@ -43,7 +43,7 @@ def _chain(
         binding=rundef.definition_sha256(defn),
         namespace=ns,
         cell_id=cell.cell_id,
-        replications=rundef.run_plan(defn["cell_manifest"])[ns],
+        replications=rundef.counts(defn["cell_manifest"])[ns],  # QO-1
         gating=gating,  # type: ignore[arg-type]
         host={},
     )
@@ -158,6 +158,15 @@ def main(argv: list[str] | None = None) -> int:
             "event counts"
         )
     report["chain_heads"] = heads  # I1-3: the chains this report was made from
+    # QO-3, QO-4: every unit's own per-tail order statistics (§3.5, §3.6) and
+    # the frozen alpha_s, from this (the run's pinned) engine
+    report["cell_bounds"] = {
+        u: {"upper": {n: v.hex() for n, v in up.items()},
+            "lower": {n: v.hex() for n, v in lo.items()}}
+        for u, (up, lo) in sorted(bounds.items())
+    }  # fmt: skip
+    report["alpha_s"] = ALPHA_S.hex()
+    report["tests"] = choices.test_manifest([(c.cell_id, c.law) for c in cells])
     report["dev_thresholds_sha256"] = sha(
         {str(k): [{n: v.hex() for n, v in side.items()} for side in b]
          for k, b in sorted(pooled.items())}

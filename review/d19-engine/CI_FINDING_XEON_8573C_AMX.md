@@ -14,3 +14,5 @@
 **Owner's server: not affected.** It is an AMD EPYC-Rome (Zen 2, no AVX-512), the engine runs inside the pinned image, and its start gate passed for the FE-7 threshold and development runs (`PILOT_FE7_EVIDENCE.md`).
 
 **Follow-up, not done here:** CI could treat a `self_check` refusal on the runner like the AMD Zen 4/5 segfault, as inconclusive. That needs its own small review. Until then, a red `calibration-tests` job needs its CPU line read before anything is concluded.
+
+**Seen again, 2026-10-12 (PR #51, run `38271163886`):** the same two tests failed in the same way on an `Intel(R) Xeon(R) Platinum 8370C` (Ice Lake, AVX-512, no AMX), with `2 failed, 260 passed`. So the dependence is on Intel AVX-512 runners generally, not on AMX. The owner's server (AMD EPYC-Rome, no AVX-512) is still unaffected.

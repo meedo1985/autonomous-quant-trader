@@ -69,6 +69,27 @@ def enumerated_tests(laws: list[str]) -> int:
     )
 
 
+CELL_BOUNDS = ("error", "dsr", "u_g")
+JOINT_BOUNDS = ("error_joint", "u_proc_joint")
+
+
+def test_manifest(cells: list[tuple[str, str]]) -> list[list[str]]:
+    """Every enumerated test (prereg §6: cell, family label or `agnostic` or
+    `joint`, bound) of (cell id, law) pairs, in order; its length is
+    `enumerated_tests` (QO-4)."""
+    out = []
+    for cell, law in cells:
+        if law == "semi-joint":
+            out += [
+                [f"{cell}/{f}", f, b] for f in ("trend", "vol") for b in CELL_BOUNDS
+            ]
+            out += [[cell, "joint", b] for b in JOINT_BOUNDS]
+        else:
+            label = law.removeprefix("semi-") if law.startswith("semi-") else "agnostic"
+            out += [[cell, label, b] for b in CELL_BOUNDS]
+    return out
+
+
 # The coverage rule (prereg §3.2, O18-4 with O18-4-T: no "unequal T" row),
 # with the owner's readings of 2026-10-11 (OWNER_DECISION_ITEM2B_STEP2_READINGS.md
 # Q5): "rho > 0" is every positive-correlation level, not opposites; QJ at
