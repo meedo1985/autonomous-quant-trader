@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from calibration import chunks, qobj, reduce, rundef
+from calibration import chunks, qobj, rundef
 from calibration.seeds import cj
 
 CELL = {"cell_id": "gaussian.independent.k1.t1240", "k": 1, "t": 1240,
@@ -24,7 +24,9 @@ def _git(root: Path, *args: str) -> str:
                           text=True, check=True).stdout.strip()  # fmt: skip
 
 
-def _repo(tmp: Path, files: dict[str, bytes]) -> tuple[Path, str]:
+def _repo(tmp: Path, files: dict[str, bytes], push: bool = True) -> tuple[Path, str]:
+    """A repository with `files` committed; with `push`, also on a remote
+    branch (S16-2, QO-2)."""
     tmp.mkdir()
     _git(tmp, "init", "-q")
     for name, data in files.items():
@@ -32,6 +34,11 @@ def _repo(tmp: Path, files: dict[str, bytes]) -> tuple[Path, str]:
         (tmp / name).write_bytes(data)
     _git(tmp, "add", "-A")
     _git(tmp, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x")
+    if push:
+        remote = tmp.with_name(tmp.name + ".git")
+        _git(tmp.parent, "init", "-q", "--bare", str(remote))
+        _git(tmp, "push", "-q", str(remote), "HEAD:refs/heads/main")
+        _git(tmp, "fetch", "-q", str(remote), "+refs/heads/*:refs/remotes/origin/*")
     return tmp, _git(tmp, "rev-parse", "HEAD")
 
 
@@ -50,6 +57,9 @@ def test_the_definition_must_be_committed_before_the_run_started(
         qobj.committed_before(root, commit, "defs/other.json", b"{}", later)
     with pytest.raises(ValueError, match="time zone"):
         qobj.committed_before(root, commit, "defs/d.json", b"{}", datetime(2030, 1, 1))
+    local, unpushed = _repo(tmp_path / "l", {"defs/d.json": b"{}"}, push=False)
+    with pytest.raises(ValueError, match="no remote branch"):
+        qobj.committed_before(local, unpushed, "defs/d.json", b"{}", later)
 
 
 def _chain(store: Path, ns: str, host: dict[str, object]) -> chunks.Chain:
@@ -69,18 +79,28 @@ def test_host_provenance_is_fixed_per_chain(tmp_path: Path) -> None:  # S16-4
     assert qobj.host_sha256(chain) != before  # but the object's hash moves
 
 
-def _setup(tmp_path: Path, qualifies: bool = True, purpose: str = "qualification"):  # type: ignore[no-untyped-def]
+def _setup(tmp_path: Path):  # type: ignore[no-untyped-def]
     prereg = b"accepted preregistration\n"
     explore = cj({"manifest_sha256": "e" * 64})
     defn = {"record_type": rundef.RECORD_TYPE, "prereg_sha256":
             hashlib.sha256(prereg).hexdigest(), "exploration_manifest_sha256":
             "e" * 64, "gating": GATING,
-            "cell_manifest": {"purpose": purpose, "cells": [CELL],
-                              "replications": {"threshold": 2, "dev": 2}}}  # fmt: skip
+            "cell_manifest": {"purpose": "qualification", "cells": [CELL],
+                              "replications": dict(rundef.PRESCRIBED)}}  # fmt: skip
     data = cj(defn)
     later = {s: b"later " + s.encode() for s in qobj.LATER.values()}
     later[qobj.LATER["preregistration.md"]] = prereg
-    root, commit = _repo(tmp_path / "root", {**later, "runs/definition.json": data})
+    reviews = {
+        name: {"sha256": hashlib.sha256(later[qobj.LATER[name]]).hexdigest(),
+               "record": f"review/{name}.md"}
+        for name in qobj.REVIEWED
+    }  # fmt: skip
+    records = {f"review/{name}.md": b"accepted" for name in qobj.REVIEWED}
+    root, commit = _repo(
+        tmp_path / "root",
+        {**later, **records, qobj.FREEZE_REVIEWS: cj(reviews),
+         "runs/definition.json": data},
+    )  # fmt: skip
     run_root = tmp_path / "run"
     for src in qobj.ENGINE.values():
         (run_root / src).parent.mkdir(parents=True, exist_ok=True)
@@ -92,11 +112,13 @@ def _setup(tmp_path: Path, qualifies: bool = True, purpose: str = "qualification
     heads = {}
     for ns in qobj.NAMESPACES:
         chain = chunks.Chain(store / ns / CELL["cell_id"], binding, ns,
-                             str(CELL["cell_id"]), 2, GATING, {"cpu": ns})  # fmt: skip
+                             str(CELL["cell_id"]), rundef.PRESCRIBED[ns], GATING,
+                             {"cpu": ns})  # fmt: skip
         heads[f"{ns}/{CELL['cell_id']}"] = chunks.run(chain, lambda rep: rep)
-    report = {"qualifies": qualifies, "margin_ok": True, "chain_heads": heads,
-              "cells": {CELL["cell_id"]: {"status": "qualifying",
-                                          "held_out": 20000}}}  # fmt: skip
+    report = {k: None for k in qobj.REPORT}
+    report |= {"qualifies": True, "margin_ok": True, "chain_heads": heads,
+               "cells": {CELL["cell_id"]: {"status": "qualifying",
+                                           "held_out": 20000}}}  # fmt: skip
     (tmp_path / "choices.json").write_bytes(cj(report))
     kwargs = {
         "root": root,
@@ -115,15 +137,13 @@ def _setup(tmp_path: Path, qualifies: bool = True, purpose: str = "qualification
 
 @pytest.fixture
 def fakes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Stand-ins for the parts whose own tests cover them: the fresh choose
-    (it must equal choices.json), the run plan (qualification is refused
-    until BO-1), and the per-cell threshold fit."""
+    """Small prescribed counts, so the synthetic chains stay small, and a
+    stand-in for the fresh choose (it must equal choices.json), which runs
+    the start gate of a real pinned checkout."""
+    monkeypatch.setattr(rundef, "PRESCRIBED", {"threshold": 3, "dev": 2})
     monkeypatch.setattr(
         qobj, "_choose", lambda r, d, s: (d.parent / "choices.json").read_bytes()
     )
-    monkeypatch.setattr(rundef, "run_plan", lambda m: m["replications"])
-    fit = [({"K": 1.0}, {"K": 0.5})]
-    monkeypatch.setattr(reduce, "cell_thresholds", lambda chain, joint=False: fit)
 
 
 def test_a_qualifying_run_gives_an_object_hashed_by_its_manifest(
@@ -145,12 +165,13 @@ def test_a_qualifying_run_gives_an_object_hashed_by_its_manifest(
         f"{ns}/{CELL['cell_id']}" for ns in qobj.NAMESPACES
     }
     assert freeze["allocation"] == {CELL["cell_id"]: 20000}
-    own = json.loads((out / "cell_thresholds.json").read_bytes())
-    assert own[CELL["cell_id"]]["upper"] == {"K": (1.0).hex()}
+    assert not out.with_name(out.name + ".partial").exists()  # QO-7: renamed
 
 
 def _not_qualifying(k, p):  # type: ignore[no-untyped-def]
-    (p / "choices.json").write_bytes(cj({"qualifies": False, "margin_ok": True}))
+    report = json.loads((p / "choices.json").read_bytes())
+    report["qualifies"] = False
+    (p / "choices.json").write_bytes(cj(report))
 
 
 def _no_screen(k, p):  # type: ignore[no-untyped-def]
@@ -169,9 +190,28 @@ def _started_earlier(k, p):  # type: ignore[no-untyped-def]
     k["threshold_started"] = datetime(2000, 1, 1, tzinfo=UTC)
 
 
-def _out_not_empty(k, p):  # type: ignore[no-untyped-def]
+def _out_exists(k, p):  # type: ignore[no-untyped-def]
     k["out"].mkdir()
-    (k["out"] / "x").write_bytes(b"")
+
+
+def _unreviewed_screen(k, p):  # type: ignore[no-untyped-def]
+    (k["root"] / qobj.LATER["screen.py"]).write_bytes(b"changed after review")
+
+
+def _no_review_record(k, p):  # type: ignore[no-untyped-def]
+    (k["root"] / "review" / "heldout.py.md").unlink()
+
+
+def _report_lacks_z_crit(k, p):  # type: ignore[no-untyped-def]
+    report = json.loads((p / "choices.json").read_bytes())
+    del report["z_crit"]
+    (p / "choices.json").write_bytes(cj(report))
+
+
+def _other_counts(k, p):  # type: ignore[no-untyped-def]
+    defn = json.loads((p / "definition.json").read_bytes())
+    defn["cell_manifest"]["replications"]["dev"] = 1
+    (p / "definition.json").write_bytes(cj(defn))
 
 
 @pytest.mark.parametrize(
@@ -182,7 +222,11 @@ def _out_not_empty(k, p):  # type: ignore[no-untyped-def]
         (_other_exploration, "exploration manifest"),
         (_other_prereg, "preregistration"),
         (_started_earlier, "after the start"),
-        (_out_not_empty, "not empty"),
+        (_out_exists, "already exists"),
+        (_unreviewed_screen, "not the reviewed version"),
+        (_no_review_record, "no review record"),
+        (_report_lacks_z_crit, "lacks"),
+        (_other_counts, "prescribed counts"),
     ],
 )
 def test_the_builder_refuses(  # type: ignore[no-untyped-def]
@@ -213,3 +257,20 @@ def test_a_fresh_choose_that_differs_is_refused(
     with pytest.raises(ValueError, match="fresh choose"):
         qobj.build(**kwargs)
     assert not kwargs["out"].exists()  # nothing written
+
+
+def test_a_chain_changed_during_the_build_is_refused(
+    tmp_path: Path, fakes: None, monkeypatch: pytest.MonkeyPatch
+) -> None:  # QO-6
+    kwargs = _setup(tmp_path)
+    chosen = (tmp_path / "choices.json").read_bytes()
+    chunk = kwargs["store"] / "dev" / CELL["cell_id"] / "chunk-0000000.json"
+
+    def choose_then_tamper(r, d, s):  # type: ignore[no-untyped-def]
+        chunk.unlink()
+        return chosen
+
+    monkeypatch.setattr(qobj, "_choose", choose_then_tamper)
+    with pytest.raises(chunks.ChainError):
+        qobj.build(**kwargs)
+    assert not kwargs["out"].exists()

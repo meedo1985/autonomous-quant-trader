@@ -3,24 +3,30 @@
 
 The object is a directory of files and `manifest.json`, the SHA-256 of
 each file; `qualification_object_sha256` is the SHA-256 of the canonical
-manifest (`cj`). `build` refuses, writing nothing, unless:
+manifest (`cj`). `build` refuses, publishing nothing, unless:
 
-- every threshold and development chain verifies and its head equals the
-  head in `choices.json`, and `choices.json` is byte-identical to a fresh
-  `d19_choose.py choose` of the same chains (BO-4: the final cells and
-  thresholds come only from the complete chains and the fixed rules);
-- the run definition is a qualification run whose preregistration hash
-  equals the bytes of the preregistration supplied;
-- the method qualifies (§5 step 6) with no margin flag (I1-6);
+- every threshold and development chain verifies, before and after the
+  object's contents are taken (QO-6), with the heads in `choices.json`, and
+  `choices.json` is byte-identical to a fresh `d19_choose.py choose` run in
+  the run's pinned checkout (BO-3, BO-4, QO-3): the final cells, the
+  thresholds, every unit's own order statistics and `alpha_s` come only
+  from the complete chains, the fixed rules and the pinned engine;
+- the run definition is a qualification run at the prescribed counts
+  (QO-1) whose preregistration hash equals the preregistration supplied;
+- the method qualifies (§5 step 6) with no margin flag (I1-6), and the
+  report holds every §4 result item (QO-4);
 - the run definition's bytes were committed, at `definition_commit`, before
-  the threshold run started (S16-2; the start time is the owner's recorded
-  `d19.sh status` line);
-- every §4 source file exists, including the §3.6 mapping and the §7.2
-  screen (BO-4).
+  the recorded threshold start, and that commit is on a remote branch
+  (S16-2, QO-2). Both times are attestations: the committer time and the
+  owner's recorded `d19.sh status` start. A public timestamp of the
+  definition hash before the run would be stronger evidence;
+- every later file (mapping, screen, held-out runner) is listed in the
+  committed freeze-review record with its SHA-256 and an existing review
+  record (BO-4, QO-5).
 
 Added for S16-4: per chain, the SHA-256 of the list of its chunks' host
-provenance, in chain order. Added for §3.6: each final qualifying cell's
-own per-tail order statistics (`cell_thresholds.json`)."""
+provenance, in chain order. The object is written to a staging directory
+and renamed into place only when complete (QO-7)."""
 
 from __future__ import annotations
 
@@ -33,7 +39,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from calibration import chunks, generator, reduce, rundef
+from calibration import chunks, generator, rundef
 from calibration.seeds import cj, sha
 
 # object file -> source (§4 contents). ENGINE files come from the run's
@@ -52,7 +58,13 @@ LATER = {
     "d19-preregistration/PREREGISTRATION.md",
     "mapping.py": "calibration/mapping.py",
     "screen.py": "calibration/screen.py",
+    "heldout.py": "scripts/d19_heldout.py",
 }
+REVIEWED = ("mapping.py", "screen.py", "heldout.py")  # BO-4, QO-5
+FREEZE_REVIEWS = "review/d19-engine/FREEZE_REVIEWS.json"
+# §4 result items choose must report (QO-4)
+REPORT = ("cells", "m", "targets", "family_block_rule", "z_crit",
+          "final_thresholds", "cell_bounds", "alpha_s", "chain_heads")  # fmt: skip
 NAMESPACES = ("threshold", "dev")
 
 
@@ -66,8 +78,8 @@ def committed_before(
     root: Path, commit: str, path: str, data: bytes, started: datetime
 ) -> int:
     """S16-2: the committer time of `commit`, which must hold `data` at
-    `path` and be earlier than `started` (timezone-aware). ValueError
-    otherwise."""
+    `path`, be on a remote branch and be earlier than `started`
+    (timezone-aware). ValueError otherwise."""
     if started.tzinfo is None:
         raise ValueError("the threshold start time needs a time zone")
     try:
@@ -77,6 +89,8 @@ def committed_before(
         raise ValueError(f"S16-2: {commit}:{path} not found") from error
     if held != data:
         raise ValueError(f"S16-2: {commit}:{path} is not this run definition")
+    if not _git(root, "branch", "-r", "--contains", commit).strip():
+        raise ValueError(f"S16-2: {commit} is on no remote branch (QO-2)")
     if when >= started.timestamp():
         raise ValueError("S16-2: the run definition was committed after the start")
     return when
@@ -106,6 +120,37 @@ def _choose(root: Path, definition: Path, store: Path) -> bytes:
         return out.read_bytes()
 
 
+def _chains(defn: dict[str, Any], store: Path) -> dict[str, chunks.Chain]:
+    counts = defn["cell_manifest"]["replications"]
+    binding = rundef.definition_sha256(defn)
+    return {
+        f"{ns}/{c.cell_id}": chunks.Chain(store / ns / c.cell_id, binding, ns,
+                                          c.cell_id, counts[ns], defn["gating"],
+                                          host={})
+        for c in generator.cells_from_manifest(defn["cell_manifest"])
+        for ns in NAMESPACES
+    }  # fmt: skip
+
+
+def _heads(chains: dict[str, chunks.Chain], expected: dict[str, str]) -> None:
+    for key, chain in chains.items():
+        if chunks.verify(chain) != expected.get(key):
+            raise ValueError(f"{key}: chain head differs from choices")
+
+
+def _reviewed(root: Path, files: dict[str, bytes]) -> None:
+    """BO-4, QO-5: each later file is in the committed freeze-review record
+    with its SHA-256 and an existing review record."""
+    path = root / FREEZE_REVIEWS
+    record = json.loads(path.read_bytes()) if path.is_file() else {}
+    for name in REVIEWED:
+        entry = record.get(name, {})
+        if entry.get("sha256") != hashlib.sha256(files[name]).hexdigest():
+            raise ValueError(f"BO-4: {name} is not the reviewed version")
+        if not (root / str(entry.get("record", ""))).is_file():
+            raise ValueError(f"BO-4: {name} has no review record")
+
+
 def build(
     *,
     root: Path,
@@ -119,93 +164,77 @@ def build(
     exploration_manifest: Path,
     out: Path,
 ) -> str:
-    """Write the object into the empty directory `out`; returns
+    """Write the object to the new directory `out`; returns
     `qualification_object_sha256`. `run_root` is the run's pinned checkout
     (its start gate must pass, so the choose and the engine files are the
     run's); `root` is the checkout holding the later files. Refuses
-    (ValueError) before writing."""
+    (ValueError) with nothing at `out`."""
+    stage = out.with_name(out.name + ".partial")
+    if out.exists() or stage.exists():
+        raise ValueError(f"{out} or its staging directory already exists")
     data = definition.read_bytes()
     defn = rundef.load(definition)
-    if defn["cell_manifest"].get("purpose") != "qualification":
+    manifest_ = defn["cell_manifest"]
+    if manifest_.get("purpose") != "qualification":
         raise ValueError("not a qualification run")
-    prereg = (root / LATER["preregistration.md"]).read_bytes()
-    if hashlib.sha256(prereg).hexdigest() != defn["prereg_sha256"]:
-        raise ValueError("the preregistration is not the run definition's")
+    if manifest_.get("replications") != rundef.PRESCRIBED:  # QO-1
+        raise ValueError(f"not the prescribed counts {rundef.PRESCRIBED}")
     sources = {n: run_root / s for n, s in ENGINE.items()}
     sources |= {n: root / s for n, s in LATER.items()}
     missing = [str(p) for p in sources.values() if not p.is_file()]
     if missing:
         raise ValueError(f"§4 sources missing: {missing}")
+    files = {name: path.read_bytes() for name, path in sources.items()}
+    prereg = files["preregistration.md"]
+    if hashlib.sha256(prereg).hexdigest() != defn["prereg_sha256"]:
+        raise ValueError("the preregistration is not the run definition's")
+    _reviewed(root, files)
     explore = exploration_manifest.read_bytes()
-    if (
-        json.loads(explore).get("manifest_sha256")
-        != defn["exploration_manifest_sha256"]
-    ):
+    recorded = defn["exploration_manifest_sha256"]
+    if json.loads(explore).get("manifest_sha256") != recorded:
         raise ValueError("the exploration manifest is not the run definition's")
 
     chosen = choices_json.read_bytes()
+    report: dict[str, Any] = json.loads(chosen)
+    if absent := [k for k in REPORT if k not in report]:
+        raise ValueError(f"choices.json lacks §4 items: {absent}")
+    chains = _chains(defn, store)
+    _heads(chains, report["chain_heads"])
     if _choose(run_root, definition, store) != chosen:
         raise ValueError("choices.json is not a fresh choose of these chains")
-    report: dict[str, Any] = json.loads(chosen)
     if not (report["qualifies"] is True and report["margin_ok"] is True):
         raise ValueError("the method does not qualify (§5 step 6)")
     committed = committed_before(
         root, definition_commit, definition_repo_path, data, threshold_started
     )
-
-    gating = defn["gating"]  # every chunk carries the run's gating
-    cells = generator.cells_from_manifest(defn["cell_manifest"])
-    binding = rundef.definition_sha256(defn)
-    plan = rundef.run_plan(defn["cell_manifest"])
-    hosts: dict[str, str] = {}
-    own: dict[str, object] = {}
-    for c in cells:
-        for ns in NAMESPACES:
-            chain = chunks.Chain(store / ns / c.cell_id, binding, ns, c.cell_id,
-                                 plan[ns], gating, host={})  # fmt: skip
-            if chunks.verify(chain) != report["chain_heads"][f"{ns}/{c.cell_id}"]:
-                raise ValueError(f"{ns}/{c.cell_id}: chain head differs from choices")
-            hosts[f"{ns}/{c.cell_id}"] = host_sha256(chain)
-        names = [c.cell_id]
-        if c.law == "semi-joint":
-            names = [f"{c.cell_id}/{f}" for f in reduce.FAMILIES]
-        threshold = chunks.Chain(store / "threshold" / c.cell_id, binding,
-                                 "threshold", c.cell_id, plan["threshold"],
-                                 gating, host={})  # fmt: skip
-        sets = reduce.cell_thresholds(threshold, c.law == "semi-joint")
-        for name, (upper, lower) in zip(names, sets, strict=True):
-            if report["cells"][name]["status"] == "qualifying":
-                own[name] = {
-                    "upper": {k: v.hex() for k, v in upper.items()},
-                    "lower": {k: v.hex() for k, v in lower.items()},
-                }
+    hosts = {key: host_sha256(chain) for key, chain in chains.items()}
+    _heads(chains, report["chain_heads"])  # QO-6: unchanged throughout
 
     freeze = {
-        "definition_sha256": binding,
+        "definition_sha256": rundef.definition_sha256(defn),
         "definition_commit": definition_commit,
         "definition_committed_unix": committed,
         "threshold_started": threshold_started.isoformat(),
         "host_provenance_sha256": hosts,
-        "alpha_s": generator.ALPHA_S.hex(),
         "allocation": {
             c: r["held_out"]
             for c, r in report["cells"].items()
             if r["status"] == "qualifying"
         },  # fmt: skip
     }
-    files = {
+    files |= {
         "definition.json": data,
         "choices.json": chosen,
         "exploration_manifest.json": explore,
-        "cell_thresholds.json": cj(own),
         "freeze.json": cj(freeze),
-        **{name: path.read_bytes() for name, path in sources.items()},
     }
-    out.mkdir(parents=True, exist_ok=True)
-    if any(out.iterdir()):
-        raise ValueError(f"{out} is not empty")
     manifest = {n: hashlib.sha256(b).hexdigest() for n, b in sorted(files.items())}
+    stage.mkdir(parents=True)
     for name, content in files.items():
-        (out / name).write_bytes(content)
-    (out / "manifest.json").write_bytes(cj(manifest))
+        (stage / name).write_bytes(content)
+    (stage / "manifest.json").write_bytes(cj(manifest))
+    for name, digest in manifest.items():  # QO-7: verify, then publish
+        if hashlib.sha256((stage / name).read_bytes()).hexdigest() != digest:
+            raise ValueError(f"staged {name} does not match its hash")
+    stage.rename(out)
     return manifest_sha256(manifest)
