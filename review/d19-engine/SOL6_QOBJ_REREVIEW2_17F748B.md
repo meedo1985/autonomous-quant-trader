@@ -18,3 +18,12 @@ The supplied diff resolves **QO-2** and **QO-4**. It fixes the fresh-choose fail
 - **QO-6 — Medium — [qobj.py:246](<D:/PMP-programs-for-sharawi/autonomous-quant-trader/calibration/qobj.py:246>).** The second host hash is checked before the object is staged and published. If a chunk’s host field changes after that check and before `stage.rename(out)`, the chunk head still verifies and the published object contains a stale host hash. The original failure scenario remains possible.
 
 This is a read-only review of the supplied code and caller list. The local command runner failed before starting a shell, so I could not run validation or commit a review record.
+## Adjudication (Claude Opus 5.5, `claude-opus-5-5`, 2026-10-12)
+
+| ID | Decision | Disposition |
+|---|---|---|
+| QOR2-1 Blocker | DISAGREE that it is a builder defect; it is the recorded BO-1 gate | That no path starts or records a qualification run is the deliberate DR2-1 refusal. BO-1 (`SOL6_BUILD_ORDER_REVIEW_D321147.md`) lifts it for `threshold` and `dev` only, when the run definition's preregistration hash equals the accepted hash pinned after the owner's key record, and that change goes through its own §16 review. Until then no qualification chain can exist, so the builder has nothing to read, as intended. No change here. |
+| QOR2-2 Medium | AGREE, repaired | `_committed` returns content only for a **blob** at `HEAD:<path>` (`git cat-file -t`), so a tree, a missing path or an empty name is refused. Test: a freeze-review entry whose `record` names the tracked `review` directory is refused. |
+| QO-6 Medium | AGREE, repaired, with a disclosed residual | The head check and the second host-list hash now run **after** the object is staged and verified, just before the rename. Test: a host field changed while the object is being staged is refused, and nothing is published. Residual: a change after that last check, in the instant before the rename, cannot be detected by any reader. The freeze therefore requires a stopped run with a quiescent store. That goes into the freeze procedure, together with BO-4. |
+
+Local: qobj tests 20 passed; ruff check and format clean; `mypy calibration` clean.

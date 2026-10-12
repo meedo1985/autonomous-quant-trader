@@ -227,6 +227,13 @@ def _uncommitted_mapping(k, p):  # type: ignore[no-untyped-def]
     (k["root"] / qobj.LATER["mapping.py"]).write_bytes(b"edited, not committed")
 
 
+def _review_record_is_a_directory(k, p):  # type: ignore[no-untyped-def]
+    reviews = json.loads((k["root"] / qobj.FREEZE_REVIEWS).read_bytes())
+    reviews["screen.py"]["record"] = "review"  # a tracked directory
+    (k["root"] / qobj.FREEZE_REVIEWS).write_bytes(cj(reviews))
+    _commit_all(k["root"])
+
+
 def _report_lacks_z_crit(k, p):  # type: ignore[no-untyped-def]
     report = json.loads((p / "choices.json").read_bytes())
     del report["z_crit"]
@@ -250,6 +257,7 @@ def _other_counts(k, p):  # type: ignore[no-untyped-def]
         (_out_exists, "already exists"),
         (_unreviewed_screen, "not the reviewed version"),
         (_no_review_record, "no committed review record"),
+        (_review_record_is_a_directory, "no committed review record"),
         (_report_lacks_z_crit, "lacks"),
         (_short_test_manifest, "M tests"),
         (_uncommitted_mapping, "not committed as it stands"),
@@ -299,5 +307,26 @@ def test_a_chain_changed_during_the_build_is_refused(
 
     monkeypatch.setattr(qobj, "_choose", choose_then_tamper)
     with pytest.raises(chunks.ChainError):
+        qobj.build(**kwargs)
+    assert not kwargs["out"].exists()
+
+
+def test_a_host_change_during_staging_is_refused(
+    tmp_path: Path, fakes: None, monkeypatch: pytest.MonkeyPatch
+) -> None:  # QO-6: the host lists are rechecked just before publishing
+    kwargs = _setup(tmp_path)
+    chunk = kwargs["store"] / "dev" / CELL["cell_id"] / "chunk-0000000.json"
+    real = qobj.cj
+
+    def cj_then_tamper(value):  # type: ignore[no-untyped-def]
+        out = real(value)
+        if isinstance(value, dict) and "freeze.json" in value:  # the manifest
+            record = json.loads(chunk.read_bytes())
+            record["host"] = {"cpu": "changed"}
+            chunk.write_bytes(real(record))
+        return out
+
+    monkeypatch.setattr(qobj, "cj", cj_then_tamper)
+    with pytest.raises(ValueError, match="host provenance changed"):
         qobj.build(**kwargs)
     assert not kwargs["out"].exists()

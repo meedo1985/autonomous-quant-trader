@@ -163,10 +163,13 @@ def _heads(chains: dict[str, chunks.Chain], expected: dict[str, str]) -> None:
 
 
 def _committed(root: Path, path: str) -> bytes | None:
-    """`path` as committed at HEAD in `root`, or None (QO-5)."""
-    done = subprocess.run(["git", "-C", str(root), "show", f"HEAD:{path}"],
-                          capture_output=True, check=False)  # fmt: skip
-    return done.stdout if done.returncode == 0 else None
+    """The file `path` as committed at HEAD in `root`, or None (QO-5): a
+    directory, a missing path or an empty name is not a file (QOR2-2)."""
+    kind = subprocess.run(["git", "-C", str(root), "cat-file", "-t", f"HEAD:{path}"],
+                          capture_output=True, text=True, check=False)  # fmt: skip
+    if not path or kind.returncode != 0 or kind.stdout.strip() != "blob":
+        return None
+    return _git(root, "cat-file", "blob", f"HEAD:{path}")
 
 
 def _reviewed(root: Path, files: dict[str, bytes]) -> None:
@@ -245,9 +248,6 @@ def build(
         root, definition_commit, definition_repo_path, data, threshold_started, remote
     )
     hosts = {key: host_sha256(chain) for key, chain in chains.items()}
-    _heads(chains, report["chain_heads"])  # QO-6: unchanged throughout,
-    if hosts != {key: host_sha256(chain) for key, chain in chains.items()}:
-        raise ValueError("host provenance changed during the build")  # and host
 
     freeze = {
         "definition_sha256": rundef.definition_sha256(defn),
@@ -275,5 +275,11 @@ def build(
     for name, digest in manifest.items():  # QO-7: verify, then publish
         if hashlib.sha256((stage / name).read_bytes()).hexdigest() != digest:
             raise ValueError(f"staged {name} does not match its hash")
+    # QO-6: the chains and their host lists, unchanged since they were read,
+    # just before publishing. The freeze needs a stopped run (a quiescent
+    # store); a change after this check is outside what a reader can see.
+    _heads(chains, report["chain_heads"])
+    if hosts != {key: host_sha256(chain) for key, chain in chains.items()}:
+        raise ValueError("host provenance changed during the build")
     stage.rename(out)
     return manifest_sha256(manifest)
