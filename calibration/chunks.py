@@ -207,6 +207,18 @@ def verify(chain: Chain) -> str:
     return previous
 
 
+def hosts(chain: Chain) -> list[object]:
+    """Every chunk's recorded host provenance in chain order, after
+    `verify` (S16-4: the qualification object fixes it per chain)."""
+    verify(chain)
+    out = []
+    for start in chain.starts():
+        record = _load(chain.path(start))
+        assert record is not None
+        out.append(record["host"])
+    return out
+
+
 def reduce(chain: Chain) -> Iterator[object]:
     """Every replication's result in replication order, after `verify`."""
     verify(chain)
