@@ -5,7 +5,8 @@ escape and demotion, the cap rule, and z_crit on the 0.001 grid."""
 from __future__ import annotations
 
 import struct
-from decimal import Decimal
+import sys
+from decimal import Decimal, localcontext
 
 import pytest
 
@@ -107,6 +108,11 @@ def test_z_crit_has_no_ceiling() -> None:  # S16-3: §5 sets none
     big = choices.z_crit({"a": _reps(z=[2.0**50] * 500)}, tau)  # S16R-1
     assert big is not None and float(big) > 2.0**50
     assert float(big - choices.Z_STEP) == 2.0**50
+    for z in (2.0**100, sys.float_info.max):  # S16R2-2, S16R2-1
+        chosen = choices.z_crit({"a": _reps(z=[z] * 500)}, tau)
+        assert chosen is not None and chosen.as_tuple().exponent == -3
+        with localcontext(prec=400):  # exact grid arithmetic at any size
+            assert float(chosen) > z and not float(chosen - choices.Z_STEP) > z
 
 
 def test_choose_reports_every_step() -> None:

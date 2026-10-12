@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from decimal import ROUND_CEILING, Decimal
+from decimal import Context, Decimal
+from fractions import Fraction
 
 from calibration import binomial, classifier, dsr, reduce
 
@@ -434,8 +435,8 @@ def z_crit(
     limit = {c: allowed(len(reps), tau_error[c]) for c, reps in qualifying.items()}
     joint = [(a, b, allowed(len(a), tau)) for a, b, tau in pairs]
 
-    def ok(z: Decimal) -> bool:
-        value = float(z)
+    def ok(i: int) -> bool:  # i: grid index, z = i * Z_STEP
+        value = _nearest(i)
         return all(
             sum(_passes(r, value) for r in reps) <= limit[c]
             for c, reps in qualifying.items()
@@ -450,19 +451,34 @@ def z_crit(
         for r in reps
         if r.z is not None and math.isfinite(r.z)
     ]
-    # S16R-1: a grid value at or above the next binary64 after the largest
-    # z_f* still compares above it after rounding (rounding is monotone)
-    top = Decimal(math.nextafter(max(stored, default=0.0), math.inf)) / Z_STEP
-    lo, hi = 0, int(top.to_integral_value(ROUND_CEILING))  # monotone in z
-    if not ok(hi * Z_STEP):
+    # S16R-1, S16R2-1/2: exact integer grid indices, no Decimal context. A
+    # grid value at or above the next binary64 after the largest z_f* still
+    # compares above it after rounding (rounding is monotone); past the
+    # largest finite float that next value is the overflow point 2**1024.
+    above = math.nextafter(max(stored, default=0.0), math.inf)
+    top = Fraction(above) if math.isfinite(above) else Fraction(2**1024)
+    lo, hi = 0, math.ceil(top * _GRID)  # events fall as z rises: monotone
+    if not ok(hi):
         return None
     while lo < hi:
         mid = (lo + hi) // 2
-        if ok(mid * Z_STEP):
+        if ok(mid):
             hi = mid
         else:
             lo = mid + 1
-    return (lo * Z_STEP).quantize(Z_STEP)
+    return Decimal(lo).scaleb(-3, Context(prec=len(str(lo)) + 3))
+
+
+_GRID = 1000  # grid points per unit: Z_STEP = 1 / _GRID
+
+
+def _nearest(i: int) -> float:
+    """The nearest binary64 of the grid value i / _GRID (P18-6); beyond the
+    largest finite float, IEEE rounding gives infinity."""
+    try:
+        return float(Fraction(i, _GRID))
+    except OverflowError:
+        return math.inf
 
 
 def _joint(
