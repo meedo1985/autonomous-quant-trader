@@ -169,3 +169,84 @@ PID                 COMMAND
 - **Memory:** the run container's peak was 413 MB, about 16% of the 2.5 GB cap. The slice peak, which also covers the threshold runs, was 435 MB.
 - **Isolation:** the engine runs at `nice -n 19` under `docker-init`.
 - **Forward paper:** still running, unaffected, and up since 2026-10-05.
+
+## Step H: development run results (2026-10-12), verbatim
+
+`status`:
+
+```
+Exited (0) 4 hours ago
+started 2026-10-11T15:40:41.843813677Z finished 2026-10-12T00:42:14.233516162Z exit 0
+slice memory peak: 466993152 bytes
+2 dev/pilot-q1-clusters-k20
+2 dev/pilot-q1-clusters-k5
+2 dev/pilot-q1-ind-k1
+2 dev/pilot-q2m-k2
+2 dev/pilot-q2m-k20
+2 dev/pilot-q2m-k5
+2 dev/pilot-q2-t5-rho-k20
+2 dev/pilot-q3-factor-k20
+2 dev/pilot-q4-k5
+2 dev/pilot-q5-trend-k20
+2 dev/pilot-q5-vol-k20
+2 dev/pilot-qj-k2
+2 dev/pilot-qj-k20
+4 threshold/pilot-q1-clusters-k20
+4 threshold/pilot-q1-clusters-k5
+4 threshold/pilot-q1-ind-k1
+4 threshold/pilot-q2m-k2
+4 threshold/pilot-q2m-k20
+4 threshold/pilot-q2m-k5
+4 threshold/pilot-q2-t5-rho-k20
+4 threshold/pilot-q3-factor-k20
+4 threshold/pilot-q4-k5
+4 threshold/pilot-q5-trend-k20
+4 threshold/pilot-q5-vol-k20
+4 threshold/pilot-qj-k2
+4 threshold/pilot-qj-k20
+```
+
+`times dev` (one worker's seconds per 500 development replications, the interval between a chain's two chunks):
+
+```
+dev/pilot-q1-clusters-k20: 2164
+dev/pilot-q1-clusters-k5: 2035
+dev/pilot-q1-ind-k1: 1486
+dev/pilot-q2-t5-rho-k20: 2231
+dev/pilot-q2m-k2: 1964
+dev/pilot-q2m-k20: 2205
+dev/pilot-q2m-k5: 1924
+dev/pilot-q3-factor-k20: 2184
+dev/pilot-q4-k5: 1882
+dev/pilot-q5-trend-k20: 2197
+dev/pilot-q5-vol-k20: 2163
+dev/pilot-qj-k2: 3664
+dev/pilot-qj-k20: 4363
+```
+
+`choose` (the leading `^[[B` is a stray down-arrow key from the terminal, not program output):
+
+```
+^[[Bz_crit None, family_block_rule largest
+```
+
+`nonfinite`:
+
+```
+pilot-q1-clusters-k20: 0 non-finite of 20000 diagnostic values
+pilot-q1-clusters-k5: 0 non-finite of 20000 diagnostic values
+pilot-q1-ind-k1: 0 non-finite of 16000 diagnostic values
+pilot-q2-t5-rho-k20: 0 non-finite of 20000 diagnostic values
+pilot-q2m-k2: 0 non-finite of 20000 diagnostic values
+pilot-q2m-k20: 0 non-finite of 20000 diagnostic values
+pilot-q2m-k5: 0 non-finite of 20000 diagnostic values
+pilot-q3-factor-k20: 0 non-finite of 20000 diagnostic values
+pilot-q4-k5: 0 non-finite of 20000 diagnostic values
+pilot-q5-trend-k20: 0 non-finite of 20000 diagnostic values
+pilot-q5-vol-k20: 0 non-finite of 20000 diagnostic values
+pilot-qj-k2: 0 non-finite of 40000 diagnostic values
+pilot-qj-k20: 0 non-finite of 40000 diagnostic values
+all cells: 0 non-finite of 296000
+```
+
+`choices.json`: recorded whole, verbatim, in `pilot_fe7_choices.json` next to this file.
