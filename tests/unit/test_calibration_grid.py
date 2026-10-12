@@ -11,7 +11,7 @@ import pytest
 from calibration import grid, rundef
 from calibration.generator import Cell, cells_from_manifest
 
-T = 1200
+T = grid.T_C2
 
 
 def test_the_grid_is_the_preregistered_104_cells() -> None:
@@ -33,8 +33,8 @@ def test_every_grid_cell_is_a_valid_generator_cell_with_a_canonical_id() -> None
     cells = grid.cells(T)
     manifest = {"cells": [dataclasses.asdict(c) for c in cells]}
     assert cells_from_manifest(manifest) == cells  # path-safe, unique, valid
-    assert cells[0].cell_id == "gaussian.independent.k1.t1200"
-    assert "skewtp.opposites.k5.t1200" in {c.cell_id for c in cells}
+    assert cells[0].cell_id == "gaussian.independent.k1.t1240"
+    assert "skewtp.opposites.k5.t1240" in {c.cell_id for c in cells}
     assert grid.problem(cells) is None
 
 
@@ -48,6 +48,8 @@ def test_every_grid_cell_is_a_valid_generator_cell_with_a_canonical_id() -> None
         (lambda cs: [dataclasses.replace(cs[0], cell_id="mine"), *cs[1:]], "FA-1"),
         (lambda cs: [dataclasses.replace(cs[0], t=T + 1, cell_id=grid.canonical_id(
             cs[0].law, cs[0].dependence, cs[0].k, T + 1)), *cs[1:]], "one T"),
+        (lambda cs: [dataclasses.replace(c, t=1247, cell_id=grid.canonical_id(
+            c.law, c.dependence, c.k, 1247)) for c in cs], "T_C2 = 1240"),
     ],
 )  # fmt: skip
 def test_anything_but_the_exact_grid_is_refused(change, message: str) -> None:  # type: ignore[no-untyped-def]
