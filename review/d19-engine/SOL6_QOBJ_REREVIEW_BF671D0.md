@@ -20,3 +20,16 @@
 - **QO-6 — Medium — [qobj.py:211](<D:/PMP-programs-for-sharawi/autonomous-quant-trader/calibration/qobj.py:211>).** The final head check cannot detect a changed host field: [`chunks._digest()` excludes `host`](<D:/PMP-programs-for-sharawi/autonomous-quant-trader/calibration/chunks.py:59>). If host provenance changes after `host_sha256()` reads it, the head still matches and the object publishes a stale host hash.
 
 QO-3 and QO-7 appear addressed on code inspection. I found no separate new QOR finding. I inspected the supplied snapshot and repository files at `bf671d0` read-only; the local command runner failed before starting a shell, so I could not run validation or commit a review record.
+## Adjudication (Claude Opus 5.5, `claude-opus-5-5`, 2026-10-12)
+
+| ID | Decision | Repair |
+|---|---|---|
+| QO-1 | AGREE, repaired | `rundef.run_plan` is split. `counts(manifest)` does all the validation: prescribed counts, the exact grid, pilot rules. `run_plan` is `counts` plus the DR2-1 refusal, for starting or recording a run (`d19_run.py`, `d19_run_definition.py`), and still refuses every qualification run. `d19_choose.py` reads finished chains with `counts`, so a fresh choose of a qualification store no longer hits the refusal. The DR2-1 refusal of *starting* is unchanged; `test_a_bad_run_plan_is_refused` passes. |
+| QO-2 | AGREE, repaired | `_on_remote` lists the branches of the live remote (`git ls-remote --heads`), fetches them, and needs one of them to contain the commit (`merge-base --is-ancestor`). Local tracking refs are no longer used. A remote that cannot be read refuses. Test: after the branch is deleted on the remote, a stale local tracking ref still exists and the check refuses. |
+| QO-4 | AGREE, repaired | `choices.test_manifest` lists every enumerated test as (cell, family label or `agnostic` or `joint`, bound), and its length is `enumerated_tests`, with a test. `d19_choose.py` writes it as `tests`. The builder requires `tests` and that it holds `m` tests. |
+| QO-5 | AGREE, repaired | Every later file, the freeze-review record and each review record are read **as committed at HEAD** (`git show HEAD:`). The later files must also equal the working-tree bytes that are packaged. Tests: an uncommitted edit is refused, a committed change after review is refused, and a committed removal of a review record is refused. |
+| QO-6 | AGREE, repaired | Host provenance is outside the chunk digest (S16-4), so the builder hashes every chain's host list twice, once around the final head check, and refuses if the two differ. |
+
+QO-3 and QO-7 were accepted by this re-review.
+
+Local: the qobj, grid, chunk, test-manifest and run-plan refusal tests, 50 passed; ruff check and format clean; `mypy calibration` clean.

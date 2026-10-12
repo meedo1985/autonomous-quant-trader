@@ -63,7 +63,7 @@ LATER = {
 REVIEWED = ("mapping.py", "screen.py", "heldout.py")  # BO-4, QO-5
 FREEZE_REVIEWS = "review/d19-engine/FREEZE_REVIEWS.json"
 # §4 result items choose must report (QO-4)
-REPORT = ("cells", "m", "targets", "family_block_rule", "z_crit",
+REPORT = ("cells", "m", "tests", "targets", "family_block_rule", "z_crit",
           "final_thresholds", "cell_bounds", "alpha_s", "chain_heads")  # fmt: skip
 NAMESPACES = ("threshold", "dev")
 
@@ -74,8 +74,28 @@ def _git(root: Path, *args: str) -> bytes:
     ).stdout
 
 
+def _on_remote(root: Path, commit: str, remote: str) -> bool:
+    """Whether a branch of the live `remote` contains `commit` (QO-2: its
+    refs are listed from the remote itself, then fetched, not read from
+    local tracking refs)."""
+    lines = _git(root, "ls-remote", "--heads", remote).decode().splitlines()
+    _git(root, "fetch", "-q", remote, *(ln.split()[1] for ln in lines))
+    return any(
+        subprocess.run(
+            ["git", "-C", str(root), "merge-base", "--is-ancestor", commit,
+             ln.split()[0]], capture_output=True, check=False,
+        ).returncode == 0
+        for ln in lines
+    )  # fmt: skip
+
+
 def committed_before(
-    root: Path, commit: str, path: str, data: bytes, started: datetime
+    root: Path,
+    commit: str,
+    path: str,
+    data: bytes,
+    started: datetime,
+    remote: str = "origin",
 ) -> int:
     """S16-2: the committer time of `commit`, which must hold `data` at
     `path`, be on a remote branch and be earlier than `started`
@@ -89,8 +109,12 @@ def committed_before(
         raise ValueError(f"S16-2: {commit}:{path} not found") from error
     if held != data:
         raise ValueError(f"S16-2: {commit}:{path} is not this run definition")
-    if not _git(root, "branch", "-r", "--contains", commit).strip():
-        raise ValueError(f"S16-2: {commit} is on no remote branch (QO-2)")
+    try:
+        on_remote = _on_remote(root, commit, remote)
+    except subprocess.CalledProcessError as error:
+        raise ValueError(f"S16-2: cannot read the remote {remote}") from error
+    if not on_remote:
+        raise ValueError(f"S16-2: {commit} is on no branch of {remote} (QO-2)")
     if when >= started.timestamp():
         raise ValueError("S16-2: the run definition was committed after the start")
     return when
@@ -138,17 +162,27 @@ def _heads(chains: dict[str, chunks.Chain], expected: dict[str, str]) -> None:
             raise ValueError(f"{key}: chain head differs from choices")
 
 
+def _committed(root: Path, path: str) -> bytes | None:
+    """`path` as committed at HEAD in `root`, or None (QO-5)."""
+    done = subprocess.run(["git", "-C", str(root), "show", f"HEAD:{path}"],
+                          capture_output=True, check=False)  # fmt: skip
+    return done.stdout if done.returncode == 0 else None
+
+
 def _reviewed(root: Path, files: dict[str, bytes]) -> None:
-    """BO-4, QO-5: each later file is in the committed freeze-review record
-    with its SHA-256 and an existing review record."""
-    path = root / FREEZE_REVIEWS
-    record = json.loads(path.read_bytes()) if path.is_file() else {}
+    """BO-4, QO-5: each later file, as committed at HEAD, is in the committed
+    freeze-review record with its SHA-256 and a committed review record."""
+    for name, path in LATER.items():
+        if _committed(root, path) != files[name]:
+            raise ValueError(f"QO-5: {path} is not committed as it stands")
+    raw = _committed(root, FREEZE_REVIEWS)
+    record = json.loads(raw) if raw is not None else {}
     for name in REVIEWED:
         entry = record.get(name, {})
         if entry.get("sha256") != hashlib.sha256(files[name]).hexdigest():
             raise ValueError(f"BO-4: {name} is not the reviewed version")
-        if not (root / str(entry.get("record", ""))).is_file():
-            raise ValueError(f"BO-4: {name} has no review record")
+        if _committed(root, str(entry.get("record", ""))) is None:
+            raise ValueError(f"BO-4: {name} has no committed review record")
 
 
 def build(
@@ -163,6 +197,7 @@ def build(
     choices_json: Path,
     exploration_manifest: Path,
     out: Path,
+    remote: str = "origin",
 ) -> str:
     """Write the object to the new directory `out`; returns
     `qualification_object_sha256`. `run_root` is the run's pinned checkout
@@ -198,6 +233,8 @@ def build(
     report: dict[str, Any] = json.loads(chosen)
     if absent := [k for k in REPORT if k not in report]:
         raise ValueError(f"choices.json lacks §4 items: {absent}")
+    if len(report["tests"]) != report["m"]:
+        raise ValueError("the test manifest does not hold M tests")
     chains = _chains(defn, store)
     _heads(chains, report["chain_heads"])
     if _choose(run_root, definition, store) != chosen:
@@ -205,10 +242,12 @@ def build(
     if not (report["qualifies"] is True and report["margin_ok"] is True):
         raise ValueError("the method does not qualify (§5 step 6)")
     committed = committed_before(
-        root, definition_commit, definition_repo_path, data, threshold_started
+        root, definition_commit, definition_repo_path, data, threshold_started, remote
     )
     hosts = {key: host_sha256(chain) for key, chain in chains.items()}
-    _heads(chains, report["chain_heads"])  # QO-6: unchanged throughout
+    _heads(chains, report["chain_heads"])  # QO-6: unchanged throughout,
+    if hosts != {key: host_sha256(chain) for key, chain in chains.items()}:
+        raise ValueError("host provenance changed during the build")  # and host
 
     freeze = {
         "definition_sha256": rundef.definition_sha256(defn),

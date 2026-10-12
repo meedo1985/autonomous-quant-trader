@@ -37,8 +37,9 @@ def _repo(tmp: Path, files: dict[str, bytes], push: bool = True) -> tuple[Path, 
     if push:
         remote = tmp.with_name(tmp.name + ".git")
         _git(tmp.parent, "init", "-q", "--bare", str(remote))
-        _git(tmp, "push", "-q", str(remote), "HEAD:refs/heads/main")
-        _git(tmp, "fetch", "-q", str(remote), "+refs/heads/*:refs/remotes/origin/*")
+        _git(tmp, "remote", "add", "origin", str(remote))
+        _git(tmp, "push", "-q", "origin", "HEAD:refs/heads/main")
+        _git(tmp, "fetch", "-q", "origin")
     return tmp, _git(tmp, "rev-parse", "HEAD")
 
 
@@ -58,8 +59,13 @@ def test_the_definition_must_be_committed_before_the_run_started(
     with pytest.raises(ValueError, match="time zone"):
         qobj.committed_before(root, commit, "defs/d.json", b"{}", datetime(2030, 1, 1))
     local, unpushed = _repo(tmp_path / "l", {"defs/d.json": b"{}"}, push=False)
-    with pytest.raises(ValueError, match="no remote branch"):
+    with pytest.raises(ValueError, match="cannot read the remote"):
         qobj.committed_before(local, unpushed, "defs/d.json", b"{}", later)
+    # QO-2: a stale local tracking ref does not count once the remote lost it
+    _git(root.with_name(root.name + ".git"), "update-ref", "-d", "refs/heads/main")
+    assert _git(root, "branch", "-r", "--contains", commit)  # stale ref remains
+    with pytest.raises(ValueError, match="on no branch of origin"):
+        qobj.committed_before(root, commit, "defs/d.json", b"{}", later)
 
 
 def _chain(store: Path, ns: str, host: dict[str, object]) -> chunks.Chain:
@@ -115,7 +121,9 @@ def _setup(tmp_path: Path):  # type: ignore[no-untyped-def]
                              str(CELL["cell_id"]), rundef.PRESCRIBED[ns], GATING,
                              {"cpu": ns})  # fmt: skip
         heads[f"{ns}/{CELL['cell_id']}"] = chunks.run(chain, lambda rep: rep)
-    report = {k: None for k in qobj.REPORT}
+    report: dict[str, object] = {k: None for k in qobj.REPORT}
+    report |= {"m": 3, "tests": [[CELL["cell_id"], "agnostic", b]
+                                 for b in ("error", "dsr", "u_g")]}  # fmt: skip
     report |= {"qualifies": True, "margin_ok": True, "chain_heads": heads,
                "cells": {CELL["cell_id"]: {"status": "qualifying",
                                            "held_out": 20000}}}  # fmt: skip
@@ -194,12 +202,29 @@ def _out_exists(k, p):  # type: ignore[no-untyped-def]
     k["out"].mkdir()
 
 
+def _commit_all(root: Path) -> None:
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "y")
+
+
 def _unreviewed_screen(k, p):  # type: ignore[no-untyped-def]
     (k["root"] / qobj.LATER["screen.py"]).write_bytes(b"changed after review")
+    _commit_all(k["root"])
 
 
 def _no_review_record(k, p):  # type: ignore[no-untyped-def]
     (k["root"] / "review" / "heldout.py.md").unlink()
+    _commit_all(k["root"])
+
+
+def _short_test_manifest(k, p):  # type: ignore[no-untyped-def]
+    report = json.loads((p / "choices.json").read_bytes())
+    report["tests"] = report["tests"][:2]
+    (p / "choices.json").write_bytes(cj(report))
+
+
+def _uncommitted_mapping(k, p):  # type: ignore[no-untyped-def]
+    (k["root"] / qobj.LATER["mapping.py"]).write_bytes(b"edited, not committed")
 
 
 def _report_lacks_z_crit(k, p):  # type: ignore[no-untyped-def]
@@ -224,8 +249,10 @@ def _other_counts(k, p):  # type: ignore[no-untyped-def]
         (_started_earlier, "after the start"),
         (_out_exists, "already exists"),
         (_unreviewed_screen, "not the reviewed version"),
-        (_no_review_record, "no review record"),
+        (_no_review_record, "no committed review record"),
         (_report_lacks_z_crit, "lacks"),
+        (_short_test_manifest, "M tests"),
+        (_uncommitted_mapping, "not committed as it stands"),
         (_other_counts, "prescribed counts"),
     ],
 )

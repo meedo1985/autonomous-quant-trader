@@ -43,7 +43,7 @@ def _chain(
         binding=rundef.definition_sha256(defn),
         namespace=ns,
         cell_id=cell.cell_id,
-        replications=rundef.run_plan(defn["cell_manifest"])[ns],
+        replications=rundef.counts(defn["cell_manifest"])[ns],  # QO-1
         gating=gating,  # type: ignore[arg-type]
         host={},
     )
@@ -166,6 +166,7 @@ def main(argv: list[str] | None = None) -> int:
         for u, (up, lo) in sorted(bounds.items())
     }  # fmt: skip
     report["alpha_s"] = ALPHA_S.hex()
+    report["tests"] = choices.test_manifest([(c.cell_id, c.law) for c in cells])
     report["dev_thresholds_sha256"] = sha(
         {str(k): [{n: v.hex() for n, v in side.items()} for side in b]
          for k, b in sorted(pooled.items())}

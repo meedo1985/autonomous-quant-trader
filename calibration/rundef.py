@@ -220,7 +220,7 @@ def seed_spec(prereg_sha256: str) -> dict[str, object]:
     return {"anchor": prereg_sha256, "namespaces": dict(SEED_NAMESPACES)}
 
 
-def run_plan(manifest: object) -> dict[str, int]:
+def counts(manifest: object) -> dict[str, int]:
     """Replications per namespace, from the cell manifest, or ValueError
     (DR-3). A `qualification` run uses exactly the prescribed counts; a
     `pilot` run (the measured re-pilot) any positive count below them, on
@@ -258,6 +258,14 @@ def run_plan(manifest: object) -> dict[str, int]:
         problem = grid.problem(cells_from_manifest(manifest))
         if problem is not None:
             raise ValueError(problem)
+    return dict(counts)
+
+
+def run_plan(manifest: object) -> dict[str, int]:
+    """`counts`, for a run to be started or recorded: a qualification run is
+    still refused (DR2-1). Reading finished chains uses `counts` (QO-1)."""
+    plan = counts(manifest)
+    if isinstance(manifest, dict) and manifest.get("purpose") == "qualification":
         # DR2-1: still refused. The accepted preregistration hash is pinned
         # only after the owner's key record, and the qualification object
         # (with the S16-2 and S16-4 obligations) is not built. T_C2 is fixed
@@ -266,7 +274,7 @@ def run_plan(manifest: object) -> dict[str, int]:
             "qualification runs are refused until the accepted preregistration "
             "hash and the qualification object exist"
         )
-    return dict(counts)
+    return plan
 
 
 def bytecode_problem() -> str | None:
