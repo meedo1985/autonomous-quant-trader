@@ -58,10 +58,13 @@ jobs:
           from calibration import fast, rundef; rundef.gating('probe')
           try:
               fast.self_check()
-          except RuntimeError as error:
-              print(error); sys.exit(4)" || rc=$?
+          except RuntimeError as error:  # CIA-1: only the known refusal, on AVX-512
+              known = str(error) == 'NumPy power no longer matches Python ** on this runtime'
+              if not (known and 'avx512f' in open('/proc/cpuinfo').read().split()):
+                  raise
+              print('::error::inconclusive: numpy power differs from Python ** on this AVX-512 CPU (seen on Intel Xeon runners), so the engine refuses; check the CPU line above and rerun the job')
+              sys.exit(4)" || rc=$?
           if [ "$rc" = 139 ]; then echo "::error::inconclusive: the probe segfaulted (seen only on AMD EPYC Zen 4/5 runners, under the pinned OpenBLAS kernel); check the CPU line above and rerun the job"; fi
-          if [ "$rc" = 4 ]; then echo "::error::inconclusive: numpy power differs from Python ** on this CPU (seen on Intel AVX-512 runners), so the engine refuses; check the CPU line above and rerun the job"; fi
           exit "$rc"
       - name: Engine tests
         run: python -m pytest tests/unit/test_calibration_*.py tests/unit/test_d19_deploy.py
