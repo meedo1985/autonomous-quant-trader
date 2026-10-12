@@ -32,7 +32,7 @@ def vol_time_aware():
                 var = fsum((x - m) ** 2 for x in rets[: k + 1]) / k
         else:
             dt = round((t - prev) / H)
-            var = decay**dt * var + (1 - decay) * r * r
+            var = decay**dt * var + (1 - decay**dt) * r * r  # GAPR-1
         prev = t
         if var is not None:
             out[t] = math.sqrt(var)

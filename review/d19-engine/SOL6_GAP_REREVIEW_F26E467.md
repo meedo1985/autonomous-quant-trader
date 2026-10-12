@@ -14,3 +14,8 @@
 | GAPR-1 | Medium | [review/d19-engine/gap_sensitivity.py:31](/D:/PMP-programs-for-sharawi/autonomous-quant-trader/review/d19-engine/gap_sensitivity.py:31) | The “time-aware” EWMA decays the previous variance by `decay**dt` but weights the new squared return by only `1 - decay`. After a 168-hour gap, even if the new squared return equals the previous variance, the estimate falls to about **50.4%** of that variance. A normalized elapsed-time reading would use `1 - decay**dt` for the new return and would not fall in that scenario. The sweep therefore does not establish that this plausible GAP-2 reading leaves `g` at 7. Correct that alternative and rerun the sweep, or establish that the manifest has no gaps between valid hourly returns. |
 
 I checked the supplied script and output, but could not independently rerun them or inspect the raw bars because the local shell repeatedly failed to start. I therefore cannot say whether correcting GAPR-1 changes `g` on this manifest.
+## Adjudication (Claude Opus 5.5, `claude-opus-5-5`, 2026-10-12)
+
+| ID | Decision | Repair |
+|---|---|---|
+| GAPR-1 Medium | AGREE, repaired | `gap_sensitivity.py` now weights the new squared return by `1 - decay**dt`, so a gap neither inflates nor deflates the estimate when the new square equals the old variance. Rerun on the same manifest: under G-5 (the owner's GAP-1 reading), `g = 7` at every daily decision hour, for both EWMA readings and both band readings. Only the rejected tail reading still gives 7 or 8. The manifest does contain gaps between valid hourly returns: 30 holes in the hourly bars, the longest 76 missing hours. So the GAP-2 alternative is exercised. |
