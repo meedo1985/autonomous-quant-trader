@@ -24,12 +24,16 @@ Readings (proposed, for review):
   whose `manifest.json` hashes to the posted `qualification_object_sha256`
   and whose `choices.json` and `definition.json` match its manifest
   (MP-R1); the record carries that hash.
-- MP-4 The diagnostics come from the run's own classifier on the run's
-  pinned runtime (MP-R2): the engine commit of the object's run definition
-  must hold exactly the engine code the run recorded (`generator_sha256`),
-  the classifier loaded here must be that commit's, and the runtime
-  identity, both canaries, the image digest and the reference vectors must
-  equal the run definition's, as at a chunk start.
+- MP-4 The diagnostics come from the run's own code on the run's pinned
+  runtime (MP-R2, MP-R4): the engine commit of the object's run definition
+  must hold exactly the engine code the run recorded (`generator_sha256`);
+  every loaded `calibration` and `aqt` module must be loaded from its
+  source in this checkout, with bytecode caching off as at a run start
+  (`rundef.bytecode_problem`), and equal that commit's file, except this
+  file, which must equal the object's reviewed `mapping.py`; and the
+  runtime identity, both canaries, the image digest and the reference
+  vectors must equal the run definition's, as at a chunk start. The entry
+  script is the declaration's own (MP-R3).
 
 The record (outcome, matched unit ids, diagnostics as float hex, object
 hash) and its SHA-256 go into the declaration (§3.6 "Outcome")."""
@@ -40,6 +44,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -48,23 +53,23 @@ import numpy as np
 from calibration import classifier, dsr, grid, rundef
 from calibration.seeds import sha
 
-CLASSIFIER = "calibration/classifier.py"
+SELF = "calibration/mapping.py"
 
 
-def load(obj: Path, posted_sha256: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    """`choices.json` and `definition.json` of the qualification object at
-    `obj`, after checking that its manifest is the posted one (MP-3).
-    ValueError otherwise."""
+def load(obj: Path, posted_sha256: str) -> tuple[dict[str, Any], dict[str, Any], bytes]:
+    """`choices.json`, `definition.json` and the reviewed `mapping.py` of
+    the qualification object at `obj`, after checking that its manifest is
+    the posted one (MP-3). ValueError otherwise."""
     manifest = json.loads((obj / "manifest.json").read_bytes())
     if sha(manifest) != posted_sha256:
         raise ValueError("the qualification object is not the posted one")
     out = []
-    for name in ("choices.json", "definition.json"):
+    for name in ("choices.json", "definition.json", "mapping.py"):
         data = (obj / name).read_bytes()
         if hashlib.sha256(data).hexdigest() != manifest.get(name):
             raise ValueError(f"{name} does not match the object's manifest")
-        out.append(json.loads(data))
-    return out[0], out[1]
+        out.append(data)
+    return json.loads(out[0]), json.loads(out[1]), out[2]
 
 
 def _git(root: Path, *args: str) -> bytes:
@@ -73,10 +78,27 @@ def _git(root: Path, *args: str) -> bytes:
     ).stdout
 
 
-def check_engine(defn: dict[str, Any], root: Path) -> None:
+def loaded() -> dict[str, Path]:
+    """Every loaded `calibration` and `aqt` module's source, by path
+    relative to this checkout; ValueError if one has none or lies outside."""
+    base = Path(__file__).resolve().parents[1]
+    out = {}
+    for name, module in sorted(sys.modules.items()):
+        if name.split(".")[0] not in ("aqt", "calibration"):
+            continue
+        file = getattr(module, "__file__", None)
+        path = None if file is None else Path(file).resolve()
+        if path is None or not path.is_relative_to(base):
+            raise ValueError(f"{name} is not loaded from this checkout")
+        out[path.relative_to(base).as_posix()] = path
+    return out
+
+
+def check_engine(defn: dict[str, Any], root: Path, reviewed: bytes) -> None:
     """MP-4, code: the run definition's engine commit in the repository at
-    `root` holds the code the run recorded, and the classifier loaded here
-    is that commit's. ValueError otherwise."""
+    `root` holds the code the run recorded, and every loaded engine module
+    is that commit's, or for this file the object's `reviewed` mapping.
+    ValueError otherwise."""
     commit = defn["engine_commit"]
     try:
         names = _git(root, "ls-tree", "-r", "--name-only", commit).decode()
@@ -89,9 +111,12 @@ def check_engine(defn: dict[str, Any], root: Path) -> None:
         raise ValueError(f"engine commit {commit} not readable") from error
     if sha(inventory) != defn["generator_sha256"]:
         raise ValueError("the engine commit is not the run's recorded code")
-    loaded = Path(classifier.__file__).read_bytes()
-    if rundef.canonical_sha256(loaded) != inventory.get(CLASSIFIER):
-        raise ValueError("the loaded classifier is not the run's")
+    if problem := rundef.bytecode_problem():
+        raise ValueError(problem)
+    inventory[SELF] = rundef.canonical_sha256(reviewed)
+    for rel, path in loaded().items():
+        if rundef.canonical_sha256(path.read_bytes()) != inventory.get(rel):
+            raise ValueError(f"the loaded {rel} is not the run's")
 
 
 def check_runtime(defn: dict[str, Any]) -> None:
@@ -112,8 +137,8 @@ def map_design(
     qualification object (MP-3), after the engine and runtime checks
     (MP-4). `e_diff`: the complete exploration days after warm-up, days by
     trials (MP-1); `root`: a repository holding the engine commit."""
-    report, defn = load(obj, posted_sha256)
-    check_engine(defn, root)
+    report, defn, reviewed = load(obj, posted_sha256)
+    check_engine(defn, root, reviewed)
     check_runtime(defn)
     return _compare(e_diff, report) | {"qualification_object_sha256": posted_sha256}
 

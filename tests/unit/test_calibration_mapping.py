@@ -1,6 +1,7 @@
 import hashlib
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -84,7 +85,8 @@ def test_refusals(change, reason):
 def _object(tmp_path, report, defn):
     obj = tmp_path / "obj"
     obj.mkdir()
-    files = {"choices.json": cj(report), "definition.json": cj(defn)}
+    files = {"choices.json": cj(report), "definition.json": cj(defn),
+             "mapping.py": b"reviewed"}  # fmt: skip
     for name, data in files.items():
         (obj / name).write_bytes(data)
     manifest = {n: hashlib.sha256(d).hexdigest() for n, d in files.items()}
@@ -94,10 +96,14 @@ def _object(tmp_path, report, defn):
 
 def test_load_checks_the_posted_hash_and_each_file(tmp_path):
     obj, posted = _object(tmp_path, {"cells": {}}, {"engine_commit": "c"})
-    assert mapping.load(obj, posted) == ({"cells": {}}, {"engine_commit": "c"})
+    assert mapping.load(obj, posted) == (
+        {"cells": {}},
+        {"engine_commit": "c"},
+        b"reviewed",
+    )
     with pytest.raises(ValueError, match="not the posted one"):
         mapping.load(obj, "0" * 64)
-    for name in ("choices.json", "definition.json"):
+    for name in ("choices.json", "definition.json", "mapping.py"):
         good = (obj / name).read_bytes()
         (obj / name).write_bytes(good + b" ")
         with pytest.raises(ValueError, match=f"{name} does not match"):
@@ -109,16 +115,18 @@ def _git(repo, *args):
     subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
 
 
-def _engine_repo(tmp_path, classifier_bytes):
-    """A repository whose one commit holds this classifier and one script."""
+def _engine_repo(tmp_path, change=None):
+    """A repository whose one commit holds every loaded engine module but
+    this file, with `change` (path, bytes) applied."""
     repo = tmp_path / "repo"
-    (repo / "calibration").mkdir(parents=True)
-    (repo / "calibration" / "classifier.py").write_bytes(classifier_bytes)
-    (repo / "scripts").mkdir()
-    (repo / "scripts" / "d19_x.py").write_bytes(b"x = 1")
-    (repo / "README").write_bytes(b"not code")
+    for rel, path in mapping.loaded().items():
+        if rel != mapping.SELF:
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (repo / rel).write_bytes(path.read_bytes())
+    if change:
+        (repo / change[0]).write_bytes(change[1])
     _git(repo, "init", "-q")
-    _git(repo, "add", ".")
+    _git(repo, "-c", "core.autocrlf=false", "add", ".")
     _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "e")
     head = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "HEAD"],
@@ -126,29 +134,51 @@ def _engine_repo(tmp_path, classifier_bytes):
         capture_output=True,
         text=True,
     ).stdout.strip()
-    return repo, head, sha(rundef.code_inventory(repo))
+    return repo, {
+        "engine_commit": head,
+        "generator_sha256": sha(rundef.code_inventory(repo)),
+    }
 
 
-def test_check_engine_binds_the_commit_and_the_loaded_classifier(tmp_path):
-    real = Path(classifier.__file__).read_bytes()
-    repo, head, recorded = _engine_repo(tmp_path, real)
-    mapping.check_engine({"engine_commit": head, "generator_sha256": recorded}, repo)
+SELF_BYTES = Path(mapping.__file__).read_bytes()
+
+
+@pytest.fixture
+def no_bytecode(monkeypatch):
+    monkeypatch.setattr(mapping.rundef, "bytecode_problem", lambda: None)
+
+
+def test_check_engine_binds_the_commit_and_every_loaded_module(tmp_path, no_bytecode):
+    repo, defn = _engine_repo(tmp_path)
+    mapping.check_engine(defn, repo, SELF_BYTES)
     with pytest.raises(ValueError, match="not the run's recorded code"):
-        mapping.check_engine(
-            {"engine_commit": head, "generator_sha256": "0" * 64}, repo
-        )
+        mapping.check_engine(defn | {"generator_sha256": "0" * 64}, repo, SELF_BYTES)
     with pytest.raises(ValueError, match="not readable"):
-        mapping.check_engine(
-            {"engine_commit": "f" * 40, "generator_sha256": recorded}, repo
-        )
+        mapping.check_engine(defn | {"engine_commit": "f" * 40}, repo, SELF_BYTES)
+    with pytest.raises(ValueError, match="calibration/mapping.py is not the run's"):
+        mapping.check_engine(defn, repo, SELF_BYTES + b"# changed")
 
 
-def test_check_engine_refuses_another_classifier(tmp_path):
-    repo, head, recorded = _engine_repo(tmp_path, b"# another classifier")
-    with pytest.raises(ValueError, match="loaded classifier is not the run's"):
-        mapping.check_engine(
-            {"engine_commit": head, "generator_sha256": recorded}, repo
-        )
+@pytest.mark.parametrize("rel", ["calibration/grid.py", "calibration/classifier.py"])
+def test_check_engine_refuses_another_loaded_module(tmp_path, no_bytecode, rel):
+    repo, defn = _engine_repo(tmp_path, (rel, b"T_C2 = 1239"))
+    with pytest.raises(ValueError, match=f"the loaded {rel} is not the run's"):
+        mapping.check_engine(defn, repo, SELF_BYTES)
+
+
+def test_check_engine_refuses_bytecode_and_outside_modules(tmp_path, monkeypatch):
+    repo, defn = _engine_repo(tmp_path)
+    monkeypatch.setattr(mapping.rundef, "bytecode_problem", lambda: "cache on")
+    with pytest.raises(ValueError, match="cache on"):
+        mapping.check_engine(defn, repo, SELF_BYTES)
+    monkeypatch.setattr(mapping.rundef, "bytecode_problem", lambda: None)
+    outside = tmp_path / "elsewhere.py"
+    outside.write_text("")
+    fake = type(sys)("calibration.elsewhere")
+    fake.__file__ = str(outside)
+    monkeypatch.setitem(sys.modules, "calibration.elsewhere", fake)
+    with pytest.raises(ValueError, match="calibration.elsewhere is not loaded"):
+        mapping.check_engine(defn, repo, SELF_BYTES)
 
 
 def test_check_runtime_refuses_another_image(monkeypatch):
@@ -170,12 +200,14 @@ def test_check_runtime_refuses_another_image(monkeypatch):
 def test_map_design_checks_and_carries_the_object_hash(tmp_path, monkeypatch):
     x = _x(2)
     calls = []
-    monkeypatch.setattr(mapping, "check_engine", lambda d, r: calls.append(("e", d, r)))
+    monkeypatch.setattr(
+        mapping, "check_engine", lambda d, r, m: calls.append(("e", d, r, m))
+    )
     monkeypatch.setattr(mapping, "check_runtime", lambda d: calls.append(("r", d)))
     defn = {"engine_commit": "c"}
     obj, posted = _object(tmp_path, json.loads(cj(_report(x))), defn)
     record = mapping.map_design(obj, posted, x, tmp_path)
-    assert calls == [("e", defn, tmp_path), ("r", defn)]
+    assert calls == [("e", defn, tmp_path, b"reviewed"), ("r", defn)]
     assert record["cells"] == ["q1-k2", "qj-k2/trend"]
     assert record["qualification_object_sha256"] == posted
     with pytest.raises(ValueError, match="not the posted one"):
