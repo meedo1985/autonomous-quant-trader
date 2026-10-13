@@ -15,15 +15,26 @@ ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "deploy" / "calibration"
 
 
-def test_the_image_is_pinned_and_holds_only_the_locked_numpy() -> None:
+# owner decision D-20 §3a (a): numpy for the engine; the model libraries
+# and their dependencies for the screen and C2's evaluation
+LOCKED = {
+    "numpy": "2.5.3", "scikit-learn": "1.9.1", "lightgbm": "4.7.0",
+    "scipy": "1.18.1", "joblib": "1.6.0", "threadpoolctl": "3.7.0",
+    "cloudpickle": "3.1.2", "narwhals": "2.27.1",
+}  # fmt: skip
+
+
+def test_the_image_is_pinned_and_holds_only_the_locked_packages() -> None:
     dockerfile = (DEPLOY / "Dockerfile").read_text(encoding="utf-8")
     assert re.search(r"^FROM python:3\.14-slim@sha256:[0-9a-f]{64}$", dockerfile, re.M)
     assert "--require-hashes --only-binary :all:" in dockerfile
     assert re.search(r"^USER d19$", dockerfile, re.M)
     lock = (DEPLOY / "requirements.lock").read_text(encoding="utf-8")
     pins = re.findall(r"^([A-Za-z0-9_.-]+)==(\S+)", lock, re.M)
-    assert [name for name, _ in pins] == ["numpy"]
-    assert len(re.findall(r"--hash=sha256:[0-9a-f]{64}", lock)) >= 1
+    assert dict(pins) == LOCKED and len(pins) == len(LOCKED)
+    stanzas = re.split(r"^(?=[A-Za-z0-9_.-]+==)", lock, flags=re.M)[1:]
+    assert all(re.search(r"--hash=sha256:[0-9a-f]{64}", s) for s in stanzas)
+    assert "libgomp1" in dockerfile  # LightGBM's OpenMP runtime
 
 
 def test_the_engine_loads_no_third_party_package_but_numpy() -> None:

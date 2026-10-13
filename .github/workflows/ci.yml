@@ -153,6 +153,31 @@ jobs:
           sudo sh /opt/aqt-d19/app/deploy/calibration/d19.sh probe || rc=$?
           if [ "$rc" = 3 ]; then echo "::error::inconclusive: the probe segfaulted (seen only on AMD EPYC Zen 4/5 runners, under the pinned OpenBLAS kernel); check the CPU line above and rerun the job"; fi
           exit "$rc"
+      # Owner decision D-20 §3a (a): adding the model libraries must leave the
+      # engine's measured outputs byte-identical. A numpy-only image from the
+      # same base and the same numpy stanza is built on this same runner;
+      # both canaries and the full reference-vector suite must match.
+      - name: The model libraries leave the engine's outputs unchanged
+        run: |
+          cd /opt/aqt-d19/app/deploy/calibration
+          mkdir /tmp/numpy-only
+          cp Dockerfile /tmp/numpy-only/
+          awk '/^numpy==/{f=1; print; next} f && /^[A-Za-z]/{f=0} f' requirements.lock > /tmp/numpy-only/requirements.lock
+          grep -c -- '--hash=' /tmp/numpy-only/requirements.lock
+          sudo docker build -q -t aqt-d19-numpy-only /tmp/numpy-only
+          for img in aqt-d19-numpy-only "aqt-d19:$COMMIT"; do
+            sudo docker run --rm --network none -e HOME=/tmp \
+              -e OPENBLAS_NUM_THREADS=1 -e OPENBLAS_CORETYPE=Haswell \
+              -v /opt/aqt-d19/app:/app:ro "$img" python -B -c \
+              "import json, sys; sys.path[:0] = ['/app', '/app/src']
+          from calibration import rundef; g = rundef.gating('compare')
+          print(json.dumps({k: g[k] for k in ('canaries', 'reference_vectors')}, sort_keys=True))"
+          done > /tmp/outputs
+          test "$(wc -l < /tmp/outputs)" = 2
+          test "$(sed -n 1p /tmp/outputs)" = "$(sed -n 2p /tmp/outputs)"
+          echo "identical: $(sed -n 1p /tmp/outputs | sha256sum)"
+          sudo docker run --rm --network none "aqt-d19:$COMMIT" python -c \
+            "import sklearn, lightgbm, scipy; print(sklearn.__version__, lightgbm.__version__, scipy.__version__)"
       - name: Record a pilot run definition
         run: |
           cd /opt/aqt-d19/app/deploy/calibration
