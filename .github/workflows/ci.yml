@@ -169,8 +169,8 @@ jobs:
             sudo docker run --rm --network none -e HOME=/tmp               -e OPENBLAS_NUM_THREADS=1 -e OPENBLAS_CORETYPE=Haswell               -v /opt/aqt-d19/app:/app:ro "$img" python -B -c               "import json, sys; sys.path[:0] = ['/app', '/app/src']
           from calibration import rundef; g = rundef.gating('compare')
           cases = {'refvec-k1-t5', 'refvec-k2-ar', 'refvec-k5-garch', 'refvec-k20-factor', 'refvec-k2-skewt', 'refvec-k5-unequal', 'refvec-k5-mixed-ar', 'refvec-k2-g2-unavailable'}
-          assert set(g['canaries']) == {'blas', 'libm'}, g['canaries']
-          assert set(g['reference_vectors']) == cases, g['reference_vectors']
+          if set(g['canaries']) != {'blas', 'libm'} or set(g['reference_vectors']) != cases:
+              sys.exit('incomplete outputs: ' + json.dumps(g['canaries']) + json.dumps(g['reference_vectors']))
           print(json.dumps({k: g[k] for k in ('canaries', 'reference_vectors')}, sort_keys=True))"
           done > /tmp/outputs
           test "$(wc -l < /tmp/outputs)" = 2
