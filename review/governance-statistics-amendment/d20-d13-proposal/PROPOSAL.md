@@ -1,4 +1,4 @@
-# D-20 (rest) and D-13: code bindings, null-test streams and the CPCV report (proposal, revision 2)
+# D-20 (rest) and D-13: code bindings, null-test streams and the CPCV report (proposal, revision 3)
 
 **Status:** `AI PROPOSAL — NOT AN OWNER DECISION — NOT ACTIVE`
 **Date:** 2026-10-13
@@ -10,6 +10,10 @@
   (`FABLE_REVIEW_37F20C8.md`: Q1–Q4 READY WITH FIXES).
 - Rev 2 applies `ADJUDICATION_37F20C8.md`, which accepts every finding, two of them
   (DC-R5, DC-R6) in part.
+- Rev 2 `2db4d63` was re-checked by Sol (`SOL_RECHECK_2DB4D63.md`: Q1–Q3
+  NOT READY, Q4 READY WITH FIXES) and Fable (`FABLE_RECHECK_2DB4D63.md`:
+  Q1–Q4 READY WITH FIXES). Rev 3 applies `ADJUDICATION_2DB4D63.md` and adds
+  owner question 2b (model libraries, §3a).
 
 **Why now.** The §7.2 declared-strategy screen is the last piece of code
 before the D-19 freeze. It runs G-11 and G-14, so it needs their open
@@ -31,11 +35,12 @@ set. They cannot change which calibration cells qualify, the thresholds or
 | M5 | Annex C C-11 (via R-8) | the ESS code | §1 |
 | M12 | gate list G-9 ("code binding `<<OPEN D-20>>`") | the DSR test code (DF-R1) | §1 |
 | M6 | seed_disclosure `derivation`; R-7 | the byte encoding of the beacon-extended family seed | §2 |
-| M7 | Annex C C-10 (3); gate list G-11; §2.4 `added_purposes` | how the 500 G-11 shifts are sampled | §3 |
+| M7 | Annex C C-10 (3); gate list G-11; §2.4 `added_purposes` (all three purposes) | how the 500 G-11 shifts are sampled | §3 |
 | M8 | Annex C C-12 (5); gate list G-14 | the G-14 offset and model-seed stream | §3 |
 | M9 | the seed under C-1, C-10 (3), C-12 (5) | which seed feeds these streams (C-13 "Seeds", FA5-6) | §4 |
 | M10 | Annex C C-10 (1); gate list G-11 | the `s_inputs` identity mapping and its enforcement | §5 |
 | M11 | Annex C C-11 (5); DRAFT §5 table l.215–222 | what the CPCV diagnostic reports (D-13) | §6 |
+| M13 | Annex B §2.4 l.110–113 (no marker) | the promised extension of the stream and I-10 vectors for `dsr_family_max_null` (DF2-R1) | §1 |
 
 **Not in scope.** These stay open:
 - D-11 (the lockbox interval, which is bootstrap-backed) and D-12;
@@ -66,15 +71,22 @@ G-1 has no such difference:
 
 This argument does not, on its own, show the existing vectors are valid.
 **Acceptance condition:** the existing Task 12 tests and the D-19 reference
-vectors must pass at the bound commit on the pinned runtime. The D-19 start
-gate already runs the reference-vector suite, including the G-1 trace, at
-every start (`rundef.start_gate`). The Task 12 tests run in CI.
+vectors must pass at the bound commit on the pinned runtime.
+- The D-19 start gate already runs the reference-vector suite at every start
+  (`rundef.start_gate`). Its G-1 trace covers the availability path: the
+  production `bootstrap_indices`, `block_length` and influence routine, with
+  the replicate Sharpes recomputed by `calibration.fast`.
+- It does not exercise `paired_sharpe_improvement_interval` itself, the
+  Task 12 Sharpe or `type_seven_quantile` (DF2-R7). For those, the condition
+  rests on the Task 12 tests, which run in CI.
 
-**The calibration already uses this code.** The D-19 engine computes G-1
-and G-12 availability through the production routines
-(`calibration/gates.py` imports `aqt.metrics.statistics`). G-9, the DSR
-test, runs in `calibration/dsr.py`. The held-out `U_G` and DSR-availability
-bounds are certified for that code, on the pinned runtime.
+**What the calibration measured.** The D-19 engine computes G-1 and G-12
+availability through the production routines (`calibration/gates.py`
+imports `aqt.metrics.statistics`). G-1's availability rule matches the
+interval routine's: any invalid replicate is `INVALID_REPLICATE`. G-9, the
+DSR test, runs in `calibration/dsr.py`. The held-out `U_G` and
+DSR-availability bounds are certified for that code, on the pinned
+runtime.
 
 **Proposal (B1).** The R-8 references listed below bind to the files as
 they stand at the **engine commit recorded in the D-19 qualification
@@ -88,17 +100,39 @@ runtime identity.
 
 | Clause | Reference | Code at the engine commit |
 |---|---|---|
-| C-0 Sharpe; C-1 (G-1); C-11 (G-12); Annex B replicate seeds | `sharpe`, `paired_sharpe_statistics`, `paired_sharpe_improvement_influence`, `block_length` (Politis-White), `bootstrap_indices`, `replicate_seed_material`, `replicate_seed`, `SEED_DOMAIN`, `paired_sharpe_improvement_interval` and every function it calls, `type_seven_quantile`, `effective_sample_size` | `src/aqt/metrics/statistics.py` |
+| C-0 Sharpe; C-1 (G-1); C-11 (G-12) | `sharpe`, `paired_sharpe_statistics`, `paired_sharpe_improvement_influence`, `block_length` (Politis-White), `bootstrap_indices`, `replicate_seed_material`, `replicate_seed`, `SEED_DOMAIN`, `paired_sharpe_improvement_interval` and every function it calls, `type_seven_quantile`, `effective_sample_size` | `src/aqt/metrics/statistics.py` |
 | C-0 `DD`, G-2 | `max_drawdown` | `src/aqt/metrics/descriptive.py` |
 | C-6 4.2 (band tests) | `reaches_rebalance_band` | `src/aqt/benchmarks/canonical.py` |
 | l.266 trial seed (DF-R2) | `seed_material`, `trial_seed` (domain `aqt.trial_seed.v1`) | `src/aqt/core/preregistration.py` |
-| G-9 (Annex A P18-6; Annex B) (DF-R1) | `evaluate` and the functions it calls; replicate Sharpes by method V as already decided | `calibration/dsr.py` |
+| G-9 (Annex A P18-6; Annex B) (DF-R1, DF2-R1) | `evaluate` and the functions it calls, including the replicate seeds and indices `_replicate_seed` and `indices` (purpose `dsr_family_max_null`, with the `WINDOW` constant as a fixed domain label, not the C-0 window); replicate Sharpes by method V as already decided | `calibration/dsr.py` |
 
-**C2 must check its code (DF-R14).** No C2 evaluation path exists yet. Its
-build must load only the code above, verified against the object's
-`engine_commit` by the same check the mapping and the held-out runner use
-(`mapping.check_engine` and `rundef.loaded_outside`). That check is a §16
-item of the C2 evaluation build.
+**Annex B §2.4's stream extension is superseded (M13; DF2-R1).** Annex B
+§2.4 says the build "would extend the conventions ..., the stream, and
+regenerate and review reference vectors (I-10)". The D-19 engine instead
+built the DSR stream inline (`dsr._replicate_seed`), in the production
+layout with the DSR purpose. It was reviewed under §16 with the engine.
+- This proposal binds that construction as frozen (table above).
+- It replaces the §2.4 sentence with: "The DSR replicate seeds and indices
+  are `calibration/dsr.py` `_replicate_seed` and `indices` at the engine
+  commit (R-8). The I-10 reference vectors are the D-19 reference-vector
+  suite, which runs `dsr.evaluate`."
+- `ReplicateStream` and IMPLEMENTATION_CONVENTIONS.md stay unchanged.
+
+**Two binding times, and C2 must check both (DF-R14, DC2-R1).**
+- **Existing code** binds to the engine commit (the table above).
+- **Code written after the run started** binds to its reviewed bytes in
+  the qualification object: `mapping.py`, `screen.py` and `heldout.py`
+  (`qobj.LATER`, `REVIEWED`).
+- No C2 evaluation path exists yet. Its build must verify the **loaded
+  bytes** of every `calibration` and `aqt` module:
+  - each must equal the engine commit's file;
+  - each object file must equal the object's copy.
+
+  It must also verify that nothing is loaded from outside these
+  (`rundef.loaded_outside`).
+- `mapping.check_engine` does this today for `mapping.py` only, and the
+  held-out runner adds its own check for itself. The C2 build generalises
+  that check to every object file. It is a §16 item of that build.
 
 **Falsifier.** Any C2 evaluation that calls a different version of a bound
 routine.
@@ -139,6 +173,13 @@ Inputs are validated before hashing (DF-R11):
   64-character lowercase hex;
 - `round`: the drand round number fixed by the R-7 procedure, as a
   positive integer.
+
+This validation belongs to the C2 builder. The shared hashing step
+`calibration.seeds.sha` does not validate; the engine's synthetic calls use
+`round = rep`, which starts at 0 (prereg §8) (DF2-R4).
+
+**Both places change.** The same `||` formula appears in R-7 and in
+`seed_disclosure.derivation` (DRAFT l.157). Both are replaced (DF2-R4).
 
 **Why this, not R-7's literal order.**
 - The D-19 engine is reviewed and merged with this form. Its synthetic
@@ -220,9 +261,14 @@ training windows in time order, starting from the first.
 **G-14 model seeds (B4, continued; DC-R3, DF-R5, DF-R6).**
 - **Seed.** After the offset, the same generator gives `model_seed =
   gen.getrandbits(31)`. The refit passes `model_seed`:
-  - as `random_state` to every scikit-learn class (linear, ridge, lasso,
-    elastic net, logistic), whatever its solver;
+  - as `random_state` to every estimator whose constructor accepts
+    `random_state`; deterministic estimators without it (such as
+    `LinearRegression`) get no seed (DC2-R2, DF2-R3);
   - as `seed` to LightGBM.
+- **Class map.** `screen.py` maps each protocol class name (linear, ridge,
+  lasso, elastic_net, logistic, lightgbm) to one exact library class. Each
+  class has a test showing that its refit is reproducible from
+  `model_seed`.
 - **No other source.** No other source of randomness may enter the refit
   pipeline. A declaration may not set LightGBM sub-seeds (`bagging_seed`,
   `feature_fraction_seed`, `data_random_seed`, `extra_seed`,
@@ -231,13 +277,8 @@ training windows in time order, starting from the first.
   and `force_col_wise = true`.
 - **The nominee's own fit** keeps the model seed its declaration fixes.
   Null draws never reuse it.
-- **Runtime.** The model libraries are part of the evaluation runtime
-  identity: the scikit-learn and LightGBM versions and binary hashes. A
-  declaration whose model class needs a library missing from the recorded
-  runtime is refused.
-
-  LightGBM is not installed today. So until a runtime with it is recorded
-  and reviewed, `lightgbm`-class trials cannot be declared (DF-R6).
+- **Runtime.** The model libraries must be in the D-19 image. §3a explains
+  why, and gives the owner's choice.
 
 **B6 — Seeds inside the screen.** The screen runs before the declaration
 post, so it cannot use the beacon. Its null streams use the trial seed
@@ -246,7 +287,21 @@ post, so it cannot use the beacon. Its null streams use the trial seed
   "trial_set_sha256": <hex>}))`;
 - `p = 0 … 29` is the screen path.
 
-This is new. Rev 1 left it implicit.
+This is new. Rev 1 left it implicit. It adds sub-derivations to the
+accepted prereg §7.2, which fixes only the screen seed. It is therefore
+recorded as a **clarification of prereg §7.2**, with the owner's decision on
+this proposal, not only as D-20 (DF2-R5). Inside the screen:
+- `evaluation_window_id` is the C2 cycle's C-0 window id, which the
+  declaration fixes;
+- the bootstrap and sign streams of the screen's paths derive from
+  `screen_seed` as `screen.py` implements them. **The reviewed code is the
+  binding**, with its reference vectors.
+
+**Disclosed (DC2-R6, DF2-R5).** The screen seed is a function of the trial
+set, which the declarer controls, and has no nonce. A declarer can therefore
+search trial sets offline for one that passes the screen. Recording every
+submitted screen run cannot rule this out. The screen has no certified error
+rate, so this weakens only its power claim, not the D-19 bound.
 
 **Reference vectors (DF-R7).** The screen build freezes, with its review:
 - the first 10 `k_i` for a fixed seed, `T` and `m`, together with the
@@ -261,11 +316,50 @@ code, not a migration.
 mapping (§5) live in `calibration/screen.py`. That file is frozen in the
 qualification object, which already lists it (`qobj.LATER`, `REVIEWED`). It
 is reviewed under §16, with the owner's PR review, before the freeze. The
-C2 evaluation imports them from the object's copy. `ReplicateStream` is not
-touched.
+C2 evaluation imports them from the object's copy, checked by its bytes (§1).
+`ReplicateStream` is not touched.
 
 **Alternative.** numpy `Philox` streams, as in prereg §8. Their sampling
 routines can change between numpy releases.
+
+## 3a. Model libraries and the image (DC2-R3, DF2-R2) — a choice
+
+The accepted preregistration says: "C2's real evaluation must run in the
+same image" as the calibration (prereg §13 rev 7g item 6, A-V1). The screen
+also runs from the frozen object.
+
+**Today that image holds no model library.** `requirements.lock` pins only
+numpy, and neither scikit-learn nor LightGBM is installed. Without them no
+model-fitting trial can be screened or evaluated.
+
+Adding a library later would change the image. Its digest is part of the
+run definition and the gating identity, so a later change voids the run
+(prereg §13 item 6). So the choice must be made **before the full run
+starts**:
+
+- **(a) Add scikit-learn and LightGBM to the image now** (recommended).
+  - **How.** Pin both, with exact versions and hashes, in
+    `requirements.lock` and the Dockerfile, before the run definition is
+    recorded.
+  - **Effect on the engine.** None: it never imports them, so its numbers
+    are unchanged.
+  - **What does change.**
+    - The image digest changes, so the image is rebuilt on the server, and
+      the launcher tests and canaries run again.
+    - The model libraries' versions and binary hashes are added to the
+      runtime identity the object records.
+    - This is an engine-image change. It needs its own §16 review and your
+      PR review before the run definition is recorded.
+  - **What it keeps open.** Model-fitting trials stay possible in C2.
+- **(b) No model-fitting trials in C2 under this object.** Every C2 trial
+  must be a pure rule, so G-14 is always `N/A` (C-12 (1)). The image is
+  unchanged.
+  - **Cost.** The protocol's model classes are unusable in C2. Using them
+    later needs a new image and a new qualification object.
+
+Either way, **no library can be added after the run starts**. A model class
+whose library is not in the recorded image cannot be declared under that
+object.
 
 ## 4. Which seed feeds the streams in C2 (M9) — a choice
 
@@ -296,8 +390,8 @@ search for the G-1 bootstrap and both null streams. It does **not** close:
 The C-13 "Seeds" bullet is therefore **rewritten, not deleted**. It names
 the closed route and keeps these two open routes.
 
-**Why no new route opens (DC-R5).** The conditions Sol asked for are
-already decided text:
+**Within one cycle, no new route opens (DC-R5, DC2-R5).** The conditions Sol
+asked for are already decided text:
 - the complete trial set `J_f` is frozen by hash before any evaluation
   (Annex A P18-1);
 - the first post on the channel governs, and any later post invalidates the
@@ -309,6 +403,17 @@ already decided text:
 - an abort after the beacon costs one halving of the allowance (FA5-3,
   `invalidation_after_post`).
 
+**Across attempts, one route stays open, disclosed (DC2-R5, DF2-R6).** After
+the beacon, a declarer with offline access to the window can compute G-1,
+G-11 and G-14 under the beacon seeds. If they look bad, the declarer can
+invalidate the cycle at will with a second post from A, then re-declare.
+The window stays eligible (O-9 (a)).
+- Each such retry costs one `m`. That is a price, not a statistical
+  correction.
+- This is the FA5-3 residual, already disclosed. It is far narrower than
+  (a)'s free search before the post.
+- The rewritten C-13 bullet says so.
+
 **Costs of (b) (DC-R6, DF-R10).**
 - **Precedence.** For C-1, C-10 (3) and C-12 (5) only, (b) overrides
   l.266's seed policy. The wording "from the trial seed (l.266)" becomes
@@ -316,16 +421,28 @@ already decided text:
 - **Beacon dependency.** G-1, G-11 and G-14 cannot run without the beacon,
   so they inherit R-7's beacon-failure handling (the cycle is invalidated,
   with no fallback).
-- **Calibration.** The D-19 certification is unaffected.
-  - The calibration models each replication's stream seed as a fixed hash
-    that is independent of the data (the synthetic outer seed, prereg §8).
-  - The certified rates are rates over the data law, at seeds that do not
-    depend on the data.
-  - Under (b), the C2 seed is a hash of public randomness that the declarer
-    cannot choose. That matches this model at least as well as (a), whose
-    seed the declarer can pick.
-  - The reviewers are asked to confirm this argument. If it fails, (b)
-    would need requalification, and (a) would be the safe choice.
+- **Calibration (DC-R6, DC2-R4, DF2-R6).** Only G-1 matters here. G-11 and
+  G-14 have no certified rate (they are screened gates), and G-9 already
+  uses the beacon seed under R-7.
+  - **What is certified.** The `U_G` bound is a probability over
+    replications, each with its own G-1 stream seed: a SHA-256 hash that is
+    fixed in advance and independent of the data (prereg §8). It is not a
+    statement about any one fixed seed. Two fixed seeds can give different
+    results, as Sol notes.
+  - **The assumption it rests on.** The certified rate transfers to C2 if
+    C2's G-1 seed behaves like one more such draw: an unpredictable hash,
+    independent of the data. This is a modelling assumption (SHA-256 as a
+    random function). No invariance bound proves it, and the owner accepts
+    it as such. It is the same assumption every hash-seeded rate in this
+    project makes.
+  - **How each option meets it.**
+    - (b) meets it, except for the priced retries above, which can select
+      the seed after looking at the data.
+    - (a) does not meet it: the l.266 seed can be searched for free before
+      the post.
+    - So (a) is **not** a safe fallback. If the assumption is rejected,
+      neither option transfers the rate, and G-1's rate would need its own
+      qualification.
 - **Audit.** The C2 evaluation must record `trial_seed_j` for every trial
   and every stream (Constitution §27).
 
@@ -364,6 +481,20 @@ ambiguous.
 - **(a) Both estimands, separately labelled** (recommended). Report the
   median and the 5th percentile over the 7 path values, for `E-IMPROV` and
   for `E-DIFF`, each named.
+  - **Path assembly (DF2-R8, DC2-R7).**
+    - The `T` OOS days form 8 chronological groups `g = 0 … 7`. The
+      remainder days go to the earliest groups, as in G-10.
+    - The 28 splits are the pairs `{a, b}` with `a < b`, in lexicographic
+      order. Each split trains on the other 6 groups, with purge and
+      embargo, and predicts its 2 test groups.
+    - Each group is a test group in exactly 7 splits. Path `p = 0 … 6`
+      takes, for every group `g`, the predictions from the `(p+1)`-th split
+      (in lexicographic order) that tests `g`.
+    - A path's daily candidate and benchmark returns are the 8 groups'
+      returns concatenated in chronological order.
+    - Per path: `E-IMPROV` = Sharpe(candidate) − Sharpe(benchmark), and
+      `E-DIFF` = Sharpe(candidate − benchmark), by `sharpe` and
+      `paired_sharpe_statistics` (§1).
   - **Quantiles.** Both are `type_seven_quantile`, at 0.5 and 0.05 (§1
     binding; DF-R13).
   - **Unavailability.** A path whose Sharpe, or whose `E-DIFF` on a
@@ -399,9 +530,15 @@ the earlier rows.
      encoding.
    - Options: Adopt (recommended), or keep blocked.
 2. **Null-test streams and `s_inputs` (§3, §5).** The G-11 and G-14 stream
-   rules, the model-seed and runtime requirements, the screen's seeds, and
-   the `s_inputs` mapping, all built and frozen in `screen.py`.
+   rules, the model-seed rules, the screen's seeds (a clarification of
+   prereg §7.2), and the `s_inputs` mapping, all built and frozen in
+   `screen.py`.
    - Options: Adopt (recommended), or use numpy Philox streams.
+
+   2b. **Model libraries (§3a).**
+   - Options: (a) add scikit-learn and LightGBM to the image before the full
+     run (recommended), or (b) no model-fitting trials in C2 under this
+     object.
 3. **Seed source in C2 (§4).**
    - Options: (b) beacon-protected seed (recommended), or (a) keep the
      l.266 trial seed.
@@ -414,7 +551,8 @@ the earlier rows.
 - Nothing is activated.
 - The S4 draft is not yet edited. After the owner's answers, the markers are
   replaced with these texts in a separate revision.
-- The engine is not changed.
+- The engine code is not changed. Under §3a (a), the engine image changes,
+  through its own reviewed PR.
 - No calibration run, cycle, trial, data access, deployment or trading is
   authorized.
 - No statistician has reviewed this.
