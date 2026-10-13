@@ -120,7 +120,9 @@ def _rep(error: bool = False, dsr_: bool = False, u_g: bool = False) -> choices.
 
 def test_tally_counts_each_test_and_skips_demoted_cells() -> None:
     tests = choices.test_manifest([("a", "gaussian"), ("q", "semi-joint"), ("d", "t5")])
-    report = {"m": len(tests), "tests": tests, "z_crit": "1.96"}
+    cells = {u: {"status": "qualifying"} for u in ("a", "q/trend", "q/vol")}
+    cells["d"] = {"status": "demoted_availability"}
+    report = {"m": len(tests), "tests": tests, "z_crit": "1.96", "cells": cells}
     n = 20_000
     a = [_rep(error=i < 300, dsr_=300 <= i < 305, u_g=i == 305) for i in range(n)]
     trend = [_rep(error=i < 500) for i in range(n)]
@@ -138,15 +140,24 @@ def test_tally_counts_each_test_and_skips_demoted_cells() -> None:
     assert rows["a", "agnostic", "error"]["within"] is True
     assert result["accepted"] is False  # q/trend: 500/20k, UCB above 0.025
     assert rows["q/trend", "trend", "error"]["within"] is False
+    vol_missing = {"a": a, "q/trend": trend}
+    with pytest.raises(ValueError, match="q/vol error: a qualifying unit"):
+        heldout.tally(report, vol_missing)
+    half = {**cells, "q/vol": {"status": "demoted_availability"}}
+    with pytest.raises(ValueError, match="qualifying unit has no replications"):
+        heldout.tally(report | {"cells": half}, {"a": a, "q/trend": trend})
 
 
 def test_tally_accepts_when_every_run_test_is_within() -> None:
     tests = choices.test_manifest([("a", "gaussian")])
     reps = {"a": [_rep(error=i < 100) for i in range(20_000)]}
-    result = heldout.tally({"m": 3, "tests": tests, "z_crit": "1.96"}, reps)
-    assert result["accepted"] is True
+    report = {"m": 3, "tests": tests, "z_crit": "1.96",
+              "cells": {"a": {"status": "qualifying"}}}  # fmt: skip
+    assert heldout.tally(report, reps)["accepted"] is True
     with pytest.raises(ValueError, match="M tests"):
-        heldout.tally({"m": 4, "tests": tests, "z_crit": "1.96"}, reps)
+        heldout.tally(report | {"m": 4}, reps)
+    with pytest.raises(ValueError, match="a qualifying unit has no replications"):
+        heldout.tally(report, {})
 
 
 def test_the_attempt_inputs_are_written_once(tmp_path: Path) -> None:
@@ -156,6 +167,25 @@ def test_the_attempt_inputs_are_written_once(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="another attempt"):
         heldout.attempt_record(tmp_path, "d19-heldout-v1", {**record, "round": 2})
     assert (tmp_path / "heldout-v1" / "attempt.json").read_bytes() == cj(record)
+    assert [p.name for p in (tmp_path / "heldout-v1").iterdir()] == ["attempt.json"]
+
+
+def test_certify_rebuilds_the_anchor_from_the_attempt_record(tmp_path: Path) -> None:
+    ns = "d19-heldout-v1"
+    with pytest.raises(ValueError, match="no attempt record"):
+        heldout.recorded_anchor(tmp_path, ns, QOBJ)
+    key = heldout.anchor(QOBJ, 9, "b" * 64)
+    record = {"anchor": key, "beacon_randomness": "b" * 64, "qobj": QOBJ, "round": 9}
+    heldout.attempt_record(tmp_path, ns, record)
+    assert heldout.recorded_anchor(tmp_path, ns, QOBJ) == key
+    with pytest.raises(ValueError, match="not this object's attempt record"):
+        heldout.recorded_anchor(tmp_path, ns, "d" * 64)
+    (tmp_path / "heldout-v1" / "attempt.json").write_bytes(cj(record | {"anchor": "0"}))
+    with pytest.raises(ValueError, match="not this object's attempt record"):
+        heldout.recorded_anchor(tmp_path, ns, QOBJ)
+    assert heldout.binding(QOBJ, key) == sha(
+        {"anchor": key, "qualification_object_sha256": QOBJ}
+    )
 
 
 def _object(tmp_path: Path, files: dict[str, bytes]) -> tuple[Path, str]:
@@ -212,6 +242,8 @@ def test_gate_checks_the_object_engine_runtime_and_this_file(
     [
         ({"definition__engine_commit": "f" * 40}, "not readable"),
         ({"choices__qualifies": False}, "does not qualify"),
+        ({"choices__m": 5}, "test manifest"),
+        ({"choices__tests": []}, "test manifest"),
         ({"freeze__allocation": {"c-k2": 40_000}}, "allocation"),
         (
             {
@@ -273,7 +305,16 @@ def test_run_then_certify(
     chunk = json.loads(
         (store / "heldout-v1" / "c-k2" / "chunk-0000000.json").read_bytes()
     )
-    assert chunk["binding"] == QOBJ and chunk["namespace"] == "d19-heldout-v1"
+    key = heldout.anchor(QOBJ, 9, "b" * 64)
+    assert chunk["binding"] == heldout.binding(QOBJ, key)
+    assert chunk["namespace"] == "d19-heldout-v1"
+    # HO-R1: a lost attempt record cannot let another anchor resume the chain
+    attempt = store / "heldout-v1" / "attempt.json"
+    kept = attempt.read_bytes()
+    attempt.unlink()
+    assert heldout.main(["run", *common, *other]) == 1
+    assert "binding does not match" in capsys.readouterr().err
+    attempt.write_bytes(kept)
 
     report = tmp_path / "report.json"
     code = heldout.main(["certify", *common, "--out", str(report)])
@@ -292,9 +333,12 @@ def test_certify_refuses_an_incomplete_chain(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(heldout, "gate", lambda obj, posted: _fixture(3))
-    report = tmp_path / "report.json"
-    code = heldout.main(["certify", "--object", str(tmp_path), "--posted", QOBJ,
-                         "--attempt", "1", "--store", str(tmp_path / "none"),
-                         "--out", str(report)])  # fmt: skip
-    assert code == 1 and "chain missing" in capsys.readouterr().err
+    report, store = tmp_path / "report.json", tmp_path / "store"
+    args = ["certify", "--object", str(tmp_path), "--posted", QOBJ,
+            "--attempt", "1", "--store", str(store), "--out", str(report)]  # fmt: skip
+    assert heldout.main(args) == 1 and "no attempt record" in capsys.readouterr().err
+    key = heldout.anchor(QOBJ, 9, "b" * 64)
+    record = {"anchor": key, "beacon_randomness": "b" * 64, "qobj": QOBJ, "round": 9}
+    heldout.attempt_record(store, "d19-heldout-v1", record)
+    assert heldout.main(args) == 1 and "chain missing" in capsys.readouterr().err
     assert not report.exists()

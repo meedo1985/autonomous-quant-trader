@@ -27,12 +27,16 @@ Readings (proposed, for review):
   object's `heldout.py` (as the mapping, MP-4); the runtime, canaries, image
   digest and reference vectors must equal the run definition's.
 - HO-2 `M` is the object's test manifest (`choices.json` "m", every
-  candidate cell, §5 `M_max`): the targets were computed at it. Tests of
-  demoted cells are not run and not certified; Bonferroni over the rest at
-  0.025/M stays valid.
-- HO-3 The attempt's anchor inputs are written once to
-  `<store>/heldout-v{N}/attempt.json`; a resume with other inputs is
-  refused (chunks bind only the object hash).
+  candidate cell, §5 `M_max`): the targets were computed at it. The gate
+  refuses unless that manifest is `choices.test_manifest` of the whole cell
+  manifest (HO-R2). Tests of demoted cells are not run and not certified;
+  Bonferroni over the rest at 0.025/M stays valid. A test of a qualifying
+  unit without replications is a refusal, never "not run".
+- HO-3 Every chunk's binding is SHA256(cj({anchor,
+  qualification_object_sha256})), so it binds the posted object and the
+  attempt's anchor (HO-R1). The anchor inputs are created once, atomically,
+  in `<store>/heldout-v{N}/attempt.json`; `certify` rebuilds the binding
+  from that record and refuses without it.
 - HO-4 Not checked here, for the attempt's procedure: the drand signature,
   that the round is the first at or after T_Qn + 24h, the O-6a freeze read
   and the two DF5-2 pre-run records.
@@ -140,6 +144,10 @@ def gate(
     ):
         raise ValueError("this runner is not the object's heldout.py")
     mapping.check_runtime(defn)
+    cells = cells_from_manifest(defn["cell_manifest"])
+    tests = choices.test_manifest([(c.cell_id, c.law) for c in cells])
+    if report["tests"] != tests or report["m"] != len(tests):
+        raise ValueError("the test manifest is not the cell manifest's (HO-R2)")
     if not (report.get("qualifies") is True and report.get("margin_ok") is True):
         raise ValueError("the object's method does not qualify")
     final = {
@@ -184,17 +192,50 @@ def _units(cell: Cell) -> list[str]:
     return [cell.cell_id]
 
 
+def binding(posted: str, anchor_: str) -> str:
+    """HO-3: what every held-out chunk is bound to."""
+    return sha({"anchor": anchor_, "qualification_object_sha256": posted})
+
+
+def _attempt_path(store: Path, ns: str) -> Path:
+    return store / ns.removeprefix("d19-") / "attempt.json"
+
+
 def attempt_record(store: Path, ns: str, record: dict[str, Any]) -> None:
-    """HO-3: written once; any later start must bring the same inputs."""
-    path = store / ns.removeprefix("d19-") / "attempt.json"
-    if path.exists():
-        if path.read_bytes() != cj(record):
-            raise ValueError(f"{path}: another attempt's inputs are recorded")
-        return
+    """HO-3: created once, complete, by an atomic link (a concurrent start
+    loses with FileExistsError); any later start must bring the same inputs."""
+    path = _attempt_path(store, ns)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_bytes(cj(record))
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".attempt-")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(cj(record))
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            if path.read_bytes() != cj(record):
+                raise ValueError(
+                    f"{path}: another attempt's inputs are recorded"
+                ) from None
+    finally:
+        os.unlink(tmp)
+
+
+def recorded_anchor(store: Path, ns: str, posted: str) -> str:
+    """The attempt's anchor from its record, recomputed from the recorded
+    beacon inputs and the posted object (HO-3). ValueError otherwise."""
+    path = _attempt_path(store, ns)
+    if not path.is_file():
+        raise ValueError(f"{path}: no attempt record")
+    record = json.loads(path.read_bytes())
+    key = anchor(posted, record.get("round"), record.get("beacon_randomness", ""))
+    expected = {"anchor": key, "beacon_randomness": record["beacon_randomness"],
+                "qobj": posted, "round": record["round"]}  # fmt: skip
+    if path.read_bytes() != cj(expected):
+        raise ValueError(f"{path}: not this object's attempt record")
+    return key
 
 
 def replication(
@@ -217,9 +258,9 @@ def replication(
     return records if cell.law == "semi-joint" else records[rules.family_label(cell)]
 
 
-def _chain(store: Path, posted: str, ns: str, cell: Cell, n: int, gating: Any,
+def _chain(store: Path, bound: str, ns: str, cell: Cell, n: int, gating: Any,
            host: Any) -> chunks.Chain:  # fmt: skip
-    return chunks.Chain(store / ns.removeprefix("d19-") / cell.cell_id, binding=posted,
+    return chunks.Chain(store / ns.removeprefix("d19-") / cell.cell_id, binding=bound,
                         namespace=ns, cell_id=cell.cell_id, replications=n,
                         gating=gating, host=host)  # fmt: skip
 
@@ -241,7 +282,8 @@ def worker(
         source = semi.load_source(raw_root)
         if source.identity != defn.get("exploration_source"):
             raise ValueError("exploration data differs from the run definition")
-    chain = _chain(store, posted, ns, cell, n, defn["gating"], host_provenance())
+    bound = binding(posted, anchor_)
+    chain = _chain(store, bound, ns, cell, n, defn["gating"], host_provenance())
     prereg = defn["prereg_sha256"]
     return chunks.run(
         chain, lambda rep: replication(cell, anchor_, ns, prereg, rep, bounds, source)
@@ -300,17 +342,23 @@ def _events(kind: str, reps: list[list[choices.Rep]], z: float) -> int:
 def tally(report: dict[str, Any], reps: dict[str, list[choices.Rep]]) -> dict[str, Any]:
     """§6: per enumerated test, the events and the one-sided Clopper-Pearson
     upper bound at alpha = 0.025/M (HO-2); accepted iff every run test is
-    within its bound. `reps`: the final units' frozen-rule replications."""
+    within its bound. `reps`: the final units' frozen-rule replications. A
+    test is run iff its units are qualifying; one without replications is
+    a ValueError (HO-R2)."""
     m, z = report["m"], float(report["z_crit"])
     if len(report["tests"]) != m:
         raise ValueError("the test manifest does not hold M tests")
     alpha = binomial.FAMILY_ALPHA / m
+    status = {u: r["status"] for u, r in report["cells"].items()}
     out = []
     for unit, label, kind in report["tests"]:
         names = [f"{unit}/{f}" for f in reduce.FAMILIES] if label == "joint" else [unit]
-        if not all(n in reps for n in names):
+        qualifying = [status.get(n) == "qualifying" for n in names]
+        if not any(qualifying):
             out.append({"test": [unit, label, kind], "run": False})
             continue
+        if not all(qualifying) or not all(n in reps for n in names):
+            raise ValueError(f"{unit} {kind}: a qualifying unit has no replications")
         group = [reps[n] for n in names]
         n, x = len(group[0]), _events(kind, group, z)
         ucb = binomial.upper(x, n, 1 - alpha)
@@ -376,7 +424,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{ns}/{cell.cell_id}: {head}")
             return 0
         gating = defn["gating"]
-        chains = [(c, b, _chain(args.store, args.posted, ns, c, n, gating, {}))
+        bound = binding(args.posted, recorded_anchor(args.store, ns, args.posted))
+        chains = [(c, b, _chain(args.store, bound, ns, c, n, gating, {}))
                   for c, n, b in planned]  # fmt: skip
         heads = {
             c.cell_id: chunks.verify(ch) for c, _, ch in chains
@@ -384,11 +433,13 @@ def main(argv: list[str] | None = None) -> int:
         reps: dict[str, list[choices.Rep]] = {}
         for cell, bounds, chain in chains:
             reps |= frozen_reps(chain, cell, bounds, report["family_block_rule"])
+        result = tally(report, reps)
     except Exception as error:  # noqa: BLE001 - any failure stops: refuse, publish nothing
         print(f"refused: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
-    result = tally(report, reps) | {
+    result |= {
         "qualification_object_sha256": args.posted,
+        "binding": bound,
         "namespace": ns,
         "chain_heads": heads,
     }
