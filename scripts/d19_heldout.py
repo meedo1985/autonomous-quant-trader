@@ -29,14 +29,16 @@ Readings (proposed, for review):
 - HO-2 `M` is the object's test manifest (`choices.json` "m", every
   candidate cell, §5 `M_max`): the targets were computed at it. The gate
   refuses unless that manifest is `choices.test_manifest` of the whole cell
-  manifest (HO-R2). Tests of demoted cells are not run and not certified;
+  manifest (HO-R2), and `choices.json` holds exactly one known status for
+  every manifest unit (HO2-R1). Tests of demoted cells are not run and not certified;
   Bonferroni over the rest at 0.025/M stays valid. A test of a qualifying
   unit without replications is a refusal, never "not run".
 - HO-3 Every chunk's binding is SHA256(cj({anchor,
   qualification_object_sha256})), so it binds the posted object and the
   attempt's anchor (HO-R1). The anchor inputs are created once, atomically,
-  in `<store>/heldout-v{N}/attempt.json`; `certify` rebuilds the binding
-  from that record and refuses without it.
+  in `<store>/heldout-v{N}/attempt.json` and made durable (file and
+  directory entries) before any worker starts (HO2-R2); `certify` rebuilds
+  the binding from that record and refuses without it.
 - HO-4 Not checked here, for the attempt's procedure: the drand signature,
   that the round is the first at or after T_Qn + 24h, the O-6a freeze read
   and the two DF5-2 pre-run records.
@@ -85,6 +87,7 @@ from calibration.rundef import canonical_sha256, host_provenance  # noqa: E402
 from calibration.seeds import cj, outer_seed, sha  # noqa: E402
 
 ATTEMPTS = (1, 2)  # §8: d19-heldout-v1, d19-heldout-v2
+STATUSES = ("qualifying", "demoted_availability", "demoted_cap")  # choices
 NAMES = ("choices.json", "definition.json", "freeze.json", "mapping.py", "heldout.py")
 
 
@@ -150,6 +153,11 @@ def gate(
         raise ValueError("the test manifest is not the cell manifest's (HO-R2)")
     if not (report.get("qualifies") is True and report.get("margin_ok") is True):
         raise ValueError("the object's method does not qualify")
+    units = {u for c in cells for u in _units(c)}
+    if set(report["cells"]) != units or any(
+        r.get("status") not in STATUSES for r in report["cells"].values()
+    ):
+        raise ValueError("choices.json needs one known status per manifest unit")
     final = {
         u: r["held_out"]
         for u, r in report["cells"].items()
@@ -205,7 +213,10 @@ def attempt_record(store: Path, ns: str, record: dict[str, Any]) -> None:
     """HO-3: created once, complete, by an atomic link (a concurrent start
     loses with FileExistsError); any later start must bring the same inputs."""
     path = _attempt_path(store, ns)
+    created = [d for d in (path.parent, *path.parent.parents) if not d.exists()]
     path.parent.mkdir(parents=True, exist_ok=True)
+    for directory in created:  # every new directory entry is durable (HO2-R2)
+        chunks._sync_dir(directory.parent)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".attempt-")
     try:
         with os.fdopen(fd, "wb") as handle:
@@ -221,6 +232,7 @@ def attempt_record(store: Path, ns: str, record: dict[str, Any]) -> None:
                 ) from None
     finally:
         os.unlink(tmp)
+    chunks._sync_dir(path.parent)  # the record's link, before any chunk (HO2-R2)
 
 
 def recorded_anchor(store: Path, ns: str, posted: str) -> str:

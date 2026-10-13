@@ -170,6 +170,18 @@ def test_the_attempt_inputs_are_written_once(tmp_path: Path) -> None:
     assert [p.name for p in (tmp_path / "heldout-v1").iterdir()] == ["attempt.json"]
 
 
+def test_the_attempt_record_is_durable_before_any_chunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HO2-R2: the new store and namespace directories' entries and the
+    record's link are synced."""
+    synced: list[Path] = []
+    monkeypatch.setattr(heldout.chunks, "_sync_dir", synced.append)
+    store = tmp_path / "store"
+    heldout.attempt_record(store, "d19-heldout-v1", {"round": 1})
+    assert synced == [store, tmp_path, store / "heldout-v1"]
+
+
 def test_certify_rebuilds_the_anchor_from_the_attempt_record(tmp_path: Path) -> None:
     ns = "d19-heldout-v1"
     with pytest.raises(ValueError, match="no attempt record"):
@@ -243,12 +255,28 @@ def test_gate_checks_the_object_engine_runtime_and_this_file(
         ({"definition__engine_commit": "f" * 40}, "not readable"),
         ({"choices__qualifies": False}, "does not qualify"),
         ({"choices__m": 5}, "test manifest"),
+        (
+            {"choices__cells": {"c-k2": {"status": "qualifying", "held_out": 20_000}}},
+            "one known status",
+        ),
+        (
+            {
+                "choices__cells": {
+                    "c-k2": {"status": "qualifying", "held_out": 20_000},
+                    "d-k1": {"status": "dropped", "held_out": None},
+                }
+            },
+            "one known status",
+        ),
         ({"choices__tests": []}, "test manifest"),
         ({"freeze__allocation": {"c-k2": 40_000}}, "allocation"),
         (
             {
                 "freeze__allocation": {"c-k2": 3},
-                "choices__cells": {"c-k2": {"status": "qualifying", "held_out": 3}},
+                "choices__cells": {
+                    "c-k2": {"status": "qualifying", "held_out": 3},
+                    "d-k1": {"status": "demoted_cap", "held_out": None},
+                },
             },
             "allocation",
         ),  # fmt: skip
