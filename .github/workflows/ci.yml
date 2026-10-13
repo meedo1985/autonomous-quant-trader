@@ -82,6 +82,9 @@ jobs:
           fetch-depth: 0  # the bundle needs the whole history
       - name: Package this commit as the reviewed main (dry run only)
         run: |
+          # On a push to main, main is checked out and cannot be force-moved;
+          # a pull request's checkout is already detached.
+          git checkout -q --detach
           git branch -f main HEAD
           git bundle create /tmp/app.bundle main
           echo "COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
