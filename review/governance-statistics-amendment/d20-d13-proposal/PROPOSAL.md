@@ -8,8 +8,8 @@
 - Rev 1 `37f20c8` was reviewed by Sol (`SOL_REVIEW_37F20C8.md`: Q1 NOT
   READY, Q2 READY WITH FIXES, Q3 NOT READY, Q4 READY WITH FIXES) and Fable
   (`FABLE_REVIEW_37F20C8.md`: Q1–Q4 READY WITH FIXES).
-- Rev 2 applies `ADJUDICATION_37F20C8.md`, which accepts every finding,
-  four of them in part.
+- Rev 2 applies `ADJUDICATION_37F20C8.md`, which accepts every finding, two of them
+  (DC-R5, DC-R6) in part.
 
 **Why now.** The §7.2 declared-strategy screen is the last piece of code
 before the D-19 freeze. It runs G-11 and G-14, so it needs their open
