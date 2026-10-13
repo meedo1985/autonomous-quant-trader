@@ -1,4 +1,4 @@
-# D-20 (rest) and D-13: code bindings, null-test streams and the CPCV report (proposal, revision 5)
+# D-20 (rest) and D-13: code bindings, null-test streams and the CPCV report (proposal, revision 6)
 
 **Status:** `AI PROPOSAL — NOT AN OWNER DECISION — NOT ACTIVE`
 **Date:** 2026-10-13
@@ -23,6 +23,11 @@
   FIXES, notes only) and Sol (`SOL_RECHECK3_4645E0A.md`: Q1, Q2, Q2b and Q4
   READY; Q3 NOT READY). Rev 5 applies `ADJUDICATION_4645E0A.md`, which
   narrows the §4 claims and adds three short notes.
+- Rev 5 `d082318` was narrowly re-checked by Sol
+  (`SOL_RECHECK4_D082318.md`: Q1, Q2 and Q4 READY; Q2b (a) and Q3 NOT
+  READY). Rev 6 applies `ADJUDICATION_D082318.md`: it withdraws the
+  remaining probability claims about retries, and re-runs the re-pilot on a
+  rebuilt image.
 
 **Why now.** The §7.2 declared-strategy screen is the last piece of code
 before the D-19 freeze. It runs G-11 and G-14, so it needs their open
@@ -385,13 +390,15 @@ starts**:
     rebuilt image and on the current one. The run definition is then
     recorded on the rebuilt image. No earlier qualification on the old
     image is carried over.
-  - **The re-pilot and the go-ahead (DF4-R2).** The re-pilot's measurements
-    carry over on the strength of the proven-identical canary and
-    reference-vector outputs: the rates, the cost and the speed come from
-    engine code that imports none of the new libraries. The cheap checks are
-    redone on the rebuilt image: the CPU probe and the interrupt-and-resume
-    byte-identity test (prereg §13 item 6). FE-4's "image done" status
-    reopens until the image PR is merged.
+  - **The re-pilot and the go-ahead (DF4-R2, DC5-R3).** Identical canary
+    and reference-vector outputs do not prove that the re-pilot's rates,
+    cost and speed are unchanged. So the FE-7 re-pilot is **re-run on the
+    rebuilt image** before the go-ahead, with the CPU probe and the
+    interrupt-and-resume byte-identity test (prereg §13 item 6). Until then,
+    the old measurements are planning estimates only. FE-4's "image done"
+    status reopens until the image PR is merged.
+    - **Cost:** another re-pilot on the server, in its usual low-priority
+      slot.
   - **What it keeps open.** Model-fitting trials stay possible in C2.
 - **(b) No model-fitting trials in C2 under this object.** Every C2 trial
   must be a pure rule, so G-14 is always `N/A` (C-12 (1)). The image is
@@ -456,12 +463,15 @@ The window stays eligible (O-9 (a)).
   cycles, and is at most 0.10 overall (Constitution v1.1 §9; DC4-R3).
   - That arithmetic becomes a probability bound only if each cycle's test
     controls its error at its allowance **given the history that led to
-    that cycle**. That holds when each re-declaration is fixed
-    independently of the window's earlier outcomes.
-  - A re-declaration adapted to what earlier attempts revealed on the same
-    window breaks that premise. This is part of the disclosed open route
-    (strategy search with offline access, DF-R10), and no allowance
-    corrects it (DC4-R2, DF4-R3).
+    that cycle**.
+  - A retry can depend on earlier outcomes on the same window, through an
+    adapted declaration or through the decision to retry at all. For such
+    retries, this proposal does not establish that conditional guarantee,
+    so **no probability bound across outcome-dependent retries is
+    asserted**. The allowance stands as the multiplicity rule the
+    Constitution sets (DC4-R2, DF4-R3, DC5-R2). Adapted re-declarations are
+    part of the disclosed open route (strategy search with offline access,
+    DF-R10).
 - For the seed-driven gates G-1, G-11 and G-14, a retry is only a price:
   they have no calibrated error rate. See the calibration point below.
 - This is the FA5-3 residual, already disclosed. It is far narrower than
@@ -513,13 +523,14 @@ The window stays eligible (O-9 (a)).
     - retrying to reach a G-1, G-11 or G-14 *pass* is not covered by any
       certified rate here. These gates are filters with no calibrated
       error rate of their own (C-13).
-    - for false promotion, the allowance rule applies under the
-      conditional premise stated above (each attempt's test valid at its
-      allowance given its history). This stays disclosed in C-13.
+    - for false promotion, see the retry paragraph above: no probability
+      bound across outcome-dependent retries is asserted. This stays
+      disclosed in C-13.
   - **How each option meets it.**
-    - (b) meets it for every attempt whose declaration is fixed in advance.
-      Retries change only the uncertified pass frequencies over retained
-      cycles (DF4-R3).
+    - (b) meets it for the first attempt on a window, declared before any
+      outcome on that window is seen (DC5-R1). Among retained cycles,
+      retries can change the uncertified pass frequencies, and can lower
+      unavailability, which is the conservative direction (DC5-R4).
     - (a) does not meet it: the l.266 seed can be searched for free before
       the post.
     - So (a) is **not** a safe fallback. If the assumption is rejected,
@@ -629,8 +640,8 @@ the earlier rows.
    2b. **Model libraries (§3a).**
    - Options: (a) add scikit-learn and LightGBM to the image before the full
      run, through one reviewed image PR that proves the engine's outputs
-     unchanged (recommended), or (b) no model-fitting trials in C2 under
-     this object.
+     unchanged, followed by a re-run of the re-pilot on the new image
+     (recommended); or (b) no model-fitting trials in C2 under this object.
 3. **Seed source in C2 (§4).**
    - Options: (b) beacon-protected seed (recommended), or (a) keep the
      l.266 trial seed.
