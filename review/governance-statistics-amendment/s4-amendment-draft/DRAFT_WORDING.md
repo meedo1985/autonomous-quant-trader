@@ -1,7 +1,7 @@
 # Constitution §4 amendment — draft wording for C2 (DSR and selection)
 
 **Status:** `AI WORDING PROPOSAL — NOT AN AMENDMENT — NOT AUTHORED — NOT SIGNED — NOT ACTIVE`
-**Date:** 2026-10-04, revision 8
+**Date:** 2026-10-13, revision 9
 **Drafted by:** Claude Opus 5.5 (`claude-opus-5-5`). Constitution §4 line 50:
 an AI "may propose but not author/merge/activate/self-approve amendments".
 This file only proposes wording; the amendment exists only if the owner
@@ -14,6 +14,8 @@ Annex C) and the owner items O-1..O-7 (`OWNER_DECISION_O1_O7.md`).
 Revision 7 adds REG (A), O-8 (a) and O-9 (a)
 (`../reg-o8-proposal/OWNER_DECISION_REG_O8_O9.md`, `4230b1f`; decided text
 `../reg-o8-proposal/PROPOSAL.md` rev 5 `8142647` §6).
+Revision 9 adds D-20 (rest) and D-13 (`../d20-d13-proposal/OWNER_DECISION_D20_D13.md`;
+decided text `../d20-d13-proposal/PROPOSAL.md` rev 6 `5c78b8f`).
 **History:** rev. 1 `e44146e` — Fable FA1 SOUND WITH FIXES, Sol SA1 UNSOUND
 (`2ecf18f`), adjudication `ff3c7f8`. Rev. 2 `afed53e` — focused checks Fable
 FA2 NOT READY (`b38204b`), Sol SA2 NOT READY (`9f67598`), adjudication
@@ -26,7 +28,9 @@ Annex C; Fable FA5 and Sol SA5 both rated it SOUND WITH FIXES
 `ADJUDICATION_AB9AD3F.md` without a further check. Rev. 7 folds in
 REG (A), O-8 (a), O-9 (a) and FR1-7 (`ADJUDICATION_370C50C.md`), not yet
 reviewed. Rev. 8 folds in O-6a (A) (`../o6a-channel/OWNER_DECISION_O6A.md`),
-not yet reviewed in place.
+not yet reviewed in place. Rev. 9 folds in D-20 (rest) and D-13 (R-7, R-8,
+R-12..R-14, the seed derivation, the gate list and §4), not yet reviewed in
+place.
 **Labels:** `[AI default]` = drafting choice, not an owner decision.
 `[derived]` = follows from decided rules. `<<OWNER x>>` = owner decision still
 needed (none remain; §7). `<<OPEN D-19 route>>` = a
@@ -139,10 +143,13 @@ annex_reading:
   R-4: "P18-0's text on windows created after v1 has no effect under this protocol; no post-v1 window is eligible until a later amendment."   # FA2-6
   R-5: "P18-1's 'to be confirmed in the amendment' on budget scope is resolved as per cycle (trial_accounting below)."   # derived
   R-6: "P18-2(a) 'the cycle ends only when (b)-(d) complete' is subject to the calendar limit cycle_termination.calendar_days_elapsed and to calendar_cap_rule below."   # FA2-1, SA2-1, SA2-3
-  R-7: "Annex B §2.4's family seed is extended, not replaced: family_seed_f = SHA256(annexB_family_seed_f || round || beacon_randomness), per seed_disclosure. The seed is fixed after the declaration post and before the first evaluation and any stream use. The sentence 'Seeds are fixed before any data exists ... cannot be gamed' is informative and does not hold for C2."   # SA2-2, FA2-7, FA5-5
-  R-8: "The references in Annexes B and C to existing code (bootstrap_indices, the replicate-seed construction, the Politis-White routine, the paired-CI routine, max_drawdown, the Task 12 Sharpe and ESS code) bind to that code at a hash fixed under <<OPEN D-20>>, except that the DSR replicate Sharpes S*_{b,j} and S°_{b,j} of Annex B §2.3 are computed by method V at the code hash and on the runtime identity recorded in d20-proposal/OWNER_DECISION_D20_V.md and the D-19 qualification object (Annex A A-V1)."   # FA1-2 residue, FA5-10
+  R-7: "Annex B §2.4's family seed is extended, not replaced: family_seed_f = SHA256(cj({\"annex_b_seed\": <hex>, \"beacon_randomness\": <hex>, \"round\": <int>})), per seed_disclosure, where cj is canonical JSON (UTF-8, sorted keys, no whitespace, decimal integers, lowercase hex); annex_b_seed is the Annex B §2.4 digest and beacon_randomness the drand randomness field, each 64 lowercase hex characters, and round the drand round fixed by seed_disclosure, a positive integer; the C2 builder validates all three before hashing. The seed is fixed after the declaration post and before the first evaluation and any stream use. The sentence 'Seeds are fixed before any data exists ... cannot be gamed' is informative and does not hold for C2."   # SA2-2, FA2-7, FA5-5
+  R-8: "These references bind to the code at the engine commit recorded in the D-19 qualification object (definition.json engine_commit, checked by its code inventory hash), on that object's pinned runtime and image: in src/aqt/metrics/statistics.py, sharpe, paired_sharpe_statistics, paired_sharpe_improvement_influence, block_length, bootstrap_indices, replicate_seed_material, replicate_seed, SEED_DOMAIN, paired_sharpe_improvement_interval and the functions it calls, type_seven_quantile and effective_sample_size (Annex C C-0, C-1, C-11, C-14); max_drawdown in src/aqt/metrics/descriptive.py (C-0, G-2); reaches_rebalance_band in src/aqt/benchmarks/canonical.py (C-6); seed_material and trial_seed in src/aqt/core/preregistration.py (protocol line 266); and, for G-9, calibration/dsr.py evaluate and the functions it calls, including _replicate_seed and indices, whose WINDOW constant is a fixed domain label. The DSR replicate Sharpes S*_{b,j} and S°_{b,j} of Annex B §2.3 are computed by method V, as d20-proposal/OWNER_DECISION_D20_V.md records (Annex A A-V1). The qualification object's later files (mapping.py, screen.py, heldout.py) bind to their bytes in that object. No lockbox clause is bound here; those stay with D-11."   # FA1-2 residue, FA5-10; D-20 (rest) B1
   R-9: "In P18-0 (iii), the embargo used for the gap is gap_embargo.value_days, computed by gap_embargo.rule; 'data outside the window' is replaced by 'data mounted in the sandbox or evaluated before declaration'. No confirmation or lockbox data not already so mounted or evaluated may be used."   # SA3-2
   R-10: "Annex C defines gates G-1..G-8, G-10..G-12 and G-14, and the event contract; G-9 is defined by Annex A P18-6 and G-13 in promotion.gates. Annex A P18-7's availability and cause-code rules apply to Annex C's UNAVAILABLE results."   # derived, SA5-7
+  R-12: "Annex B §2.4's sentence that the build 'would extend the conventions (IMPLEMENTATION_CONVENTIONS.md), the stream, and regenerate and review reference vectors (I-10)' is replaced: the DSR replicate seeds and indices are calibration/dsr.py _replicate_seed and indices at the engine commit (R-8), and the I-10 reference vectors are the D-19 reference-vector suite, which runs dsr.evaluate."   # D-20 (rest) M13
+  R-13: "For Annex C C-1 (the G-1 bootstrap stream), C-10 (3) (the G-11 shifts) and C-12 (5) (the G-14 offsets and model seeds) only, the trial seed is the beacon-protected seed trial_seed_j = SHA256(cj({\"family_seed\": family_seed_f, \"trial_id\": <id>})), with family_seed_f per R-7 and trial_id exactly as Annex B §2.4 hashes it; this prevails over protocol line 266 for these streams. Every other use of line 266, including the nominee's own fit, is unchanged. These gates cannot run without the beacon and follow seed_disclosure's failure rule. The evaluation records every trial_seed_j (Constitution §27)."   # D-20 (rest) §4 option (b)
+  R-14: "A C2 evaluation verifies the loaded bytes of its code with two disjoint checks: each loaded calibration or aqt module that is not a later object file equals the engine commit's file (R-8); each later object file (mapping.py, screen.py, heldout.py), loaded as a module or run as the entry point, equals the qualification object's copy, verified against the posted manifest, which replaces any engine-commit entry for the same path; nothing is loaded from outside these. The C2 evaluation's own code therefore lies in the engine commit or in a later object file."   # D-20 (rest) §1
   R-11: "Annex B §2.3's sentence 'Means and variances are computed with math.fsum and the two-pass algorithm, in replicate index order' governs S0 and var_b, the statistics across replicates; the replicate Sharpes S*_{b,j} and S°_{b,j} are computed by method V (R-8, A-V1)."   # owner decision D-20 (partial), clarification of decided text
 seed_disclosure:                               # O-6
   value: "The C2 family seeds are derived from public randomness published after the declaration is committed."
@@ -154,7 +161,7 @@ seed_disclosure:                               # O-6
     beacon: "one drand League of Entropy mainnet chain, fixed in this protocol by chain hash and public key at signing <<SIGNING: chain hash, public key>>; the declaration cannot choose it"
     round: "the first round of that chain whose scheduled time is at least T + 24h, where T is the 14-digit UTC CDX timestamp of the earliest qualifying Internet Archive capture listed at the freeze point (SPEC §5)"
     verification: "the round's randomness is valid only if its signature verifies against the fixed public key; the round number, signature and randomness are recorded for Constitution §27"
-    derivation: "family_seed_f = SHA256(annexB_family_seed_f || round || beacon_randomness); byte encoding <<OPEN D-20>>"
+    derivation: "family_seed_f = SHA256(cj({annex_b_seed, beacon_randomness, round})), exactly as R-7"
     failure: "no fallback chain or source. If no verifying output for the round exists within 7 days of its scheduled time, the cycle is INVALIDATED before any evaluation. The cycle is also INVALIDATED if: no qualifying capture is listed at the freeze point; the frozen acceptance record changes; no post is included by height D; or an earlier qualifying capture giving a different round is shown before the evaluation is final (SPEC §5, §7)."
     invalidation_after_post: "a cycle invalidated after its post increments m (Constitution v1.1 §9, O-1). It does not make the eligible window ineligible (O-9 (a))."   # FA5-3, SA5-3
   disclosure: "kept as in §5"
@@ -284,7 +291,7 @@ each gate is the Annex C section named in `def`.
 ```yaml
 promotion:
   gates:
-    G-1:  {lines: "274-275", def: "Annex C C-1", na: "never", stage: pre_lockbox, status: "decided D-03; code binding <<OPEN D-20>>"}
+    G-1:  {lines: "274-275", def: "Annex C C-1", na: "never", stage: pre_lockbox, status: "decided D-03; code binding D-20 (R-8); stream seed R-13"}
     G-2:  {lines: "276-278", def: "Annex C C-2", na: "never", stage: pre_lockbox, status: "decided O-7"}
     G-3:  {lines: "42-44, 279", def: "Annex C C-3", na: "never", stage: pre_lockbox, status: "decided D-02, N-3"}
     G-4:  {lines: "201-204, 280-282", def: "Annex C C-4", na: "never", stage: pre_lockbox, status: "decided D-06, D-07"}
@@ -292,12 +299,12 @@ promotion:
     G-6:  {lines: "267, 284", def: "Annex C C-7", na: "never", stage: pre_lockbox, status: "decided D-15"}
     G-7:  {lines: "268, 285", def: "Annex C C-7", na: "never", stage: pre_lockbox, status: "decided D-15"}
     G-8:  {lines: "260-265, 286", def: "Annex C C-8", na: "no ordered numeric tunable dimension (line 264)", stage: pre_lockbox, status: "decided D-04, D-05"}
-    G-9:  {lines: "287", def: "Annex A P18-6", na: "never", stage: pre_lockbox, status: "<<D19 values>>; code binding <<OPEN D-20>>"}
+    G-9:  {lines: "287", def: "Annex A P18-6", na: "never", stage: pre_lockbox, status: "<<D19 values>>; code binding D-20 (R-8, R-12)"}
     G-10: {lines: "234-241, 288", def: "Annex C C-9", na: "declared family trials |J_f| < 20 (line 235)", stage: pre_lockbox, status: "decided D-08, D-09, D-10"}
-    G-11: {lines: "134-140, 289", def: "Annex C C-10", na: "g11_class constant_signal, fixed at preregistration", stage: pre_lockbox, status: "decided D-14; registration REG (A); s_inputs enforcement and shift sampling <<OPEN D-20>>"}
+    G-11: {lines: "134-140, 289", def: "Annex C C-10", na: "g11_class constant_signal, fixed at preregistration", stage: pre_lockbox, status: "decided D-14; registration REG (A); s_inputs enforcement and shift sampling D-20 (Annex C C-10)"}
     G-12: {lines: "242-244, 290", def: "Annex C C-11", na: "never", stage: pre_lockbox, status: "decided N-1"}
     G-13: {lines: "291", def: "benchmark hash matches the v1.1 canonical benchmark hash (§1a)", na: "never", stage: pre_lockbox, status: "defined"}
-    G-14: {lines: "141-145, 289", def: "Annex C C-12", na: "trial fits no model of the vol-scaled target, fixed at preregistration", stage: pre_lockbox, status: "decided N-2 (a); seed stream <<OPEN D-20>>"}
+    G-14: {lines: "141-145, 289", def: "Annex C C-12", na: "trial fits no model of the vol-scaled target, fixed at preregistration", stage: pre_lockbox, status: "decided N-2 (a); seed stream D-20 (Annex C C-12)"}
     L-1:  {lines: "83-91", pass: "BTC lockbox delta-Sharpe >= 5th percentile of the prediction distribution", na: "never", stage: lockbox, status: "<<OPEN D-11>>"}
     L-2:  {lines: "91", pass: "BTC lockbox delta-Sharpe > 0", na: "never", stage: lockbox, status: "<<OPEN D-11>>"}
     L-3:  {lines: "91", pass: "DD(BTC) (Annex C C-0) holds on the lockbox", na: "never", stage: lockbox, status: "<<OPEN D-11>>"}
@@ -327,10 +334,9 @@ and 300 stay in force. (Restored per FA5-9.)
 
 | v1.0 lines / place | Clause | Marker |
 |---|---|---|
-| 215–222 | CPCV diagnostic report (its ESS input is Annex C C-11) | `<<OPEN D-13>>` |
 | 77–79 | lockbox attestation coarse fields | `<<OPEN D-12>>` |
 | 83–92 | lockbox prediction interval and pass rule (L-1..L-4) | `<<OPEN D-11>>` |
-| §2.0 R-8, seed derivation; §2.4 `added_purposes`; Annex C C-0 (Sharpe, `max_drawdown`), C-1, C-6 (band routine), C-10 (1) (`s_inputs` mapping and enforcement), C-10 (3), C-11, C-12 (5) | code bindings, stream conventions and reference vectors | `<<OPEN D-20>>` |
+| 83–92 (with D-11) | code bindings and streams of any lockbox clause | `<<OPEN D-20>>` |
 | §2.0 beacon; §2.0 channel | the drand chain hash and public key; address A, outpoint F, amount, funding height, deadline height D | `<<SIGNING>>` |
 | §2.1, §2.4, G-9 | `T_min`, `family_block_rule`, `z_crit`, `U_proc` allocation | `<<D19>>` |
 | §2.1 start, gap | values fixed at declaration | `<<DECLARATION>>` |
