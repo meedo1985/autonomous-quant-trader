@@ -83,7 +83,10 @@ is named.
 `PASS` iff the lower bound of the two-sided 90% paired block-bootstrap
 confidence interval of BTC `E-IMPROV` is `> 0`, computed by the existing
 paired-CI routine (`paired_sharpe_improvement_interval`, bound by R-8; its
-stream's trial seed is R-13's beacon-protected seed). The
+stream's trial seed is R-13's beacon-protected seed). This reuses the Task
+12 stream (matrix row D-20 option (b)), on the condition that the Task 12
+tests and the D-19 reference vectors pass at the bound engine commit on the
+pinned runtime. [D-20 §1] The
 result is `UNAVAILABLE` if the routine returns any unavailability reason,
 including these:
 - either leg has no Sharpe on the window;
@@ -316,6 +319,18 @@ Evaluate in order:
    - Stability rests on the pinned runtime and image (R-8). The reference
      vectors (the first 10 `k_i` and the SHA-256 of all 500, for fixed
      inputs) are frozen with `screen.py`.
+   - **Inside the D-19 screen** (prereg §7.2, which runs before the post and
+     so cannot use the beacon; a clarification of the accepted prereg)
+     [D-20 B6]:
+     - the trial seed of the null streams is
+       `SHA256(cj({"path": p, "screen_seed": <hex>, "trial_id": <id>}))`,
+       where `screen_seed = SHA256(cj({"stream": "screen",
+       "trial_set_sha256": <hex>}))` and `p = 0 … 29` is the screen path;
+     - `evaluation_window_id` is the C2 cycle's C-0 window id, which the
+       declaration fixes;
+     - the screen paths' bootstrap and sign streams derive from
+       `screen_seed` as the reviewed `screen.py` implements them; that code
+       and its reference vectors are the binding.
 4. **Draw `i`.**
    - Use `s_((h + 24·k_i) mod 24T)` in place of `s_h`.
    - Re-size with the trial's own `σ̂_h` at the real hour.
@@ -397,10 +412,21 @@ Evaluate in order:
    - The nominee's own fit keeps the model seed its declaration fixes; null
      draws never reuse it.
    - A model class whose library is not in the D-19 image cannot be
-     declared. The libraries enter that image before the run definition
-     (owner decision D-20, §3a (a)).
-   - Reference vectors for `(offset, model_seed)`, with the SHA-256 over a
-     full `d × w` grid, are frozen with `screen.py`.
+     declared. No library is added after the run starts. [D-20 §3a (a)]
+     Before the run definition is recorded:
+     - one §16-reviewed image PR adds scikit-learn and LightGBM, with every
+       transitive dependency hash-pinned, resolved against `numpy==2.5.3` on
+       CPython 3.14, and any system library they need; the libraries are
+       bound through the image digest;
+     - that PR shows byte-identical canary and full reference-vector
+       outputs on the rebuilt image and on the current one;
+     - the FE-7 re-pilot is re-run on the rebuilt image, with the CPU probe
+       and the interrupt-and-resume test, before the go-ahead; the old
+       measurements are planning estimates only;
+     - FE-4's "image done" status is reopened until that PR merges.
+   - Reference vectors are frozen with `screen.py`: `(offset, model_seed)`
+     for `d ∈ {0, 499}` and `w ∈ {0, 1}`, and the SHA-256 over the full
+     `d × w` grid, for a fixed set of `n_w`. [D-20 B4]
 6. **Statistic.** The Spearman IC, with midranks, over all OOS rows in the
    window whose target realisation also lies inside the window.
 7. **Pass rule.**
@@ -417,7 +443,7 @@ Evaluate in order:
    otherwise the report says "CPCV not enabled" and nothing is computed.
 2. **Groups and splits.** The `T` OOS days form 8 chronological groups
    `g = 0 … 7`, remainder days to the earliest groups. The 28 splits are the
-   pairs `{a, b}`, `a < b`. Each trains on the other 6 groups with purge and
+   pairs `{a, b}`, `a < b`, in lexicographic order. Each trains on the other 6 groups with purge and
    embargo (l.222) and predicts its 2 test groups.
 3. **Paths.** Path `p = 1 … 7` is the 4 splits `{g, g XOR p}`, `g = 0 … 7`.
    Each test group is simulated from its own first 00:00 UTC decision,
@@ -458,6 +484,10 @@ Evaluate in order:
     depend on earlier outcomes, and the D-19 `U_G` rate is claimed only for
     the first attempt on a window, declared before any outcome on it is
     seen. [D-20 §4 (b)]
+  - That claim rests on a modelling assumption the owner accepted: the
+    SHA-256 seed acts as a fresh, unpredictable draw, independent of the
+    data. No invariance bound proves the transfer. It is the assumption every
+    hash-seeded rate of the D-19 calibration already makes.
 - **Screen seeds.** The §7.2 screen seed depends on the declared trial set,
   so a declarer can search trial sets offline for one that passes the
   screen. The screen has no certified error rate. [D-20 B6]
