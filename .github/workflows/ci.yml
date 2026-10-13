@@ -153,6 +153,30 @@ jobs:
           sudo sh /opt/aqt-d19/app/deploy/calibration/d19.sh probe || rc=$?
           if [ "$rc" = 3 ]; then echo "::error::inconclusive: the probe segfaulted (seen only on AMD EPYC Zen 4/5 runners, under the pinned OpenBLAS kernel); check the CPU line above and rerun the job"; fi
           exit "$rc"
+      # Owner decision D-20 §3a (a): adding the model libraries must leave the
+      # engine's measured outputs byte-identical. The current image is rebuilt
+      # from its own Dockerfile and lock as of 4afd350 (main before this
+      # change, IM-R1) on this same runner; in both images, both canaries and
+      # all 8 reference vectors must be present (IM-R2) and equal.
+      - name: The model libraries leave the engine's outputs unchanged
+        run: |
+          mkdir /tmp/current-image
+          for f in Dockerfile requirements.lock; do
+            git show "4afd350:deploy/calibration/$f" > "/tmp/current-image/$f"
+          done
+          sudo docker build -q -t aqt-d19-current /tmp/current-image
+          for img in aqt-d19-current "aqt-d19:$COMMIT"; do
+            sudo docker run --rm --network none -e HOME=/tmp               -e OPENBLAS_NUM_THREADS=1 -e OPENBLAS_CORETYPE=Haswell               -v /opt/aqt-d19/app:/app:ro "$img" python -B -c               "import json, sys; sys.path[:0] = ['/app', '/app/src']
+          from calibration import rundef; g = rundef.gating('compare')
+          cases = {'refvec-k1-t5', 'refvec-k2-ar', 'refvec-k5-garch', 'refvec-k20-factor', 'refvec-k2-skewt', 'refvec-k5-unequal', 'refvec-k5-mixed-ar', 'refvec-k2-g2-unavailable'}
+          if set(g['canaries']) != {'blas', 'libm'} or set(g['reference_vectors']) != cases:
+              sys.exit('incomplete outputs: ' + json.dumps(g['canaries']) + json.dumps(g['reference_vectors']))
+          print(json.dumps({k: g[k] for k in ('canaries', 'reference_vectors')}, sort_keys=True))"
+          done > /tmp/outputs
+          test "$(wc -l < /tmp/outputs)" = 2
+          test "$(sed -n 1p /tmp/outputs)" = "$(sed -n 2p /tmp/outputs)"
+          echo "identical: $(sed -n 1p /tmp/outputs | sha256sum)"
+          sudo docker run --rm --network none "aqt-d19:$COMMIT" python -c             "import sklearn, lightgbm, scipy; print(sklearn.__version__, lightgbm.__version__, scipy.__version__)"
       - name: Record a pilot run definition
         run: |
           cd /opt/aqt-d19/app/deploy/calibration
