@@ -1,4 +1,4 @@
-# D-20 (rest) and D-13: code bindings, null-test streams and the CPCV report (proposal, revision 3)
+# D-20 (rest) and D-13: code bindings, null-test streams and the CPCV report (proposal, revision 4)
 
 **Status:** `AI PROPOSAL — NOT AN OWNER DECISION — NOT ACTIVE`
 **Date:** 2026-10-13
@@ -14,6 +14,10 @@
   NOT READY, Q4 READY WITH FIXES) and Fable (`FABLE_RECHECK_2DB4D63.md`:
   Q1–Q4 READY WITH FIXES). Rev 3 applies `ADJUDICATION_2DB4D63.md` and adds
   owner question 2b (model libraries, §3a).
+- Rev 3 `dba31fb` was narrowly re-checked by Fable
+  (`FABLE_RECHECK2_DBA31FB.md`: Q1 and Q4 READY WITH FIXES, Q2, Q2b and Q3
+  READY) and Sol (`SOL_RECHECK2_DBA31FB.md`: Q1, Q2b (a), Q3 and Q4 NOT
+  READY; Q2 READY WITH FIXES). Rev 4 applies `ADJUDICATION_DBA31FB.md`.
 
 **Why now.** The §7.2 declared-strategy screen is the last piece of code
 before the D-19 freeze. It runs G-11 and G-14, so it needs their open
@@ -118,21 +122,26 @@ layout with the DSR purpose. It was reviewed under §16 with the engine.
   suite, which runs `dsr.evaluate`."
 - `ReplicateStream` and IMPLEMENTATION_CONVENTIONS.md stay unchanged.
 
-**Two binding times, and C2 must check both (DF-R14, DC2-R1).**
-- **Existing code** binds to the engine commit (the table above).
-- **Code written after the run started** binds to its reviewed bytes in
-  the qualification object: `mapping.py`, `screen.py` and `heldout.py`
-  (`qobj.LATER`, `REVIEWED`).
-- No C2 evaluation path exists yet. Its build must verify the **loaded
-  bytes** of every `calibration` and `aqt` module:
-  - each must equal the engine commit's file;
-  - each object file must equal the object's copy.
-
-  It must also verify that nothing is loaded from outside these
-  (`rundef.loaded_outside`).
-- `mapping.check_engine` does this today for `mapping.py` only, and the
-  held-out runner adds its own check for itself. The C2 build generalises
-  that check to every object file. It is a §16 item of that build.
+**Two bindings, and C2 must check both (DF-R14, DC2-R1, DC3-R1, DF3-R1).**
+- **Engine files** bind to the engine commit (the table above).
+- **Object files** bind to their reviewed bytes in the qualification
+  object. These are the `qobj.LATER` files, reviewed separately and frozen
+  at the freeze:
+  - `calibration/mapping.py` (object `mapping.py`);
+  - `calibration/screen.py` (object `screen.py`);
+  - `scripts/d19_heldout.py` (object `heldout.py`).
+- No C2 evaluation path exists yet. Its build must run two disjoint checks
+  on the **loaded bytes**:
+  1. each loaded `calibration` or `aqt` module that is not an object file
+     must equal the engine commit's file;
+  2. each object file, whether loaded as a module or run as the entry
+     point, must equal the object's copy, verified against the posted
+     object manifest. That copy **replaces** any engine-commit entry for the
+     same path, as `mapping.check_engine` already does for `mapping.py`.
+- Nothing may be loaded from outside these (`rundef.loaded_outside`).
+- `mapping.check_engine` and the held-out runner's gate each cover one
+  object file today. The C2 build generalises them. It is a §16 item of
+  that build.
 
 **Falsifier.** Any C2 evaluation that calls a different version of a bound
 routine.
@@ -338,18 +347,33 @@ run definition and the gating identity, so a later change voids the run
 starts**:
 
 - **(a) Add scikit-learn and LightGBM to the image now** (recommended).
-  - **How.** Pin both, with exact versions and hashes, in
-    `requirements.lock` and the Dockerfile, before the run definition is
-    recorded.
-  - **Effect on the engine.** None: it never imports them, so its numbers
-    are unchanged.
-  - **What does change.**
-    - The image digest changes, so the image is rebuilt on the server, and
-      the launcher tests and canaries run again.
-    - The model libraries' versions and binary hashes are added to the
-      runtime identity the object records.
-    - This is an engine-image change. It needs its own §16 review and your
-      PR review before the run definition is recorded.
+  - **How.** One §16-reviewed image PR, before the run definition is
+    recorded and before any qualification on the image:
+    - pin scikit-learn and LightGBM and every transitive dependency (SciPy,
+      joblib, threadpoolctl and any other), with exact versions and hashes,
+      in `requirements.lock`. The Dockerfile installs with
+      `--require-hashes --only-binary :all:`;
+    - the lock must resolve against `numpy==2.5.3` on CPython 3.14, so the
+      NumPy pin, and with it method V's identity, does not move;
+    - add any system library LightGBM's wheel needs (such as `libgomp1`)
+      to the Dockerfile.
+  - **How the libraries are bound (DC3-R2, DF3-R2).** Through the **image
+    digest**, which is part of the gating identity and covers every byte of
+    the image, these libraries included. No separate model-runtime identity
+    is added, and no engine code changes. The C2 verification rule is the
+    existing one: the evaluation runs in the image with the recorded digest
+    (prereg l.536).
+  - **What changes in the engine's record.** The image digest changes.
+    The A-V1 gating identity also changes: `dsr.runtime_identity` hashes
+    every `*openblas*` file under site-packages, so SciPy's bundled
+    OpenBLAS enters it. This is harmless if it happens before the run
+    definition is recorded.
+  - **That the engine's numbers are unchanged is a claim to check, not an
+    assumption (DC3-R2).** The image PR must show that both canaries and
+    the full reference-vector suite give byte-identical outputs on the
+    rebuilt image and on the current one. The run definition is then
+    recorded on the rebuilt image. No earlier qualification on the old
+    image is carried over.
   - **What it keeps open.** Model-fitting trials stay possible in C2.
 - **(b) No model-fitting trials in C2 under this object.** Every C2 trial
   must be a pure rule, so G-14 is always `N/A` (C-12 (1)). The image is
@@ -408,8 +432,11 @@ the beacon, a declarer with offline access to the window can compute G-1,
 G-11 and G-14 under the beacon seeds. If they look bad, the declarer can
 invalidate the cycle at will with a second post from A, then re-declare.
 The window stays eligible (O-9 (a)).
-- Each such retry costs one `m`. That is a price, not a statistical
-  correction.
+- Each such retry costs one `m`. For the false-promotion claim, that is a
+  correction: the allowance halves each time, and the total stays below
+  0.10 (Constitution v1.1 §9). For the seed-driven gates G-1, G-11 and G-14
+  it is only a price, because they have no calibrated error rate; see the
+  calibration point below.
 - This is the FA5-3 residual, already disclosed. It is far narrower than
   (a)'s free search before the post.
 - The rewritten C-13 bullet says so.
@@ -429,12 +456,34 @@ The window stays eligible (O-9 (a)).
     fixed in advance and independent of the data (prereg §8). It is not a
     statement about any one fixed seed. Two fixed seeds can give different
     results, as Sol notes.
-  - **The assumption it rests on.** The certified rate transfers to C2 if
-    C2's G-1 seed behaves like one more such draw: an unpredictable hash,
-    independent of the data. This is a modelling assumption (SHA-256 as a
-    random function). No invariance bound proves it, and the owner accepts
-    it as such. It is the same assumption every hash-seeded rate in this
-    project makes.
+  - **The assumption it rests on.** The certified rate transfers to a C2
+    attempt if that attempt's G-1 seed behaves like one more such draw: an
+    unpredictable hash, independent of the data. This is a modelling
+    assumption (SHA-256 as a random function), and no invariance bound
+    proves it. It is the same assumption every hash-seeded rate in this
+    project makes. **Adopting (b) records the owner's acceptance of this
+    assumption.** If the owner does not accept it, neither option transfers
+    the rate (DF3-R4).
+  - **The claim is per attempt, fixed in advance, not per retained cycle
+    (DC3-R3).** If a cycle can be invalidated after the beacon and retried,
+    a selected cycle is not one fresh draw. For example, keeping the
+    better of two attempts turns a per-attempt probability `p` into
+    `2p − p²` for the event the actor prefers. So:
+    - the D-19 `U_G` bound is asserted for each C2 attempt, as fixed before
+      its beacon, and **not** as a frequency over the cycles a declarer
+      chooses to keep;
+    - `U_G` bounds **unavailability**, a no-result outcome. Retrying to
+      escape unavailability can only lower the unavailability of the
+      retained cycles, so it cannot make the certified bound
+      anti-conservative;
+    - retrying to reach a G-1, G-11 or G-14 *pass* is not covered by any
+      certified rate here. These gates are filters with no calibrated
+      error rate of their own (C-13).
+    - For the false-promotion claim, retries are bounded by the allowance
+      rule. Each invalidated attempt still increments `m`, and the `m`-th
+      cycle's allowance is `0.05 / 2^(m−1)`, so the total over all attempts
+      stays below 0.10 (Constitution v1.1 §9, O-1). This stays disclosed in
+      C-13.
   - **How each option meets it.**
     - (b) meets it, except for the priced retries above, which can select
       the seed after looking at the data.
@@ -487,10 +536,18 @@ ambiguous.
     - The 28 splits are the pairs `{a, b}` with `a < b`, in lexicographic
       order. Each split trains on the other 6 groups, with purge and
       embargo, and predicts its 2 test groups.
-    - Each group is a test group in exactly 7 splits. Path `p = 0 … 6`
-      takes, for every group `g`, the predictions from the `(p+1)`-th split
-      (in lexicographic order) that tests `g`.
-    - A path's daily candidate and benchmark returns are the 8 groups'
+    - **Paths (DC3-R4).** Path `p = 1 … 7` is made of the 4 splits
+      `{g, g XOR p}`, for `g = 0 … 7` (bitwise exclusive or). Each path
+      covers all 8 groups exactly once, each split is used in exactly one
+      path, and both test groups of a split go to the same path. Path 1,
+      for example, is `{0,1}, {2,3}, {4,5}, {6,7}`. Rev 3's rank rule
+      split a split's two groups across paths, and is withdrawn.
+    - **State at each group (DF3-R5).** Each test group is simulated from
+      its own first 00:00 UTC decision, starting flat: exposure 0, no
+      pending order, an unset clock and a fresh overlay state (as C-10 (4)
+      starts a draw). The benchmark is the window's single benchmark
+      series, sliced by group.
+    - A path's daily candidate and benchmark returns are its 8 groups'
       returns concatenated in chronological order.
     - Per path: `E-IMPROV` = Sharpe(candidate) − Sharpe(benchmark), and
       `E-DIFF` = Sharpe(candidate − benchmark), by `sharpe` and
@@ -524,8 +581,9 @@ the earlier rows.
    - D-20 is triggered. For G-1 this picks row option (b): reuse the Task
      12 stream, which is safe because the estimand is unchanged.
    - The named code (including the trial-seed and DSR code) binds to the
-     D-19 engine commit recorded in the qualification object. Lockbox
-     clauses are reserved.
+     D-19 engine commit recorded in the qualification object. The object
+     files (`mapping.py`, `screen.py`, `heldout.py`) bind to their reviewed
+     bytes in the object. Lockbox clauses are reserved.
    - R-7's family-seed formula is amended to the engine's named-object
      encoding.
    - Options: Adopt (recommended), or keep blocked.
@@ -537,8 +595,9 @@ the earlier rows.
 
    2b. **Model libraries (§3a).**
    - Options: (a) add scikit-learn and LightGBM to the image before the full
-     run (recommended), or (b) no model-fitting trials in C2 under this
-     object.
+     run, through one reviewed image PR that proves the engine's outputs
+     unchanged (recommended), or (b) no model-fitting trials in C2 under
+     this object.
 3. **Seed source in C2 (§4).**
    - Options: (b) beacon-protected seed (recommended), or (a) keep the
      l.266 trial seed.
