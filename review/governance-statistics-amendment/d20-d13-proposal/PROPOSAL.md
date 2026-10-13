@@ -1,4 +1,4 @@
-# D-20 (rest) and D-13: code bindings, null-test streams and the CPCV report (proposal, revision 4)
+# D-20 (rest) and D-13: code bindings, null-test streams and the CPCV report (proposal, revision 5)
 
 **Status:** `AI PROPOSAL — NOT AN OWNER DECISION — NOT ACTIVE`
 **Date:** 2026-10-13
@@ -18,6 +18,11 @@
   (`FABLE_RECHECK2_DBA31FB.md`: Q1 and Q4 READY WITH FIXES, Q2, Q2b and Q3
   READY) and Sol (`SOL_RECHECK2_DBA31FB.md`: Q1, Q2b (a), Q3 and Q4 NOT
   READY; Q2 READY WITH FIXES). Rev 4 applies `ADJUDICATION_DBA31FB.md`.
+- Rev 4 `4645e0a` was narrowly re-checked by Fable
+  (`FABLE_RECHECK3_4645E0A.md`: Q1, Q2 and Q4 READY; Q2b and Q3 READY WITH
+  FIXES, notes only) and Sol (`SOL_RECHECK3_4645E0A.md`: Q1, Q2, Q2b and Q4
+  READY; Q3 NOT READY). Rev 5 applies `ADJUDICATION_4645E0A.md`, which
+  narrows the §4 claims and adds three short notes.
 
 **Why now.** The §7.2 declared-strategy screen is the last piece of code
 before the D-19 freeze. It runs G-11 and G-14, so it needs their open
@@ -142,6 +147,12 @@ layout with the DSR purpose. It was reviewed under §16 with the engine.
 - `mapping.check_engine` and the held-out runner's gate each cover one
   object file today. The C2 build generalises them. It is a §16 item of
   that build.
+- **Build-order consequence (DF4-R1).** Under these checks the C2
+  evaluation's own code (the B2 input validation, §4's `trial_seed_j`, the
+  §6 path assembly and its entry point) can load only from the engine
+  commit or from an object file such as `screen.py`. No third location can
+  load. So that code must either be in the engine commit before the full
+  run starts, or be built into an object file before the freeze.
 
 **Falsifier.** Any C2 evaluation that calls a different version of a bound
 routine.
@@ -374,6 +385,13 @@ starts**:
     rebuilt image and on the current one. The run definition is then
     recorded on the rebuilt image. No earlier qualification on the old
     image is carried over.
+  - **The re-pilot and the go-ahead (DF4-R2).** The re-pilot's measurements
+    carry over on the strength of the proven-identical canary and
+    reference-vector outputs: the rates, the cost and the speed come from
+    engine code that imports none of the new libraries. The cheap checks are
+    redone on the rebuilt image: the CPU probe and the interrupt-and-resume
+    byte-identity test (prereg §13 item 6). FE-4's "image done" status
+    reopens until the image PR is merged.
   - **What it keeps open.** Model-fitting trials stay possible in C2.
 - **(b) No model-fitting trials in C2 under this object.** Every C2 trial
   must be a pure rule, so G-14 is always `N/A` (C-12 (1)). The image is
@@ -432,11 +450,20 @@ the beacon, a declarer with offline access to the window can compute G-1,
 G-11 and G-14 under the beacon seeds. If they look bad, the declarer can
 invalidate the cycle at will with a second post from A, then re-declare.
 The window stays eligible (O-9 (a)).
-- Each such retry costs one `m`. For the false-promotion claim, that is a
-  correction: the allowance halves each time, and the total stays below
-  0.10 (Constitution v1.1 §9). For the seed-driven gates G-1, G-11 and G-14
-  it is only a price, because they have no calibrated error rate; see the
-  calibration point below.
+- Each such retry costs one `m`, and `m` is the applicable multiplicity
+  correction for false promotion: the `m`-th cycle's allowance is
+  `0.05 / 2^(m−1)`. The total stays below 0.10 after any finite number of
+  cycles, and is at most 0.10 overall (Constitution v1.1 §9; DC4-R3).
+  - That arithmetic becomes a probability bound only if each cycle's test
+    controls its error at its allowance **given the history that led to
+    that cycle**. That holds when each re-declaration is fixed
+    independently of the window's earlier outcomes.
+  - A re-declaration adapted to what earlier attempts revealed on the same
+    window breaks that premise. This is part of the disclosed open route
+    (strategy search with offline access, DF-R10), and no allowance
+    corrects it (DC4-R2, DF4-R3).
+- For the seed-driven gates G-1, G-11 and G-14, a retry is only a price:
+  they have no calibrated error rate. See the calibration point below.
 - This is the FA5-3 residual, already disclosed. It is far narrower than
   (a)'s free search before the post.
 - The rewritten C-13 bullet says so.
@@ -464,14 +491,21 @@ The window stays eligible (O-9 (a)).
     project makes. **Adopting (b) records the owner's acceptance of this
     assumption.** If the owner does not accept it, neither option transfers
     the rate (DF3-R4).
-  - **The claim is per attempt, fixed in advance, not per retained cycle
-    (DC3-R3).** If a cycle can be invalidated after the beacon and retried,
-    a selected cycle is not one fresh draw. For example, keeping the
-    better of two attempts turns a per-attempt probability `p` into
-    `2p − p²` for the event the actor prefers. So:
-    - the D-19 `U_G` bound is asserted for each C2 attempt, as fixed before
-      its beacon, and **not** as a frequency over the cycles a declarer
-      chooses to keep;
+  - **The claim covers a first attempt fixed in advance, not adaptive
+    attempts or retained cycles (DC3-R3, DC4-R1).** If a cycle can be
+    invalidated after the beacon and retried, a selected cycle is not one
+    fresh draw. For example, keeping the better of two attempts turns a
+    per-attempt probability `p` into `2p − p²` for the event the actor
+    prefers. An attempt made only because an earlier one failed is
+    conditioned on that failure, and its data may differ in law: if
+    unavailability is driven by a feature of the data, the second attempt's
+    unavailability can be near 1 even though the ex ante rate is `p`. So:
+    - the D-19 `U_G` bound is asserted only for an attempt whose
+      declaration is fixed before any outcome on the window is seen, in
+      practice the first attempt on it. It is **not** asserted for an
+      attempt reached adaptively, nor as a frequency over the cycles a
+      declarer chooses to keep. No conditional, sequential argument is
+      offered;
     - `U_G` bounds **unavailability**, a no-result outcome. Retrying to
       escape unavailability can only lower the unavailability of the
       retained cycles, so it cannot make the certified bound
@@ -479,14 +513,13 @@ The window stays eligible (O-9 (a)).
     - retrying to reach a G-1, G-11 or G-14 *pass* is not covered by any
       certified rate here. These gates are filters with no calibrated
       error rate of their own (C-13).
-    - For the false-promotion claim, retries are bounded by the allowance
-      rule. Each invalidated attempt still increments `m`, and the `m`-th
-      cycle's allowance is `0.05 / 2^(m−1)`, so the total over all attempts
-      stays below 0.10 (Constitution v1.1 §9, O-1). This stays disclosed in
-      C-13.
+    - for false promotion, the allowance rule applies under the
+      conditional premise stated above (each attempt's test valid at its
+      allowance given its history). This stays disclosed in C-13.
   - **How each option meets it.**
-    - (b) meets it, except for the priced retries above, which can select
-      the seed after looking at the data.
+    - (b) meets it for every attempt whose declaration is fixed in advance.
+      Retries change only the uncertified pass frequencies over retained
+      cycles (DF4-R3).
     - (a) does not meet it: the l.266 seed can be searched for free before
       the post.
     - So (a) is **not** a safe fallback. If the assumption is rejected,
