@@ -1,8 +1,9 @@
 # Annex C — promotion gate definitions for cycle C2
 
 **Status:** `AI WORDING PROPOSAL — NOT AN AMENDMENT — NOT SIGNED — NOT ACTIVE`
-**Date:** 2026-10-04, revision 3 (folds in REG (A), O-8 (a) and FR1-7;
-revision 2 applied `ADJUDICATION_AB9AD3F.md`)
+**Date:** 2026-10-13, revision 4 (folds in D-20 (rest) and D-13; revision 3
+folded in REG (A), O-8 (a) and FR1-7; revision 2 applied
+`ADJUDICATION_AB9AD3F.md`)
 **Drafted by:** Claude Opus 5.5 (`claude-opus-5-5`). This annex restates
 owner-decided rows as operative text. It decides nothing.
 
@@ -33,6 +34,7 @@ under DRAFT_WORDING §0 precedence.
 | D-14, D-15, N-3, N-4 | `d14-d15-proposal/OWNER_DECISION_D14_D15.md` plus `OWNER_DECISION_D14_D15_ADDENDUM.md` (governs) | PROPOSAL rev 7 `411e1af` §1–§2: every recommended option, except Q13 (b), Q15 (b) and Q17 (b) per the addendum |
 | O-7 | `s4-amendment-draft/OWNER_DECISION_O1_O7.md` | absolute reading of l.276–278 |
 | REG (A), O-8 (a) | `reg-o8-proposal/OWNER_DECISION_REG_O8_O9.md` | PROPOSAL rev 5 `8142647` §6; FR1-7 per `reg-o8-proposal/ADJUDICATION_370C50C.md` |
+| D-20 (rest), D-13 | `d20-d13-proposal/OWNER_DECISION_D20_D13.md` | PROPOSAL rev 6 `5c78b8f`: §1–§3, §5, §3a (a), §4 (b), §6 (a) |
 
 "l.n" means a line of `protocols/protocol_v1.yaml` v1.0, unless another file
 is named.
@@ -49,11 +51,13 @@ is named.
   `VOL_TARGET_BUY_AND_HOLD` on the same symbol, cost multiplier and day index.
   Unless stated otherwise, a run is the baseline run at 1x cost under the
   event contract C-6.
-- **Code bindings.** The code paths named in this annex bind to that code at a
-  hash fixed under `<<OPEN D-20>>`, as DRAFT §2.0 R-8 says. (FA5-10)
+- **Code bindings.** The code paths named in this annex bind to the code at
+  the engine commit recorded in the D-19 qualification object, and the later
+  object files to their bytes in that object, as DRAFT §2.0 R-8 and R-14
+  say. (FA5-10) [D-20]
 - **Sharpe.** Sharpe is the scaled Sharpe of a daily return series, with the
   n−1 variance convention, as in `review/task12/IMPLEMENTATION_CONVENTIONS.md`.
-  The code binding is `<<OPEN D-20>>`. A series with zero variance or fewer
+  The code is `sharpe` and `paired_sharpe_statistics` (R-8). A series with zero variance or fewer
   than 2 observations has no Sharpe. [D-08 §1; D-07 P7-2]
 - **Estimands.** [D-01]
   - `E-IMPROV` = Sharpe(candidate) − Sharpe(benchmark).
@@ -78,7 +82,11 @@ is named.
 
 `PASS` iff the lower bound of the two-sided 90% paired block-bootstrap
 confidence interval of BTC `E-IMPROV` is `> 0`, computed by the existing
-paired-CI routine (`statistics.py:591–651`; binding `<<OPEN D-20>>`). The
+paired-CI routine (`paired_sharpe_improvement_interval`, bound by R-8; its
+stream's trial seed is R-13's beacon-protected seed). This reuses the Task
+12 stream (matrix row D-20 option (b)), on the condition that the Task 12
+tests and the D-19 reference vectors pass at the bound engine commit on the
+pinned runtime. [D-20 §1] The
 result is `UNAVAILABLE` if the routine returns any unavailability reason,
 including these:
 - either leg has no Sharpe on the window;
@@ -146,7 +154,7 @@ and benchmark. [O-8 (a); N-4 and Q10 were already decided for every run]
         declared band. The declared band is the l.112 value, 0.10 (l.97).
         [AI default; FA5-16] "Reach" is tested by `reaches_rebalance_band`
         in `src/aqt/benchmarks/canonical.py` (`≥ 0.10 − 4·ulp(1.0)`), here
-        and in every band test below; binding `<<OPEN D-20>>`. [FR1-7]
+        and in every band test below; bound by R-8. [FR1-7; D-20]
       - The direction of the order is classified now, at decision time, by
         comparing target with held exposure.
       - An increase is allowed only at 00:00, and only if the clock shows at
@@ -268,8 +276,12 @@ Evaluate in order:
      inputs. `σ̂`, the sizing estimator's output and any frozen feature
      identical to it (currently `ewma_vol_168h` for a trial sized by
      `EWMA_168h`) are never among them. A violation invalidates the
-     declaration. The identity mapping and its enforcement are §16 code,
-     `<<OPEN D-20>>`. [REG (A)]
+     declaration. The identity mapping and its enforcement are §16 code in
+     `calibration/screen.py`, frozen in the D-19 qualification object (one
+     hash per cycle, the same for every trial) and reviewed before the
+     freeze; it carries a falsifier test that rejects a declaration putting
+     `ewma_vol_168h` or `σ̂` in a `σ̂`-sized trial's `s_inputs`. [REG (A);
+     D-20 B5]
    - **Sizing is vol-targeted only.** There is no fixed-size class: a fixed
      size such as the owner's 10% cannot be registered in C2 (written
      `s_h = 0.10·σ̂_h/τ` it would need `σ̂` in `s`). It remains a deployment
@@ -287,9 +299,38 @@ Evaluate in order:
      `N/A`.**
 3. **Shifts.** `g` = `gap_embargo.value_days`, and `m = max(g, 30)`.
    - The 500 shifts `k_i` are drawn without replacement from
-     `{m, …, T − m}` days, from the trial seed (l.266) with purpose
-     `"random_exposure_null"`. The sampling mechanics are `<<OPEN D-20>>`.
-   - The gate is available only if `T − 2m ≥ 499`.
+     `{m, …, T − m}` days, from the trial's beacon-protected seed (R-13) with
+     purpose `"random_exposure_null"`. [D-20 B3]
+   - The gate is available only if `T − 2m ≥ 499`; otherwise it is
+     `UNAVAILABLE`, reason `INSUFFICIENT_SHIFT_RANGE`.
+   - **Stream.** One generator: CPython `random.Random` seeded with
+     `int.from_bytes(bytes.fromhex(seed), "big")`, where `seed` is the
+     SHA-256 of `json.dumps([SEED_DOMAIN, trial_seed_hex,
+     CONVENTION_DOCUMENT_SHA256, "random_exposure_null", "BTCUSDT", "1.0",
+     evaluation_window_id, 500], separators=(",", ":"),
+     ensure_ascii=False)`. `evaluation_window_id` is the canonical
+     `["<w0>","<w1>"]` string of C-0's window; the convention hash is a fixed
+     domain field.
+   - **Draws.** An integer in `[0, n)` is drawn by rejection sampling on
+     `getrandbits(n.bit_length())`, as `bootstrap_indices` draws. With `P`
+     the ascending list `[m, …, T − m]`, for `i = 0 … 499`:
+     `j = i + draw(len(P) − i)`, swap `P[i]` and `P[j]`, `k_i = P[i]`
+     (a partial Fisher–Yates shuffle).
+   - Stability rests on the pinned runtime and image (R-8). The reference
+     vectors (the first 10 `k_i` and the SHA-256 of all 500, for fixed
+     inputs) are frozen with `screen.py`.
+   - **Inside the D-19 screen** (prereg §7.2, which runs before the post and
+     so cannot use the beacon; a clarification of the accepted prereg)
+     [D-20 B6]:
+     - the trial seed of the null streams is
+       `SHA256(cj({"path": p, "screen_seed": <hex>, "trial_id": <id>}))`,
+       where `screen_seed = SHA256(cj({"stream": "screen",
+       "trial_set_sha256": <hex>}))` and `p = 0 … 29` is the screen path;
+     - `evaluation_window_id` is the C2 cycle's C-0 window id, which the
+       declaration fixes;
+     - the screen paths' bootstrap and sign streams derive from
+       `screen_seed` as the reviewed `screen.py` implements them; that code
+       and its reference vectors are the binding.
 4. **Draw `i`.**
    - Use `s_((h + 24·k_i) mod 24T)` in place of `s_h`.
    - Re-size with the trial's own `σ̂_h` at the real hour.
@@ -331,7 +372,7 @@ Evaluate in order:
 4. **Pass rule.** `PASS` iff `ESS ≥ 120`. Report the raw decisions, `h`, the
    ESS and the method (Constitution §23).
 5. **CPCV switch.** The same definition feeds the CPCV switch at l.216. The
-   role of CPCV is `<<OPEN D-13>>`.
+   CPCV report is defined in C-14. [D-13]
 
 ## C-12 G-14: shuffled-labels null (l.141–145, 289) [N-2 (a)]
 
@@ -343,13 +384,49 @@ Evaluate in order:
 3. **Null label.**
    - After purge and embargo, within each training window's retained rows,
      the label sequence is circularly shifted.
+   - Windows `w = 0, 1, …` are the walk-forward training windows in time
+     order; `n_w` is the number of rows retained in window `w`, in time
+     order. The null label of retained row `r` is
+     `label[(r + offset) mod n_w]`.
    - The offset is drawn per draw and per window. It lies in
-     `[horizon_days, window_length − horizon_days]`.
+     `[horizon_days, n_w − horizon_days]`. If that range is empty in any
+     window, the gate is `UNAVAILABLE`, reason `NO_SHIFT_RANGE`; windows are
+     never dropped. [D-20 B4]
 4. **Refit.** The whole label-dependent pipeline is refitted at the same
    `parameter_point`, with no retuning.
-5. **Seeds.** Model seeds and offsets come from a stream seeded by the trial
-   seed (l.266), with purpose `"shuffled_labels_null"`, per draw and per
-   window. The binding is `<<OPEN D-20>>`.
+5. **Seeds.** Model seeds and offsets come from a stream seeded by the
+   trial's beacon-protected seed (R-13), with purpose
+   `"shuffled_labels_null"`, per draw and per window. [D-20 B4]
+   - Each draw `d = 0 … 499` and window `w` has its own generator, built as
+     in C-10 (3) with purpose `"shuffled_labels_null"` and trailing indices
+     `d, w` in place of `500`. From it: `offset = horizon_days +
+     draw(n_w − 2·horizon_days + 1)`, then `model_seed =
+     getrandbits(31)`.
+   - `model_seed` is passed as `random_state` to every estimator whose
+     constructor accepts it (none otherwise, as for `LinearRegression`), and
+     as `seed` to LightGBM. `screen.py` maps each allowed class to one exact
+     library class, each with a reproducibility test.
+   - No other randomness enters the refit. A declaration may not set
+     LightGBM sub-seeds; LightGBM runs with `deterministic = true`,
+     `num_threads = 1` and `force_col_wise = true`.
+   - The nominee's own fit keeps the model seed its declaration fixes; null
+     draws never reuse it.
+   - A model class whose library is not in the D-19 image cannot be
+     declared. No library is added after the run starts. [D-20 §3a (a)]
+     Before the run definition is recorded:
+     - one §16-reviewed image PR adds scikit-learn and LightGBM, with every
+       transitive dependency hash-pinned, resolved against `numpy==2.5.3` on
+       CPython 3.14, and any system library they need; the libraries are
+       bound through the image digest;
+     - that PR shows byte-identical canary and full reference-vector
+       outputs on the rebuilt image and on the current one;
+     - the FE-7 re-pilot is re-run on the rebuilt image, with the CPU probe
+       and the interrupt-and-resume test, before the go-ahead; the old
+       measurements are planning estimates only;
+     - FE-4's "image done" status is reopened until that PR merges.
+   - Reference vectors are frozen with `screen.py`: `(offset, model_seed)`
+     for `d ∈ {0, 499}` and `w ∈ {0, 1}`, and the SHA-256 over the full
+     `d × w` grid, for a fixed set of `n_w`. [D-20 B4]
 6. **Statistic.** The Spearman IC, with midranks, over all OOS rows in the
    window whose target realisation also lies inside the window.
 7. **Pass rule.**
@@ -359,6 +436,29 @@ Evaluate in order:
      `UNAVAILABLE`.
 8. **Model classes.** These are set in DRAFT §2.5 (FA5-15).
 9. **No error rate is claimed.**
+
+## C-14 CPCV diagnostic report (l.215–222) [D-13 (a)]
+
+1. **When.** Only if the effective decisions (C-11) are at least 250;
+   otherwise the report says "CPCV not enabled" and nothing is computed.
+2. **Groups and splits.** The `T` OOS days form 8 chronological groups
+   `g = 0 … 7`, remainder days to the earliest groups. The 28 splits are the
+   pairs `{a, b}`, `a < b`, in lexicographic order. Each trains on the other 6 groups with purge and
+   embargo (l.222) and predicts its 2 test groups.
+3. **Paths.** Path `p = 1 … 7` is the 4 splits `{g, g XOR p}`, `g = 0 … 7`.
+   Each test group is simulated from its own first 00:00 UTC decision,
+   starting flat (exposure 0, no pending order, an unset clock, a fresh
+   overlay state). The benchmark is the window's benchmark series, sliced by
+   group. A path's daily returns are its 8 groups' returns in chronological
+   order.
+4. **Statistics.** Per path, `E-IMPROV` and `E-DIFF` (C-0). The report gives
+   the median and the 5th percentile over the 7 paths, by
+   `type_seven_quantile` at 0.5 and 0.05, for each estimand, each labelled.
+   A path whose value is unavailable is reported as unavailable, and that
+   estimand's summaries are then unavailable; no path is dropped.
+5. **Role.** `diagnostic_only` (l.220–221). Nothing reads the report: no
+   gate, the screen, the mapping, the DSR test, the nomination or
+   promotion. No statistician reviewed this.
 
 ## C-13 Accepted consequences (informative)
 
@@ -375,7 +475,20 @@ Evaluate in order:
   - G-11 needs 500 re-runs per nominee.
   - G-14 needs 500 refits per nominee.
 - **Seeds.** The G-1 bootstrap, the G-11 shifts and the G-14 offsets use
-  streams from the l.266 trial seed, which the public beacon does not
-  protect. A declarer could vary that seed with cosmetic hypothesis edits
-  before the post, and check the effect offline. (FA5-6)
+  the beacon-protected trial seed (R-13), so cosmetic edits before the post
+  no longer let a declarer search them offline (FA5-6, closed). Still open:
+  - a search over the nominee's own model seed, fixed before the post;
+  - a search over the strategy itself by a declarer with offline access;
+  - invalidating a cycle after the beacon and re-declaring. Each retry
+    increments `m`. No probability bound is asserted across retries that
+    depend on earlier outcomes, and the D-19 `U_G` rate is claimed only for
+    the first attempt on a window, declared before any outcome on it is
+    seen. [D-20 §4 (b)]
+  - That claim rests on a modelling assumption the owner accepted: the
+    SHA-256 seed acts as a fresh, unpredictable draw, independent of the
+    data. No invariance bound proves the transfer. It is the assumption every
+    hash-seeded rate of the D-19 calibration already makes.
+- **Screen seeds.** The §7.2 screen seed depends on the declared trial set,
+  so a declarer can search trial sets offline for one that passes the
+  screen. The screen has no certified error rate. [D-20 B6]
 - **Review.** No statistician reviewed any of this.
