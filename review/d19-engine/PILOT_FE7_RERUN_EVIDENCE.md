@@ -90,3 +90,41 @@ slice memory peak: 466993152 bytes
 FR2-2 failing-chain check: **PASS**. The owner then resumed with `sudo sh d19.sh run threshold`.
 
 Note on memory: `status` reads the slice's `MemoryPeak` (`d19.sh` line 146), which counts from when the systemd slice started, not from this run. 466,993,152 bytes after three minutes matches the first run's overall peak, so it is most likely carried over from that run (the server has not been rebooted). This run's own peak comes from `memwatch` in step G, which reads the run container's own `memory.peak` (`d19.sh` line 202).
+
+## Step E (continued): threshold run finished, verbatim
+
+```
+root@aqt-server:/opt/aqt-d19/app/deploy/calibration# sudo sh d19.sh status
+Exited (0) About an hour ago
+started 2026-10-16T18:10:57.750675118Z finished 2026-10-16T18:14:27.920942886Z exit 0
+slice memory peak: 466993152 bytes
+4 threshold/pilot-q1-clusters-k20
+4 threshold/pilot-q1-clusters-k5
+4 threshold/pilot-q1-ind-k1
+4 threshold/pilot-q2m-k2
+4 threshold/pilot-q2m-k20
+4 threshold/pilot-q2m-k5
+4 threshold/pilot-q2-t5-rho-k20
+4 threshold/pilot-q3-factor-k20
+4 threshold/pilot-q4-k5
+4 threshold/pilot-q5-trend-k20
+4 threshold/pilot-q5-vol-k20
+4 threshold/pilot-qj-k2
+4 threshold/pilot-qj-k20
+root@aqt-server:/opt/aqt-d19/app/deploy/calibration# sudo sh d19.sh times threshold
+threshold/pilot-q1-clusters-k20: 3 3 3
+threshold/pilot-q1-clusters-k5: 2 2 2
+threshold/pilot-q1-ind-k1: 2 2 2
+threshold/pilot-q2-t5-rho-k20: 4 4 4
+threshold/pilot-q2m-k2: 2 2 2
+threshold/pilot-q2m-k20: 3 4 4
+threshold/pilot-q2m-k5: 2 2 2
+threshold/pilot-q3-factor-k20: 5 5 5
+threshold/pilot-q4-k5: 6 6 5
+threshold/pilot-q5-trend-k20: 24 25 141(spans a restart)
+threshold/pilot-q5-vol-k20: 18 18 18
+threshold/pilot-qj-k2: 7 7 7
+threshold/pilot-qj-k20: 41 41 41
+```
+
+All 13 cells complete, exit 0. The resumed part ran 18:10:57-18:14:27Z. Against the first run (`PILOT_FE7_EVIDENCE.md` step E), every cell's seconds per 500 draws is within 1 s (for example qj-k20 41 vs 40, q4-k5 6/6/5 vs 5/5/5). The marked 141 s spans the failcheck stop and is excluded as designed.
