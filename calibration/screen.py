@@ -10,11 +10,16 @@ imports only engine-commit code.
 - SP-1 Source rows: the exploration-partition 1h bars of BTCUSDT and
   ETHUSDT, read only through `build_exploration_manifest`, joined on
   `open_time`; an hour missing for either symbol is left out, never filled
-  (Constitution §6), and kept rows are adjacent, as across the bootstrap's
-  wrap (as `semi.joint_returns` treats days). Nothing reads across a left-
-  out hour: each row carries only its own offsets from its own open.
-- SP-2 Bootstrap: `semi.stationary_indices` over the joint rows, mean block
-  168 h, from the `"market"` stream; signs: `semi.block_signs`, mean 24 h,
+  (Constitution §6). Each row carries only its own offsets from its own
+  open, so no price is read across a left-out hour.
+- SP-2 Bootstrap (S1-R1): the stationary bootstrap of
+  `semi.stationary_indices` over the joint rows, mean block 168 h, from the
+  `"market"` stream, with one change: a block never continues across a
+  left-out hour or the end of the source. Where the next row is not the
+  next clock hour (or there is none), the step restarts at a uniform row
+  instead, so a block is always consecutive clock hours. Draw order: one
+  uniform start, then per hour one uniform test and, on a restart (by the
+  test or forced), one uniform index. Signs: `semi.block_signs`, mean 24 h,
   from the `"sign"` stream, one sign per row shared by both symbols.
 - SP-3 Streams: path `p` uses seed `SHA256(cj({"path": p, "screen_seed":
   <hex>}))` (no `trial_id` key, so it never equals a C-10 null-stream trial
@@ -27,10 +32,15 @@ imports only engine-commit code.
   sum_{j<=i} c_j`.
 - SP-5 Length: the caller passes the hour count (C2 window plus the trials'
   declared warm-up); the trial set fixes both.
-- SP-6 Reference vectors: the draws (rows, signs) are exact everywhere and
-  frozen in the unit test; the reconstructed floats use `log`/`exp`, so
-  their bit-exact vector belongs to the pinned-image check (slice S7), as
-  the engine's own reference vectors do (`rundef.reference_vectors`).
+- SP-6 Reference vectors (S1-R3): the draws (rows, signs) come from numpy
+  `Generator` methods, which numpy does not keep stable across versions;
+  they are reproducible on the pinned numpy 2.5.3 and frozen in the unit
+  test, which detects a change. The reconstructed floats use `log`/`exp`,
+  so their bit-exact vector belongs to the pinned-image check (slice S7),
+  as the engine's own reference vectors do (`rundef.reference_vectors`).
+- SP-7 Unavailable path (S1-R2): a path with any non-finite or non-positive
+  price (exp overflow or underflow over a long one-signed stretch) is
+  refused with `PathUnavailable`; the driver records it, never repairs it.
 """
 
 from __future__ import annotations
@@ -44,7 +54,7 @@ import numpy as np
 from aqt.data.bars import BarSeries
 from aqt.data.klines import EXPLORATION, build_exploration_manifest
 from calibration.seeds import sha, stream
-from calibration.semi import SYMBOLS, block_signs, stationary_indices
+from calibration.semi import SYMBOLS, block_signs
 
 N_PATHS = 30  # n_S
 MEAN_BLOCK_HOURS = 168
@@ -52,25 +62,31 @@ SIGN_BLOCK_HOURS = 24
 OPEN, HIGH, LOW, CLOSE, VOLUME = range(5)
 
 
+class PathUnavailable(ValueError):
+    """SP-7: a reconstructed path is not finite and positive."""
+
+
 @dataclass(frozen=True)
 class HourlySource:
     """Joint rows: `bars[i, s]` = (open, high, low, close, volume) of symbol
-    `SYMBOLS[s]` at the i-th common hour; identity for the object (§7.2)."""
+    `SYMBOLS[s]` at clock hour `hour[i]` (hours since the epoch); identity
+    for the object (§7.2)."""
 
     bars: np.ndarray
+    hour: np.ndarray
     identity: dict[str, object]
 
 
-def joint_bars(series: list[BarSeries]) -> np.ndarray:
+def joint_bars(series: list[BarSeries]) -> HourlySource:
     """SP-1: rows x symbols x OHLCV over the hours present in every series,
-    in time order."""
+    in time order (identity left empty)."""
     if [s.symbol for s in series] != list(SYMBOLS):
         raise ValueError(f"need the series of {SYMBOLS} in that order")
     by_time = [{b.open_time: b for b in s.bars} for s in series]
     common = sorted(set(by_time[0]).intersection(*by_time[1:]))
     if len(common) < 2:
         raise ValueError("fewer than two common hours")
-    return np.array(
+    bars = np.array(
         [
             [
                 (b.open, b.high, b.low, b.close, b.volume)
@@ -80,11 +96,14 @@ def joint_bars(series: list[BarSeries]) -> np.ndarray:
         ],
         dtype=float,
     )
+    hour = np.array([int(t.timestamp()) // 3600 for t in common], dtype=np.int64)
+    return HourlySource(bars, hour, {})
 
 
 def load_hourly_source(raw_root: Path) -> HourlySource:
     builds = [build_exploration_manifest(EXPLORATION, s, raw_root) for s in SYMBOLS]
-    bars = joint_bars([b.series for b in builds])
+    joint = joint_bars([b.series for b in builds])
+    bars = joint.bars
     identity: dict[str, object] = {
         "manifest_sha256": {
             s: b.manifest.manifest_sha256 for s, b in zip(SYMBOLS, builds, strict=True)
@@ -92,9 +111,10 @@ def load_hourly_source(raw_root: Path) -> HourlySource:
         "bars_sha256": hashlib.sha256(
             np.ascontiguousarray(bars, "<f8").tobytes()
         ).hexdigest(),
+        "hours_sha256": hashlib.sha256(joint.hour.astype("<i8").tobytes()).hexdigest(),
         "rows": len(bars),
     }
-    return HourlySource(bars, identity)
+    return HourlySource(bars, joint.hour, identity)
 
 
 def screen_seed(trial_set_sha256: str) -> str:
@@ -119,21 +139,45 @@ def reconstruct(sampled: np.ndarray, signs: np.ndarray) -> np.ndarray:
     out[..., LOW] = np.exp(log_open + lo)
     out[..., CLOSE] = np.exp(log_close)
     out[..., VOLUME] = sampled[..., VOLUME]
+    prices = out[..., :VOLUME]
+    if not (np.all(np.isfinite(prices)) and np.all(prices > 0)):
+        raise PathUnavailable("path has a non-finite or non-positive price")
+    return out
+
+
+def hourly_indices(
+    rng: np.random.Generator, hour: np.ndarray, n: int, mean_block: int
+) -> np.ndarray:
+    """SP-2: stationary bootstrap rows whose blocks are consecutive hours."""
+    out = np.empty(n, dtype=np.int64)
+    out[0] = rng.integers(len(hour))
+    for i in range(1, n):
+        prev = out[i - 1]
+        nxt = prev + 1
+        if (
+            rng.random() < 1 / mean_block
+            or nxt == len(hour)
+            or hour[nxt] != hour[prev] + 1
+        ):
+            out[i] = rng.integers(len(hour))
+        else:
+            out[i] = nxt
     return out
 
 
 def path_draws(
-    n_source: int, seed: str, p: int, hours: int
+    hour: np.ndarray, seed: str, p: int, hours: int
 ) -> tuple[np.ndarray, np.ndarray]:
     """SP-2, SP-3: the source rows and signs of screen path `p`."""
     if not 0 <= p < N_PATHS or hours < 1:
         raise ValueError(f"need 0 <= p < {N_PATHS} and hours >= 1")
     s = path_seed(seed, p)
-    rows = stationary_indices(stream(s, "market"), n_source, hours, MEAN_BLOCK_HOURS)
+    rows = hourly_indices(stream(s, "market"), hour, hours, MEAN_BLOCK_HOURS)
     return rows, block_signs(stream(s, "sign"), hours, SIGN_BLOCK_HOURS)
 
 
-def null_path(source: np.ndarray, seed: str, p: int, hours: int) -> np.ndarray:
-    """Screen path `p`: hours x symbols x OHLCV."""
-    rows, signs = path_draws(len(source), seed, p, hours)
-    return reconstruct(source[rows], signs)
+def null_path(source: HourlySource, seed: str, p: int, hours: int) -> np.ndarray:
+    """Screen path `p`: hours x symbols x OHLCV; `PathUnavailable` (SP-7)."""
+    rows, signs = path_draws(source.hour, seed, p, hours)
+    with np.errstate(over="ignore", under="ignore"):
+        return reconstruct(source.bars[rows], signs)

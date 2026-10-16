@@ -31,7 +31,7 @@ def _series(symbol: str, hours: list[int], scale: float) -> BarSeries:
     return BarSeries(symbol, tuple(bars))
 
 
-def _source(n: int = 400) -> np.ndarray:
+def _source(n: int = 400) -> screen.HourlySource:
     return screen.joint_bars(
         [
             _series("BTCUSDT", list(range(n)), 1.0),
@@ -41,9 +41,11 @@ def _source(n: int = 400) -> np.ndarray:
 
 
 def test_joint_rows_are_the_common_hours_in_time_order() -> None:
-    bars = screen.joint_bars(
+    joint = screen.joint_bars(
         [_series("BTCUSDT", [0, 1, 2, 4], 1.0), _series("ETHUSDT", [0, 2, 3, 4], 0.1)]
     )
+    bars = joint.bars
+    assert list(joint.hour - joint.hour[0]) == [0, 2, 4]
     assert bars.shape == (3, 2, 5)
     assert list(bars[:, 0, screen.VOLUME]) == [10.0, 12.0, 14.0]  # hours 0, 2, 4
     with pytest.raises(ValueError, match="in that order"):
@@ -53,7 +55,7 @@ def test_joint_rows_are_the_common_hours_in_time_order() -> None:
 
 
 def test_reconstruction_chains_opens_and_keeps_each_bars_offsets() -> None:
-    src = _source(10)
+    src = _source(10).bars
     path = screen.reconstruct(src, np.ones(10))
     assert np.allclose(path[0, :, screen.OPEN], src[0, :, screen.OPEN])
     assert np.allclose(path[1:, :, screen.OPEN], path[:-1, :, screen.CLOSE])
@@ -65,7 +67,7 @@ def test_reconstruction_chains_opens_and_keeps_each_bars_offsets() -> None:
 
 
 def test_sign_minus_one_mirrors_high_low_and_close() -> None:
-    src = _source(4)
+    src = _source(4).bars
     signs = np.array([1.0, -1.0, -1.0, 1.0])
     path = screen.reconstruct(src, signs)
     rel = path / path[..., screen.OPEN : screen.OPEN + 1]
@@ -74,6 +76,39 @@ def test_sign_minus_one_mirrors_high_low_and_close() -> None:
     assert np.allclose(rel[1, :, screen.LOW], 1 / src_rel[1, :, screen.HIGH])
     assert np.allclose(rel[2, :, screen.CLOSE], 1 / src_rel[2, :, screen.CLOSE])
     assert np.allclose(rel[3, :, screen.CLOSE], src_rel[3, :, screen.CLOSE])
+
+
+def test_a_block_never_continues_across_a_missing_hour_or_the_end() -> None:
+    # S1-R1: hours 0..9 and 11..19 (hour 10 missing for ETH); mean block
+    # huge, so every restart is a forced one
+    src = screen.joint_bars(
+        [
+            _series("BTCUSDT", list(range(20)), 1.0),
+            _series("ETHUSDT", [h for h in range(20) if h != 10], 0.1),
+        ]
+    )
+    rng = np.random.default_rng(7)
+    rows = screen.hourly_indices(rng, src.hour, 5000, 10**9)
+    steps = np.diff(rows)
+    gap_row = int(np.flatnonzero(np.diff(src.hour) != 1)[0])  # last row before the gap
+    after_gap = rows[1:][rows[:-1] == gap_row]
+    after_end = rows[1:][rows[:-1] == len(src.hour) - 1]
+    assert after_gap.size and after_end.size
+    # restarts: uniform over 19 rows, so the next row only by chance
+    assert np.mean(after_gap == gap_row + 1) < 0.2 and np.unique(after_gap).size > 10
+    assert np.unique(after_end).size > 10
+    # without a forced restart, a block runs on
+    assert np.all(steps[(rows[:-1] != gap_row) & (rows[:-1] != len(src.hour) - 1)] == 1)
+
+
+def test_a_path_that_overflows_or_underflows_is_unavailable() -> None:
+    # S1-R2: a bar with close 100x open, repeated with sign +1, overflows exp
+    bar = np.array([[1.0, 101.0, 1.0, 100.0, 1.0]] * 2)
+    sampled = np.repeat(bar[None], 200, axis=0)
+    with np.errstate(over="ignore"), pytest.raises(screen.PathUnavailable):
+        screen.reconstruct(sampled, np.ones(200))
+    with np.errstate(under="ignore"), pytest.raises(screen.PathUnavailable):
+        screen.reconstruct(sampled, -np.ones(200))
 
 
 def test_a_null_path_is_valid_ohlc_with_one_sign_for_both_symbols() -> None:
@@ -110,20 +145,20 @@ def test_seeds_follow_the_preregistered_formula() -> None:
 def test_reference_vectors() -> None:
     """Frozen with screen.py (SCREEN_PLAN S1): a change here is a change to
     the screen's paths and needs review. The draws (rows, signs) are exact
-    on every platform; the float path is exact only on the pinned image
+    on the pinned numpy; the float path is exact only on the pinned image
     (SP-6), so here it is compared to 1e-12."""
     src = _source()
     seed = screen.screen_seed("00" * 32)
     draws = hashlib.sha256()
     for p in range(screen.N_PATHS):
-        rows, signs = screen.path_draws(len(src), seed, p, 1000)
+        rows, signs = screen.path_draws(src.hour, seed, p, 1000)
         draws.update(rows.astype("<i8").tobytes() + signs.astype("<f8").tobytes())
     assert draws.hexdigest() == REF_DRAWS
     first = screen.null_path(src, seed, 0, 1000)[0, 0]
     assert np.allclose(first, REF_FIRST_BAR, rtol=1e-12, atol=0)
 
 
-REF_DRAWS = "a01ffb5c087a485243faca07f449cd5e46f700328ea4091578776aa4fc198080"
+REF_DRAWS = "a9d32c99ac15ab1c8b722b9d09f7b78359b5c3a54cf4297936c81aa47389907a"
 REF_FIRST_BAR = [
     477.0044407262295,
     486.5445295407542,
