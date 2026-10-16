@@ -205,11 +205,12 @@ def null_path(source: HourlySource, seed: str, p: int, hours: int) -> np.ndarray
 #   "module:function", where `module` is a top-level module (no package, so
 #   no `__init__` runs), with the SHA-256 of its source file. The module is
 #   self-contained: it may import only the modules `math` and `numpy`
-#   themselves, no submodule (S3R4-R1; bound by the image digest), never
-#   with `*`, and it may not name, as a name, an
-#   attribute or an imported alias, `__import__`, `importlib`, `exec`,
-#   `eval`, `compile`, `open`, `__builtins__` or numpy's file input and
-#   output (`load`, `save`, `loadtxt`, `fromfile`, `memmap`, `lib`, ...;
+#   themselves, as `import math` / `import numpy [as np]`, no submodule
+#   and no `from ... import` (S3R4-R1, S3R5-R1; bound by the image digest),
+#   and it may not name, as a name or an attribute, `__import__`,
+#   `importlib`, `exec`, `eval`, `compile`, `open`, `__builtins__`, numpy's
+#   file input and output or its tool submodules (`load`, `save`,
+#   `loadtxt`, `fromfile`, `memmap`, `lib`, `f2py`, `testing`, ...;
 #   S3R2-R1). `check_trial` already refuses a dotted module (S3R2-R2).
 #   `load` checks the rest on the hashed bytes, then compiles exactly those
 #   bytes into a fresh module that is never put in `sys.modules`, whose
@@ -295,6 +296,9 @@ CODE_FORBIDDEN_NAMES = (
     "load", "save", "savez", "savez_compressed", "loadtxt", "savetxt",
     "genfromtxt", "fromfile", "tofile", "fromregex", "memmap", "DataSource",
     "lib", "ctypeslib",
+    # numpy submodules and helpers that can read files or run tools (S3R5-R1)
+    "f2py", "testing", "rec", "ma", "dump", "dumps", "loads", "show_config",
+    "show_runtime", "info",
 )  # fmt: skip
 _HEX = frozenset("0123456789abcdef")
 
@@ -486,12 +490,12 @@ def check_code(source: bytes, name: str) -> None:
         elif isinstance(node, ast.ImportFrom):
             if node.level:
                 raise TrialError(f"{name}: relative import")
-            if any(a.name == "*" for a in node.names):
-                raise TrialError(f"{name}: import *")
-            roots = [node.module or ""]
-            used = [a.name for a in node.names if a.name in CODE_FORBIDDEN_NAMES]
-            if used:
-                raise TrialError(f"{name} uses {used[0]}")
+            if node.module != "__future__":  # S3R5-R1: no from-import at all
+                raise TrialError(
+                    f"{name} imports from {node.module}; only 'import math' and"
+                    " 'import numpy' are allowed"
+                )
+            roots = []
         else:
             roots = []
         bad = [r for r in roots if r not in CODE_IMPORTS and r != "__future__"]
@@ -512,6 +516,8 @@ def _code_import(
     """TI-2: the only import trial code gets."""
     if level or name not in (*CODE_IMPORTS, "__future__"):
         raise ImportError(f"trial code may import only {CODE_IMPORTS}, not {name}")
+    if fromlist and name != "__future__":  # S3R5-R1: from numpy import f2py
+        raise ImportError(f"trial code may not import names from {name}")
     return builtins.__import__(name, globals, locals, fromlist, level)
 
 

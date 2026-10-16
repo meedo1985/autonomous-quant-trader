@@ -332,7 +332,12 @@ def test_code_runs_from_exactly_the_hashed_bytes(
         ("x = __import__('os')\n", "uses"),
         ("import numpy as np\nf = np.load\n", "uses"),
         ("g = open\n", "uses"),
-        ("from numpy import load\n", "uses"),  # S3R2-R1
+        ("from numpy import load\n", "imports"),  # S3R2-R1
+        ("from numpy import f2py\n", "imports"),  # S3R5-R1
+        ("from math import sqrt\n", "imports"),
+        ("from __future__ import annotations\nimport numpy as np\n", None),
+        ("import numpy as np\nx = np.f2py\n", "uses"),
+        ("import numpy as np\nx = np.testing\n", "uses"),
         ("from numpy import *\n", "import"),
         ("import numpy as np\nx = np.lib.npyio\n", "uses"),
         ("import numpy as np\nx = np.fromfile\n", "uses"),
@@ -359,6 +364,7 @@ def test_trial_code_is_self_contained(code: str, message: str | None) -> None:
         "import os\n    return os",
         "from numpy.lib import format\n    return format",
         "import numpy.linalg\n    return numpy",
+        "from numpy import f2py\n    return f2py",
     ],
 )
 def test_trial_code_runs_with_pure_builtins_only(
