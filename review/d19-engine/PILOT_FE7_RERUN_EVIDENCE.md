@@ -128,3 +128,38 @@ threshold/pilot-qj-k20: 41 41 41
 ```
 
 All 13 cells complete, exit 0. The resumed part ran 18:10:57-18:14:27Z. Against the first run (`PILOT_FE7_EVIDENCE.md` step E), every cell's seconds per 500 draws is within 1 s (for example qj-k20 41 vs 40, q4-k5 6/6/5 vs 5/5/5). The marked 141 s spans the failcheck stop and is excluded as designed.
+
+## Step F: resume identity, verbatim
+
+```
+root@aqt-server:/opt/aqt-d19/app/deploy/calibration# sudo sh d19.sh clean-check
+threshold/pilot-q1-ind-k1: 0fdcd239a02a67b0200ca40a4a69960cf7aa0218ec79c65aecf971d821172e2a
+threshold/pilot-q1-clusters-k20: 272f529dc8efe9ed253444d06a3d957d67e08933afa2e9343a4c82f967058c21
+threshold/pilot-q2-t5-rho-k20: 1f67ab8d90140b95a1b72975bc24beb29521be9fe41aa075808f43bc8fa431d4
+threshold/pilot-q2m-k20: 7fbf241e3ffb4501649736800a07a365dd26e961f27d4d3c7865d3ea2ddaf835
+threshold/pilot-q3-factor-k20: 3bdcbc1e006a2b9af809e3b6db25bbe10914749d0c313d8af9bcdf4c64f50eca
+threshold/pilot-q4-k5: 2f7ce6d6fbe76a53aa19228cbf3484540dc9a914bd33bceb666255feeacb0c3c
+threshold/pilot-q5-trend-k20: a93ab8b18a7decc11161e69be9585fd609828ac94ca7660e5b6a9e76c2b28283
+threshold/pilot-q5-vol-k20: a5a7fbdca26d51f414287f4bac27b41e4866303effd4746d2b74222e6ad169e5
+threshold/pilot-qj-k20: 0778f20711dddf2b8df088f0e81e81b45cf2acb41475a7a3bc94f1d863d2e20c
+threshold/pilot-q1-clusters-k5: 5b44cc8cdc6a24e73c0f9684868e9be15e646e251776313b85c01fb90d8f8adb
+threshold/pilot-q2m-k2: 5bf35ac62301d38e2a21777375b8d09045b1a26a553d3c0fbd8e05eef36df178
+threshold/pilot-q2m-k5: a37f63275073822bf25629d7f43c8d84eca0fc3e36917b91260d22d79a8253dc
+threshold/pilot-qj-k2: a6757f3c0681d8f698a2fd1d4bb4011e030553bcf512723b8ccd6a14d3d387e6
+pilot-q1-clusters-k20: 4 chunks identical
+pilot-q1-clusters-k5: 4 chunks identical
+pilot-q1-ind-k1: 4 chunks identical
+pilot-q2-t5-rho-k20: 4 chunks identical
+pilot-q2m-k2: 4 chunks identical
+pilot-q2m-k20: 4 chunks identical
+pilot-q2m-k5: 4 chunks identical
+pilot-q3-factor-k20: 4 chunks identical
+pilot-q4-k5: 4 chunks identical
+pilot-q5-trend-k20: 4 chunks identical
+pilot-q5-vol-k20: 4 chunks identical
+pilot-qj-k2: 4 chunks identical
+pilot-qj-k20: 4 chunks identical
+PASS: the resumed threshold run equals the clean run
+```
+
+**Result:** PASS on the rebuilt image, as on the first run; that includes `pilot-q5-trend-k20`, whose chain was cut by the killed worker this time. The first run's clean-run chain heads were not recorded, so they cannot be compared with these.
