@@ -45,6 +45,7 @@ imports only engine-commit code.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib
 import importlib.util
@@ -199,16 +200,21 @@ def null_path(source: HourlySource, seed: str, p: int, hours: int) -> np.ndarray
 #   `sha({"trials": [trial_sha256, ...]})` in declared order, which is the
 #   §7.2 seed input. A set has 1 to 20 trials (§13 rev 7g item 1) with
 #   distinct `trial_id`s.
-# - TI-2 (S3-R1) `signal` and `overlay` name code as "module:function"
-#   with the SHA-256 of the module's source file. `load` compiles exactly
-#   the hashed bytes into a fresh module that is not put in `sys.modules`:
-#   no cached module and no package `__init__` of its own is used. Anything
-#   that module imports is bound elsewhere: the standard library and the
-#   image libraries by the image digest, and `aqt` / `calibration` by the
-#   engine-commit check of the screen driver (slice S7, as `mapping.py`
-#   MP-4 does). The signal is called as `signal(inputs, params)`: `inputs`
-#   holds only its `s_inputs` (C-10 (1)), name -> hourly array, and
-#   `params` is `parameter_point` without `tau` and `sigma` (S3-R2).
+# - TI-2 (S3-R1, S3R-R1) `signal` and `overlay` name code as
+#   "module:function", where `module` is a top-level module (no package, so
+#   no `__init__` runs), with the SHA-256 of its source file. The module is
+#   self-contained: it may import only `math` and `numpy` (bound by the
+#   image digest), and it may not name `__import__`, `importlib`, `exec`,
+#   `eval`, `compile`, `open` or `__builtins__`. `load` checks this on the
+#   hashed bytes, then compiles exactly those bytes into a fresh module that
+#   is never put in `sys.modules`. So everything a trial's code can run is
+#   either its hashed file or the image. Disclosed: a deliberate evasion of
+#   the name check (for example through attribute tricks on objects numpy
+#   hands back) is a false declaration, not something this check can rule
+#   out. The signal is called as `signal(inputs, params)`: `inputs` holds
+#   only its `s_inputs` (C-10 (1)), name -> hourly array, and `params` is
+#   `signal_params`: `parameter_point` without `tau`, `sigma` and the
+#   `model.` dimensions (S3-R2).
 # - TI-3 `s_inputs` entries are frozen feature names (`FEATURE_NAMES`) or
 #   "model:<id>" of the trial's own declared model. Never allowed:
 #   "sigma_hat" (the sizing estimator's output) and, for a trial sized by
@@ -224,14 +230,21 @@ def null_path(source: HourlySource, seed: str, p: int, hours: int) -> np.ndarray
 #   "logistic" (protocol `logistic_use`), "sign_of_vol_scaled_target". Both
 #   model the vol-scaled target of l.103-105 at the trial's horizon, so
 #   G-14 applies to every model trial and is a frozen N/A without a model
-#   (`g14_applies`). Class-specific limits are checked in slice S6.
+#   (`g14_applies`). PENDING (S3R-R3): whether C-12 (1) "fit a model of the
+#   vol-scaled target" covers the sign target is a clause-specific binding
+#   for the owner; this default (G-14 mandatory, the stricter reading)
+#   stands until decided. Class-specific limits are checked in slice S6.
 # - TI-6 (S3-R2) `horizon_hours` is one of 24, 72, 168; `warmup_hours` >=
 #   0; `parameter_point` maps names to scalars, and `grid` maps the same
 #   names to value lists containing the point; G-8 reads its neighbours
 #   there and runs them through the same `params` and top-level fields.
 #   `tau` and `sigma` are grid dimensions only under those names: when
 #   present, the point must equal the top-level field and every grid value
-#   must be allowed for it.
+#   must be allowed for it. A model hyperparameter is a grid dimension only
+#   as "model.<name>" (S3R-R2): `<name>` must be in `model.params` with the
+#   point's value, and a plain point name may not equal a `model.params`
+#   key. `model_params` gives the fit's parameters with the point's
+#   `model.` values, so a G-8 neighbour changes the fit, never the signal.
 # - TI-7 `g11_class` "constant_signal" is checked in every run (C-10 (2)):
 #   `class_mismatch` is true when `s` is not identical at every hour.
 # - TI-8 (S3-R6) The overlay may only keep the target or set it to 0
@@ -254,6 +267,11 @@ G11_CLASSES = ("signal_timed", "constant_signal")
 SIGMA_HAT = "sigma_hat"
 SIGMA_IDENTICAL_FEATURE = {"EWMA_168h": "ewma_vol_168h"}
 SIZING_DIMENSIONS = ("tau", "sigma")
+MODEL_DIMENSION = "model."
+CODE_IMPORTS = ("math", "numpy")
+CODE_FORBIDDEN_NAMES = (
+    "__import__", "importlib", "exec", "eval", "compile", "open", "__builtins__",
+)  # fmt: skip
 _HEX = frozenset("0123456789abcdef")
 
 
@@ -351,6 +369,14 @@ def check_trial(trial: dict[str, Any]) -> None:
     for k in SIZING_DIMENSIONS:
         if k in point and (point[k] != trial[k] or not set(grid[k]) <= set(allowed[k])):
             raise TrialError(f"grid {k} must hold allowed values, the point = {k}")
+    model_keys = set(model["params"]) if model is not None else set()
+    for k, v in point.items():
+        if k in model_keys:
+            raise TrialError(f"parameter_point {k} is a model param: use model.{k}")
+        if k.startswith(MODEL_DIMENSION):
+            name = k[len(MODEL_DIMENSION) :]
+            if name not in model_keys or model["params"][name] != v:
+                raise TrialError(f"{k} must be a model param with the point's value")
     check_s_inputs(trial)
 
 
@@ -402,19 +428,59 @@ def g14_applies(trial: dict[str, Any]) -> bool:
 def signal_params(trial: dict[str, Any]) -> dict[str, Any]:
     """TI-2: what the signal receives besides its inputs."""
     point: dict[str, Any] = trial["parameter_point"]
-    return {k: v for k, v in point.items() if k not in SIZING_DIMENSIONS}
+    return {
+        k: v
+        for k, v in point.items()
+        if k not in SIZING_DIMENSIONS and not k.startswith(MODEL_DIMENSION)
+    }
+
+
+def model_params(trial: dict[str, Any]) -> dict[str, Any]:
+    """TI-6: the fit's parameters, with the point's `model.` values."""
+    point: dict[str, Any] = trial["parameter_point"]
+    fit = dict(trial["model"]["params"])
+    for k, v in point.items():
+        if k.startswith(MODEL_DIMENSION):
+            fit[k[len(MODEL_DIMENSION) :]] = v
+    return fit
+
+
+def check_code(source: bytes, name: str) -> None:
+    """TI-2: a self-contained module importing only `CODE_IMPORTS`."""
+    try:
+        tree = ast.parse(source, name)
+    except SyntaxError as e:
+        raise TrialError(f"{name} does not parse: {e}") from e
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            roots = [a.name.split(".")[0] for a in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                raise TrialError(f"{name}: relative import")
+            roots = [(node.module or "").split(".")[0]]
+        else:
+            roots = []
+        bad = [r for r in roots if r not in CODE_IMPORTS and r != "__future__"]
+        if bad:
+            raise TrialError(f"{name} imports {bad}; only {CODE_IMPORTS} allowed")
+        ident = node.id if isinstance(node, ast.Name) else getattr(node, "attr", None)
+        if ident in CODE_FORBIDDEN_NAMES:
+            raise TrialError(f"{name} uses {ident}")
 
 
 def load(ref: str, sha256: str) -> Callable[..., Any]:
     """TI-2: compile exactly the hashed source into a fresh, unregistered
     module and return its function."""
     module_name, function = ref.split(":")
+    if not module_name.isidentifier():
+        raise TrialError(f"{module_name} must be a top-level module")
     spec = importlib.util.find_spec(module_name)
     if spec is None or spec.origin is None or not spec.origin.endswith(".py"):
         raise TrialError(f"no Python source for {module_name}")
     source = Path(spec.origin).read_bytes()
     if hashlib.sha256(source).hexdigest() != sha256:
         raise TrialError(f"{module_name} is not the declared source")
+    check_code(source, module_name)
     module = types.ModuleType(module_name)
     module.__file__ = spec.origin
     exec(compile(source, spec.origin, "exec"), module.__dict__)  # noqa: S102

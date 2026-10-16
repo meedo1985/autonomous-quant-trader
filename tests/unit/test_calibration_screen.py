@@ -318,6 +318,33 @@ def test_code_runs_from_exactly_the_hashed_bytes(
     del sys.modules["s3_trial_signal"]
 
 
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [
+        ("import os\n", "imports"),
+        ("from calibration import seeds\n", "imports"),
+        ("from . import x\n", "relative"),
+        ("import numpy.linalg as la\nimport math\n", None),
+        ("x = __import__('os')\n", "uses"),
+        ("import numpy as np\nf = np.load\ng = open\n", "uses"),
+        ("def s(:\n", "parse"),
+    ],
+)
+def test_trial_code_is_self_contained(code: str, message: str | None) -> None:
+    # S3R-R1: only math and numpy; no dynamic import, exec or file access
+    if message is None:
+        screen.check_code(code.encode(), "m")
+    else:
+        with pytest.raises(screen.TrialError, match=message):
+            screen.check_code(code.encode(), "m")
+
+
+def test_a_package_module_is_refused() -> None:
+    # S3R-R1: a dotted module would run its package __init__ first
+    with pytest.raises(screen.TrialError, match="top-level"):
+        screen.load("calibration.seeds:sha", "0" * 64)
+
+
 def test_sizing_dimensions_are_bound_and_kept_from_the_signal() -> None:
     t = _trial(
         parameter_point={"span": 72, "tau": "0.60"},
@@ -333,11 +360,40 @@ def test_sizing_dimensions_are_bound_and_kept_from_the_signal() -> None:
     )
     screen.check_trial(vol)
     assert screen.signal_params(vol) == {}
+    with pytest.raises(screen.TrialError, match="the point = sigma"):
+        screen.check_trial({**vol, "sigma": "EWMA_72h"})  # point != top-level
+
+
+def test_model_hyperparameters_enter_the_grid_only_as_model_dimensions() -> None:
+    # S3R-R2
+    model = {**MODEL, "params": {"alpha": "1"}}
+    t = _trial(
+        model=model,
+        parameter_point={"span": 72, "model.alpha": "1"},
+        grid={"span": [24, 72], "model.alpha": ["0.1", "1", "10"]},
+    )
+    screen.check_trial(t)
+    assert screen.signal_params(t) == {"span": 72}
+    assert screen.model_params(t) == {"alpha": "1"}
+    neighbour = {**t, "parameter_point": {"span": 72, "model.alpha": "10"}}
+    assert screen.model_params(neighbour) == {"alpha": "10"}
+    for point, grid in (
+        ({"alpha": "10"}, {"alpha": ["10"]}),  # plain name shadows a model param
+        ({"model.alpha": "10"}, {"model.alpha": ["10"]}),  # differs from params
+        ({"model.beta": "1"}, {"model.beta": ["1"]}),  # not a model param
+    ):
+        with pytest.raises(screen.TrialError):
+            screen.check_trial(_trial(model=model, parameter_point=point, grid=grid))
+    with pytest.raises(screen.TrialError):
+        screen.check_trial(
+            _trial(parameter_point={"model.alpha": "1"}, grid={"model.alpha": ["1"]})
+        )
 
 
 def test_g14_applies_to_model_trials_only() -> None:
     logit = {**MODEL, "class": "logistic", "target": "sign_of_vol_scaled_target"}
     screen.check_trial(_trial(model=logit))
+    assert screen.g14_applies(_trial(model=logit))  # S3R-R3 default, pending
     assert screen.g14_applies(_trial(model=MODEL))
     assert not screen.g14_applies(_trial())
 
