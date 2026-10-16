@@ -46,11 +46,12 @@ imports only engine-commit code.
 from __future__ import annotations
 
 import ast
+import builtins
 import hashlib
 import importlib
 import importlib.util
 import types
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -210,15 +211,17 @@ def null_path(source: HourlySource, seed: str, p: int, hours: int) -> np.ndarray
 #   output (`load`, `save`, `loadtxt`, `fromfile`, `memmap`, `lib`, ...;
 #   S3R2-R1). `check_trial` already refuses a dotted module (S3R2-R2).
 #   `load` checks the rest on the hashed bytes, then compiles exactly those
-#   bytes into a fresh module that is never put in `sys.modules`. So
-#   everything a trial's code can run is either its hashed file or the
-#   image. Disclosed: a deliberate evasion of the name check (for example
-#   through attribute tricks on objects numpy hands back) is a false
-#   declaration, not something this check can rule out. The signal is
-#   called as `signal(inputs, params)`: `inputs` holds only its `s_inputs`
-#   (C-10 (1)), name -> hourly array, and `params` is `signal_params`:
-#   `parameter_point` without `tau`, `sigma` and the `model.` dimensions
-#   (S3-R2).
+#   bytes into a fresh module that is never put in `sys.modules`, whose
+#   builtins are only `CODE_BUILTINS` (pure computation: no `input`, `open`,
+#   `print`, `getattr`, `globals`, `breakpoint`, ...) and whose `__import__`
+#   admits only `math` and `numpy` (S3R3-R1). So everything a trial's code
+#   can run is either its hashed file or the image. Disclosed: a deliberate
+#   evasion (for example through attribute tricks on objects numpy hands
+#   back) is a false declaration, not something these checks can rule out.
+#   The signal is called as `signal(inputs, params)`: `inputs` holds only
+#   its `s_inputs` (C-10 (1)), name -> hourly array, and `params` is
+#   `signal_params`: `parameter_point` without `tau`, `sigma` and the
+#   `model.` dimensions (S3-R2).
 # - TI-3 `s_inputs` entries are frozen feature names (`FEATURE_NAMES`) or
 #   "model:<id>" of the trial's own declared model. Never allowed:
 #   "sigma_hat" (the sizing estimator's output) and, for a trial sized by
@@ -274,6 +277,15 @@ SIGMA_IDENTICAL_FEATURE = {"EWMA_168h": "ewma_vol_168h"}
 SIZING_DIMENSIONS = ("tau", "sigma")
 MODEL_DIMENSION = "model."
 CODE_IMPORTS = ("math", "numpy")
+# TI-2 (S3R3-R1): the builtins trial code runs with (pure computation)
+CODE_BUILTINS = (
+    "abs", "all", "any", "bool", "dict", "divmod", "enumerate", "filter",
+    "float", "frozenset", "int", "isinstance", "len", "list", "map", "max",
+    "min", "pow", "range", "reversed", "round", "set", "slice", "sorted",
+    "str", "sum", "tuple", "zip", "True", "False", "None",
+    "ArithmeticError", "Exception", "IndexError", "KeyError",
+    "OverflowError", "TypeError", "ValueError", "ZeroDivisionError",
+)  # fmt: skip
 CODE_FORBIDDEN_NAMES = (
     "__import__", "importlib", "exec", "eval", "compile", "open", "__builtins__",
     # numpy file input and output (S3R2-R1)
@@ -487,6 +499,25 @@ def check_code(source: bytes, name: str) -> None:
             raise TrialError(f"{name} uses {ident}")
 
 
+def _code_import(
+    name: str,
+    globals: Mapping[str, object] | None = None,
+    locals: Mapping[str, object] | None = None,
+    fromlist: Sequence[str] = (),
+    level: int = 0,
+) -> types.ModuleType:
+    """TI-2: the only import trial code gets."""
+    if level or name.split(".")[0] not in (*CODE_IMPORTS, "__future__"):
+        raise ImportError(f"trial code may import only {CODE_IMPORTS}, not {name}")
+    return builtins.__import__(name, globals, locals, fromlist, level)
+
+
+def _code_builtins() -> dict[str, object]:
+    out: dict[str, object] = {n: getattr(builtins, n) for n in CODE_BUILTINS}
+    out["__import__"] = _code_import
+    return out
+
+
 def load(ref: str, sha256: str) -> Callable[..., Any]:
     """TI-2: compile exactly the hashed source into a fresh, unregistered
     module and return its function."""
@@ -502,6 +533,7 @@ def load(ref: str, sha256: str) -> Callable[..., Any]:
     check_code(source, module_name)
     module = types.ModuleType(module_name)
     module.__file__ = spec.origin
+    module.__dict__["__builtins__"] = _code_builtins()
     exec(compile(source, spec.origin, "exec"), module.__dict__)  # noqa: S102
     fn: object = module.__dict__.get(function)
     if not callable(fn):

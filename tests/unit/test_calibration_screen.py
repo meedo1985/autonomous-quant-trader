@@ -346,6 +346,53 @@ def test_trial_code_is_self_contained(code: str, message: str | None) -> None:
             screen.check_code(code.encode(), "m")
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "return float(input())",
+        "return print(1)",
+        "return getattr(inputs, 'x')",
+        "return globals()",
+        "return __import__('os')",
+        "import os\n    return os",
+    ],
+)
+def test_trial_code_runs_with_pure_builtins_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str
+) -> None:
+    # S3R3-R1: names the static check might miss fail at run time
+    src = tmp_path / "s3_pure.py"
+    src.write_text(
+        f"import math\nimport numpy as np\n\ndef s(inputs, params):\n    {body}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    digest = hashlib.sha256(src.read_bytes()).hexdigest()
+    try:
+        fn = screen.load("s3_pure:s", digest)
+    except screen.TrialError:
+        return  # refused statically
+    with pytest.raises((NameError, ImportError)):
+        fn({}, {})
+
+
+def test_honest_trial_code_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "s3_honest.py"
+    src.write_text(
+        "import math\nimport numpy as np\n\n"
+        "def s(inputs, params):\n"
+        "    x = np.asarray(inputs['ema_dist_72'], dtype=float)\n"
+        "    return np.maximum(0.0, np.sign(x)) * math.sqrt(params['k'])\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    fn = screen.load("s3_honest:s", hashlib.sha256(src.read_bytes()).hexdigest())
+    out = fn({"ema_dist_72": [-1.0, 2.0]}, {"k": 4})
+    assert out.tolist() == [0.0, 2.0]
+
+
 def test_a_package_module_is_refused() -> None:
     # S3R-R1: a dotted module would run its package __init__ first
     with pytest.raises(screen.TrialError, match="top-level"):
@@ -409,7 +456,7 @@ def test_model_hyperparameters_enter_the_grid_only_as_model_dimensions() -> None
 def test_g14_applies_to_model_trials_only() -> None:
     logit = {**MODEL, "class": "logistic", "target": "sign_of_vol_scaled_target"}
     screen.check_trial(_trial(model=logit))
-    assert screen.g14_applies(_trial(model=logit))  # S3R-R3 default, pending
+    assert screen.g14_applies(_trial(model=logit))  # owner decision S3R-R3
     assert screen.g14_applies(_trial(model=MODEL))
     assert not screen.g14_applies(_trial())
 
