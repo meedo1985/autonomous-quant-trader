@@ -13,7 +13,7 @@ This runbook authorizes nothing by itself:
 
 - **`/opt/aqt-d19/app`:** the engine's own checkout at the commit you choose. It belongs to root, and the engine only reads it.
 - **`/var/lib/aqt-d19`:** the run's files (definition, chunks, choices). It belongs to the engine's account, uid 990.
-- **The image `aqt-d19:<commit>`:** Python 3.14 and NumPy 2.5.3, the only package, pinned by hash.
+- **The image `aqt-d19:<commit>`:** Python 3.14 and NumPy 2.5.3, which is all the engine loads. From PR #58 it also holds scikit-learn, LightGBM and their dependencies, for the screen and C2's evaluation (owner decision D-20 §3a (a)). Every package is pinned by hash.
 - **The slice `aqt-d19.slice`:** caps the calibration at 2.5 GB of memory, so forward paper keeps the rest.
 
 Every engine process has these limits:
