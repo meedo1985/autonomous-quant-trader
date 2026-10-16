@@ -204,17 +204,21 @@ def null_path(source: HourlySource, seed: str, p: int, hours: int) -> np.ndarray
 #   "module:function", where `module` is a top-level module (no package, so
 #   no `__init__` runs), with the SHA-256 of its source file. The module is
 #   self-contained: it may import only `math` and `numpy` (bound by the
-#   image digest), and it may not name `__import__`, `importlib`, `exec`,
-#   `eval`, `compile`, `open` or `__builtins__`. `load` checks this on the
-#   hashed bytes, then compiles exactly those bytes into a fresh module that
-#   is never put in `sys.modules`. So everything a trial's code can run is
-#   either its hashed file or the image. Disclosed: a deliberate evasion of
-#   the name check (for example through attribute tricks on objects numpy
-#   hands back) is a false declaration, not something this check can rule
-#   out. The signal is called as `signal(inputs, params)`: `inputs` holds
-#   only its `s_inputs` (C-10 (1)), name -> hourly array, and `params` is
-#   `signal_params`: `parameter_point` without `tau`, `sigma` and the
-#   `model.` dimensions (S3-R2).
+#   image digest), never with `*`, and it may not name, as a name, an
+#   attribute or an imported alias, `__import__`, `importlib`, `exec`,
+#   `eval`, `compile`, `open`, `__builtins__` or numpy's file input and
+#   output (`load`, `save`, `loadtxt`, `fromfile`, `memmap`, `lib`, ...;
+#   S3R2-R1). `check_trial` already refuses a dotted module (S3R2-R2).
+#   `load` checks the rest on the hashed bytes, then compiles exactly those
+#   bytes into a fresh module that is never put in `sys.modules`. So
+#   everything a trial's code can run is either its hashed file or the
+#   image. Disclosed: a deliberate evasion of the name check (for example
+#   through attribute tricks on objects numpy hands back) is a false
+#   declaration, not something this check can rule out. The signal is
+#   called as `signal(inputs, params)`: `inputs` holds only its `s_inputs`
+#   (C-10 (1)), name -> hourly array, and `params` is `signal_params`:
+#   `parameter_point` without `tau`, `sigma` and the `model.` dimensions
+#   (S3-R2).
 # - TI-3 `s_inputs` entries are frozen feature names (`FEATURE_NAMES`) or
 #   "model:<id>" of the trial's own declared model. Never allowed:
 #   "sigma_hat" (the sizing estimator's output) and, for a trial sized by
@@ -230,10 +234,10 @@ def null_path(source: HourlySource, seed: str, p: int, hours: int) -> np.ndarray
 #   "logistic" (protocol `logistic_use`), "sign_of_vol_scaled_target". Both
 #   model the vol-scaled target of l.103-105 at the trial's horizon, so
 #   G-14 applies to every model trial and is a frozen N/A without a model
-#   (`g14_applies`). PENDING (S3R-R3): whether C-12 (1) "fit a model of the
-#   vol-scaled target" covers the sign target is a clause-specific binding
-#   for the owner; this default (G-14 mandatory, the stricter reading)
-#   stands until decided. Class-specific limits are checked in slice S6.
+#   (`g14_applies`). Owner decision 2026-10-16 (S3R-R3,
+#   `OWNER_DECISION_S3R_R3_G14_SIGN_MODELS.md`): C-12 (1) covers the sign
+#   target, so G-14 is mandatory for logistic trials too. Class-specific
+#   limits are checked in slice S6.
 # - TI-6 (S3-R2) `horizon_hours` is one of 24, 72, 168; `warmup_hours` >=
 #   0; `parameter_point` maps names to scalars, and `grid` maps the same
 #   names to value lists containing the point; G-8 reads its neighbours
@@ -242,7 +246,8 @@ def null_path(source: HourlySource, seed: str, p: int, hours: int) -> np.ndarray
 #   present, the point must equal the top-level field and every grid value
 #   must be allowed for it. A model hyperparameter is a grid dimension only
 #   as "model.<name>" (S3R-R2): `<name>` must be in `model.params` with the
-#   point's value, and a plain point name may not equal a `model.params`
+#   point's value, compared with its JSON type (`True` is not `1`; S3R2-R3),
+#   and a plain point name may not equal a `model.params`
 #   key. `model_params` gives the fit's parameters with the point's
 #   `model.` values, so a G-8 neighbour changes the fit, never the signal.
 # - TI-7 `g11_class` "constant_signal" is checked in every run (C-10 (2)):
@@ -271,6 +276,10 @@ MODEL_DIMENSION = "model."
 CODE_IMPORTS = ("math", "numpy")
 CODE_FORBIDDEN_NAMES = (
     "__import__", "importlib", "exec", "eval", "compile", "open", "__builtins__",
+    # numpy file input and output (S3R2-R1)
+    "load", "save", "savez", "savez_compressed", "loadtxt", "savetxt",
+    "genfromtxt", "fromfile", "tofile", "fromregex", "memmap", "DataSource",
+    "lib", "ctypeslib",
 )  # fmt: skip
 _HEX = frozenset("0123456789abcdef")
 
@@ -285,8 +294,9 @@ def _scalar(value: object, name: str) -> None:
 
 
 def _code_ref(value: object, name: str) -> None:
-    if not isinstance(value, str) or value.count(":") != 1 or "" in value.split(":"):
-        raise TrialError(f"{name} must be 'module:function', got {value!r}")
+    parts = value.split(":") if isinstance(value, str) else []
+    if len(parts) != 2 or not all(x.isidentifier() for x in parts):
+        raise TrialError(f"{name} must be 'module:function', top-level, got {value!r}")
 
 
 def _sha256_hex(value: object, name: str) -> None:
@@ -305,6 +315,10 @@ def _mapping(value: object, name: str) -> dict[str, Any]:
     for k in value:
         _text(k, f"{name} key")
     return value
+
+
+def _typed(value: object) -> tuple[str, object]:
+    return type(value).__name__, value
 
 
 def check_trial(trial: dict[str, Any]) -> None:
@@ -375,7 +389,7 @@ def check_trial(trial: dict[str, Any]) -> None:
             raise TrialError(f"parameter_point {k} is a model param: use model.{k}")
         if k.startswith(MODEL_DIMENSION):
             name = k[len(MODEL_DIMENSION) :]
-            if name not in model_keys or model["params"][name] != v:
+            if name not in model_keys or _typed(model["params"][name]) != _typed(v):
                 raise TrialError(f"{k} must be a model param with the point's value")
     check_s_inputs(trial)
 
@@ -457,7 +471,12 @@ def check_code(source: bytes, name: str) -> None:
         elif isinstance(node, ast.ImportFrom):
             if node.level:
                 raise TrialError(f"{name}: relative import")
+            if any(a.name == "*" for a in node.names):
+                raise TrialError(f"{name}: import *")
             roots = [(node.module or "").split(".")[0]]
+            used = [a.name for a in node.names if a.name in CODE_FORBIDDEN_NAMES]
+            if used:
+                raise TrialError(f"{name} uses {used[0]}")
         else:
             roots = []
         bad = [r for r in roots if r not in CODE_IMPORTS and r != "__future__"]

@@ -180,7 +180,7 @@ def _trial(**change: object) -> dict[str, object]:
     t: dict[str, object] = {
         "trial_id": "t000",
         "family": "trend",
-        "signal": "calibration.seeds:sha",
+        "signal": "trial_signal:s",
         "signal_sha256": "a" * 64,
         "overlay": None,
         "overlay_sha256": None,
@@ -259,6 +259,8 @@ def test_s_inputs_are_frozen_features_or_the_trials_own_model() -> None:
         {"grid": {"span": [24, 72, 72]}},
         {"grid": {"other": [1]}},
         {"signal": "no_colon"},
+        {"signal": "calibration.seeds:sha"},  # S3R2-R2: not top-level
+        {"overlay": "pkg.mod:f", "overlay_sha256": "b" * 64},
         {"signal_sha256": "A" * 64},
         {"overlay_sha256": "b" * 64},  # without an overlay
         {"trial_id": ""},
@@ -326,7 +328,12 @@ def test_code_runs_from_exactly_the_hashed_bytes(
         ("from . import x\n", "relative"),
         ("import numpy.linalg as la\nimport math\n", None),
         ("x = __import__('os')\n", "uses"),
-        ("import numpy as np\nf = np.load\ng = open\n", "uses"),
+        ("import numpy as np\nf = np.load\n", "uses"),
+        ("g = open\n", "uses"),
+        ("from numpy import load\n", "uses"),  # S3R2-R1
+        ("from numpy import *\n", "import"),
+        ("import numpy as np\nx = np.lib.npyio\n", "uses"),
+        ("import numpy as np\nx = np.fromfile\n", "uses"),
         ("def s(:\n", "parse"),
     ],
 )
@@ -387,6 +394,15 @@ def test_model_hyperparameters_enter_the_grid_only_as_model_dimensions() -> None
     with pytest.raises(screen.TrialError):
         screen.check_trial(
             _trial(parameter_point={"model.alpha": "1"}, grid={"model.alpha": ["1"]})
+        )
+    flag = {**MODEL, "params": {"fit_intercept": True}}  # S3R2-R3: True is not 1
+    with pytest.raises(screen.TrialError):
+        screen.check_trial(
+            _trial(
+                model=flag,
+                parameter_point={"model.fit_intercept": 1},
+                grid={"model.fit_intercept": [1, 0]},
+            )
         )
 
 
