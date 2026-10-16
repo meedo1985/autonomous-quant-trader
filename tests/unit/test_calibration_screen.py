@@ -173,6 +173,9 @@ REF_FIRST_BAR = [
 # --- S3: the trial interface ---------------------------------------------
 
 
+MODEL = {"id": "m", "class": "ridge", "params": {}, "target": "vol_scaled_target"}
+
+
 def _trial(**change: object) -> dict[str, object]:
     t: dict[str, object] = {
         "trial_id": "t000",
@@ -212,7 +215,12 @@ def test_the_falsifier_rejects_sigma_hat_and_its_identical_feature_in_s_inputs()
 
 
 def test_s_inputs_are_frozen_features_or_the_trials_own_model() -> None:
-    model = {"id": "m1", "class": "ridge", "params": {"alpha": "1.0"}}
+    model = {
+        "id": "m1",
+        "class": "ridge",
+        "params": {"alpha": "1.0"},
+        "target": "vol_scaled_target",
+    }
     screen.check_trial(_trial(model=model, s_inputs=["model:m1", "ret_24h"]))
     for bad in (["model:m2"], ["volume"], ["ret_24h", "ret_24h"], "ret_24h"):
         with pytest.raises(screen.TrialError):
@@ -229,8 +237,21 @@ def test_s_inputs_are_frozen_features_or_the_trials_own_model() -> None:
         {"sigma": "EWMA_72h"},  # only the vol family may choose
         {"family": "vol", "sigma": "EWMA_100h"},
         {"g11_class": "other"},
-        {"model": {"id": "m", "class": "mlp", "params": {}}},
-        {"model": {"id": "m", "class": "ridge", "params": {"alpha": 1.5}}},
+        {"model": {**MODEL, "class": "mlp"}},
+        {"model": {**MODEL, "params": {"alpha": 1.5}}},
+        {"model": {**MODEL, "params": {1: "1.0"}}},  # S3-R5
+        {"model": {"id": "m", "class": "ridge", "params": {}}},  # no target
+        {"model": {**MODEL, "class": "logistic"}},  # S3-R3: needs the sign target
+        {"model": {**MODEL, "target": "sign_of_vol_scaled_target"}},
+        {"family": "fixed_size"},  # S3-R4
+        {"family": "other"},
+        {"parameter_point": {1: 72}, "grid": {1: [72]}},  # S3-R5
+        {"parameter_point": {"tau": "0.40"}, "grid": {"tau": ["0.40"]}},  # S3-R2
+        {"parameter_point": {"tau": "0.60"}, "grid": {"tau": ["0.60", "0.70"]}},
+        {
+            "parameter_point": {"sigma": "EWMA_168h"},
+            "grid": {"sigma": ["HAR_RV", "EWMA_168h"]},  # trend: EWMA_168h only
+        },
         {"horizon_hours": 48},
         {"horizon_hours": True},
         {"warmup_hours": -1},
@@ -274,15 +295,59 @@ def test_the_set_hash_is_ordered_bounded_and_unique() -> None:
         screen.trial_set_sha256(many)
 
 
-def test_code_loads_only_from_the_declared_source() -> None:
-    from calibration import seeds
+def test_code_runs_from_exactly_the_hashed_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # S3-R1: a module imported earlier and then edited must not be used
+    import importlib
+    import sys
 
-    good = hashlib.sha256(Path(seeds.__file__).read_bytes()).hexdigest()
-    assert screen.load("calibration.seeds:sha", good) is seeds.sha
+    src = tmp_path / "s3_trial_signal.py"
+    src.write_text("def s(inputs, params):\n    return 1\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    old = importlib.import_module("s3_trial_signal")
+    src.write_text("def s(inputs, params):\n    return 2\n", encoding="utf-8")
+    new = hashlib.sha256(src.read_bytes()).hexdigest()
+    fn = screen.load("s3_trial_signal:s", new)
+    assert fn({}, {}) == 2 and old.s({}, {}) == 1
+    assert sys.modules["s3_trial_signal"] is old  # the loaded module is not registered
     with pytest.raises(screen.TrialError, match="declared source"):
-        screen.load("calibration.seeds:sha", "0" * 64)
+        screen.load("s3_trial_signal:s", "0" * 64)
     with pytest.raises(screen.TrialError, match="not a function"):
-        screen.load("calibration.seeds:nothing", good)
+        screen.load("s3_trial_signal:nothing", new)
+    del sys.modules["s3_trial_signal"]
+
+
+def test_sizing_dimensions_are_bound_and_kept_from_the_signal() -> None:
+    t = _trial(
+        parameter_point={"span": 72, "tau": "0.60"},
+        grid={"span": [24, 72], "tau": ["0.40", "0.60", "0.80"]},
+    )
+    screen.check_trial(t)
+    assert screen.signal_params(t) == {"span": 72}
+    vol = _trial(
+        family="vol",
+        sigma="HAR_RV",
+        parameter_point={"sigma": "HAR_RV"},
+        grid={"sigma": ["EWMA_72h", "HAR_RV"]},
+    )
+    screen.check_trial(vol)
+    assert screen.signal_params(vol) == {}
+
+
+def test_g14_applies_to_model_trials_only() -> None:
+    logit = {**MODEL, "class": "logistic", "target": "sign_of_vol_scaled_target"}
+    screen.check_trial(_trial(model=logit))
+    assert screen.g14_applies(_trial(model=MODEL))
+    assert not screen.g14_applies(_trial())
+
+
+def test_the_overlay_may_only_keep_the_target_or_exit() -> None:
+    target = np.array([0.3, 0.5, 0.0, 0.7])
+    assert not screen.overlay_violation(target, np.array([0.3, 0.0, 0.0, 0.7]))
+    assert screen.overlay_violation(target, np.array([0.15, 0.5, 0.0, 0.7]))
+    assert screen.overlay_violation(target, np.array([0.3, 0.5, 0.2, 0.7]))
+    assert screen.overlay_violation(target, target[:3])
 
 
 def test_the_signal_sees_only_its_declared_inputs() -> None:

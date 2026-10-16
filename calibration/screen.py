@@ -48,6 +48,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import importlib.util
+import types
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -193,30 +194,48 @@ def null_path(source: HourlySource, seed: str, p: int, hours: int) -> np.ndarray
 # Readings TI-n (proposed, for review):
 # - TI-1 A trial is a canonical-JSON object with exactly the fields of
 #   `TRIAL_FIELDS`; decimals are strings, as in `aqt.core.preregistration`
-#   (`tau` one of "0.40", "0.60", "0.80"). `trial_sha256` is `sha` of it and
-#   `trial_set_sha256` is `sha({"trials": [trial_sha256, ...]})` in declared
-#   order, which is the §7.2 seed input. A set has 1 to 20 trials (§13 rev 7g
-#   item 1) with distinct `trial_id`s.
-# - TI-2 `signal` and `overlay` name code as "module:function" with the
-#   SHA-256 of the module's source file; `load` refuses a different file.
-#   The screen passes `signal` only its `s_inputs` (C-10 (1)), as a mapping
-#   name -> hourly array, and nothing else.
+#   (`tau` one of "0.40", "0.60", "0.80"); every mapping key is a non-empty
+#   string (S3-R5). `trial_sha256` is `sha` of it and `trial_set_sha256` is
+#   `sha({"trials": [trial_sha256, ...]})` in declared order, which is the
+#   §7.2 seed input. A set has 1 to 20 trials (§13 rev 7g item 1) with
+#   distinct `trial_id`s.
+# - TI-2 (S3-R1) `signal` and `overlay` name code as "module:function"
+#   with the SHA-256 of the module's source file. `load` compiles exactly
+#   the hashed bytes into a fresh module that is not put in `sys.modules`:
+#   no cached module and no package `__init__` of its own is used. Anything
+#   that module imports is bound elsewhere: the standard library and the
+#   image libraries by the image digest, and `aqt` / `calibration` by the
+#   engine-commit check of the screen driver (slice S7, as `mapping.py`
+#   MP-4 does). The signal is called as `signal(inputs, params)`: `inputs`
+#   holds only its `s_inputs` (C-10 (1)), name -> hourly array, and
+#   `params` is `parameter_point` without `tau` and `sigma` (S3-R2).
 # - TI-3 `s_inputs` entries are frozen feature names (`FEATURE_NAMES`) or
 #   "model:<id>" of the trial's own declared model. Never allowed:
 #   "sigma_hat" (the sizing estimator's output) and, for a trial sized by
 #   EWMA_168h, the identical frozen feature `ewma_vol_168h` (REG (A), D-20
 #   B5). Every other volatility feature stays allowed.
-# - TI-4 `sigma` is "EWMA_168h", or in the "vol" family one of the
-#   protocol's allowed volatility-family estimators (C-10 (1)).
-# - TI-5 `model` is null or {"id", "class", "params"} with `class` in the
-#   cycle's allowed classes (DRAFT §2.5, unchanged v1.0 value); a model
-#   trial fits the vol-scaled target, so G-14 applies to it and is a frozen
-#   N/A otherwise (C-12 (1)). Class-specific limits are checked in slice S6.
-# - TI-6 `horizon_hours` is one of 24, 72, 168; `warmup_hours` >= 0;
-#   `parameter_point` maps names to scalars, and `grid` maps the same names
-#   to value lists containing the point (G-8 reads its neighbours there).
+# - TI-4 (S3-R4) `family` is "trend" or "vol", the two families the D-19
+#   calibration covers (`calibration/rules.py` FAMILIES). There is no fixed-
+#   size class (C-10 (1), REG (A)). `sigma` is "EWMA_168h", or in the vol
+#   family one of the protocol's allowed volatility-family estimators.
+# - TI-5 (S3-R3) `model` is null or {"id", "class", "params", "target"}
+#   with `class` in the cycle's allowed classes (DRAFT §2.5, unchanged v1.0
+#   value) and `target` "vol_scaled_target" or, required for and only for
+#   "logistic" (protocol `logistic_use`), "sign_of_vol_scaled_target". Both
+#   model the vol-scaled target of l.103-105 at the trial's horizon, so
+#   G-14 applies to every model trial and is a frozen N/A without a model
+#   (`g14_applies`). Class-specific limits are checked in slice S6.
+# - TI-6 (S3-R2) `horizon_hours` is one of 24, 72, 168; `warmup_hours` >=
+#   0; `parameter_point` maps names to scalars, and `grid` maps the same
+#   names to value lists containing the point; G-8 reads its neighbours
+#   there and runs them through the same `params` and top-level fields.
+#   `tau` and `sigma` are grid dimensions only under those names: when
+#   present, the point must equal the top-level field and every grid value
+#   must be allowed for it.
 # - TI-7 `g11_class` "constant_signal" is checked in every run (C-10 (2)):
 #   `class_mismatch` is true when `s` is not identical at every hour.
+# - TI-8 (S3-R6) The overlay may only keep the target or set it to 0
+#   (C-10 (1)); the runner checks every output with `overlay_violation`.
 
 TRIAL_FIELDS = (
     "trial_id", "family", "signal", "signal_sha256", "overlay", "overlay_sha256",
@@ -224,14 +243,17 @@ TRIAL_FIELDS = (
     "parameter_point", "grid", "warmup_hours",
 )  # fmt: skip
 MAX_TRIALS = 20
+FAMILIES = ("trend", "vol")
 TAUS = ("0.40", "0.60", "0.80")
 DEFAULT_SIGMA = "EWMA_168h"
 VOL_SIGMAS = ("EWMA_72h", "EWMA_168h", "EWMA_336h", "HAR_RV", "GARCH_1_1")
 MODEL_CLASSES = ("linear", "ridge", "lasso", "elastic_net", "logistic", "lightgbm")
+MODEL_TARGETS = ("vol_scaled_target", "sign_of_vol_scaled_target")
 HORIZONS_HOURS = (24, 72, 168)
 G11_CLASSES = ("signal_timed", "constant_signal")
 SIGMA_HAT = "sigma_hat"
 SIGMA_IDENTICAL_FEATURE = {"EWMA_168h": "ewma_vol_168h"}
+SIZING_DIMENSIONS = ("tau", "sigma")
 _HEX = frozenset("0123456789abcdef")
 
 
@@ -259,12 +281,21 @@ def _text(value: object, name: str) -> None:
         raise TrialError(f"{name} must be a non-empty string")
 
 
+def _mapping(value: object, name: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise TrialError(f"{name} must be a mapping")
+    for k in value:
+        _text(k, f"{name} key")
+    return value
+
+
 def check_trial(trial: dict[str, Any]) -> None:
     """TI-1..TI-6: refuse (TrialError) any declaration outside the interface."""
     if not isinstance(trial, dict) or set(trial) != set(TRIAL_FIELDS):
         raise TrialError(f"fields must be exactly {TRIAL_FIELDS}")
     _text(trial["trial_id"], "trial_id")
-    _text(trial["family"], "family")
+    if trial["family"] not in FAMILIES:
+        raise TrialError(f"family must be one of {FAMILIES}")
     _code_ref(trial["signal"], "signal")
     _sha256_hex(trial["signal_sha256"], "signal_sha256")
     if trial["overlay"] is None:
@@ -275,21 +306,26 @@ def check_trial(trial: dict[str, Any]) -> None:
         _sha256_hex(trial["overlay_sha256"], "overlay_sha256")
     if trial["tau"] not in TAUS:
         raise TrialError(f"tau must be one of {TAUS}")
-    sigmas = VOL_SIGMAS if trial["family"] == "vol" else (DEFAULT_SIGMA,)
+    sigmas = allowed_sigmas(trial)
     if trial["sigma"] not in sigmas:
         raise TrialError(f"sigma must be one of {sigmas} in family {trial['family']}")
     if trial["g11_class"] not in G11_CLASSES:
         raise TrialError(f"g11_class must be one of {G11_CLASSES}")
     model = trial["model"]
     if model is not None:
-        if not isinstance(model, dict) or set(model) != {"id", "class", "params"}:
-            raise TrialError("model must be null or {id, class, params}")
+        model = _mapping(model, "model")
+        if set(model) != {"id", "class", "params", "target"}:
+            raise TrialError("model must be null or {id, class, params, target}")
         _text(model["id"], "model id")
         if model["class"] not in MODEL_CLASSES:
             raise TrialError(f"model class must be one of {MODEL_CLASSES}")
-        if not isinstance(model["params"], dict):
-            raise TrialError("model params must be a mapping")
-        for k, v in model["params"].items():
+        if model["target"] not in MODEL_TARGETS:
+            raise TrialError(f"model target must be one of {MODEL_TARGETS}")
+        if (model["class"] == "logistic") != (model["target"] == MODEL_TARGETS[1]):
+            raise TrialError(
+                "logistic needs, and only logistic may use, the sign target"
+            )
+        for k, v in _mapping(model["params"], "model params").items():
             _scalar(v, f"model params {k}")
     h = trial["horizon_hours"]
     if type(h) is not int or h not in HORIZONS_HOURS:
@@ -297,10 +333,9 @@ def check_trial(trial: dict[str, Any]) -> None:
     w = trial["warmup_hours"]
     if type(w) is not int or w < 0:
         raise TrialError("warmup_hours must be an integer >= 0")
-    point, grid = trial["parameter_point"], trial["grid"]
-    if not (isinstance(point, dict) and isinstance(grid, dict)) or set(point) != set(
-        grid
-    ):
+    point = _mapping(trial["parameter_point"], "parameter_point")
+    grid = _mapping(trial["grid"], "grid")
+    if set(point) != set(grid):
         raise TrialError("parameter_point and grid must map the same names")
     for k, v in point.items():
         _scalar(v, f"parameter_point {k}")
@@ -312,7 +347,15 @@ def check_trial(trial: dict[str, Any]) -> None:
         keys = [(type(x).__name__, x) for x in values]
         if len(set(keys)) != len(keys) or (type(v).__name__, v) not in keys:
             raise TrialError(f"grid {k} must hold distinct values including the point")
+    allowed = {"tau": TAUS, "sigma": sigmas}
+    for k in SIZING_DIMENSIONS:
+        if k in point and (point[k] != trial[k] or not set(grid[k]) <= set(allowed[k])):
+            raise TrialError(f"grid {k} must hold allowed values, the point = {k}")
     check_s_inputs(trial)
+
+
+def allowed_sigmas(trial: dict[str, Any]) -> tuple[str, ...]:
+    return VOL_SIGMAS if trial["family"] == "vol" else (DEFAULT_SIGMA,)
 
 
 def check_s_inputs(trial: dict[str, Any]) -> None:
@@ -351,15 +394,31 @@ def trial_set_sha256(trials: list[dict[str, Any]]) -> str:
     return sha({"trials": hashes})
 
 
+def g14_applies(trial: dict[str, Any]) -> bool:
+    """TI-5: G-14 is mandatory for a model trial, a frozen N/A otherwise."""
+    return trial["model"] is not None
+
+
+def signal_params(trial: dict[str, Any]) -> dict[str, Any]:
+    """TI-2: what the signal receives besides its inputs."""
+    point: dict[str, Any] = trial["parameter_point"]
+    return {k: v for k, v in point.items() if k not in SIZING_DIMENSIONS}
+
+
 def load(ref: str, sha256: str) -> Callable[..., Any]:
-    """TI-2: import `module:function` after checking its source file's hash."""
+    """TI-2: compile exactly the hashed source into a fresh, unregistered
+    module and return its function."""
     module_name, function = ref.split(":")
     spec = importlib.util.find_spec(module_name)
-    if spec is None or spec.origin is None:
-        raise TrialError(f"no module {module_name}")
-    if hashlib.sha256(Path(spec.origin).read_bytes()).hexdigest() != sha256:
+    if spec is None or spec.origin is None or not spec.origin.endswith(".py"):
+        raise TrialError(f"no Python source for {module_name}")
+    source = Path(spec.origin).read_bytes()
+    if hashlib.sha256(source).hexdigest() != sha256:
         raise TrialError(f"{module_name} is not the declared source")
-    fn: object = getattr(importlib.import_module(module_name), function, None)
+    module = types.ModuleType(module_name)
+    module.__file__ = spec.origin
+    exec(compile(source, spec.origin, "exec"), module.__dict__)  # noqa: S102
+    fn: object = module.__dict__.get(function)
     if not callable(fn):
         raise TrialError(f"{ref} is not a function")
     return fn
@@ -378,3 +437,8 @@ def signal_inputs(
 def class_mismatch(trial: dict[str, Any], s: np.ndarray) -> bool:
     """TI-7: a constant_signal trial whose s is not identical at every hour."""
     return trial["g11_class"] == "constant_signal" and bool(np.any(s != s[0]))
+
+
+def overlay_violation(target: np.ndarray, out: np.ndarray) -> bool:
+    """TI-8: an overlay output that is neither the target nor 0, hour by hour."""
+    return out.shape != target.shape or bool(np.any((out != target) & (out != 0)))
