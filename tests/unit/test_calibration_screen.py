@@ -326,7 +326,9 @@ def test_code_runs_from_exactly_the_hashed_bytes(
         ("import os\n", "imports"),
         ("from calibration import seeds\n", "imports"),
         ("from . import x\n", "relative"),
-        ("import numpy.linalg as la\nimport math\n", None),
+        ("import numpy as np\nimport math\nla = np.linalg\n", None),
+        ("import numpy.linalg as la\n", "imports"),  # S3R4-R1: no submodule
+        ("from numpy.lib.format import open_memmap\n", "imports"),
         ("x = __import__('os')\n", "uses"),
         ("import numpy as np\nf = np.load\n", "uses"),
         ("g = open\n", "uses"),
@@ -355,6 +357,8 @@ def test_trial_code_is_self_contained(code: str, message: str | None) -> None:
         "return globals()",
         "return __import__('os')",
         "import os\n    return os",
+        "from numpy.lib import format\n    return format",
+        "import numpy.linalg\n    return numpy",
     ],
 )
 def test_trial_code_runs_with_pure_builtins_only(
@@ -382,9 +386,13 @@ def test_honest_trial_code_runs(
     src = tmp_path / "s3_honest.py"
     src.write_text(
         "import math\nimport numpy as np\n\n"
+        "class Scale:\n"
+        "    def __init__(self, k):\n"
+        "        self.k = k\n\n"
         "def s(inputs, params):\n"
         "    x = np.asarray(inputs['ema_dist_72'], dtype=float)\n"
-        "    return np.maximum(0.0, np.sign(x)) * math.sqrt(params['k'])\n",
+        "    k = Scale(math.sqrt(params['k'])).k\n"
+        "    return np.maximum(0.0, np.sign(x)) * k\n",
         encoding="utf-8",
     )
     monkeypatch.syspath_prepend(str(tmp_path))

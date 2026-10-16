@@ -204,8 +204,9 @@ def null_path(source: HourlySource, seed: str, p: int, hours: int) -> np.ndarray
 # - TI-2 (S3-R1, S3R-R1) `signal` and `overlay` name code as
 #   "module:function", where `module` is a top-level module (no package, so
 #   no `__init__` runs), with the SHA-256 of its source file. The module is
-#   self-contained: it may import only `math` and `numpy` (bound by the
-#   image digest), never with `*`, and it may not name, as a name, an
+#   self-contained: it may import only the modules `math` and `numpy`
+#   themselves, no submodule (S3R4-R1; bound by the image digest), never
+#   with `*`, and it may not name, as a name, an
 #   attribute or an imported alias, `__import__`, `importlib`, `exec`,
 #   `eval`, `compile`, `open`, `__builtins__` or numpy's file input and
 #   output (`load`, `save`, `loadtxt`, `fromfile`, `memmap`, `lib`, ...;
@@ -213,8 +214,9 @@ def null_path(source: HourlySource, seed: str, p: int, hours: int) -> np.ndarray
 #   `load` checks the rest on the hashed bytes, then compiles exactly those
 #   bytes into a fresh module that is never put in `sys.modules`, whose
 #   builtins are only `CODE_BUILTINS` (pure computation: no `input`, `open`,
-#   `print`, `getattr`, `globals`, `breakpoint`, ...) and whose `__import__`
-#   admits only `math` and `numpy` (S3R3-R1). So everything a trial's code
+#   `print`, `getattr`, `globals`, `breakpoint`, ...; class definitions are
+#   allowed, S3R4-R2) and whose `__import__` admits only `math` and `numpy`
+#   themselves (S3R3-R1, S3R4-R1). So everything a trial's code
 #   can run is either its hashed file or the image. Disclosed: a deliberate
 #   evasion (for example through attribute tricks on objects numpy hands
 #   back) is a false declaration, not something these checks can rule out.
@@ -283,6 +285,7 @@ CODE_BUILTINS = (
     "float", "frozenset", "int", "isinstance", "len", "list", "map", "max",
     "min", "pow", "range", "reversed", "round", "set", "slice", "sorted",
     "str", "sum", "tuple", "zip", "True", "False", "None",
+    "__build_class__", "object", "staticmethod", "property",
     "ArithmeticError", "Exception", "IndexError", "KeyError",
     "OverflowError", "TypeError", "ValueError", "ZeroDivisionError",
 )  # fmt: skip
@@ -479,13 +482,13 @@ def check_code(source: bytes, name: str) -> None:
         raise TrialError(f"{name} does not parse: {e}") from e
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            roots = [a.name.split(".")[0] for a in node.names]
+            roots = [a.name for a in node.names]
         elif isinstance(node, ast.ImportFrom):
             if node.level:
                 raise TrialError(f"{name}: relative import")
             if any(a.name == "*" for a in node.names):
                 raise TrialError(f"{name}: import *")
-            roots = [(node.module or "").split(".")[0]]
+            roots = [node.module or ""]
             used = [a.name for a in node.names if a.name in CODE_FORBIDDEN_NAMES]
             if used:
                 raise TrialError(f"{name} uses {used[0]}")
@@ -507,7 +510,7 @@ def _code_import(
     level: int = 0,
 ) -> types.ModuleType:
     """TI-2: the only import trial code gets."""
-    if level or name.split(".")[0] not in (*CODE_IMPORTS, "__future__"):
+    if level or name not in (*CODE_IMPORTS, "__future__"):
         raise ImportError(f"trial code may import only {CODE_IMPORTS}, not {name}")
     return builtins.__import__(name, globals, locals, fromlist, level)
 
