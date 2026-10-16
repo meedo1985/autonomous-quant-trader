@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -496,3 +497,79 @@ def test_a_constant_signal_trial_must_be_constant() -> None:
     assert not screen.class_mismatch(const, np.full(5, 0.3))
     assert screen.class_mismatch(const, np.array([0.3, 0.3, 0.4]))
     assert not screen.class_mismatch(_trial(), np.array([0.3, 0.4]))
+
+
+# --- S5: G-11 shifts -------------------------------------------------------
+
+WINDOW = '["2022-01-01T00:00:00Z","2025-06-01T00:00:00Z"]'
+
+
+def test_g11_seed_follows_the_annex_formula() -> None:
+    # C-10 (3): json.dumps([SEED_DOMAIN, trial_seed, convention hash,
+    # "random_exposure_null", "BTCUSDT", "1.0", window id, 500])
+    material = (
+        '["aqt.statistics.stream.v1","' + "ab" * 32 + '",'
+        '"f3ba9362c5f1512fd24600775df2aa048a7e701c8f40c8cb00e97c2c644f515c",'
+        '"random_exposure_null","BTCUSDT","1.0",' + json.dumps(WINDOW) + ",500]"
+    )
+    assert (
+        screen.g11_seed("ab" * 32, WINDOW)
+        == hashlib.sha256(material.encode()).hexdigest()
+    )
+
+
+def test_screen_trial_seed_follows_the_annex_formula() -> None:
+    # C-10 (3) "Inside the D-19 screen"
+    seed = screen.screen_seed("00" * 32)
+    cj = '{"path":3,"screen_seed":"' + seed + '","trial_id":"t007"}'
+    assert (
+        screen.screen_trial_seed(seed, 3, "t007")
+        == hashlib.sha256(cj.encode()).hexdigest()
+    )
+
+
+def test_g11_shifts_are_500_distinct_days_inside_the_range() -> None:
+    for t_days, g in ((1247, 30), (1247, 45), (1059, 30)):
+        k = screen.g11_shifts("cd" * 32, WINDOW, t_days, g)
+        m = max(g, 30)
+        assert len(k) == 500 == len(set(k))
+        assert min(k) >= m and max(k) <= t_days - m
+    # the floor: g below 30 uses m = 30
+    assert screen.g11_shifts("cd" * 32, WINDOW, 1247, 5) == screen.g11_shifts(
+        "cd" * 32, WINDOW, 1247, 30
+    )
+
+
+def test_g11_is_unavailable_below_the_shift_range() -> None:
+    # T - 2m >= 499: m = 30 needs T >= 559
+    assert len(screen.g11_shifts("cd" * 32, WINDOW, 559, 30)) == 500
+    k = screen.g11_shifts("cd" * 32, WINDOW, 559, 30)
+    assert sorted(k) == list(range(30, 530))  # every value of P is used
+    with pytest.raises(screen.GateUnavailable) as e:
+        screen.g11_shifts("cd" * 32, WINDOW, 558, 30)
+    assert (e.value.gate, e.value.reason) == ("G-11", "INSUFFICIENT_SHIFT_RANGE")
+
+
+def test_g11_partial_fisher_yates_matches_an_independent_draw() -> None:
+    import random
+
+    seed = screen.g11_seed("ef" * 32, WINDOW)
+    rng = random.Random(int.from_bytes(bytes.fromhex(seed), "big"))
+    pool = list(range(30, 1247 - 30 + 1))
+    out = []
+    for i in range(500):
+        n = len(pool) - i
+        while (r := rng.getrandbits(n.bit_length())) >= n:
+            pass
+        pool[i], pool[i + r] = pool[i + r], pool[i]
+        out.append(pool[i])
+    assert screen.g11_shifts("ef" * 32, WINDOW, 1247, 30) == out
+
+
+def test_g11_reference_vectors() -> None:
+    """Frozen with screen.py (C-10 (3), GS-5): exact on every CPython."""
+    k = screen.g11_shifts("ab" * 32, WINDOW, 1247, 30)
+    assert k[:10] == [1008, 180, 1182, 403, 592, 827, 352, 109, 479, 1142]
+    assert screen.g11_shifts_sha256(k) == (
+        "a63398708b99fbd5f0f5c8cee5f497ae79fab2a2b1bfee0c53577fac82bce911"
+    )

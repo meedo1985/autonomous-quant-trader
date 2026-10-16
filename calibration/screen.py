@@ -1,10 +1,10 @@
 """Declared-strategy screen of the D-19 preregistration §7.2 (A-U1).
 
 Build slices (`review/d19-engine/SCREEN_PLAN.md`): S1, the `n_S = 30`
-simulated null hourly BTC/ETH paths; S3, the trial interface. Later slices
-add the event-contract runs and the seven screened gates to this file, which
-the qualification object binds by its bytes (DRAFT R-8, qobj `LATER`); it
-imports only engine-commit code.
+simulated null hourly BTC/ETH paths; S3, the trial interface; S5, the G-11
+shifts. Later slices add the event-contract runs and the seven screened
+gates to this file, which the qualification object binds by its bytes
+(DRAFT R-8, qobj `LATER`); it imports only engine-commit code.
 
 §7.2 "Paths", read as follows (readings SP-n, for review):
 - SP-1 Source rows: the exploration-partition 1h bars of BTCUSDT and
@@ -50,6 +50,8 @@ import builtins
 import hashlib
 import importlib
 import importlib.util
+import json
+import random
 import types
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -58,6 +60,7 @@ from typing import Any
 
 import numpy as np
 
+import aqt.metrics.statistics as st
 from aqt.data.bars import BarSeries
 from aqt.data.klines import EXPLORATION, build_exploration_manifest
 from aqt.features.factory import FEATURE_NAMES
@@ -568,3 +571,98 @@ def class_mismatch(trial: dict[str, Any], s: np.ndarray) -> bool:
 def overlay_violation(target: np.ndarray, out: np.ndarray) -> bool:
     """TI-8: an overlay output that is neither the target nor 0, hour by hour."""
     return out.shape != target.shape or bool(np.any((out != target) & (out != 0)))
+
+
+# --- S5: G-11 shifts (Annex C C-10 (3), D-20 B3, B6) ------------------------
+#
+# Readings GS-n (proposed, for review):
+# - GS-1 Inside the screen the null-stream trial seed is
+#   `SHA256(cj({"path": p, "screen_seed": <hex>, "trial_id": <id>}))`
+#   (`screen_trial_seed`, C-10 (3) "Inside the D-19 screen"), and
+#   `evaluation_window_id` is the C2 cycle's C-0 window id, which the
+#   declaration fixes and the caller passes as its canonical
+#   `["<w0>","<w1>"]` string.
+# - GS-2 `g11_seed` is the SHA-256 of `json.dumps([SEED_DOMAIN,
+#   trial_seed_hex, CONVENTION_DOCUMENT_SHA256, "random_exposure_null",
+#   "BTCUSDT", "1.0", evaluation_window_id, 500], separators=(",", ":"),
+#   ensure_ascii=False)`, with `SEED_DOMAIN` and the convention hash taken
+#   from `aqt.metrics.statistics` (the R-8 bound module); "1.0" is a string,
+#   as the annex writes it.
+# - GS-3 One CPython `random.Random`, seeded with the seed's 256-bit
+#   integer; `_draw(n)` is `bootstrap_indices`' rejection sampling on
+#   `getrandbits(n.bit_length())`; with `P = [m, ..., T - m]`, for i = 0..499,
+#   `j = i + _draw(len(P) - i)`, swap `P[i]`, `P[j]`, `k_i = P[i]`.
+# - GS-4 `m = max(g, 30)`; the gate is available only if `T - 2m >= 499`
+#   (then `P` has at least 500 values); otherwise `GateUnavailable` with
+#   reason `INSUFFICIENT_SHIFT_RANGE`. `T` and `g` are whole days.
+# - GS-5 Reference vectors (frozen in the unit test, exact on every CPython:
+#   Mersenne Twister and integer seeding are stable): the first 10 `k_i` and
+#   `g11_shifts_sha256` = `sha({"k": [k_0, ..., k_499]})` for fixed inputs.
+
+G11_DRAWS = 500
+G11_FLOOR_DAYS = 30
+G11_PURPOSE = "random_exposure_null"
+G11_ASSET = "BTCUSDT"
+G11_COST = "1.0"
+
+
+class GateUnavailable(Exception):
+    """A screened gate cannot be computed; `reason` is its cause code."""
+
+    def __init__(self, gate: str, reason: str) -> None:
+        super().__init__(f"{gate} UNAVAILABLE: {reason}")
+        self.gate = gate
+        self.reason = reason
+
+
+def screen_trial_seed(seed: str, p: int, trial_id: str) -> str:
+    """GS-1: the null-stream trial seed of trial `trial_id` on path `p`."""
+    return sha({"path": p, "screen_seed": seed, "trial_id": trial_id})
+
+
+def g11_seed(trial_seed_hex: str, window_id: str) -> str:
+    """GS-2."""
+    material = json.dumps(
+        [
+            st.SEED_DOMAIN,
+            trial_seed_hex,
+            st.CONVENTION_DOCUMENT_SHA256,
+            G11_PURPOSE,
+            G11_ASSET,
+            G11_COST,
+            window_id,
+            G11_DRAWS,
+        ],
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def _draw(generator: random.Random, n: int) -> int:
+    """GS-3: `bootstrap_indices`' uniform draw in [0, n)."""
+    drawn = generator.getrandbits(n.bit_length())
+    while drawn >= n:
+        drawn = generator.getrandbits(n.bit_length())
+    return drawn
+
+
+def g11_shifts(
+    trial_seed_hex: str, window_id: str, t_days: int, g_days: int
+) -> list[int]:
+    """GS-3, GS-4: the 500 day shifts `k_i`, or `GateUnavailable`."""
+    m = max(g_days, G11_FLOOR_DAYS)
+    if t_days - 2 * m < G11_DRAWS - 1:
+        raise GateUnavailable("G-11", "INSUFFICIENT_SHIFT_RANGE")
+    seed = g11_seed(trial_seed_hex, window_id)
+    generator = random.Random(int.from_bytes(bytes.fromhex(seed), "big"))
+    pool = list(range(m, t_days - m + 1))
+    for i in range(G11_DRAWS):
+        j = i + _draw(generator, len(pool) - i)
+        pool[i], pool[j] = pool[j], pool[i]
+    return pool[:G11_DRAWS]
+
+
+def g11_shifts_sha256(shifts: list[int]) -> str:
+    """GS-5."""
+    return sha({"k": shifts})
