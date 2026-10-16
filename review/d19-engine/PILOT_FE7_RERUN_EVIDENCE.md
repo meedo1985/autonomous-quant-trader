@@ -163,3 +163,21 @@ PASS: the resumed threshold run equals the clean run
 ```
 
 **Result:** PASS on the rebuilt image, as on the first run; that includes `pilot-q5-trend-k20`, whose chain was cut by the killed worker this time. The first run's clean-run chain heads were not recorded, so they cannot be compared with these.
+
+## Step G: development run started, memory, forward paper (verbatim)
+
+The owner's first `memwatch` ran before any development run had been started (his paste shows no `run dev` line before it), so it correctly printed `FAIL: no sample showed 2 workers running`; `status` then still showed the finished threshold run. He then started the run:
+
+```
+root@aqt-server:/opt/aqt-d19/app/deploy/calibration# sudo sh d19.sh run dev
+6c4cb48f8b23bbae0c00a56bcbf86ba7f7554e2560988eb57f5fe98d39060d9a
+Started. Progress: sudo sh d19.sh status
+root@aqt-server:/opt/aqt-d19/app/deploy/calibration# sudo sh d19.sh memwatch
+2 workers in 60 of 60 samples; this run's memory peak: 413155328 bytes
+root@aqt-server:/opt/aqt-d19/app/deploy/calibration# systemctl status aqt-paper --no-pager | head -3
+● aqt-paper.service - aqt forward paper trading
+     Loaded: loaded (/etc/systemd/system/aqt-paper.service; enabled; preset: enabled)
+     Active: active (running) since Mon 2026-10-05 06:30:33 UTC; 1 week 4 days ago
+```
+
+(The `systemctl` lines were sent before the run started; forward paper had been running unchanged since 2026-10-05.) Both workers ran in every sample. This run's own peak, 413,155,328 bytes (about 413 MB), read from the run container's `memory.peak`, is in line with the first run (slice peak about 435 MB twelve minutes into its development run, about 467 MB overall). The first run's `memwatch` itself was broken then and fixed later (`ec5349f`), so there is no exact first-run `memwatch` number to compare.
