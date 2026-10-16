@@ -548,6 +548,10 @@ def test_g11_is_unavailable_below_the_shift_range() -> None:
     with pytest.raises(screen.GateUnavailable) as e:
         screen.g11_shifts("cd" * 32, WINDOW, 558, 30)
     assert (e.value.gate, e.value.reason) == ("G-11", "INSUFFICIENT_SHIFT_RANGE")
+    # S5-R1: the boundary moves with g (m = 45 needs T >= 589)
+    assert len(screen.g11_shifts("cd" * 32, WINDOW, 589, 45)) == 500
+    with pytest.raises(screen.GateUnavailable):
+        screen.g11_shifts("cd" * 32, WINDOW, 588, 45)
 
 
 def test_g11_partial_fisher_yates_matches_an_independent_draw() -> None:
