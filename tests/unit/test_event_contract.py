@@ -8,6 +8,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from aqt.backtest.costs import (
+    FeeQuote,
+    FeeSchedule,
+    FeeTier,
+    ewma_hourly_volatility_bps_series,
+    hourly_log_returns_bps,
+    per_side_cost_bps,
+)
 from aqt.backtest.engine import ExposureTarget, run_backtest
 from aqt.backtest.event_contract import EventContractError, run_event_contract
 from aqt.data.bars import Bar, BarSeries
@@ -111,6 +119,43 @@ def test_execution_delay_fills_at_the_next_instant_and_drops_at_the_end() -> Non
     assert ec.exposure == (0.0, 0.5, 0.5, 0.0)
     ec = run_event_contract(series, [0.0, 0.0, 0.0, 0.5], 21, delay=1)
     assert ec.fills == () and ec.dropped == 1  # 00:00 order due after the end
+
+
+def test_a_due_fill_comes_before_the_same_instants_decision() -> None:
+    # S2-R1: 0.5 decided at 00:00 fills at 01:00; the 0.3 decided at 01:00 is
+    # judged against the filled 0.5 (a reduction, due at 02:00). Deciding
+    # before the fill would see 0 and refuse an intraday increase.
+    series = _series(_flat(60))
+    ec = run_event_contract(series, [0.5, 0.3, 0.3, 0.3], 24, delay=1)
+    got = [(f.decision_instant, f.fill_instant, f.exposure) for f in ec.fills]
+    assert got == [(24, 25, 0.5), (25, 26, 0.3)]
+
+
+def test_delayed_costs_use_decision_volatility_and_fill_time_fees() -> None:
+    # S2-R2: the fee changes at the fill instant and the volatility jumps in
+    # the decision-to-fill hour; the cost must use the fill's fee and the
+    # decision's sigma (costs.trade_cost)
+    opens = _walk(25) + [200.0] + _walk(40, seed=5)  # bar 24 closes at 200
+    series = _series(opens)
+    fees = FeeSchedule(
+        (
+            FeeTier(START, 0.0),
+            FeeTier(series.bars[25].open_time, 50.0),
+        )
+    )
+    ec = run_event_contract(series, [0.6, 0.6], 24, fees=fees, delay=1)
+    sigma = ewma_hourly_volatility_bps_series(hourly_log_returns_bps(series))
+    want = per_side_cost_bps(
+        sigma_hourly_bps=sigma[24 - 3], fee=FeeQuote(50.0, "schedule")
+    ).cost_quote(0.6)
+    assert ec.fills[0].fill_instant == 25 and ec.fills[0].cost == want
+    wrong_sigma = per_side_cost_bps(
+        sigma_hourly_bps=sigma[25 - 3], fee=FeeQuote(50.0, "schedule")
+    ).cost_quote(0.6)
+    wrong_fee = per_side_cost_bps(
+        sigma_hourly_bps=sigma[24 - 3], fee=FeeQuote(0.0, "schedule")
+    ).cost_quote(0.6)
+    assert want not in (wrong_sigma, wrong_fee)
 
 
 def test_a_delayed_reduction_never_fills_as_an_increase() -> None:
