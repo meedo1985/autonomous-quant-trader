@@ -89,4 +89,4 @@ slice memory peak: 466993152 bytes
 
 FR2-2 failing-chain check: **PASS**. The owner then resumed with `sudo sh d19.sh run threshold`.
 
-Open question: the slice memory peak (466,993,152 bytes) after three minutes matches the first run's overall peak almost exactly. If the slice counter is not reset between runs, this number is the earlier peak, not this run's. To check before the findings rely on it.
+Note on memory: `status` reads the slice's `MemoryPeak` (`d19.sh` line 146), which counts from when the systemd slice started, not from this run. 466,993,152 bytes after three minutes matches the first run's overall peak, so it is most likely carried over from that run (the server has not been rebooted). This run's own peak comes from `memwatch` in step G, which reads the run container's own `memory.peak` (`d19.sh` line 202).
