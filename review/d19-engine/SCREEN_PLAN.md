@@ -25,7 +25,7 @@ Sources: prereg §7.2 and §10; §13 rev 7g item 1 (20 trials, not 80); Annex C 
 
 ## 3. What is missing (the real size of the job)
 
-1. **The event-contract runner (C-6).** The current backtester (`src/aqt/backtest/engine.py`) refuses delayed fills and does not implement the C-6 band, clamp and clock rules. G-5, G-6, G-7 and G-11 all need C-6. **Recommended:** build C-6 once, as its own slice, in `src/aqt/backtest/`, because every later gate run and C2 itself must use the same contract. Two copies would be the kind of divergence G-13 exists to catch. This is protected code (§16).
+1. **The event-contract runner (C-6).** The current backtester (`src/aqt/backtest/engine.py`) refuses delayed fills and does not implement the C-6 band, clamp and clock rules. G-5, G-6, G-7 and G-11 all need C-6. This is protected code (§16). **Where it lives is constrained by the binding:** the qualification object binds `calibration/screen.py` by its bytes and everything else by the engine commit in the full run's definition (DRAFT R-8, `calibration/qobj.py` `LATER`). Code merged into `src/` after that commit is bound by nothing. So either C-6 is merged into `src/aqt/backtest/` **before** the full run's definition is recorded (then the engine commit binds it, and C2 can reuse the same code), or it lives inside `screen.py`. Recommended: the first, if S2 is ready before the full run starts; otherwise inside `screen.py`, with the production backtester later required to match it. Decided at S2, with review.
 2. **The trial declaration format.** The hashed interface of C-10 (1)-(2): `s`, `τ` ∈ {0.40, 0.60, 0.80}, `σ̂` (EWMA_168h or a vol-family estimator), overlay, `s_inputs`, `g11_class`, model class and parameter point, declared grid (for G-8), horizon, warm-up. Plus the REG (A) `s_inputs` enforcement and its falsifier test (rejects `ewma_vol_168h` or `σ̂` in a `σ̂`-sized trial's `s_inputs`).
 3. **The walk-forward model pipeline** (protocol l.198-214: windows, purge, embargo) for G-14's 500 refits. `src/aqt/models` and `src/aqt/validation` are empty today.
 4. **The seven gate availability checks** and the null-path generator.
@@ -34,7 +34,7 @@ Sources: prereg §7.2 and §10; §13 rev 7g item 1 (20 trials, not 80); Annex C 
 
 | # | Slice | Main content | Frozen reference vectors |
 |---|---|---|---|
-| S1 | Null paths | §7.2 path builder: joint hourly bootstrap (mean block 168 h), shared signs (mean 24 h), the OHLC sign flip and chaining, length = C2 window + warm-up; streams from `screen_seed` | first path's first bars + SHA-256 of all 30 |
+| S1 | Null paths | §7.2 path builder: joint hourly bootstrap (mean block 168 h), shared signs (mean 24 h), the OHLC sign flip and chaining, length = C2 window + warm-up; streams from `screen_seed` | draws (rows, signs) exact in the unit test; float path bit-exact on the pinned image at S7 |
 | S2 | C-6 runner | event contract in `src/aqt/backtest/`, 1x/2x cost, execution delay, the reduction-to-0 rule, the decision-time clock; tests from each C-6 clause | — |
 | S3 | Trial interface | declaration schema + hash, `s_inputs` gate (falsifier test), `g11_class` constant-signal check | — |
 | S4 | Simple gates | G-3, G-5, G-7 on C-6; G-6 feature lag (`t − 1h` inputs); G-8 neighbours from the declared grid | — |
