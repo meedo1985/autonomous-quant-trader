@@ -1531,3 +1531,54 @@ def test_g11_needs_its_streams_and_is_na_for_constant_signals(
     const = _screen_trial(tmp_path, monkeypatch, code, g11_class="constant_signal")
     got = screen.screen_gates(const, _screen_path(), W0, WINDOW_H)  # no stream needed
     assert got["G-11"] == screen.NA
+
+
+def test_every_g11_draw_is_scored_and_one_bad_draw_makes_it_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # S5B-R1: 500 draw statistics are computed; an unavailable one counts
+    state = {"draws": 0, "scored": 0, "fail_at": 0}
+    real_targets, real_stats = screen.g11_targets, screen.leg_stats
+
+    def targets(*a: Any) -> list[float]:
+        state["draws"] += 1
+        return real_targets(*a)
+
+    def stats(*a: Any) -> dict[str, float]:
+        if state["draws"]:
+            state["scored"] += 1
+            if state["draws"] == state["fail_at"]:
+                raise screen.RunUnavailable("INJECTED_DRAW")
+        return real_stats(*a)
+
+    monkeypatch.setattr(screen, "g11_targets", targets)
+    monkeypatch.setattr(screen, "leg_stats", stats)
+    trial = _screen_trial(tmp_path, monkeypatch)
+    got = screen.screen_gates(trial, _g11_path(), W0, WINDOW_G11_H, *NULL_STREAM)
+    assert got["G-11"] is None and state["scored"] == 500
+    state.update(draws=0, scored=0, fail_at=250)
+    got = screen.screen_gates(trial, _g11_path(), W0, WINDOW_G11_H, *NULL_STREAM)
+    assert got["G-11"] == "INJECTED_DRAW" and state["scored"] == 250
+
+
+def test_a_g11_draw_overlay_sees_the_real_hour_and_starts_fresh() -> None:
+    # S5B-R2 (C-10 (4)): the overlay reads the market at the real hour and
+    # gets fresh state for every draw
+    n = 48
+    closes = [100.0 + i for i in range(60)]
+    cols = {name: tuple([1.0] * 60) for name in FEATURE_NAMES}
+    seen: list[tuple[float, int]] = []
+
+    def overlay(
+        target: float, market: dict[str, float], state: dict[str, int]
+    ) -> float:
+        seen.append((market["close"], state.get("n", 0)))
+        state["n"] = state.get("n", 0) + 1
+        return target
+
+    trial = {**_trial(), "tau": "0.40"}
+    for shift in (1, 2):
+        seen.clear()
+        screen.g11_targets(trial, overlay, [0.1] * n, cols, 0, closes, 1, n, shift)
+        assert [c for c, _ in seen] == closes[0:n]  # bar j0 + i - 1, unshifted
+        assert [k for _, k in seen] == list(range(n))  # state starts at 0
