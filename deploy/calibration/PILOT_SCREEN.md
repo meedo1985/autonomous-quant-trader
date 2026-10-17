@@ -4,7 +4,7 @@
 
 **What runs.** The 20 example trials in `deploy/calibration/screen-pilot/` (8 trend rules, 6 vol rules, 6 models: linear, ridge, lasso, elastic net, logistic, LightGBM at its largest allowed size), each on all 30 null paths, every screened gate. It is a measurement only: nothing is declared, nothing is decided, and forward paper keeps running untouched.
 
-**Engine commit:** `336e3221a1a5c7d60cf39638900e8baa19d68651`.
+**Engine commit:** `ebdf20806a0e59bde9305bc052a18c98fd3a7b33`.
 
 **Time:** about 15 minutes of your attention, then about 15 hours of running (an estimate from the laptop: 14 rules ≈ 50 s per path, 5 linear-family models ≈ 4-6 min per path, LightGBM ≈ 20 min per path, on 2 workers). This holds for this mix only: a set of 20 LightGBM trials would take about 100 hours, so the result is reported per kind of trial, not per set size (S8 review).
 
@@ -19,12 +19,13 @@ cd /opt/aqt-d19/app/deploy/calibration
 sudo sh d19.sh status
 old=$(git -C /opt/aqt-d19/app rev-parse --short HEAD); echo "$old"
 if [ -e "/opt/aqt-d19/app-$old" ]; then echo "STOP: app-$old already exists"; else echo "ok: app-$old is free"; fi
+cg=$(systemctl show aqt-d19.slice -p ControlGroup --value); n=0; [ -z "$cg" ] || n=$(sudo find "/sys/fs/cgroup$cg" -name cgroup.procs -exec cat {} + | wc -l); if [ "$n" = 0 ]; then echo "ok: no D-19 process is running"; else echo "STOP: $n D-19 processes are running"; fi
 ```
 
-Check before going on (S8-R4, S8R-R3):
+Check before going on (S8-R4, S8R-R3, S8R2-R2):
 - the first line `status` prints must not say `Up`;
 - the line printed by `echo "$old"` (after `status`'s own lines) must be `e39b23d`;
-- the last line must be `ok: app-e39b23d is free`. If it says `STOP: …`, stop and send me the output.
+- the last two lines must be `ok: app-e39b23d is free` and `ok: no D-19 process is running` (the second also catches a `clean-check`, which the old launcher starts without a name). If either says `STOP: …`, stop and send me the output.
 
 Then:
 
@@ -40,15 +41,15 @@ The last line must list `app-cbde711` and `app-e39b23d` (and nothing called `app
 ```sh
 rm -rf /tmp/aqt-d19-src
 git clone https://github.com/meedo1985/autonomous-quant-trader.git /tmp/aqt-d19-src
-git -C /tmp/aqt-d19-src checkout 336e3221a1a5c7d60cf39638900e8baa19d68651
+git -C /tmp/aqt-d19-src checkout ebdf20806a0e59bde9305bc052a18c98fd3a7b33
 git -C /tmp/aqt-d19-src rev-parse HEAD
-sudo sh /tmp/aqt-d19-src/deploy/calibration/d19.sh install https://github.com/meedo1985/autonomous-quant-trader.git 336e3221a1a5c7d60cf39638900e8baa19d68651
+sudo sh /tmp/aqt-d19-src/deploy/calibration/d19.sh install https://github.com/meedo1985/autonomous-quant-trader.git ebdf20806a0e59bde9305bc052a18c98fd3a7b33
 cd /opt/aqt-d19/app/deploy/calibration
 sudo sh d19.sh build
 sudo sh d19.sh probe
 ```
 
-The fourth line must print `336e3221a1a5c7d60cf39638900e8baa19d68651`. **Send me** the line `build` prints (the image id) and the last line of `probe` (it must be `This CPU runs the pinned runtime.`).
+The fourth line must print `ebdf20806a0e59bde9305bc052a18c98fd3a7b33`. **Send me** the line `build` prints (the image id) and the last line of `probe` (it must be `This CPU runs the pinned runtime.`).
 
 ## B. Start the pilot screen
 
