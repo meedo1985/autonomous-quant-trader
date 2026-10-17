@@ -3,8 +3,9 @@
 Build slices (`review/d19-engine/SCREEN_PLAN.md`): S1, the `n_S = 30`
 simulated null hourly BTC/ETH paths; S3, the trial interface; S5, the G-11
 shifts; S4b, trial runs and G-3, G-5, G-6, G-7 (on `aqt.backtest.
-event_contract` and `aqt.features.columns`); S4c, G-8. Later slices add
-the G-11 runs, G-14 and the driver to this file, which the qualification object binds by
+event_contract` and `aqt.features.columns`); S4c, G-8; S5b, the G-11 runs;
+S6, the walk-forward models and G-14; S7, the driver. All of it is in this
+file, which the qualification object binds by
 its bytes (DRAFT R-8, qobj `LATER`); everything it imports must be
 engine-commit code (`SCREEN_PLAN.md` section 3).
 
@@ -55,6 +56,8 @@ import importlib.util
 import json
 import math
 import random
+import sys
+import time
 import types
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -1675,3 +1678,229 @@ def spearman_ic(predictions: Sequence[float], targets: Sequence[float]) -> float
     if not math.isfinite(ic):
         raise RunUnavailable("CONSTANT_IC_INPUT")
     return ic
+
+
+# --- S7: the screen driver (prereg §7.2 "Runs", "Outcome", "Seed") ---------
+#
+# Readings DR-n (proposed, for review):
+# - DR-1 One path per index `p`, `max(warmup) + window_hours + 1` hours long
+#   (§7.2 "Length": the C2 window plus the trials' declared warm-up). A trial
+#   with a shorter warm-up runs on the path's last `warmup + window_hours + 1`
+#   hours, so every trial's window is the same stretch of the path.
+# - DR-2 Trial `t` on path `p` runs `screen_gates` with the null-stream seed
+#   `screen_trial_seed(screen_seed, p, trial_id)` (GS-1), the C2 window id and
+#   `g` the declaration fixes. Every (trial, path) result is recorded.
+# - DR-3 A path that cannot be built (`PathUnavailable`, SP-7) makes every
+#   gate of every trial on it `PATH_UNAVAILABLE`. A declaration the
+#   interface refuses (`TrialError`) refuses the whole screen: nothing is run.
+# - DR-4 Outcome `VALID` iff every recorded gate result is available or a
+#   frozen N/A; otherwise `INVALID` (P18-1). No `m` is spent either way.
+# - DR-5 The record holds the inputs and their hashes, every run's gate
+#   results, the outcome, the screen's reference vectors and `screen_sha256`,
+#   this file's bytes; `record_sha256 = sha(record)` goes into the
+#   declaration (§7.2 "Every screen run is recorded and listed").
+# - DR-6 A real screen first checks the qualification object as `mapping.py`
+#   MP-3/MP-4 does: the posted hash, the run definition's engine commit and
+#   runtime, and every loaded `calibration`/`aqt` module equal to that
+#   commit's, except `mapping.py` and this file, which must equal the
+#   object's reviewed copies. So the screen's own new modules
+#   (`aqt.backtest.event_contract`, `aqt.features.columns`) must be in the
+#   engine commit (SCREEN_PLAN section 3).
+# - DR-7 A pilot (`pilot=True`, prereg §10's "one screen of a 20-trial set")
+#   skips DR-6, records per-run seconds, and marks the record
+#   `measurement_only`: its outcome is not a declaration outcome.
+# - DR-8 `workers` processes run the (trial, path) jobs; each worker gets the
+#   repository, `src` and the trial-code directory on its import path. The
+#   record lists runs in job order (path-major), whatever the finishing order.
+
+SCREEN_SELF = "calibration/screen.py"
+
+
+def screen_reference_vectors() -> dict[str, str]:
+    """SP-6, GS-5, WF-8: the screen's reference vectors on fixed synthetic
+    input; bit-exact only on the pinned image (the float path)."""
+    hours = np.arange(400, dtype=np.int64)
+    bars = np.array(
+        [
+            [
+                [
+                    100 + i + 0.5 * math.sin(i),
+                    103 + i,
+                    97 + i,
+                    100 + i + math.cos(i),
+                    10.0,
+                ]
+            ]
+            * 2
+            for i in range(400)
+        ],
+        dtype=float,
+    )
+    source = HourlySource(bars, hours, {})
+    seed = screen_seed("00" * 32)
+    paths = b"".join(
+        np.ascontiguousarray(null_path(source, seed, p, 1000), "<f8").tobytes()
+        for p in range(N_PATHS)
+    )
+    window = '["2022-01-01T00:00:00Z","2025-06-01T00:00:00Z"]'
+    return {
+        "paths": hashlib.sha256(paths).hexdigest(),
+        "g11": g11_shifts_sha256(g11_shifts("ab" * 32, window, 1247, 30)),
+        "g14": g14_grid_sha256("ab" * 32, window, (120, 365), 7),
+    }
+
+
+def check_object(obj: Path, posted_sha256: str, root: Path) -> None:
+    """DR-6: the posted qualification object, its engine code and runtime."""
+    from calibration import mapping
+
+    manifest = json.loads((obj / "manifest.json").read_bytes())
+    if sha(manifest) != posted_sha256:
+        raise ValueError("the qualification object is not the posted one")
+    files = {}
+    for name in ("definition.json", "mapping.py", "screen.py"):
+        data = (obj / name).read_bytes()
+        if hashlib.sha256(data).hexdigest() != manifest.get(name):
+            raise ValueError(f"{name} does not match the object's manifest")
+        files[name] = data
+    defn = json.loads(files["definition.json"])
+    check_screen_code(
+        defn,
+        root,
+        {
+            "calibration/mapping.py": files["mapping.py"],
+            SCREEN_SELF: files["screen.py"],
+        },
+    )
+    mapping.check_runtime(defn)
+
+
+def check_screen_code(
+    defn: dict[str, Any], root: Path, reviewed: Mapping[str, bytes]
+) -> None:
+    """DR-6: the engine commit holds the run's recorded code, and every loaded
+    engine module is that commit's or, for the reviewed files, the object's."""
+    from calibration import mapping, rundef
+
+    commit = defn["engine_commit"]
+    try:
+        names = mapping._git(root, "ls-tree", "-r", "--name-only", commit).decode()
+        inventory = {
+            rel: rundef.canonical_sha256(mapping._git(root, "show", f"{commit}:{rel}"))
+            for rel in sorted(names.splitlines())
+            if rundef.is_code(rel)
+        }
+    except Exception as error:
+        raise ValueError(f"engine commit {commit} not readable") from error
+    if sha(inventory) != defn["generator_sha256"]:
+        raise ValueError("the engine commit is not the run's recorded code")
+    if problem := rundef.bytecode_problem():
+        raise ValueError(problem)
+    for rel, data in reviewed.items():
+        inventory[rel] = rundef.canonical_sha256(data)
+    for rel, path in mapping.loaded().items():
+        if rundef.canonical_sha256(path.read_bytes()) != inventory.get(rel):
+            raise ValueError(f"the loaded {rel} is not the run's")
+
+
+def screen_job(
+    source: HourlySource,
+    seed: str,
+    trial: dict[str, Any],
+    p: int,
+    hours: int,
+    w0: datetime,
+    window_hours: int,
+    window_id: str,
+    g_days: int,
+) -> dict[str, Any]:
+    """DR-1..DR-3: one trial on one path."""
+    started = time.perf_counter()
+    try:
+        path = null_path(source, seed, p, hours)
+    except PathUnavailable:
+        gates: dict[str, str | None] = dict.fromkeys(GATES, "PATH_UNAVAILABLE")
+    else:
+        own = trial["warmup_hours"] + window_hours + 1
+        gates = screen_gates(
+            trial,
+            path[len(path) - own :],
+            w0,
+            window_hours,
+            screen_trial_seed(seed, p, trial["trial_id"]),
+            window_id,
+            g_days,
+        )
+    return {
+        "trial_id": trial["trial_id"],
+        "path": p,
+        "gates": gates,
+        "seconds": time.perf_counter() - started,
+    }
+
+
+def _extend_path(paths: Sequence[str]) -> None:
+    """DR-8: a worker process imports the engine and the trial code from the
+    parent's paths (spawn and forkserver children do not inherit them)."""
+    sys.path[:0] = [p for p in paths if p not in sys.path]
+
+
+def run_screen(
+    trials: list[dict[str, Any]],
+    source: HourlySource,
+    w0: datetime,
+    window_hours: int,
+    window_id: str,
+    g_days: int,
+    workers: int = 2,
+    pilot: bool = False,
+    code_dir: Path | None = None,
+) -> dict[str, Any]:
+    """DR-1..DR-5, DR-7: the screen record of `trials`."""
+    set_sha = trial_set_sha256(trials)  # refuses an invalid declaration (DR-3)
+    seed = screen_seed(set_sha)
+    hours = max(t["warmup_hours"] for t in trials) + window_hours + 1
+    jobs = [(t, p) for p in range(N_PATHS) for t in trials]
+    args = (seed, hours, w0, window_hours, window_id, g_days)
+    if workers == 1:
+        runs = [screen_job(source, seed, t, p, *args[1:]) for t, p in jobs]
+    else:
+        # imported here: at module import it registers __mp_main__, and the
+        # engine's import test allows numpy alone (test_d19_deploy.py)
+        from concurrent.futures import ProcessPoolExecutor
+
+        root = Path(__file__).resolve().parents[1]
+        paths = [str(root), str(root / "src")]
+        if code_dir is not None:
+            paths.append(str(code_dir.resolve()))
+        with ProcessPoolExecutor(
+            max_workers=workers, initializer=_extend_path, initargs=(paths,)
+        ) as pool:
+            futures = [
+                pool.submit(screen_job, source, seed, t, p, *args[1:]) for t, p in jobs
+            ]
+            runs = [f.result() for f in futures]
+    valid = all(v is None or v == NA for r in runs for v in r["gates"].values())
+    if not pilot:
+        for r in runs:
+            del r["seconds"]  # timing is pilot evidence, not part of a declaration
+    record: dict[str, Any] = {
+        "screen_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "trial_set_sha256": set_sha,
+        "trials": [trial_sha256(t) for t in trials],
+        "screen_seed": seed,
+        "source": source.identity,
+        "w0": w0.isoformat(),
+        "window_hours": window_hours,
+        "window_id": window_id,
+        "g_days": g_days,
+        "path_hours": hours,
+        "reference_vectors": screen_reference_vectors(),
+        "runs": runs,
+        "outcome": "VALID" if valid else "INVALID",
+    }
+    if pilot:
+        record["measurement_only"] = (
+            "pilot screen (prereg §10): not a declaration; the outcome decides nothing"
+        )
+    return record

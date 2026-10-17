@@ -18,3 +18,7 @@ Validation: `pytest tests/unit/test_calibration_screen.py -k g11` 10 passed; ruf
 ## Re-review at 2fd6af1 (`SOL6_SCREEN_S5B_REREVIEW_2FD6AF1.md`): S5BR-R1
 
 Accepted. The direct test now uses features that differ by hour and asserts every market input the overlay receives is the real hour's row; `test_g11_loads_the_overlay_afresh_for_every_draw` runs a screen-level G-11 with an overlay that counts calls in a module global and raises once it exceeds one window, so reusing one loaded instance across draws or runs would make G-11 unavailable. Test-only.
+
+## Re-review 2 at 2ea7061 (`SOL6_SCREEN_S5B_REREVIEW2_2EA7061.md`)
+
+Accepted. `ewma_vol_168h` now varies by hour in the direct overlay test, which asserts the overlay receives the real hour's value of it too. Test-only.

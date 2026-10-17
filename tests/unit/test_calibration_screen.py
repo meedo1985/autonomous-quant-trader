@@ -1567,7 +1567,7 @@ def test_a_g11_draw_overlay_sees_the_real_hour_and_starts_fresh() -> None:
     n = 48
     closes = [100.0 + i for i in range(60)]
     cols = {name: tuple(float(i) for i in range(60)) for name in FEATURE_NAMES}
-    cols["ewma_vol_168h"] = tuple([0.5] * 60)
+    cols["ewma_vol_168h"] = tuple(0.5 + i / 1000 for i in range(60))  # by hour too
     seen: list[tuple[float, float, int]] = []
 
     def overlay(
@@ -1575,6 +1575,7 @@ def test_a_g11_draw_overlay_sees_the_real_hour_and_starts_fresh() -> None:
     ) -> float:
         others = {market[f] for f in FEATURE_NAMES if f != "ewma_vol_168h"}
         assert others == {market["ret_1h"]}
+        assert market["ewma_vol_168h"] == 0.5 + market["ret_1h"] / 1000  # same row
         seen.append((market["close"], market["ret_1h"], state.get("n", 0)))
         state["n"] = state.get("n", 0) + 1
         return target
@@ -1607,3 +1608,119 @@ def test_g11_loads_the_overlay_afresh_for_every_draw(
     )
     got = screen.screen_gates(trial, _g11_path(), W0, WINDOW_G11_H, *NULL_STREAM)
     assert got["G-11"] is None and got["G-3"] is None
+
+
+# --- S7: the driver -------------------------------------------------------
+
+CONST = "def s(row, params, state):\n    return 0.5\n"
+
+
+def _source_for_screen() -> screen.HourlySource:
+    return _source()
+
+
+def test_a_pilot_screen_records_every_run_and_the_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(screen, "N_PATHS", 2)  # production: 30
+    valid = _screen_trial(tmp_path, monkeypatch, CONST, g11_class="constant_signal")
+    record = screen.run_screen(
+        [valid], _source_for_screen(), W0, WINDOW_H, WINDOW, 30, workers=1, pilot=True
+    )
+    assert record["outcome"] == "VALID"  # constant signal: G-8, G-11, G-14 N/A
+    assert [(r["trial_id"], r["path"]) for r in record["runs"]] == [
+        ("t000", 0),
+        ("t000", 1),
+    ]
+    assert all("seconds" in r for r in record["runs"]) and "measurement_only" in record
+    assert record["trial_set_sha256"] == screen.trial_set_sha256([valid])
+    assert record["screen_seed"] == screen.screen_seed(record["trial_set_sha256"])
+    assert set(record["reference_vectors"]) == {"paths", "g11", "g14"}
+    # a signal-timed trial on a 30-day window: G-11 has no shift range
+    timed = {**valid, "trial_id": "t001", "g11_class": "signal_timed"}
+    record = screen.run_screen(
+        [valid, timed], _source_for_screen(), W0, WINDOW_H, WINDOW, 30, workers=1
+    )
+    assert record["outcome"] == "INVALID" and "measurement_only" not in record
+    assert all("seconds" not in r for r in record["runs"])  # DR-5: not declared
+
+
+def test_every_trial_runs_on_the_end_of_the_shared_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # DR-1: one path per index, trials with less warm-up use its last hours
+    monkeypatch.setattr(screen, "N_PATHS", 1)
+    seen: list[tuple[str, int, str]] = []
+    real = screen.screen_gates
+
+    def spy(trial: dict[str, Any], path: np.ndarray, *a: Any) -> dict[str, Any]:
+        seen.append((trial["trial_id"], len(path), a[2]))
+        return real(trial, path, *a)
+
+    monkeypatch.setattr(screen, "screen_gates", spy)
+    short = _screen_trial(tmp_path, monkeypatch, CONST, g11_class="constant_signal")
+    long = {**short, "trial_id": "t001", "warmup_hours": 4900}
+    record = screen.run_screen(
+        [short, long], _source_for_screen(), W0, WINDOW_H, WINDOW, 30, workers=1
+    )
+    assert record["path_hours"] == 4900 + WINDOW_H + 1
+    seed = record["screen_seed"]
+    assert seen == [
+        ("t000", 4801 + WINDOW_H + 1, screen.screen_trial_seed(seed, 0, "t000")),
+        ("t001", 4900 + WINDOW_H + 1, screen.screen_trial_seed(seed, 0, "t001")),
+    ]
+
+
+def test_an_unbuildable_path_and_an_invalid_declaration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # DR-3
+    monkeypatch.setattr(screen, "N_PATHS", 1)
+
+    real = screen.null_path
+
+    def broken(source: Any, seed: str, p: int, hours: int) -> np.ndarray:
+        if hours == 1000:  # the reference vectors' fixed path still builds
+            return real(source, seed, p, hours)
+        raise screen.PathUnavailable("overflow")
+
+    monkeypatch.setattr(screen, "null_path", broken)
+    trial = _screen_trial(tmp_path, monkeypatch, CONST, g11_class="constant_signal")
+    record = screen.run_screen(
+        [trial], _source_for_screen(), W0, WINDOW_H, WINDOW, 30, workers=1
+    )
+    assert set(record["runs"][0]["gates"].values()) == {"PATH_UNAVAILABLE"}
+    assert record["outcome"] == "INVALID"
+    with pytest.raises(screen.TrialError):
+        screen.run_screen(
+            [{**trial, "tau": "0.5"}], _source_for_screen(), W0, WINDOW_H, WINDOW, 30
+        )
+
+
+def test_two_worker_processes_give_the_same_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # DR-8: workers import the engine and the trial code from the parent's paths
+    monkeypatch.setattr(screen, "N_PATHS", 2)
+    trial = _screen_trial(tmp_path, monkeypatch, CONST, g11_class="constant_signal")
+    one = screen.run_screen(
+        [trial], _source_for_screen(), W0, WINDOW_H, WINDOW, 30, workers=1
+    )
+    # the patched N_PATHS does not reach worker processes: compare runs 0-1
+    two = screen.run_screen(
+        [trial],
+        _source_for_screen(),
+        W0,
+        WINDOW_H,
+        WINDOW,
+        30,
+        workers=2,
+        code_dir=tmp_path,
+    )
+    assert two["runs"][:2] == one["runs"]
+
+
+def test_the_screen_reference_vectors_are_stable() -> None:
+    # SP-6: the draws are frozen elsewhere; this pins the record's keys and
+    # that the vectors do not depend on call order
+    assert screen.screen_reference_vectors() == screen.screen_reference_vectors()
