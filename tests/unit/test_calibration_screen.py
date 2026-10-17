@@ -1562,17 +1562,20 @@ def test_every_g11_draw_is_scored_and_one_bad_draw_makes_it_unavailable(
 
 
 def test_a_g11_draw_overlay_sees_the_real_hour_and_starts_fresh() -> None:
-    # S5B-R2 (C-10 (4)): the overlay reads the market at the real hour and
-    # gets fresh state for every draw
+    # S5B-R2, S5BR-R1 (C-10 (4)): the overlay reads every market input at the
+    # real hour (features vary by hour here) and gets fresh state every draw
     n = 48
     closes = [100.0 + i for i in range(60)]
-    cols = {name: tuple([1.0] * 60) for name in FEATURE_NAMES}
-    seen: list[tuple[float, int]] = []
+    cols = {name: tuple(float(i) for i in range(60)) for name in FEATURE_NAMES}
+    cols["ewma_vol_168h"] = tuple([0.5] * 60)
+    seen: list[tuple[float, float, int]] = []
 
     def overlay(
         target: float, market: dict[str, float], state: dict[str, int]
     ) -> float:
-        seen.append((market["close"], state.get("n", 0)))
+        others = {market[f] for f in FEATURE_NAMES if f != "ewma_vol_168h"}
+        assert others == {market["ret_1h"]}
+        seen.append((market["close"], market["ret_1h"], state.get("n", 0)))
         state["n"] = state.get("n", 0) + 1
         return target
 
@@ -1580,5 +1583,27 @@ def test_a_g11_draw_overlay_sees_the_real_hour_and_starts_fresh() -> None:
     for shift in (1, 2):
         seen.clear()
         screen.g11_targets(trial, overlay, [0.1] * n, cols, 0, closes, 1, n, shift)
-        assert [c for c, _ in seen] == closes[0:n]  # bar j0 + i - 1, unshifted
-        assert [k for _, k in seen] == list(range(n))  # state starts at 0
+        assert [c for c, _, _ in seen] == closes[0:n]  # bar j0 + i - 1, unshifted
+        assert [f for _, f, _ in seen] == [float(i) for i in range(n)]  # its row
+        assert [k for _, _, k in seen] == list(range(n))  # state starts at 0
+
+
+def test_g11_loads_the_overlay_afresh_for_every_draw(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # S5BR-R1: an overlay counting its calls in a module global fails if one
+    # loaded instance is reused across draws (or runs)
+    code = (
+        "CALLS = [0]\n"
+        "def o(t, m, state):\n"
+        "    CALLS[0] += 1\n"
+        f"    if CALLS[0] > {WINDOW_G11_H}:\n"
+        "        raise ValueError('reused')\n"
+        "    return t\n"
+    )
+    digest = _module(tmp_path, monkeypatch, "s5b_counting_overlay", code)
+    trial = _screen_trial(
+        tmp_path, monkeypatch, overlay="s5b_counting_overlay:o", overlay_sha256=digest
+    )
+    got = screen.screen_gates(trial, _g11_path(), W0, WINDOW_G11_H, *NULL_STREAM)
+    assert got["G-11"] is None and got["G-3"] is None
