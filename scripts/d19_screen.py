@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -50,6 +51,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"the pilot screens a {screen.MAX_TRIALS}-trial set (prereg §10)")
     code = args.trial_code.resolve()
     out = args.out.open("xb")  # S7-R8, S7R-R4: reserved before any work
+    reserved = os.fstat(out.fileno())
     try:
         if args.command == "pilot":
             record = screen.run_screen(
@@ -76,7 +78,12 @@ def main(argv: list[str] | None = None) -> int:
         out.close()
     except BaseException:
         out.close()
-        args.out.unlink()  # only the file this run reserved
+        try:  # S7R2-R1: remove the path only if it is still this run's file
+            now = os.stat(args.out)
+            if (now.st_dev, now.st_ino) == (reserved.st_dev, reserved.st_ino):
+                args.out.unlink()
+        except FileNotFoundError:
+            pass
         raise
     if args.command == "pilot":
         print("MEASUREMENT", sha(record))

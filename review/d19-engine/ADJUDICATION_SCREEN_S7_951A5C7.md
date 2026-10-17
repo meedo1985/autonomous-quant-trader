@@ -12,3 +12,10 @@ Adjudicated by Claude Opus 5.5 (`claude-opus-5-5`), 2026-10-17. Review record: `
 Not repaired: none.
 
 Validation: full screen suite (screen, event contract, deploy, feature columns) passed with `-W error::FutureWarning`; ruff check and format clean; mypy clean; lint-imports 6 kept, 0 broken.
+
+## Re-review 2 at 8f40348 (`SOL6_SCREEN_S7_REREVIEW2_8F40348.md`)
+
+| ID | Decision | Repair |
+|---|---|---|
+| S7R-R1 (still open) | **Accept.** Exact-string comparison missed aliases. | `_extend_path` compares `os.path.realpath` of every entry; any spelling of the engine or trial-code directories is removed before placing them. Test `test_an_alias_of_the_trial_code_directory_is_moved_last` (a `..` detour). |
+| S7R2-R1 | **Accept.** Cleanup unlinked by name. | The CLI records the reserved file's `(st_dev, st_ino)` and removes the path only if it still names that file. Test case (POSIX only: Windows cannot replace an open file, so the race cannot arise there). |

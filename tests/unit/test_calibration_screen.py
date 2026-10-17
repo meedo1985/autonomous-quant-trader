@@ -6,6 +6,7 @@ import functools
 import hashlib
 import json
 import math
+import os
 import random
 import sys
 from datetime import UTC, datetime, timedelta
@@ -1744,6 +1745,20 @@ def test_workers_search_trial_code_last(monkeypatch: pytest.MonkeyPatch) -> None
     assert sys.path == ["/repo", "/repo/src", "/site-packages", "/trials"]
 
 
+def test_an_alias_of_the_trial_code_directory_is_moved_last(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # S7R-R1: another spelling of the same directory (here with a ".."
+    # detour) is recognised by its resolved path
+    code = tmp_path / "trials"
+    code.mkdir()
+    (tmp_path / "other").mkdir()
+    alias = str(tmp_path / "other" / ".." / "trials")
+    monkeypatch.setattr(sys, "path", [alias, "/site-packages"])
+    screen._extend_path(["/repo"], [str(code)])
+    assert sys.path == ["/repo", "/site-packages", str(code)]
+
+
 def test_run_screen_finds_trial_code_from_code_dir_alone(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1909,3 +1924,18 @@ def test_the_cli_pilot_needs_twenty_trials_and_never_overwrites(
     with pytest.raises(ZeroDivisionError):
         cli.main(["pilot", *base, "--raw-root", str(tmp_path), "--out", str(fresh)])
     assert not fresh.exists()
+    # S7R2-R1: a file that replaced the reservation is not this run's: kept
+    # (Windows cannot replace an open file, so the case arises on POSIX only)
+    if os.name == "nt":
+        return
+    replaced = tmp_path / "replaced.json"
+
+    def swap(*a: Any, **k: Any) -> dict[str, int]:
+        replaced.unlink()  # another process replaces the path meanwhile
+        replaced.write_bytes(b"theirs")
+        raise RuntimeError("screen failed")
+
+    monkeypatch.setattr(cli.screen, "run_screen", swap)
+    with pytest.raises(RuntimeError):
+        cli.main(["pilot", *base, "--raw-root", str(tmp_path), "--out", str(replaced)])
+    assert replaced.read_bytes() == b"theirs"

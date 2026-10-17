@@ -55,6 +55,7 @@ import importlib
 import importlib.util
 import json
 import math
+import os
 import random
 import sys
 import time
@@ -1880,7 +1881,10 @@ def _extend_path(engine: Sequence[str], code: Sequence[str]) -> None:
     earlier entry of a trial-code directory moved to the end (S7R-R1); run in
     the parent and in every worker (spawn and forkserver children do not
     inherit the parent's paths)."""
-    sys.path[:] = [p for p in sys.path if p not in engine and p not in code]
+    placed = {os.path.realpath(p) for p in [*engine, *code]}
+    # S7R-R1: compare resolved directories, so no alias or other spelling of
+    # the trial-code directory stays ahead of site-packages
+    sys.path[:] = [p for p in sys.path if os.path.realpath(p or ".") not in placed]
     sys.path[:0] = list(engine)
     sys.path.extend(code)
 
