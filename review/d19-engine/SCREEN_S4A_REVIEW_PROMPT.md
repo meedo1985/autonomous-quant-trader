@@ -1,0 +1,9 @@
+# Review prompt: D-19 screen slice S4a (feature columns) at the head carrying this prompt
+
+You are an independent adversarial reviewer working read-only, not an authority. Everything is attached; if your shell works you may read the repository and run `python -m pytest -q tests/unit/test_feature_columns.py`, but do not modify files.
+
+`src/aqt/features/columns.py` computes every frozen Cycle-1 feature at every decision bar of a series in one pass. It must equal `aqt.features.factory.compute_features` bit for bit (the frozen implementation of `specs/FEATURE_FACTORY_v1.md`), because the screen's gates and later C2 runs will use it where the per-call function (about 0.2 s per decision) is too slow. Check each feature against the factory's own float operations: the history it reads (every bar from the series start), the EMA seed and recursion, the exact-integer replacement of `math.fsum` (scale 2**1074, correctly rounded integer true division), the exact-integer replacement of `statistics.stdev` (exact sums of values and squares, the same `_float_sqrt_of_frac`), the window bounds of SMA, ATR, breakout and every `rv_*`, the `ewma_vol_168h` series index, and the first decision bar. Look for an off-by-one, a case where the integer method is not exactly equal (subnormals, zeros, negative values, very large sums), refusals the factory makes that this skips, and whether the tests (exact equality at sampled bars, including the first and last, on two random series) would catch a broken implementation. Note that it uses the private `statistics._float_sqrt_of_frac` and `factory._ANNUALIZATION_FACTOR` / `_EMA_ALPHAS`; say whether that is acceptable on the pinned runtime.
+
+Out of scope: S1, S2, S3, S5 (accepted) and the gates.
+
+Verdict ACCEPT or FIX. Findings get stable IDs S4A-Rn with severity, file:line and a concrete failure scenario.
