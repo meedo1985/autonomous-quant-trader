@@ -10,6 +10,9 @@
       the screen a declaration lists: checks the posted qualification
       object, its code, runtime, the exploration bars and the screen's
       frozen reference vectors first (DR-6). Exit 0 VALID, 2 INVALID.
+  summary --record RECORD.json
+      a measurement record's seconds per trial (total and slowest path), its
+      gate results per trial, and the screen's reference vectors (S8).
 
 `--trials` is a JSON list of trial declarations; `--trial-code` the
 directory of their signal and overlay modules (searched last, DR-8). A record
@@ -46,9 +49,40 @@ def publish(out: Path, data: bytes) -> None:
         os.unlink(tmp)
 
 
+def summary(record: dict[str, object]) -> list[str]:
+    """S8: what the cost pilot reports, one line per trial plus totals."""
+    runs = record["runs"]
+    assert isinstance(runs, list)
+    lines, total = [], 0.0
+    for tid in sorted({r["trial_id"] for r in runs}):
+        own = [r for r in runs if r["trial_id"] == tid]
+        secs = [float(r.get("seconds", 0.0)) for r in own]
+        total += sum(secs)
+        results: dict[str, int] = {}
+        for r in own:
+            for gate, value in r["gates"].items():
+                key = f"{gate}:{'ok' if value is None else value}"
+                results[key] = results.get(key, 0) + 1
+        lines.append(
+            f"{tid}: {len(own)} paths, {sum(secs):.0f} s total, "
+            f"slowest {max(secs):.0f} s; "
+            + ", ".join(f"{k} x{n}" for k, n in sorted(results.items()))
+        )
+    lines.append(
+        f"all trials: {total:.0f} worker-seconds ({total / 3600:.1f} worker-hours)"
+    )
+    lines.append(f"availability: {record.get('availability')}")
+    lines.append(
+        f"reference vectors: {json.dumps(record['reference_vectors'], sort_keys=True)}"
+    )
+    return lines
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="D-19 declared-strategy screen")
     sub = parser.add_subparsers(dest="command", required=True)
+    show = sub.add_parser("summary")
+    show.add_argument("--record", type=Path, required=True)
     for name in ("pilot", "declare"):
         p = sub.add_parser(name)
         p.add_argument("--trials", type=Path, required=True)
@@ -60,6 +94,9 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--object", type=Path, required=True)
             p.add_argument("--posted", required=True)
     args = parser.parse_args(argv)
+    if args.command == "summary":
+        print("\n".join(summary(json.loads(args.record.read_bytes()))))
+        return 0
     trials = json.loads(args.trials.read_bytes())
     if args.command == "pilot" and len(trials) != screen.MAX_TRIALS:
         parser.error(f"the pilot screens a {screen.MAX_TRIALS}-trial set (prereg §10)")

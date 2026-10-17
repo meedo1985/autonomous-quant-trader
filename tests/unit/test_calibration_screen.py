@@ -1937,3 +1937,45 @@ def test_the_cli_pilot_needs_twenty_trials_and_never_overwrites(
         cli.main(["pilot", *base, "--raw-root", str(tmp_path), "--out", str(good)]) == 0
     )
     assert json.loads(good.read_bytes()) == {"x": 1}
+
+
+def test_the_pilot_summary_reports_seconds_and_gates() -> None:
+    # S8: what the owner sends back from the server
+    import importlib.util as iu
+
+    spec = iu.spec_from_file_location(
+        "d19_screen_cli2", Path(__file__).parents[2] / "scripts" / "d19_screen.py"
+    )
+    assert spec is not None and spec.loader is not None
+    cli = iu.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    record = {
+        "runs": [
+            {
+                "trial_id": "p01",
+                "path": 0,
+                "seconds": 50.0,
+                "gates": {"G-3": None, "G-14": "N/A"},
+            },
+            {
+                "trial_id": "p01",
+                "path": 1,
+                "seconds": 70.0,
+                "gates": {"G-3": None, "G-14": "N/A"},
+            },
+            {
+                "trial_id": "p20",
+                "path": 0,
+                "seconds": 1200.0,
+                "gates": {"G-3": "X", "G-14": None},
+            },
+        ],
+        "availability": "SOME_UNAVAILABLE",
+        "reference_vectors": {"paths": "a", "g11": "b", "g14": "c"},
+    }
+    lines = cli.summary(record)
+    assert lines[0] == "p01: 2 paths, 120 s total, slowest 70 s; G-14:N/A x2, G-3:ok x2"
+    assert lines[1].startswith("p20: 1 paths, 1200 s total") and "G-3:X x1" in lines[1]
+    assert lines[2] == "all trials: 1320 worker-seconds (0.4 worker-hours)"
+    assert lines[3] == "availability: SOME_UNAVAILABLE"
+    assert '"paths": "a"' in lines[4]

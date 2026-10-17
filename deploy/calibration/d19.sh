@@ -19,6 +19,9 @@
 #   sudo sh d19.sh copy-raw
 #   sudo sh d19.sh times <threshold|dev>
 #   sudo sh d19.sh memwatch
+#   sudo sh d19.sh screen-pilot
+#   sudo sh d19.sh screen-status
+#   sudo sh d19.sh screen-summary
 #
 # Every engine process runs in the pinned image, as uid 990, without network,
 # at `nice 19`, inside aqt-d19.slice (systemd MemoryMax 2560M, checked before
@@ -150,6 +153,29 @@ status)  # FE4-5, P18-6: state, times, memory, chunks per chain; nothing else
     ;;
 stop)
     docker stop -t 60 "$NAME"
+    docker stop -t 60 "$NAME-screen" >/dev/null 2>&1 || true
+    ;;
+screen-pilot)  # S8, prereg §10: one screen of the 20-trial pilot set, measurement only
+    [ ! -e "$WORK/screen-pilot.json" ] || { echo "refused: $WORK/screen-pilot.json exists" >&2; exit 1; }
+    docker rm "$NAME-screen" >/dev/null 2>&1 || true
+    engine -d --name "$NAME-screen" -- d19_screen.py pilot \
+        --trials /app/deploy/calibration/screen-pilot/trials.json \
+        --trial-code /app/deploy/calibration/screen-pilot \
+        --raw-root raw --out screen-pilot.json
+    echo "Started. Progress: sudo sh d19.sh screen-status"
+    ;;
+screen-status)  # S8: state, times and this run's memory high-water mark
+    docker ps -a --filter "name=^$NAME-screen\$" --format '{{.Status}}'
+    docker inspect -f 'started {{.State.StartedAt}} finished {{.State.FinishedAt}} exit {{.State.ExitCode}}' \
+        "$NAME-screen" 2>/dev/null || true
+    if [ "$(docker inspect -f '{{.State.Running}}' "$NAME-screen" 2>/dev/null)" = true ]; then
+        pid=$(docker inspect -f '{{.State.Pid}}' "$NAME-screen")
+        echo "memory peak so far: $(cat "/sys/fs/cgroup$(cut -d: -f3 "/proc/$pid/cgroup")/memory.peak") bytes"
+    fi
+    docker logs --tail 3 "$NAME-screen" 2>&1 || true
+    ;;
+screen-summary)  # S8: seconds per trial and gate availability from the record
+    engine --rm -- d19_screen.py summary --record screen-pilot.json
     ;;
 choose)
     engine --rm -- d19_choose.py choose --definition definition.json \
