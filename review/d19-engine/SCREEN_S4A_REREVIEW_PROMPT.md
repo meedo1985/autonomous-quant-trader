@@ -1,0 +1,3 @@
+# Re-review prompt: D-19 screen slice S4a at the head carrying this prompt
+
+You are an independent adversarial reviewer working read-only, not an authority. You reviewed S4a at ebf0c8a (verdict FIX, S4A-R1, S4A-R2; record attached). Attached: the adjudication, the diff from ebf0c8a, the complete `columns.py` and its test, and the frozen `factory.py`. Check that both findings are resolved, that the refusals now equal the factory's (no more, no fewer, including the order that decides which error a bad series raises only where it could change the exception class), and that the new tests would catch a regression. Verdict ACCEPT or FIX; new findings get stable IDs S4AR-Rn.

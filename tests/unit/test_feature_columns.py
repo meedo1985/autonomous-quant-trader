@@ -55,3 +55,35 @@ def test_too_short_or_gapped_series_are_refused() -> None:
     gapped = BarSeries("BTCUSDT", s.bars[:100] + s.bars[101:])
     with pytest.raises(Exception):  # noqa: B017 - the series refuses a hole
         feature_columns(gapped)
+
+
+def test_a_value_the_factory_returns_unchecked_is_returned() -> None:
+    # S4A-R1: closes at the smallest subnormal, one high at the largest float:
+    # the mean true range is finite, atr_24 = it / close is inf, and the
+    # factory returns that row rather than refusing
+    tiny, huge = 5e-324, 1.7976931348623157e308
+    bars = [
+        Bar(START + timedelta(hours=i), tiny, tiny, tiny, tiny, 1.0)
+        for i in range(REQUIRED_HISTORY_BARS)
+    ]
+    k = REQUIRED_HISTORY_BARS - 2
+    bars[k] = Bar(bars[k].open_time, tiny, huge, tiny, tiny, 1.0)
+    series = BarSeries("BTCUSDT", tuple(bars))
+    row = compute_features(series, bars[-1].open_time + bars[-1].interval).as_dict()
+    first, columns = feature_columns(series)
+    assert math.isinf(row["atr_24"]) and math.isinf(columns["atr_24"][0])
+    for name in FEATURE_NAMES:
+        assert columns[name][0] == row[name] or (
+            math.isnan(columns[name][0]) and math.isnan(row[name])
+        ), name
+
+
+def test_a_non_hourly_series_is_refused() -> None:
+    # S4A-R2: the factory refuses any interval but 1h
+    bars = tuple(
+        Bar(START + timedelta(hours=2 * i), 1.0, 1.0, 1.0, 1.0, 1.0, timedelta(hours=2))
+        for i in range(REQUIRED_HISTORY_BARS + 2)
+    )
+    series = BarSeries("BTCUSDT", bars, interval=timedelta(hours=2))
+    with pytest.raises(FeatureFactoryError, match="1:00:00 series"):
+        feature_columns(series)

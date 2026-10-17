@@ -23,18 +23,26 @@ float operations:
   basis-point returns, as `ewma_volatility` does per call;
 - `breakout_720`: `max` over the window.
 
-Nothing is filled or repaired: a series with a hole is refused, as the
-factory refuses it.
+Refusals are the factory's own, no more and no fewer (S4A-R1, S4A-R2): a
+non-hourly series or a hole, too short a history, and a non-finite value of
+a primitive the factory checks (`log_return`, `true_range`, the EMA, the SMA,
+each `rv_*`, `ewma_vol_168h`, the mean true range before it is divided by
+the close). Derived ratios the factory does not check (`ema_dist_*`,
+`trend_200d`, `breakout_720`, `atr_24`) are returned as computed, even when
+not finite; callers decide what that means.
 """
 
 from __future__ import annotations
 
-import math
 import statistics
 from fractions import Fraction
 
-from aqt.backtest.costs import BPS_PER_UNIT, ewma_hourly_volatility_bps_series
-from aqt.data.bars import BarSeries
+from aqt.backtest.costs import (
+    BPS_PER_UNIT,
+    CostModelError,
+    ewma_hourly_volatility_bps_series,
+)
+from aqt.data.bars import BAR_INTERVAL, BarSeries
 from aqt.features.factory import (
     _ANNUALIZATION_FACTOR,
     _EMA_ALPHAS,
@@ -46,6 +54,7 @@ from aqt.features.factory import (
     RV_WINDOWS,
     SMA_WINDOW,
     FeatureFactoryError,
+    _require_finite,
     log_return,
     true_range,
 )
@@ -81,6 +90,10 @@ def feature_columns(series: BarSeries) -> tuple[int, dict[str, tuple[float, ...]
     """`(first, columns)`: `columns[name][k]` is `compute_features(series,
     t).<name>` for the decision at the close of bar `first + k`, for every
     bar with the factory's required history."""
+    if series.interval != BAR_INTERVAL:
+        raise FeatureFactoryError(
+            f"features require a {BAR_INTERVAL} series, got {series.interval}"
+        )
     series.require_contiguous()
     bars = series.bars
     n = len(bars)
@@ -91,7 +104,12 @@ def feature_columns(series: BarSeries) -> tuple[int, dict[str, tuple[float, ...]
         )
     closes = [b.close for b in bars]
     returns = [log_return(closes[i + 1], closes[i]) for i in range(n - 1)]
-    sigma_bps = ewma_hourly_volatility_bps_series([r * BPS_PER_UNIT for r in returns])
+    try:
+        sigma_bps = ewma_hourly_volatility_bps_series(
+            [r * BPS_PER_UNIT for r in returns]
+        )
+    except CostModelError as error:
+        raise FeatureFactoryError(str(error)) from error
     ranges = [0.0] + [true_range(bars[i], closes[i - 1]) for i in range(1, n)]
     exact_close = [_exact(c) for c in closes]
     exact_ret = [_exact(r) for r in returns]
@@ -128,7 +146,15 @@ def feature_columns(series: BarSeries) -> tuple[int, dict[str, tuple[float, ...]
                 s1, s2 = rv[w]
                 rv[w] = (s1 + new - old, s2 + new * new - old * old)
         close = closes[i]
-        sma_value = _fsum_value(sma) / SMA_WINDOW
+        for span in EMA_SPANS:
+            _require_finite(ema[span], "exponential_moving_average")
+        sma_value = _require_finite(
+            _fsum_value(sma) / SMA_WINDOW, "simple_moving_average"
+        )
+        atr_value = _require_finite(_fsum_value(atr) / ATR_WINDOW, "average_true_range")
+        ewma_value = _require_finite(
+            (sigma_bps[i - 2] / BPS_PER_UNIT) * _ANNUALIZATION_FACTOR, "ewma_vol_168h"
+        )
         row = {
             "ret_1h": log_return(close, closes[i - 1]),
             "ret_24h": log_return(close, closes[i - 24]),
@@ -143,14 +169,13 @@ def feature_columns(series: BarSeries) -> tuple[int, dict[str, tuple[float, ...]
             "sma_4800": sma_value,
             "trend_200d": close / sma_value - 1.0,
             "breakout_720": close / max(closes[i + 1 - BREAKOUT_WINDOW : i + 1]) - 1.0,
-            "ewma_vol_168h": (sigma_bps[i - 2] / BPS_PER_UNIT) * _ANNUALIZATION_FACTOR,
-            "atr_24": (_fsum_value(atr) / ATR_WINDOW) / close,
+            "ewma_vol_168h": ewma_value,
+            "atr_24": atr_value / close,
         }
         for w in RV_WINDOWS:
-            row[f"rv_{w}"] = _stdev(w, *rv[w]) * _ANNUALIZATION_FACTOR
+            row[f"rv_{w}"] = _require_finite(
+                _stdev(w, *rv[w]) * _ANNUALIZATION_FACTOR, "realized_volatility"
+            )
         for name in FEATURE_NAMES:
-            value = row[name]
-            if not math.isfinite(value):
-                raise FeatureFactoryError(f"{name} at bar {i} is not finite")
-            out[name].append(value)
+            out[name].append(row[name])
     return first, {name: tuple(v) for name, v in out.items()}
