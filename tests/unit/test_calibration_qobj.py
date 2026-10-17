@@ -191,6 +191,15 @@ def test_a_reader_accepts_a_built_object_and_refuses_a_lesser_one(
     def changed(name: str, **items: object) -> dict[str, bytes]:
         return {**files, name: cj({**json.loads(files[name]), **items})}
 
+    def without(name: str, key: str) -> dict[str, bytes]:
+        content = json.loads(files[name])
+        del content[key]
+        return {**files, name: cj(content)}
+
+    keys = json.loads(files["choices.json"])["chain_heads"]
+    freeze = json.loads(files["freeze.json"])
+    late = int(datetime.fromisoformat(freeze["threshold_started"]).timestamp()) + 1
+
     minimal = {  # the shape the screen's reader used to accept
         "definition.json": files["definition.json"],
         "mapping.py": b"m",
@@ -208,9 +217,32 @@ def test_a_reader_accepts_a_built_object_and_refuses_a_lesser_one(
         (changed("freeze.json", allocation={}), "allocation"),
         (changed("freeze.json", definition_sha256="0" * 64), "freeze"),
         ({**files, "preregistration.md": b"other"}, "preregistration"),
+        # S16SR2-1: a head per manifest chain, each a digest, none genesis
+        (changed("choices.json", chain_heads={}), "chain head"),
+        (changed("choices.json", chain_heads=dict.fromkeys(keys, "x")), "chain head"),
+        (changed("choices.json", chain_heads=dict.fromkeys(keys, "0" * 64)), "head"),
+        # S16SR2-2: the freeze's fields as build writes them
+        (without("freeze.json", "host_provenance_sha256"), "host provenance"),
+        (without("freeze.json", "definition_commit"), "commit id"),
+        (changed("freeze.json", definition_commit="abc1234"), "commit id"),
+        (without("freeze.json", "threshold_started"), "start time"),
+        (without("freeze.json", "definition_committed_unix"), "before the threshold"),
+        (
+            changed("freeze.json", definition_committed_unix=late),
+            "before the threshold",
+        ),
     ):
         with pytest.raises(ValueError, match=why):
             qobj.read(bad)
+
+
+def test_the_builder_needs_the_full_definition_commit(
+    tmp_path: Path, fakes: None
+) -> None:
+    kwargs = _setup(tmp_path)  # S16SR2-2: `read` refuses a short id
+    with pytest.raises(ValueError, match="full commit id"):
+        qobj.build(**{**kwargs, "definition_commit": kwargs["definition_commit"][:7]})
+    assert not kwargs["out"].exists()
 
 
 def _not_qualifying(k, p):  # type: ignore[no-untyped-def]

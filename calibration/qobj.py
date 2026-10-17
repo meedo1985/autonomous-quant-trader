@@ -68,6 +68,15 @@ REPORT = ("cells", "m", "tests", "targets", "family_block_rule", "z_crit",
 NAMESPACES = ("threshold", "dev")
 
 
+def _hex(value: object, n: int) -> bool:
+    """`value` is `n` lowercase hex digits (a SHA-256 or a full commit id)."""
+    return (
+        isinstance(value, str)
+        and len(value) == n
+        and set(value) <= set("0123456789abcdef")
+    )
+
+
 def _git(root: Path, *args: str) -> bytes:
     return subprocess.run(
         ["git", "-C", str(root), *args], capture_output=True, check=True
@@ -257,6 +266,35 @@ def read(files: dict[str, bytes]) -> tuple[dict[str, Any], dict[str, Any]]:
     }
     if freeze.get("definition_sha256") != rundef.definition_sha256(defn):
         raise ValueError("the freeze is not the run definition's")
+    # S16SR2-1, S16SR2-2: one digest per threshold and dev chain of the
+    # manifest, and the freeze's commit and times as build writes them; the
+    # digests themselves are checked against the store at the freeze
+    keys = {f"{ns}/{c.cell_id}" for c in cells for ns in NAMESPACES}
+
+    def digests(value: object) -> bool:
+        return (
+            isinstance(value, dict)
+            and set(value) == keys
+            and all(_hex(v, 64) for v in value.values())
+        )
+
+    heads = report["chain_heads"]
+    if not digests(heads) or chunks.GENESIS in heads.values():
+        raise ValueError("choices.json needs a chain head per manifest chain")
+    if not digests(freeze.get("host_provenance_sha256")):
+        raise ValueError("the freeze needs a host provenance hash per chain")
+    commit, when = (
+        freeze.get("definition_commit"),
+        freeze.get("definition_committed_unix"),
+    )
+    if not _hex(commit, 40):
+        raise ValueError("the freeze needs the definition's full commit id")
+    try:
+        started = datetime.fromisoformat(freeze["threshold_started"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("the freeze needs the threshold start time") from error
+    if type(when) is not int or started.tzinfo is None or when >= started.timestamp():
+        raise ValueError("the freeze's commit time is not before the threshold start")
     if freeze.get("allocation") != final or set(final.values()) - set(choices.HELD_OUT):
         raise ValueError("the allocation is not the final cells' 20k/40k")
     return report, defn
@@ -282,6 +320,8 @@ def build(
     run's); `root` is the checkout holding the later files. Refuses
     (ValueError) with nothing at `out`."""
     stage = out.with_name(out.name + ".partial")
+    if not _hex(definition_commit, 40):  # S16SR2-2: as `read` checks it
+        raise ValueError("definition_commit must be the full commit id")
     if out.exists() or stage.exists():
         raise ValueError(f"{out} or its staging directory already exists")
     data = definition.read_bytes()
