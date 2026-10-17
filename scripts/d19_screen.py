@@ -49,25 +49,35 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "pilot" and len(trials) != screen.MAX_TRIALS:
         parser.error(f"the pilot screens a {screen.MAX_TRIALS}-trial set (prereg §10)")
     code = args.trial_code.resolve()
-    sys.path.append(str(code))  # last: never shadows the engine or the image
-    source = screen.load_hourly_source(args.raw_root)
-    if args.command == "pilot":
-        record = screen.run_screen(
-            trials,
-            source,
-            screen.C2_W0,
-            screen.C2_WINDOW_DAYS * 24,
-            screen.C2_WINDOW_ID,
-            screen.C2_G_DAYS,
-            workers=args.workers,
-            code_dir=code,
-        )
-    else:
-        record = screen.declare(
-            trials, source, args.object, args.posted, ROOT, args.workers, code
-        )
-    with args.out.open("xb") as out:  # S7-R8: never overwrites
+    out = args.out.open("xb")  # S7-R8, S7R-R4: reserved before any work
+    try:
+        if args.command == "pilot":
+            record = screen.run_screen(
+                trials,
+                screen.load_hourly_source(args.raw_root),
+                screen.C2_W0,
+                screen.C2_WINDOW_DAYS * 24,
+                screen.C2_WINDOW_ID,
+                screen.C2_G_DAYS,
+                workers=args.workers,
+                code_dir=code,
+            )
+        else:
+            record = screen.declare(
+                trials,
+                args.raw_root,
+                args.object,
+                args.posted,
+                ROOT,
+                args.workers,
+                code,
+            )
         out.write(cj(record))
+        out.close()
+    except BaseException:
+        out.close()
+        args.out.unlink()  # only the file this run reserved
+        raise
     if args.command == "pilot":
         print("MEASUREMENT", sha(record))
         return 0

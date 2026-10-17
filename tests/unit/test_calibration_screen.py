@@ -1737,10 +1737,45 @@ def test_two_worker_processes_give_the_same_runs(
 
 
 def test_workers_search_trial_code_last(monkeypatch: pytest.MonkeyPatch) -> None:
-    # S7-R1: trial code never shadows an engine or image module
-    monkeypatch.setattr(sys, "path", ["/site-packages"])
+    # S7-R1, S7R-R1: trial code never shadows an engine or image module, even
+    # if it was already early on the path (PYTHONPATH)
+    monkeypatch.setattr(sys, "path", ["/trials", "/site-packages", "/repo"])
     screen._extend_path(["/repo", "/repo/src"], ["/trials"])
     assert sys.path == ["/repo", "/repo/src", "/site-packages", "/trials"]
+
+
+def test_run_screen_finds_trial_code_from_code_dir_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # S7R-R3: the parent loads trial code from code_dir before any worker
+    monkeypatch.setattr(screen, "N_PATHS", 1)
+    code = tmp_path / "code"
+    code.mkdir()
+    (code / "s7_only_here.py").write_text(CONST, encoding="utf-8")
+    digest = hashlib.sha256((code / "s7_only_here.py").read_bytes()).hexdigest()
+    trial = {
+        **_trial(
+            signal="s7_only_here:s",
+            signal_sha256=digest,
+            s_inputs=["ema_dist_168"],
+            warmup_hours=4801,
+            g11_class="constant_signal",
+        ),
+        "parameter_point": {},
+        "grid": {},
+    }
+    monkeypatch.setattr(sys, "path", [p for p in sys.path if p != str(code)])
+    record = screen.run_screen(
+        [trial],
+        _source_for_screen(),
+        W0,
+        WINDOW_H,
+        WINDOW,
+        30,
+        workers=1,
+        code_dir=code,
+    )
+    assert record["availability"] == "ALL_AVAILABLE"
 
 
 def test_the_screen_reference_vectors_are_frozen_where_exact() -> None:
@@ -1758,8 +1793,12 @@ def test_c2_constants_follow_the_engine() -> None:
     assert screen.C2_WINDOW_ID == '["2022-01-08T00:00:00Z","2025-06-01T00:00:00Z"]'
 
 
-def _declarable(monkeypatch: pytest.MonkeyPatch, defn: dict[str, Any]) -> None:
+def _declarable(
+    monkeypatch: pytest.MonkeyPatch, defn: dict[str, Any], src: screen.HourlySource
+) -> None:
     monkeypatch.setattr(screen, "check_object", lambda obj, posted, root: defn)
+    # S7R-R2: declare rebuilds the bars itself from the raw root
+    monkeypatch.setattr(screen, "load_hourly_source", lambda root: src)
     monkeypatch.setattr(screen, "N_PATHS", 1)
     monkeypatch.setattr(screen, "C2_W0", W0)
     monkeypatch.setattr(screen, "C2_WINDOW_DAYS", WINDOW_H // 24)
@@ -1773,14 +1812,14 @@ def test_a_declaration_record_needs_the_checks_and_names_the_object(
     # DR-6 (S7-R2, S7-R3, S7-R4)
     src = _source_for_screen()
     defn = {"exploration_source": {"manifest_sha256": src.identity["manifest_sha256"]}}
-    _declarable(monkeypatch, defn)
+    _declarable(monkeypatch, defn, src)
     trial = _screen_trial(tmp_path, monkeypatch, CONST, g11_class="constant_signal")
     with pytest.raises(ValueError, match="not frozen yet"):
-        screen.declare([trial], src, tmp_path, "f" * 64, tmp_path, workers=1)
+        screen.declare([trial], tmp_path, tmp_path, "f" * 64, tmp_path, workers=1)
     monkeypatch.setattr(
         screen, "FROZEN_REFERENCE_VECTORS", screen.screen_reference_vectors()
     )
-    record = screen.declare([trial], src, tmp_path, "f" * 64, tmp_path, workers=1)
+    record = screen.declare([trial], tmp_path, tmp_path, "f" * 64, tmp_path, workers=1)
     assert record["outcome"] == "VALID"
     assert record["qualification_object_sha256"] == "f" * 64
     assert "measurement_only" not in record and "availability" not in record
@@ -1790,14 +1829,16 @@ def test_a_declaration_record_needs_the_checks_and_names_the_object(
     other = screen.HourlySource(
         src.bars, src.hour, {"manifest_sha256": {"BTCUSDT": "c" * 64}}
     )
+    monkeypatch.setattr(screen, "load_hourly_source", lambda root: other)
     with pytest.raises(ValueError, match="exploration bars"):
-        screen.declare([trial], other, tmp_path, "f" * 64, tmp_path, workers=1)
+        screen.declare([trial], tmp_path, tmp_path, "f" * 64, tmp_path, workers=1)
+    monkeypatch.setattr(screen, "load_hourly_source", lambda root: src)
     # changed reference vectors: refused
     monkeypatch.setattr(
         screen, "FROZEN_REFERENCE_VECTORS", {"paths": "x", "g11": "y", "g14": "z"}
     )
     with pytest.raises(ValueError, match="differ from the frozen"):
-        screen.declare([trial], src, tmp_path, "f" * 64, tmp_path, workers=1)
+        screen.declare([trial], tmp_path, tmp_path, "f" * 64, tmp_path, workers=1)
 
 
 def test_check_object_verifies_every_manifest_file(
@@ -1852,7 +1893,19 @@ def test_the_cli_pilot_needs_twenty_trials_and_never_overwrites(
     monkeypatch.setattr(
         cli.screen, "load_hourly_source", lambda root: _source_for_screen()
     )
-    monkeypatch.setattr(cli.screen, "run_screen", lambda *a, **k: {"x": 1})
+    ran: list[object] = []
+
+    def fake_run(*a: Any, **k: Any) -> dict[str, int]:
+        ran.append(a)
+        return {"x": 1}
+
+    monkeypatch.setattr(cli.screen, "run_screen", fake_run)
     with pytest.raises(FileExistsError):
         cli.main(["pilot", *base, "--raw-root", str(tmp_path), "--out", str(out)])
-    assert out.read_bytes() == b"keep"
+    assert out.read_bytes() == b"keep" and ran == []  # S7R-R4: refused before work
+    # a failing screen leaves no reserved file behind
+    monkeypatch.setattr(cli.screen, "run_screen", lambda *a, **k: 1 / 0)
+    fresh = tmp_path / "fresh.json"
+    with pytest.raises(ZeroDivisionError):
+        cli.main(["pilot", *base, "--raw-root", str(tmp_path), "--out", str(fresh)])
+    assert not fresh.exists()

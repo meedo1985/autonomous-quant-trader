@@ -1709,12 +1709,13 @@ def spearman_ic(predictions: Sequence[float], targets: Sequence[float]) -> float
 #   that commit's, except `mapping.py` and this file, which must equal the
 #   object's copies (so `aqt.backtest.event_contract` and
 #   `aqt.features.columns` must be in the engine commit, SCREEN_PLAN section
-#   3). Then (S7-R2) its inputs are not the caller's: the window and `g` are
-#   the C2 constants the engine fixes (`grid.T_C2 = 1247 - g`, prereg §3.1;
-#   `w0` = 2022-01-01 + g, DRAFT `partitions.confirmation.start`), and the
-#   exploration bars must be the run definition's (`exploration_source`
-#   manifests). And (S7-R4) the screen's reference vectors must equal those
-#   frozen in this file; the float path's vector is frozen from the pinned
+#   3). Then (S7-R2, S7R-R2) its inputs are not the caller's: the window and
+#   `g` are the C2 constants the engine fixes (`grid.T_C2 = 1247 - g`,
+#   prereg §3.1; `w0` = 2022-01-01 + g, DRAFT `partitions.confirmation.
+#   start`), and the bars are rebuilt from the exploration archives, whose
+#   manifests must be the run definition's (`exploration_source`). And
+#   (S7-R4) the screen's reference vectors must equal those frozen in this
+#   file; the float path's vector is frozen from the pinned
 #   image (slice S8) and, until then, `declare` refuses.
 # - DR-7 `run_screen` alone makes a measurement record (prereg §10's pilot,
 #   "one screen of a 20-trial set"): per-run seconds, an availability summary,
@@ -1875,10 +1876,20 @@ def screen_job(
 
 
 def _extend_path(engine: Sequence[str], code: Sequence[str]) -> None:
-    """DR-8: a worker imports the engine first and the trial code last
-    (spawn and forkserver children do not inherit the parent's paths)."""
-    sys.path[:0] = [p for p in engine if p not in sys.path]
-    sys.path.extend(p for p in code if p not in sys.path)
+    """DR-8: the engine first and the trial code last on the import path, an
+    earlier entry of a trial-code directory moved to the end (S7R-R1); run in
+    the parent and in every worker (spawn and forkserver children do not
+    inherit the parent's paths)."""
+    sys.path[:] = [p for p in sys.path if p not in engine and p not in code]
+    sys.path[:0] = list(engine)
+    sys.path.extend(code)
+
+
+def _paths(code_dir: Path | None) -> tuple[list[str], list[str]]:
+    root = Path(__file__).resolve().parents[1]
+    return [str(root), str(root / "src")], (
+        [] if code_dir is None else [str(code_dir.resolve())]
+    )
 
 
 def run_screen(
@@ -1893,6 +1904,8 @@ def run_screen(
 ) -> dict[str, Any]:
     """DR-1..DR-3, DR-5, DR-7: the measurement record of `trials`."""
     set_sha = trial_set_sha256(trials)  # refuses an invalid declaration (DR-3)
+    engine, code = _paths(code_dir)
+    _extend_path(engine, code)  # S7R-R3: the parent loads trial code too
     for t in trials:  # S7-R6: every trial's code loads from its bytes first
         load(t["signal"], t["signal_sha256"])
         if t["overlay"] is not None:
@@ -1908,9 +1921,6 @@ def run_screen(
         # engine's import test allows numpy alone (test_d19_deploy.py)
         from concurrent.futures import ProcessPoolExecutor
 
-        root = Path(__file__).resolve().parents[1]
-        engine = [str(root), str(root / "src")]
-        code = [] if code_dir is None else [str(code_dir.resolve())]
         with ProcessPoolExecutor(
             max_workers=workers, initializer=_extend_path, initargs=(engine, code)
         ) as pool:
@@ -1939,15 +1949,19 @@ def run_screen(
 
 def declare(
     trials: list[dict[str, Any]],
-    source: HourlySource,
+    raw_root: Path,
     obj: Path,
     posted_sha256: str,
     root: Path,
     workers: int = 2,
     code_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """DR-4..DR-6: the screen record a declaration lists, or ValueError."""
+    """DR-4..DR-6: the screen record a declaration lists, or ValueError. The
+    bars are rebuilt here from the exploration archives (each checked
+    against its sidecar by `build_exploration_manifest`), never taken from
+    the caller (S7R-R2)."""
     defn = check_object(obj, posted_sha256, root)
+    source = load_hourly_source(raw_root)
     vectors = screen_reference_vectors()
     if any(v is None for v in FROZEN_REFERENCE_VECTORS.values()):
         raise ValueError("the screen's float reference vector is not frozen yet (S8)")
