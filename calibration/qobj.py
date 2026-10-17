@@ -200,6 +200,68 @@ def _reviewed(root: Path, files: dict[str, bytes]) -> None:
             raise ValueError(f"BO-4: {name} has no committed review record")
 
 
+def read(files: dict[str, bytes]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """S16SR-1: what a reader can re-check of `build`'s refusals from the
+    object's own (manifest-checked) files, without the run's store: exactly
+    the built file set, a qualification run at the prescribed counts, the
+    preregistration and exploration manifest the definition names, every §4
+    report item with M tests of the cell manifest, one known status per unit,
+    a qualifying method, and the freeze's definition hash and allocation.
+    Returns (choices report, definition); ValueError otherwise."""
+    from calibration import choices, reduce  # noqa: PLC0415
+
+    built = set(ENGINE) | set(LATER)
+    built |= {"definition.json", "choices.json", "exploration_manifest.json"}
+    if set(files) != built | {"freeze.json"}:
+        raise ValueError("the object's files are not the qualification object's")
+    defn: dict[str, Any] = json.loads(files["definition.json"])
+    manifest_ = defn["cell_manifest"]
+    if manifest_.get("purpose") != "qualification":
+        raise ValueError("not a qualification run")
+    if manifest_.get("replications") != rundef.PRESCRIBED:
+        raise ValueError(f"not the prescribed counts {rundef.PRESCRIBED}")
+    prereg = hashlib.sha256(files["preregistration.md"]).hexdigest()
+    if prereg != defn["prereg_sha256"]:
+        raise ValueError("the preregistration is not the run definition's")
+    explore = json.loads(files["exploration_manifest.json"])
+    if explore.get("manifest_sha256") != defn["exploration_manifest_sha256"]:
+        raise ValueError("the exploration manifest is not the run definition's")
+    report: dict[str, Any] = json.loads(files["choices.json"])
+    if absent := [k for k in REPORT if k not in report]:
+        raise ValueError(f"choices.json lacks §4 items: {absent}")
+    cells = generator.cells_from_manifest(manifest_)
+    tests = choices.test_manifest([(c.cell_id, c.law) for c in cells])
+    if report["tests"] != tests or report["m"] != len(tests):
+        raise ValueError("the test manifest is not the cell manifest's")
+    units = {
+        u
+        for c in cells
+        for u in (
+            [f"{c.cell_id}/{f}" for f in reduce.FAMILIES]
+            if c.law == "semi-joint"
+            else [c.cell_id]
+        )
+    }
+    statuses = ("qualifying", "demoted_availability", "demoted_cap")  # choices.py
+    if set(report["cells"]) != units or any(
+        r.get("status") not in statuses for r in report["cells"].values()
+    ):
+        raise ValueError("choices.json needs one known status per manifest unit")
+    if not (report.get("qualifies") is True and report.get("margin_ok") is True):
+        raise ValueError("the method does not qualify (§5 step 6)")
+    freeze = json.loads(files["freeze.json"])
+    final = {
+        u: r["held_out"]
+        for u, r in report["cells"].items()
+        if r["status"] == "qualifying"
+    }
+    if freeze.get("definition_sha256") != rundef.definition_sha256(defn):
+        raise ValueError("the freeze is not the run definition's")
+    if freeze.get("allocation") != final or set(final.values()) - set(choices.HELD_OUT):
+        raise ValueError("the allocation is not the final cells' 20k/40k")
+    return report, defn
+
+
 def build(
     *,
     root: Path,

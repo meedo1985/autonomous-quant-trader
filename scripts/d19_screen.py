@@ -83,6 +83,8 @@ def summary(record: dict[str, object]) -> list[str]:
         f"all trials: {total:.0f} worker-seconds ({total / 3600:.1f} worker-hours)"
     )
     lines.append(f"availability: {record.get('availability')}")
+    runtimes = {json.dumps(r.get("runtime"), sort_keys=True) for r in runs}
+    lines.append(f"job runtimes (S16SR-1): {sorted(runtimes)}")
     lines.append(
         f"reference vectors: {json.dumps(record['reference_vectors'], sort_keys=True)}"
     )

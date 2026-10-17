@@ -176,6 +176,43 @@ def test_a_qualifying_run_gives_an_object_hashed_by_its_manifest(
     assert not out.with_name(out.name + ".partial").exists()  # QO-7: renamed
 
 
+def test_a_reader_accepts_a_built_object_and_refuses_a_lesser_one(
+    tmp_path: Path, fakes: None
+) -> None:
+    # S16SR-1: qobj.read re-checks the builder's refusals from the files
+    kwargs = _setup(tmp_path)
+    qobj.build(**kwargs)
+    out = kwargs["out"]
+    names = json.loads((out / "manifest.json").read_bytes())
+    files = {n: (out / n).read_bytes() for n in names}
+    report, defn = qobj.read(files)
+    assert report["qualifies"] is True and defn["prereg_sha256"]
+
+    def changed(name: str, **items: object) -> dict[str, bytes]:
+        return {**files, name: cj({**json.loads(files[name]), **items})}
+
+    minimal = {  # the shape the screen's reader used to accept
+        "definition.json": files["definition.json"],
+        "mapping.py": b"m",
+        "screen.py": b"s",
+        "preregistration.md": files["preregistration.md"],
+        "choices.json": b'{"qualifies": true, "margin_ok": true}',
+        "freeze.json": b"{}",
+    }
+    cell = CELL["cell_id"]
+    for bad, why in (
+        (minimal, "files are not"),
+        (changed("choices.json", m=2, tests=[]), "test manifest"),
+        (changed("choices.json", cells={cell: {"status": "odd"}}), "known status"),
+        (changed("choices.json", margin_ok=False), "does not qualify"),
+        (changed("freeze.json", allocation={}), "allocation"),
+        (changed("freeze.json", definition_sha256="0" * 64), "freeze"),
+        ({**files, "preregistration.md": b"other"}, "preregistration"),
+    ):
+        with pytest.raises(ValueError, match=why):
+            qobj.read(bad)
+
+
 def _not_qualifying(k, p):  # type: ignore[no-untyped-def]
     report = json.loads((p / "choices.json").read_bytes())
     report["qualifies"] = False

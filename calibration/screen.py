@@ -91,7 +91,7 @@ from aqt.features.factory import (
     FeatureFactoryError,
 )
 from aqt.metrics.descriptive import _max_drawdown
-from calibration import gap, grid
+from calibration import dsr, gap, grid
 from calibration.seeds import sha, stream
 from calibration.semi import SYMBOLS, block_signs
 
@@ -1790,7 +1790,7 @@ def screen_reference_vectors() -> dict[str, str]:
 def check_object(obj: Path, posted_sha256: str, root: Path) -> dict[str, Any]:
     """DR-6: the posted qualification object (every manifest file, S7-R7),
     its engine code and runtime; returns its run definition."""
-    from calibration import mapping
+    from calibration import mapping, qobj
 
     manifest = json.loads((obj / "manifest.json").read_bytes())
     if sha(manifest) != posted_sha256:
@@ -1801,23 +1801,7 @@ def check_object(obj: Path, posted_sha256: str, root: Path) -> dict[str, Any]:
         if hashlib.sha256(data).hexdigest() != digest:
             raise ValueError(f"{name} does not match the object's manifest")
         files[name] = data
-    for name in (
-        "choices.json",
-        "definition.json",
-        "freeze.json",
-        "mapping.py",
-        "preregistration.md",
-        "screen.py",
-    ):
-        if name not in files:
-            raise ValueError(f"the object has no {name}")
-    report = json.loads(files["choices.json"])  # S16S-2: as d19_heldout's gate
-    if not (report.get("qualifies") is True and report.get("margin_ok") is True):
-        raise ValueError("the object's method does not qualify")
-    defn: dict[str, Any] = json.loads(files["definition.json"])
-    prereg = hashlib.sha256(files["preregistration.md"]).hexdigest()
-    if prereg != defn.get("prereg_sha256"):  # S16S-2: as qobj's builder
-        raise ValueError("the preregistration is not the run definition's")
+    _, defn = qobj.read(files)  # S16S-2, S16SR-1: the builder's own checks
     check_screen_code(
         defn,
         root,
@@ -1891,6 +1875,8 @@ def screen_job(
         "path": p,
         "gates": gates,
         "seconds": time.perf_counter() - started,
+        # S16SR-1: the pinned runtime as this job's own process had it
+        "runtime": {k: os.environ.get(k, "") for k in dsr.V_ENVIRONMENT},
     }
 
 
@@ -2002,6 +1988,8 @@ def declare(
         workers=workers,
         code_dir=code_dir,
     )
+    if any(r["runtime"] != dsr.V_ENVIRONMENT for r in record["runs"]):
+        raise ValueError("a screen job ran off the pinned runtime (S16SR-1)")
     for r in record["runs"]:
         del r["seconds"]  # timing is measurement evidence, not declared
     del record["measurement_only"]

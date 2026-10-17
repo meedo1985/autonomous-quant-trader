@@ -1835,6 +1835,8 @@ def _declarable(
     monkeypatch.setattr(screen, "C2_WINDOW_DAYS", WINDOW_H // 24)
     monkeypatch.setattr(screen, "C2_WINDOW_ID", WINDOW)
     monkeypatch.setattr(screen, "C2_G_DAYS", 30)
+    for name, value in screen.dsr.V_ENVIRONMENT.items():  # S16SR-1
+        monkeypatch.setenv(name, value)
 
 
 def test_a_declaration_record_needs_the_checks_and_names_the_object(
@@ -1856,6 +1858,12 @@ def test_a_declaration_record_needs_the_checks_and_names_the_object(
     assert "measurement_only" not in record and "availability" not in record
     assert all("seconds" not in r for r in record["runs"])
     assert (record["w0"], record["window_hours"]) == (W0.isoformat(), WINDOW_H)
+    assert all(r["runtime"] == screen.dsr.V_ENVIRONMENT for r in record["runs"])
+    # a job off the pinned runtime: refused (S16SR-1)
+    monkeypatch.setenv("OPENBLAS_CORETYPE", "Zen")
+    with pytest.raises(ValueError, match="pinned runtime"):
+        screen.declare([trial], tmp_path, tmp_path, "f" * 64, tmp_path, workers=1)
+    monkeypatch.setenv("OPENBLAS_CORETYPE", "Haswell")
     # other exploration bars than the run definition's: refused
     other = screen.HourlySource(
         src.bars, src.hour, {"manifest_sha256": {"BTCUSDT": "c" * 64}}
@@ -1875,9 +1883,9 @@ def test_a_declaration_record_needs_the_checks_and_names_the_object(
 def test_check_object_verifies_every_manifest_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # S7-R7: choices.json and every other listed file, not three of them;
-    # S16S-2: a qualifying report and a freeze record, as d19_heldout's gate
-    from calibration import mapping
+    # S7-R7: every listed file; S16SR-1: the object's contents are checked by
+    # qobj.read (its own test), so the minimal object is refused here
+    from calibration import mapping, qobj
 
     def write(files: dict[str, bytes]) -> str:
         for name, data in files.items():
@@ -1898,24 +1906,17 @@ def test_check_object_verifies_every_manifest_file(
     posted = write(files)
     monkeypatch.setattr(screen, "check_screen_code", lambda *a: None)
     monkeypatch.setattr(mapping, "check_runtime", lambda defn: None)
-    assert screen.check_object(tmp_path, posted, tmp_path) == defn
-    posted = write({**files, "preregistration.md": b"other"})
-    with pytest.raises(ValueError, match="preregistration"):
+    with pytest.raises(ValueError, match="not the qualification object's"):
         screen.check_object(tmp_path, posted, tmp_path)
-    posted = write(files)
+    seen: list[dict[str, bytes]] = []
+    monkeypatch.setattr(qobj, "read", lambda f: (seen.append(f), ({}, defn))[1])
+    assert screen.check_object(tmp_path, posted, tmp_path) == defn
+    assert seen == [files]  # every manifest file, checked, goes to the reader
     (tmp_path / "choices.json").write_bytes(b"changed")
     with pytest.raises(ValueError, match="choices.json"):
         screen.check_object(tmp_path, posted, tmp_path)
     with pytest.raises(ValueError, match="posted"):
         screen.check_object(tmp_path, "0" * 64, tmp_path)
-    for report in (b'{"qualifies": false, "margin_ok": true}', b'{"qualifies": true}'):
-        posted = write({**files, "choices.json": report})
-        with pytest.raises(ValueError, match="does not qualify"):
-            screen.check_object(tmp_path, posted, tmp_path)
-    (tmp_path / "freeze.json").unlink()
-    posted = write({n: d for n, d in files.items() if n != "freeze.json"})
-    with pytest.raises(ValueError, match="no freeze.json"):
-        screen.check_object(tmp_path, posted, tmp_path)
 
 
 def test_the_cli_starts_on_the_pinned_runtime_without_bytecode() -> None:
@@ -2041,4 +2042,5 @@ def test_the_pilot_summary_reports_seconds_and_gates() -> None:
     assert lines[2].startswith("p20: 1 paths, 1200 s total") and "G-3:X x1" in lines[2]
     assert lines[3] == "all trials: 1320 worker-seconds (0.4 worker-hours)"
     assert lines[4] == "availability: SOME_UNAVAILABLE"
-    assert '"paths": "a"' in lines[5]
+    assert lines[5] == "job runtimes (S16SR-1): ['null']"  # an older record
+    assert '"paths": "a"' in lines[6]
