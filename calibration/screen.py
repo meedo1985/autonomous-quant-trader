@@ -61,7 +61,7 @@ import time
 import types
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -90,7 +90,7 @@ from aqt.features.factory import (
     FeatureFactoryError,
 )
 from aqt.metrics.descriptive import _max_drawdown
-from calibration import gap
+from calibration import gap, grid
 from calibration.seeds import sha, stream
 from calibration.semi import SYMBOLS, block_signs
 
@@ -1692,28 +1692,58 @@ def spearman_ic(predictions: Sequence[float], targets: Sequence[float]) -> float
 #   `g` the declaration fixes. Every (trial, path) result is recorded.
 # - DR-3 A path that cannot be built (`PathUnavailable`, SP-7) makes every
 #   gate of every trial on it `PATH_UNAVAILABLE`. A declaration the
-#   interface refuses (`TrialError`) refuses the whole screen: nothing is run.
-# - DR-4 Outcome `VALID` iff every recorded gate result is available or a
-#   frozen N/A; otherwise `INVALID` (P18-1). No `m` is spent either way.
+#   interface refuses (`TrialError`), including trial code that does not load
+#   from its declared bytes, refuses the whole screen before any run: every
+#   trial's code is loaded and checked first (S7-R6).
+# - DR-4 A declaration's outcome is `VALID` iff every recorded gate result is
+#   available or a frozen N/A; otherwise `INVALID` (P18-1). No `m` is spent.
 # - DR-5 The record holds the inputs and their hashes, every run's gate
-#   results, the outcome, the screen's reference vectors and `screen_sha256`,
-#   this file's bytes; `record_sha256 = sha(record)` goes into the
-#   declaration (§7.2 "Every screen run is recorded and listed").
-# - DR-6 A real screen first checks the qualification object as `mapping.py`
-#   MP-3/MP-4 does: the posted hash, the run definition's engine commit and
-#   runtime, and every loaded `calibration`/`aqt` module equal to that
-#   commit's, except `mapping.py` and this file, which must equal the
-#   object's reviewed copies. So the screen's own new modules
-#   (`aqt.backtest.event_contract`, `aqt.features.columns`) must be in the
-#   engine commit (SCREEN_PLAN section 3).
-# - DR-7 A pilot (`pilot=True`, prereg §10's "one screen of a 20-trial set")
-#   skips DR-6, records per-run seconds, and marks the record
-#   `measurement_only`: its outcome is not a declaration outcome.
+#   results, the screen's reference vectors and `screen_sha256`, this file's
+#   bytes; a declaration record adds the outcome and the posted
+#   `qualification_object_sha256` (S7-R3). `record_sha256 = sha(record)` goes
+#   into the declaration (§7.2 "Every screen run is recorded and listed").
+# - DR-6 Only `declare` makes a declaration record (S7-R3). It first checks
+#   the qualification object as `mapping.py` MP-3/MP-4 does, every file of its
+#   manifest included (S7-R7): the posted hash, the run definition's engine
+#   commit and runtime, and every loaded `calibration`/`aqt` module equal to
+#   that commit's, except `mapping.py` and this file, which must equal the
+#   object's copies (so `aqt.backtest.event_contract` and
+#   `aqt.features.columns` must be in the engine commit, SCREEN_PLAN section
+#   3). Then (S7-R2) its inputs are not the caller's: the window and `g` are
+#   the C2 constants the engine fixes (`grid.T_C2 = 1247 - g`, prereg §3.1;
+#   `w0` = 2022-01-01 + g, DRAFT `partitions.confirmation.start`), and the
+#   exploration bars must be the run definition's (`exploration_source`
+#   manifests). And (S7-R4) the screen's reference vectors must equal those
+#   frozen in this file; the float path's vector is frozen from the pinned
+#   image (slice S8) and, until then, `declare` refuses.
+# - DR-7 `run_screen` alone makes a measurement record (prereg §10's pilot,
+#   "one screen of a 20-trial set"): per-run seconds, an availability summary,
+#   `measurement_only`, and no outcome (S7-R5); the CLI's pilot needs exactly
+#   20 trials and prints `MEASUREMENT`.
 # - DR-8 `workers` processes run the (trial, path) jobs; each worker gets the
-#   repository, `src` and the trial-code directory on its import path. The
-#   record lists runs in job order (path-major), whatever the finishing order.
+#   repository and `src` first on its import path and the trial-code
+#   directory last, so trial code can never shadow an engine or image module
+#   (S7-R1). The record lists runs in job order (path-major).
 
 SCREEN_SELF = "calibration/screen.py"
+# DR-6 (S7-R2): the C2 window and gap the engine fixes
+C2_G_DAYS = 1247 - grid.T_C2  # prereg §3.1
+C2_W0 = datetime(2022, 1, 1, tzinfo=UTC) + timedelta(days=C2_G_DAYS)
+C2_WINDOW_DAYS = grid.T_C2
+C2_WINDOW_ID = json.dumps(
+    [
+        C2_W0.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        (C2_W0 + timedelta(days=C2_WINDOW_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    ],
+    separators=(",", ":"),
+)
+# DR-6 (S7-R4): the screen's frozen reference vectors; "paths" (floats) is
+# frozen from the pinned image by slice S8, and `declare` refuses until then
+FROZEN_REFERENCE_VECTORS: dict[str, str | None] = {
+    "paths": None,
+    "g11": "a63398708b99fbd5f0f5c8cee5f497ae79fab2a2b1bfee0c53577fac82bce911",
+    "g14": "5eb80b73256d75d628a4562ec04631b090eea5efcf461ff9148a04b5b4f8d643",
+}
 
 
 def screen_reference_vectors() -> dict[str, str]:
@@ -1750,20 +1780,24 @@ def screen_reference_vectors() -> dict[str, str]:
     }
 
 
-def check_object(obj: Path, posted_sha256: str, root: Path) -> None:
-    """DR-6: the posted qualification object, its engine code and runtime."""
+def check_object(obj: Path, posted_sha256: str, root: Path) -> dict[str, Any]:
+    """DR-6: the posted qualification object (every manifest file, S7-R7),
+    its engine code and runtime; returns its run definition."""
     from calibration import mapping
 
     manifest = json.loads((obj / "manifest.json").read_bytes())
     if sha(manifest) != posted_sha256:
         raise ValueError("the qualification object is not the posted one")
     files = {}
-    for name in ("definition.json", "mapping.py", "screen.py"):
+    for name, digest in manifest.items():
         data = (obj / name).read_bytes()
-        if hashlib.sha256(data).hexdigest() != manifest.get(name):
+        if hashlib.sha256(data).hexdigest() != digest:
             raise ValueError(f"{name} does not match the object's manifest")
         files[name] = data
-    defn = json.loads(files["definition.json"])
+    for name in ("definition.json", "mapping.py", "screen.py"):
+        if name not in files:
+            raise ValueError(f"the object has no {name}")
+    defn: dict[str, Any] = json.loads(files["definition.json"])
     check_screen_code(
         defn,
         root,
@@ -1773,6 +1807,7 @@ def check_object(obj: Path, posted_sha256: str, root: Path) -> None:
         },
     )
     mapping.check_runtime(defn)
+    return defn
 
 
 def check_screen_code(
@@ -1839,10 +1874,11 @@ def screen_job(
     }
 
 
-def _extend_path(paths: Sequence[str]) -> None:
-    """DR-8: a worker process imports the engine and the trial code from the
-    parent's paths (spawn and forkserver children do not inherit them)."""
-    sys.path[:0] = [p for p in paths if p not in sys.path]
+def _extend_path(engine: Sequence[str], code: Sequence[str]) -> None:
+    """DR-8: a worker imports the engine first and the trial code last
+    (spawn and forkserver children do not inherit the parent's paths)."""
+    sys.path[:0] = [p for p in engine if p not in sys.path]
+    sys.path.extend(p for p in code if p not in sys.path)
 
 
 def run_screen(
@@ -1853,11 +1889,14 @@ def run_screen(
     window_id: str,
     g_days: int,
     workers: int = 2,
-    pilot: bool = False,
     code_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """DR-1..DR-5, DR-7: the screen record of `trials`."""
+    """DR-1..DR-3, DR-5, DR-7: the measurement record of `trials`."""
     set_sha = trial_set_sha256(trials)  # refuses an invalid declaration (DR-3)
+    for t in trials:  # S7-R6: every trial's code loads from its bytes first
+        load(t["signal"], t["signal_sha256"])
+        if t["overlay"] is not None:
+            load(t["overlay"], t["overlay_sha256"])
     seed = screen_seed(set_sha)
     hours = max(t["warmup_hours"] for t in trials) + window_hours + 1
     jobs = [(t, p) for p in range(N_PATHS) for t in trials]
@@ -1870,21 +1909,17 @@ def run_screen(
         from concurrent.futures import ProcessPoolExecutor
 
         root = Path(__file__).resolve().parents[1]
-        paths = [str(root), str(root / "src")]
-        if code_dir is not None:
-            paths.append(str(code_dir.resolve()))
+        engine = [str(root), str(root / "src")]
+        code = [] if code_dir is None else [str(code_dir.resolve())]
         with ProcessPoolExecutor(
-            max_workers=workers, initializer=_extend_path, initargs=(paths,)
+            max_workers=workers, initializer=_extend_path, initargs=(engine, code)
         ) as pool:
             futures = [
                 pool.submit(screen_job, source, seed, t, p, *args[1:]) for t, p in jobs
             ]
             runs = [f.result() for f in futures]
-    valid = all(v is None or v == NA for r in runs for v in r["gates"].values())
-    if not pilot:
-        for r in runs:
-            del r["seconds"]  # timing is pilot evidence, not part of a declaration
-    record: dict[str, Any] = {
+    available = all(v is None or v == NA for r in runs for v in r["gates"].values())
+    return {
         "screen_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "trial_set_sha256": set_sha,
         "trials": [trial_sha256(t) for t in trials],
@@ -1897,10 +1932,45 @@ def run_screen(
         "path_hours": hours,
         "reference_vectors": screen_reference_vectors(),
         "runs": runs,
-        "outcome": "VALID" if valid else "INVALID",
+        "availability": "ALL_AVAILABLE" if available else "SOME_UNAVAILABLE",
+        "measurement_only": "screen measurement (prereg §10): not a declaration",
     }
-    if pilot:
-        record["measurement_only"] = (
-            "pilot screen (prereg §10): not a declaration; the outcome decides nothing"
-        )
+
+
+def declare(
+    trials: list[dict[str, Any]],
+    source: HourlySource,
+    obj: Path,
+    posted_sha256: str,
+    root: Path,
+    workers: int = 2,
+    code_dir: Path | None = None,
+) -> dict[str, Any]:
+    """DR-4..DR-6: the screen record a declaration lists, or ValueError."""
+    defn = check_object(obj, posted_sha256, root)
+    vectors = screen_reference_vectors()
+    if any(v is None for v in FROZEN_REFERENCE_VECTORS.values()):
+        raise ValueError("the screen's float reference vector is not frozen yet (S8)")
+    if vectors != FROZEN_REFERENCE_VECTORS:
+        raise ValueError("the screen's reference vectors differ from the frozen ones")
+    recorded = (defn.get("exploration_source") or {}).get("manifest_sha256")
+    if source.identity["manifest_sha256"] != recorded:
+        raise ValueError("the exploration bars are not the run definition's")
+    record = run_screen(
+        trials,
+        source,
+        C2_W0,
+        C2_WINDOW_DAYS * 24,
+        C2_WINDOW_ID,
+        C2_G_DAYS,
+        workers=workers,
+        code_dir=code_dir,
+    )
+    for r in record["runs"]:
+        del r["seconds"]  # timing is measurement evidence, not declared
+    del record["measurement_only"]
+    record["qualification_object_sha256"] = posted_sha256
+    record["outcome"] = (
+        "VALID" if record.pop("availability") == "ALL_AVAILABLE" else "INVALID"
+    )
     return record

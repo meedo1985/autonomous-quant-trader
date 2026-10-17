@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import random
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -1276,7 +1277,7 @@ def test_a_failing_fit_is_unavailable(
 @pytest.fixture(autouse=True)
 def _fast_g14(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     # every model trial in these tests runs G-14; 3 draws keep them fast
-    if "test_g14_reference" not in request.node.name:
+    if "reference_vectors" not in request.node.name:  # frozen at 500 draws
         monkeypatch.setattr(screen, "G14_DRAWS", 3)
 
 
@@ -1616,18 +1617,27 @@ CONST = "def s(row, params, state):\n    return 0.5\n"
 
 
 def _source_for_screen() -> screen.HourlySource:
-    return _source()
+    src = _source()
+    identity: dict[str, object] = {
+        "manifest_sha256": {"BTCUSDT": "a" * 64, "ETHUSDT": "b" * 64}
+    }
+    return screen.HourlySource(src.bars, src.hour, identity)
 
 
-def test_a_pilot_screen_records_every_run_and_the_outcome(
+def _no_seconds(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{k: v for k, v in r.items() if k != "seconds"} for r in runs]
+
+
+def test_a_measurement_records_every_run_and_no_outcome(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # DR-7 (S7-R5): availability and seconds, never an outcome
     monkeypatch.setattr(screen, "N_PATHS", 2)  # production: 30
     valid = _screen_trial(tmp_path, monkeypatch, CONST, g11_class="constant_signal")
     record = screen.run_screen(
-        [valid], _source_for_screen(), W0, WINDOW_H, WINDOW, 30, workers=1, pilot=True
+        [valid], _source_for_screen(), W0, WINDOW_H, WINDOW, 30, workers=1
     )
-    assert record["outcome"] == "VALID"  # constant signal: G-8, G-11, G-14 N/A
+    assert record["availability"] == "ALL_AVAILABLE" and "outcome" not in record
     assert [(r["trial_id"], r["path"]) for r in record["runs"]] == [
         ("t000", 0),
         ("t000", 1),
@@ -1641,8 +1651,7 @@ def test_a_pilot_screen_records_every_run_and_the_outcome(
     record = screen.run_screen(
         [valid, timed], _source_for_screen(), W0, WINDOW_H, WINDOW, 30, workers=1
     )
-    assert record["outcome"] == "INVALID" and "measurement_only" not in record
-    assert all("seconds" not in r for r in record["runs"])  # DR-5: not declared
+    assert record["availability"] == "SOME_UNAVAILABLE"
 
 
 def test_every_trial_runs_on_the_end_of_the_shared_path(
@@ -1671,12 +1680,11 @@ def test_every_trial_runs_on_the_end_of_the_shared_path(
     ]
 
 
-def test_an_unbuildable_path_and_an_invalid_declaration(
+def test_an_unbuildable_path_and_refusals_before_any_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # DR-3
+    # DR-3, S7-R6
     monkeypatch.setattr(screen, "N_PATHS", 1)
-
     real = screen.null_path
 
     def broken(source: Any, seed: str, p: int, hours: int) -> np.ndarray:
@@ -1690,14 +1698,23 @@ def test_an_unbuildable_path_and_an_invalid_declaration(
         [trial], _source_for_screen(), W0, WINDOW_H, WINDOW, 30, workers=1
     )
     assert set(record["runs"][0]["gates"].values()) == {"PATH_UNAVAILABLE"}
-    assert record["outcome"] == "INVALID"
+    assert record["availability"] == "SOME_UNAVAILABLE"
     with pytest.raises(screen.TrialError):
         screen.run_screen(
             [{**trial, "tau": "0.5"}], _source_for_screen(), W0, WINDOW_H, WINDOW, 30
         )
+    # S7-R6: a later trial's stale code hash refuses the screen before a run
+    jobs: list[object] = []
+    monkeypatch.setattr(screen, "screen_job", lambda *a: jobs.append(a))
+    stale = {**trial, "trial_id": "t001", "signal_sha256": "0" * 64}
+    with pytest.raises(screen.TrialError, match="declared source"):
+        screen.run_screen(
+            [trial, stale], _source_for_screen(), W0, WINDOW_H, WINDOW, 30, workers=1
+        )
+    assert jobs == []
 
 
-def test_two_worker_processes_give_the_same_record(
+def test_two_worker_processes_give_the_same_runs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # DR-8: workers import the engine and the trial code from the parent's paths
@@ -1706,7 +1723,6 @@ def test_two_worker_processes_give_the_same_record(
     one = screen.run_screen(
         [trial], _source_for_screen(), W0, WINDOW_H, WINDOW, 30, workers=1
     )
-    # the patched N_PATHS does not reach worker processes: compare runs 0-1
     two = screen.run_screen(
         [trial],
         _source_for_screen(),
@@ -1717,10 +1733,126 @@ def test_two_worker_processes_give_the_same_record(
         workers=2,
         code_dir=tmp_path,
     )
-    assert two["runs"][:2] == one["runs"]
+    assert _no_seconds(two["runs"]) == _no_seconds(one["runs"])
 
 
-def test_the_screen_reference_vectors_are_stable() -> None:
-    # SP-6: the draws are frozen elsewhere; this pins the record's keys and
-    # that the vectors do not depend on call order
-    assert screen.screen_reference_vectors() == screen.screen_reference_vectors()
+def test_workers_search_trial_code_last(monkeypatch: pytest.MonkeyPatch) -> None:
+    # S7-R1: trial code never shadows an engine or image module
+    monkeypatch.setattr(sys, "path", ["/site-packages"])
+    screen._extend_path(["/repo", "/repo/src"], ["/trials"])
+    assert sys.path == ["/repo", "/repo/src", "/site-packages", "/trials"]
+
+
+def test_the_screen_reference_vectors_are_frozen_where_exact() -> None:
+    # S7-R4: g11 and g14 are exact everywhere; the float path waits for S8
+    got = screen.screen_reference_vectors()
+    assert got["g11"] == screen.FROZEN_REFERENCE_VECTORS["g11"]
+    assert got["g14"] == screen.FROZEN_REFERENCE_VECTORS["g14"]
+    assert screen.FROZEN_REFERENCE_VECTORS["paths"] is None
+
+
+def test_c2_constants_follow_the_engine() -> None:
+    # S7-R2: T_C2 = 1247 - g, w0 = 2022-01-01 + g
+    assert screen.C2_G_DAYS == 7 and screen.C2_WINDOW_DAYS == 1240
+    assert screen.C2_W0 == datetime(2022, 1, 8, tzinfo=UTC)
+    assert screen.C2_WINDOW_ID == '["2022-01-08T00:00:00Z","2025-06-01T00:00:00Z"]'
+
+
+def _declarable(monkeypatch: pytest.MonkeyPatch, defn: dict[str, Any]) -> None:
+    monkeypatch.setattr(screen, "check_object", lambda obj, posted, root: defn)
+    monkeypatch.setattr(screen, "N_PATHS", 1)
+    monkeypatch.setattr(screen, "C2_W0", W0)
+    monkeypatch.setattr(screen, "C2_WINDOW_DAYS", WINDOW_H // 24)
+    monkeypatch.setattr(screen, "C2_WINDOW_ID", WINDOW)
+    monkeypatch.setattr(screen, "C2_G_DAYS", 30)
+
+
+def test_a_declaration_record_needs_the_checks_and_names_the_object(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # DR-6 (S7-R2, S7-R3, S7-R4)
+    src = _source_for_screen()
+    defn = {"exploration_source": {"manifest_sha256": src.identity["manifest_sha256"]}}
+    _declarable(monkeypatch, defn)
+    trial = _screen_trial(tmp_path, monkeypatch, CONST, g11_class="constant_signal")
+    with pytest.raises(ValueError, match="not frozen yet"):
+        screen.declare([trial], src, tmp_path, "f" * 64, tmp_path, workers=1)
+    monkeypatch.setattr(
+        screen, "FROZEN_REFERENCE_VECTORS", screen.screen_reference_vectors()
+    )
+    record = screen.declare([trial], src, tmp_path, "f" * 64, tmp_path, workers=1)
+    assert record["outcome"] == "VALID"
+    assert record["qualification_object_sha256"] == "f" * 64
+    assert "measurement_only" not in record and "availability" not in record
+    assert all("seconds" not in r for r in record["runs"])
+    assert (record["w0"], record["window_hours"]) == (W0.isoformat(), WINDOW_H)
+    # other exploration bars than the run definition's: refused
+    other = screen.HourlySource(
+        src.bars, src.hour, {"manifest_sha256": {"BTCUSDT": "c" * 64}}
+    )
+    with pytest.raises(ValueError, match="exploration bars"):
+        screen.declare([trial], other, tmp_path, "f" * 64, tmp_path, workers=1)
+    # changed reference vectors: refused
+    monkeypatch.setattr(
+        screen, "FROZEN_REFERENCE_VECTORS", {"paths": "x", "g11": "y", "g14": "z"}
+    )
+    with pytest.raises(ValueError, match="differ from the frozen"):
+        screen.declare([trial], src, tmp_path, "f" * 64, tmp_path, workers=1)
+
+
+def test_check_object_verifies_every_manifest_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # S7-R7: choices.json and every other listed file, not three of them
+    from calibration import mapping
+
+    files = {
+        "definition.json": b"{}",
+        "mapping.py": b"m",
+        "screen.py": b"s",
+        "choices.json": b"c",
+    }
+    for name, data in files.items():
+        (tmp_path / name).write_bytes(data)
+    manifest = {n: hashlib.sha256(d).hexdigest() for n, d in files.items()}
+    (tmp_path / "manifest.json").write_bytes(json.dumps(manifest).encode())
+    monkeypatch.setattr(screen, "check_screen_code", lambda *a: None)
+    monkeypatch.setattr(mapping, "check_runtime", lambda defn: None)
+    assert screen.check_object(tmp_path, sha(manifest), tmp_path) == {}
+    (tmp_path / "choices.json").write_bytes(b"changed")
+    with pytest.raises(ValueError, match="choices.json"):
+        screen.check_object(tmp_path, sha(manifest), tmp_path)
+    with pytest.raises(ValueError, match="posted"):
+        screen.check_object(tmp_path, "0" * 64, tmp_path)
+
+
+def test_the_cli_pilot_needs_twenty_trials_and_never_overwrites(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # S7-R5, S7-R8
+    import importlib.util as iu
+
+    spec = iu.spec_from_file_location(
+        "d19_screen_cli", Path(__file__).parents[2] / "scripts" / "d19_screen.py"
+    )
+    assert spec is not None and spec.loader is not None
+    cli = iu.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    trials = tmp_path / "trials.json"
+    trials.write_text(json.dumps([_trial()]), encoding="utf-8")
+    base = ["--trials", str(trials), "--trial-code", str(tmp_path)]
+    with pytest.raises(SystemExit) as e:
+        cli.main(
+            ["pilot", *base, "--raw-root", str(tmp_path), "--out", str(tmp_path / "r")]
+        )
+    assert e.value.code == 2  # argparse error: not a 20-trial set
+    out = tmp_path / "exists.json"
+    out.write_bytes(b"keep")
+    monkeypatch.setattr(cli.screen, "MAX_TRIALS", 1)
+    monkeypatch.setattr(
+        cli.screen, "load_hourly_source", lambda root: _source_for_screen()
+    )
+    monkeypatch.setattr(cli.screen, "run_screen", lambda *a, **k: {"x": 1})
+    with pytest.raises(FileExistsError):
+        cli.main(["pilot", *base, "--raw-root", str(tmp_path), "--out", str(out)])
+    assert out.read_bytes() == b"keep"
