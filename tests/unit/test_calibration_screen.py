@@ -1410,13 +1410,14 @@ def _longer_path() -> np.ndarray:
     return screen.null_path(_source(), seed, 0, MODEL_WARMUP + WINDOW_LONG_H + 1)
 
 
+@pytest.mark.parametrize("draws_n", [2, 4])
 def test_g14_runs_the_nominee_and_every_draw_in_every_window(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, draws_n: int
 ) -> None:
     # S6C-R2: every refit window draws its own (d, w), and G-14 scores the
-    # nominee plus exactly G14_DRAWS null pipelines (an unusual count, 4,
-    # shows the loop follows the constant rather than a hardcoded number)
-    monkeypatch.setattr(screen, "G14_DRAWS", 4)
+    # nominee plus exactly G14_DRAWS null pipelines; two counts show the loop
+    # follows the constant rather than a hardcoded number
+    monkeypatch.setattr(screen, "G14_DRAWS", draws_n)
     draws: list[tuple[int, int]] = []
     real_draw = screen.g14_draw
 
@@ -1438,8 +1439,8 @@ def test_g14_runs_the_nominee_and_every_draw_in_every_window(
     trial = _model_trial(tmp_path, monkeypatch)
     got = screen.screen_gates(trial, _longer_path(), W0, WINDOW_LONG_H, *NULL_STREAM)
     assert got["G-14"] is None
-    assert sorted(set(draws)) == [(d, w) for d in range(4) for w in range(3)]
-    assert len(scored) == 1 + 4  # the nominee and every draw
+    assert sorted(set(draws)) == [(d, w) for d in range(draws_n) for w in range(3)]
+    assert len(scored) == 1 + draws_n  # the nominee and every draw
     # the first IC is the nominee's: no draw is taken before it
     nominee = screen.walk_forward(
         trial,

@@ -14,3 +14,7 @@ Validation: `pytest tests/unit/test_calibration_screen.py tests/unit/test_d19_de
 ## Re-review at da27bcc (`SOL6_SCREEN_S6C_REREVIEW_DA27BCC.md`): S6C-R2 completed
 
 Accepted. `test_g14_runs_the_nominee_and_every_draw_in_every_window` now sets `G14_DRAWS = 4` (a count no other test uses), spies on `spearman_ic` and asserts exactly 1 + 4 IC evaluations, the first equal to the nominee's own predictions (recomputed independently), with every draw `d = 0..3` drawing its own offset in every window `w = 0..2`. A loop that skipped the nominee or hardcoded its draw count fails it.
+
+## Re-review 2 at 5b8e2f7 (`SOL6_SCREEN_S6C_REREVIEW2_5B8E2F7.md`)
+
+Accepted. The test is parametrised over two draw counts (2 and 4); a loop with any hardcoded count fails one of them.
