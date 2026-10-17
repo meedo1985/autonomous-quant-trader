@@ -19,13 +19,17 @@ cd /opt/aqt-d19/app/deploy/calibration
 sudo sh d19.sh status
 old=$(git -C /opt/aqt-d19/app rev-parse --short HEAD); echo "$old"
 if [ -e "/opt/aqt-d19/app-$old" ]; then echo "STOP: app-$old already exists"; else echo "ok: app-$old is free"; fi
-cg=$(systemctl show aqt-d19.slice -p ControlGroup --value); n=0; [ -z "$cg" ] || n=$(sudo find "/sys/fs/cgroup$cg" -name cgroup.procs -exec cat {} + | wc -l); if [ "$n" = 0 ]; then echo "ok: no D-19 process is running"; else echo "STOP: $n D-19 processes are running"; fi
+if ! cg=$(systemctl show aqt-d19.slice -p ControlGroup --value); then echo "STOP: cannot read aqt-d19.slice"
+elif [ -z "$cg" ]; then echo "ok: no D-19 process is running (the slice is inactive)"
+elif ! procs=$(sudo find "/sys/fs/cgroup$cg" -name cgroup.procs -exec cat {} +); then echo "STOP: cannot read the processes of aqt-d19.slice"
+elif [ -n "$procs" ]; then echo "STOP: D-19 processes are running"
+else echo "ok: no D-19 process is running"; fi
 ```
 
-Check before going on (S8-R4, S8R-R3, S8R2-R2):
+Check before going on (S8-R4, S8R-R3, S8R2-R2, S8R3-R1):
 - the first line `status` prints must not say `Up`;
 - the line printed by `echo "$old"` (after `status`'s own lines) must be `e39b23d`;
-- the last two lines must be `ok: app-e39b23d is free` and `ok: no D-19 process is running` (the second also catches a `clean-check`, which the old launcher starts without a name). If either says `STOP: …`, stop and send me the output.
+- the last two lines must be `ok: app-e39b23d is free` and a line starting `ok: no D-19 process is running` (the second fails closed: any query it cannot make prints `STOP`; it also catches a `clean-check`, which the old launcher starts without a name). If either says `STOP: …`, stop and send me the output.
 
 Then:
 
