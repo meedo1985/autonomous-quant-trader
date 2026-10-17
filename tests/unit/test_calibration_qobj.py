@@ -187,6 +187,7 @@ def test_a_reader_accepts_a_built_object_and_refuses_a_lesser_one(
     files = {n: (out / n).read_bytes() for n in names}
     report, defn = qobj.read(files)
     assert report["qualifies"] is True and defn["prereg_sha256"]
+    assert set(json.loads(files["freeze.json"])) == qobj.FREEZE_KEYS  # S16SR3-1
 
     def changed(name: str, **items: object) -> dict[str, bytes]:
         return {**files, name: cj({**json.loads(files[name]), **items})}
@@ -199,6 +200,7 @@ def test_a_reader_accepts_a_built_object_and_refuses_a_lesser_one(
     keys = json.loads(files["choices.json"])["chain_heads"]
     freeze = json.loads(files["freeze.json"])
     late = int(datetime.fromisoformat(freeze["threshold_started"]).timestamp()) + 1
+    spaced = freeze["threshold_started"].replace("T", " ")
 
     minimal = {  # the shape the screen's reader used to accept
         "definition.json": files["definition.json"],
@@ -221,12 +223,17 @@ def test_a_reader_accepts_a_built_object_and_refuses_a_lesser_one(
         (changed("choices.json", chain_heads={}), "chain head"),
         (changed("choices.json", chain_heads=dict.fromkeys(keys, "x")), "chain head"),
         (changed("choices.json", chain_heads=dict.fromkeys(keys, "0" * 64)), "head"),
-        # S16SR2-2: the freeze's fields as build writes them
-        (without("freeze.json", "host_provenance_sha256"), "host provenance"),
-        (without("freeze.json", "definition_commit"), "commit id"),
+        # S16SR2-2, S16SR3-1: the freeze's fields exactly as build writes them
+        (without("freeze.json", "host_provenance_sha256"), "fields are not"),
+        (without("freeze.json", "definition_commit"), "fields are not"),
+        (without("freeze.json", "threshold_started"), "fields are not"),
+        (without("freeze.json", "definition_committed_unix"), "fields are not"),
+        (changed("freeze.json", extra=1), "fields are not"),
+        (changed("freeze.json", host_provenance_sha256={}), "host provenance"),
         (changed("freeze.json", definition_commit="abc1234"), "commit id"),
-        (without("freeze.json", "threshold_started"), "start time"),
-        (without("freeze.json", "definition_committed_unix"), "before the threshold"),
+        (changed("freeze.json", threshold_started="soon"), "start time"),
+        (changed("freeze.json", threshold_started=spaced), "as build writes"),
+        (changed("freeze.json", definition_committed_unix="1"), "before the threshold"),
         (
             changed("freeze.json", definition_committed_unix=late),
             "before the threshold",

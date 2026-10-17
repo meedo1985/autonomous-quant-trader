@@ -66,6 +66,9 @@ FREEZE_REVIEWS = "review/d19-engine/FREEZE_REVIEWS.json"
 REPORT = ("cells", "m", "tests", "targets", "family_block_rule", "z_crit",
           "final_thresholds", "cell_bounds", "alpha_s", "chain_heads")  # fmt: skip
 NAMESPACES = ("threshold", "dev")
+# freeze.json's fields, exactly as `build` writes them (S16SR3-1)
+FREEZE_KEYS = {"definition_sha256", "definition_commit", "definition_committed_unix",
+               "threshold_started", "host_provenance_sha256", "allocation"}  # fmt: skip
 
 
 def _hex(value: object, n: int) -> bool:
@@ -259,6 +262,8 @@ def read(files: dict[str, bytes]) -> tuple[dict[str, Any], dict[str, Any]]:
     if not (report.get("qualifies") is True and report.get("margin_ok") is True):
         raise ValueError("the method does not qualify (§5 step 6)")
     freeze = json.loads(files["freeze.json"])
+    if not isinstance(freeze, dict) or set(freeze) != FREEZE_KEYS:  # S16SR3-1
+        raise ValueError("the freeze's fields are not the ones build writes")
     final = {
         u: r["held_out"]
         for u, r in report["cells"].items()
@@ -293,6 +298,8 @@ def read(files: dict[str, bytes]) -> tuple[dict[str, Any], dict[str, Any]]:
         started = datetime.fromisoformat(freeze["threshold_started"])
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError("the freeze needs the threshold start time") from error
+    if started.isoformat() != freeze["threshold_started"]:  # S16SR3-1
+        raise ValueError("the threshold start time is not as build writes it")
     if type(when) is not int or started.tzinfo is None or when >= started.timestamp():
         raise ValueError("the freeze's commit time is not before the threshold start")
     if freeze.get("allocation") != final or set(final.values()) - set(choices.HELD_OUT):
