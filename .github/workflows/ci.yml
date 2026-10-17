@@ -215,6 +215,9 @@ jobs:
           case "$cg" in */aqt-d19.slice/*) ;; *) echo "not in aqt-d19.slice"; exit 1 ;; esac
           peak=$(sudo cat "/sys/fs/cgroup$cg/memory.peak")
           echo "memory.peak $peak"; test "$peak" -gt 0  # cgroup files have size 0
+          # S8R2-R2: an unlabelled container in the slice blocks every engine run
+          out=$(sudo sh d19.sh timing 2>&1) && exit 1
+          echo "$out" | grep -q "refused: a D-19 run is going"
           sudo docker rm -f "$cid"
           sudo sh d19.sh status
           sudo sh d19.sh timing | tee /tmp/timing

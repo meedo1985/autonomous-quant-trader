@@ -66,15 +66,38 @@ running() {  # running <container>: true if that D-19 container is up
     [ -n "$out" ]
 }
 
+busy() {  # S8R2-R2: processes in the capped slice, from any container,
+    # labelled or not (a run started by an older launcher carries no label)
+    cg=$(systemctl show "$SLICE" -p ControlGroup --value) ||
+        { echo "FAIL: cannot read $SLICE" >&2; exit 1; }
+    [ -n "$cg" ] || { echo 0; return; }  # an inactive slice holds nothing
+    procs=$(find "/sys/fs/cgroup$cg" -name cgroup.procs -exec cat {} +) ||
+        { echo "FAIL: cannot read the processes of $SLICE" >&2; exit 1; }
+    printf '%s' "$procs" | grep -c . || true
+}
+
 alone() {  # S8-R2, S8R-R2: D-19 engine runs share the slice; one at a time
     ids=$(up) || exit 1
-    if [ -n "$ids" ]; then
-        echo "refused: a D-19 run is going (sudo sh d19.sh status / screen-status)" >&2
+    n=$(busy) || exit 1
+    if [ -n "$ids" ] || [ "$n" != 0 ]; then
+        echo "refused: a D-19 run is going ($n processes in $SLICE; see status / screen-status)" >&2
         exit 1
     fi
 }
 
+LOCKED=""
+lock() {  # S8R2-R1: check and start under one lock, held until this script
+    # exits, so two commands cannot both pass `alone` before either starts.
+    # A detached run outlives the lock; `alone` then sees it in the slice.
+    [ -z "$LOCKED" ] || return 0
+    exec 9>"$WORK/engine.lock"
+    flock -n 9 || { echo "refused: another d19.sh engine command is running" >&2; exit 1; }
+    LOCKED=1
+    alone
+}
+
 engine() {  # engine [docker run options...] -- <script> [arguments...]
+    lock  # S8R2-R1: every engine run, foreground or detached, is alone
     id=$(docker image inspect --format '{{.Id}}' "$(tag)")
     capped "$id"
     opts=""
@@ -120,6 +143,7 @@ probe)  # can this CPU run the pinned runtime? (V_BINDING: OPENBLAS_CORETYPE=Has
     # in the measurement, and only that (FE4R-1, FE4R2-1). It is reported
     # as unclassified until diagnosed (FE4R2-2): the AMD crash is the likely
     # cause, not a proven one.
+    lock  # S8R2-R1: the measurement uses the slice too
     id=$(docker image inspect --format '{{.Id}}' "$(tag)")
     capped "$id"
     rc=0
@@ -159,7 +183,7 @@ record)
     engine --rm -- d19_run_definition.py record "$@"
     ;;
 run)
-    alone
+    lock
     docker rm "$NAME" >/dev/null 2>&1 || true
     engine -d --name "$NAME" -- d19_run.py run --definition definition.json \
         --store store --namespace "$2" --raw-root raw
@@ -176,17 +200,20 @@ status)  # FE4-5, P18-6: state, times, memory, chunks per chain; nothing else
         awk -F/ '{ n[$(NF-2) "/" $(NF-1)]++ } END { for (c in n) print n[c], c }' |
         sort -k2
     ;;
-stop)  # S8-R1, S8R-R1: every D-19 engine container that is up; failures reported
+stop)  # S8-R1, S8R-R1, S8R2-R3: every D-19 engine container that is up,
+    # each attempted; any failure is reported and fails the command at the end
     ids=$(up) || exit 1
     [ -n "$ids" ] || { echo "no D-19 run was going"; exit 0; }
+    failed=0
     for id in $ids; do
-        docker stop -t 60 "$id" >/dev/null || { echo "FAIL: could not stop $id" >&2; exit 1; }
-        echo "stopped $id"
+        if docker stop -t 60 "$id" >/dev/null; then echo "stopped $id"
+        else echo "FAIL: could not stop $id" >&2; failed=1; fi
     done
+    [ "$failed" = 0 ] || exit 1
     ;;
 screen-pilot)  # S8, prereg §10: one screen of the 20-trial pilot set, measurement only
     [ ! -e "$WORK/screen-pilot.json" ] || { echo "refused: $WORK/screen-pilot.json exists" >&2; exit 1; }
-    alone
+    lock
     docker rm "$NAME-screen" >/dev/null 2>&1 || true
     engine -d --name "$NAME-screen" -- d19_screen.py pilot \
         --trials /app/deploy/calibration/screen-pilot/trials.json \
@@ -218,7 +245,7 @@ nonfinite)  # FE-7, FE7-5: non-finite threshold diagnostics, per cell
     engine --rm -- d19_pilot_checks.py nonfinite store
     ;;
 clean-check)  # FE7-2: a clean threshold run equals the interrupted+resumed one
-    alone
+    lock  # held across both engine runs below
     [ ! -e "$WORK/store-clean" ] ||
         { echo "refused: $WORK/store-clean exists; a clean run needs an empty store" >&2; exit 1; }
     engine --rm -- d19_run.py run --definition definition.json         --store store-clean --namespace threshold --raw-root raw

@@ -97,6 +97,16 @@ def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
     assert "-print -quit" in times and "NR == 0" in times
     status = launcher[launcher.index("status)") : launcher.index("stop)")]
     assert "docker logs" not in status and "cat " not in status
+    # S8R2-R1: every engine start (and probe) checks and starts under one lock
+    engine = launcher[launcher.index("engine() {") :]
+    assert engine.splitlines()[1].strip().startswith("lock")
+    probe = launcher[launcher.index("probe)") : launcher.index("copy-raw)")]
+    assert re.search(r"^\s*lock\b", probe, re.M)
+    assert "flock -n 9" in launcher
+    # S8R2-R3: stop attempts every container before failing
+    stop = launcher[launcher.index("stop)") : launcher.index("screen-pilot)")]
+    loop = stop[stop.index("for id") : stop.index("done")]
+    assert "exit" not in loop and '[ "$failed" = 0 ] || exit 1' in stop
 
 
 @pytest.mark.skipif(shutil.which("sh") is None, reason="no POSIX sh")
