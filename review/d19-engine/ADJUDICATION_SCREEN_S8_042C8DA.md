@@ -38,3 +38,12 @@ The sheet names engine commit `ebdf208` (`ebdf20806a0e59bde9305bc052a18c98fd3a7b
 Not repaired: none.
 
 Validation: `tests/unit/test_d19_deploy.py` 6 passed; `sh -n d19.sh` clean; ruff check and format clean. `flock` and the slice count need Linux and are exercised by the CI `calibration-launcher` job.
+
+## Re-review 3 at 893eaeb (`SOL6_SCREEN_S8_REREVIEW3_893EAEB.md`)
+
+| ID | Decision | Repair |
+|---|---|---|
+| S8R3-R1 | **Accept.** | Step 0's slice check is an `if/elif` chain: a failed `systemctl show` or a failed `find`/`cat` prints `STOP`; an empty control group (inactive slice) prints `ok: ... (the slice is inactive)`; any process listed prints `STOP`. No pipeline masks a status. Checked with stubs for all five cases (systemctl fails, slice inactive, find fails, processes present, none present): each prints the expected line. |
+| S8R3-R2 | **Accept.** | The branch was not yet pushed. Pushed `screen-plan`; GitHub's API now resolves `ebdf20806a0e59bde9305bc052a18c98fd3a7b33`, and the launcher blob at `ebdf208` equals the one at `origin/screen-plan` (`53c0aaf8ff95d887f3a6fc7f6831d7840adfbe65`). The launcher is unchanged since `ebdf208`, so the sheet keeps that engine commit. |
+
+Not repaired: none.
