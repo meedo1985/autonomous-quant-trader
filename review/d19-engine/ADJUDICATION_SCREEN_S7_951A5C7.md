@@ -23,3 +23,13 @@ Validation: full screen suite (screen, event contract, deploy, feature columns) 
 ## Re-review 3 at da1eaad (`SOL6_SCREEN_S7_REREVIEW3_DA1EAAD.md`): S7R2-R1
 
 Accepted, by removing destination cleanup altogether. The CLI refuses an existing destination before any work, writes the record to a private `mkstemp` file beside it, and publishes with `os.link` (atomic create-if-absent); the `finally` removes only the private file, never the published path. A file created at the destination during the screen makes publishing fail and is left untouched. Test cases: refusal before work, a file created meanwhile (kept, no `.partial` left), a successful publish.
+
+## Re-review 4 at 1304d7b (`SOL6_SCREEN_S7_REREVIEW4_1304D7B.md`)
+
+| ID | Decision | Repair |
+|---|---|---|
+| S7R4-R1 | **Accept, by removing the temporary file.** The threat assumes another writer in the run directory, which on the server is root; still, a simpler design closes it. | `reserve` claims the destination with `open("xb")` (O_CREAT \| O_EXCL) before any work and the record is written through that handle; no temporary file, no link, no rename. |
+| S7R4-R2 | **Accept.** | The exclusive claim before work is a reservation: a second run is refused at once. Test case. |
+| S7R4-R3 | **Accept.** | O_EXCL fails on any existing entry, a dangling symlink included, so the refusal is before work. |
+
+Nothing is ever deleted: a run that fails after its claim leaves the empty claimed file, which the owner removes by hand before a rerun (the CLI's message says so). Test cases: existing file refused before work, a second claim refused, a failed run leaves an empty file, a successful run writes through its claim.

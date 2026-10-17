@@ -1914,23 +1914,22 @@ def test_the_cli_pilot_needs_twenty_trials_and_never_overwrites(
         return {"x": 1}
 
     monkeypatch.setattr(cli.screen, "run_screen", fake_run)
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit, match="never overwritten"):
         cli.main(["pilot", *base, "--raw-root", str(tmp_path), "--out", str(out)])
     assert out.read_bytes() == b"keep" and ran == []  # S7R-R4: refused before work
-    # S7R2-R1: a file created at the path during the screen is never touched;
-    # publishing fails and only the private temporary file is removed
-    late = tmp_path / "late.json"
-
-    def create_meanwhile(*a: Any, **k: Any) -> dict[str, int]:
-        late.write_bytes(b"theirs")
-        return {"x": 1}
-
-    monkeypatch.setattr(cli.screen, "run_screen", create_meanwhile)
-    with pytest.raises(FileExistsError):
-        cli.main(["pilot", *base, "--raw-root", str(tmp_path), "--out", str(late)])
-    assert late.read_bytes() == b"theirs"
-    assert not list(tmp_path.glob(".screen-*.partial"))
-    # a successful run publishes the record
+    # S7R4-R2: the claim is exclusive, so a second run is refused at once
+    claimed = tmp_path / "claimed.json"
+    first = cli.reserve(claimed)
+    with pytest.raises(SystemExit):
+        cli.reserve(claimed)
+    first.close()
+    # a failing screen leaves its empty claimed file (nothing is deleted)
+    monkeypatch.setattr(cli.screen, "run_screen", lambda *a, **k: 1 / 0)
+    failed = tmp_path / "failed.json"
+    with pytest.raises(ZeroDivisionError):
+        cli.main(["pilot", *base, "--raw-root", str(tmp_path), "--out", str(failed)])
+    assert failed.read_bytes() == b""
+    # a successful run writes the record through its claim
     good = tmp_path / "good.json"
     monkeypatch.setattr(cli.screen, "run_screen", fake_run)
     assert (

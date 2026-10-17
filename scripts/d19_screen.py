@@ -24,10 +24,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
-import tempfile
 from pathlib import Path
+from typing import BinaryIO
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "src")]
@@ -36,17 +35,16 @@ from calibration import screen  # noqa: E402
 from calibration.seeds import cj, sha  # noqa: E402
 
 
-def publish(out: Path, data: bytes) -> None:
-    """S7-R8, S7R2-R1: write a private temporary file beside `out`, then
-    publish it with a hard link, which fails if `out` exists; cleanup only
-    ever removes the private file, never the published path."""
-    fd, tmp = tempfile.mkstemp(dir=out.parent, prefix=".screen-", suffix=".partial")
+def reserve(out: Path) -> BinaryIO:
+    """S7-R8, S7R-R4, S7R4-R1..R3: claim `out` exclusively before any work
+    (O_CREAT | O_EXCL: fails if anything exists there, a dangling link
+    included; two runs cannot both claim it). The record is written through
+    this handle, never reopened by name, and nothing is ever deleted: a
+    failed run leaves the empty claimed file, to be removed by hand."""
     try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-        os.link(tmp, out)  # atomic create-if-absent
-    finally:
-        os.unlink(tmp)
+        return out.open("xb")
+    except FileExistsError as e:
+        raise SystemExit(f"refused: {out} exists; a record is never overwritten") from e
 
 
 def summary(record: dict[str, object]) -> list[str]:
@@ -101,8 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "pilot" and len(trials) != screen.MAX_TRIALS:
         parser.error(f"the pilot screens a {screen.MAX_TRIALS}-trial set (prereg §10)")
     code = args.trial_code.resolve()
-    if args.out.exists():  # S7R-R4: refused before any work
-        parser.error(f"{args.out} exists; a record is never overwritten")
+    out = reserve(args.out)
     if args.command == "pilot":
         record = screen.run_screen(
             trials,
@@ -118,7 +115,8 @@ def main(argv: list[str] | None = None) -> int:
         record = screen.declare(
             trials, args.raw_root, args.object, args.posted, ROOT, args.workers, code
         )
-    publish(args.out, cj(record))
+    with out:
+        out.write(cj(record))
     if args.command == "pilot":
         print("MEASUREMENT", sha(record))
         return 0
