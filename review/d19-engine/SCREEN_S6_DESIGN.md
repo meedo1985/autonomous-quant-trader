@@ -34,7 +34,7 @@ A **decision instant** `t` is a bar boundary; at 00:00 UTC it is the close of th
   | `ridge` | `StandardScaler` then `Ridge` | `alpha` (decimal > 0), `fit_intercept` |
   | `lasso` | `StandardScaler` then `Lasso` (`max_iter=10000`, `selection="cyclic"`) | `alpha` (> 0), `fit_intercept` |
   | `elastic_net` | `StandardScaler` then `ElasticNet` (`max_iter=10000`, `selection="cyclic"`) | `alpha` (> 0), `l1_ratio` (0 to 1), `fit_intercept` |
-  | `logistic` | `StandardScaler` then `LogisticRegression` (`penalty="l2"`, `solver="lbfgs"`, `max_iter=10000`) | `C` (> 0), `fit_intercept` |
+  | `logistic` | `StandardScaler` then `LogisticRegression` (`l1_ratio=0` (pure L2; scikit-learn 1.9 deprecates `penalty="l2"`), `solver="lbfgs"`, `max_iter=10000`) | `C` (> 0), `fit_intercept` |
   | `lightgbm` | `lightgbm.LGBMRegressor` (`objective="regression"`, `learning_rate=0.05`, `deterministic=True`, `num_threads=1`, `force_col_wise=True`, `verbose=-1`, no bagging, no feature subsampling) | `n_estimators` (int 1-300), `max_depth` (int 1-3), `num_leaves` (int 2-8), `min_child_samples` (int >= 1), `reg_alpha`, `reg_lambda` (decimal >= 0) |
 
   The scaler is part of the label-independent pipeline and is refit on each window's retained rows. `model_seed` is passed as `random_state` where accepted and as `seed` to LightGBM. Aliases (for example LightGBM's `min_data_in_leaf`) are refused, because only the listed names are accepted. Each class has a reproducibility test (same data and seed, identical predictions).

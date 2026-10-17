@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import random
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -14,7 +16,7 @@ import aqt.metrics.statistics as st
 from aqt.backtest.event_contract import EventResult
 from aqt.data.bars import Bar, BarSeries
 from aqt.features.factory import FEATURE_NAMES
-from calibration import screen
+from calibration import gap, screen
 from calibration.seeds import sha
 
 START = datetime(2020, 1, 1, tzinfo=UTC)
@@ -177,7 +179,13 @@ REF_FIRST_BAR = [
 # --- S3: the trial interface ---------------------------------------------
 
 
-MODEL = {"id": "m", "class": "ridge", "params": {}, "target": "vol_scaled_target"}
+MODEL = {
+    "id": "m",
+    "class": "ridge",
+    "params": {},
+    "target": "vol_scaled_target",
+    "features": ["ret_24h", "rv_168"],
+}
 
 
 def _trial(**change: object) -> dict[str, object]:
@@ -224,6 +232,7 @@ def test_s_inputs_are_frozen_features_or_the_trials_own_model() -> None:
         "class": "ridge",
         "params": {"alpha": "1.0"},
         "target": "vol_scaled_target",
+        "features": ["ret_24h"],
     }
     screen.check_trial(_trial(model=model, s_inputs=["model:m1", "ret_24h"]))
     for bad in (["model:m2"], ["volume"], ["ret_24h", "ret_24h"], "ret_24h"):
@@ -954,3 +963,160 @@ def test_g8_is_na_without_an_ordered_numeric_dimension(
         tmp_path, monkeypatch, parameter_point={"mode": "a"}, grid={"mode": ["a", "b"]}
     )
     assert screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)["G-8"] == screen.NA
+
+
+# --- S6a: walk-forward pieces ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("cls", "params"),
+    [
+        ("lightgbm", {"max_depth": -1}),  # S6D-R3: "no limit" is out of range
+        ("lightgbm", {"max_depth": 4}),
+        ("lightgbm", {"num_leaves": 9}),
+        ("lightgbm", {"n_estimators": 301}),
+        ("lightgbm", {"min_data_in_leaf": 5}),  # an alias of min_child_samples
+        ("lightgbm", {"learning_rate": "0.1"}),  # fixed, not declarable
+        ("ridge", {"alpha": "0"}),
+        ("ridge", {"alpha": 1}),  # decimals are strings
+        ("logistic", {"C": "-1"}),
+        ("elastic_net", {"l1_ratio": "1.5"}),
+        ("linear", {"fit_intercept": 1}),
+        ("linear", {"random_state": 3}),
+    ],
+)
+def test_model_parameters_outside_the_allowlist_are_refused(
+    cls: str, params: dict[str, object]
+) -> None:
+    target = "sign_of_vol_scaled_target" if cls == "logistic" else "vol_scaled_target"
+    model = {**MODEL, "class": cls, "params": params, "target": target}
+    with pytest.raises(screen.TrialError):
+        screen.check_trial(_trial(model=model))
+
+
+def test_allowed_model_parameters_and_grids_pass() -> None:
+    lgbm = {
+        **MODEL,
+        "class": "lightgbm",
+        "params": {"max_depth": 3, "num_leaves": 8, "n_estimators": 300},
+    }
+    screen.check_trial(_trial(model=lgbm))
+    t = _trial(
+        model=lgbm,
+        parameter_point={"model.max_depth": 3},
+        grid={"model.max_depth": [1, 2, 3]},
+    )
+    screen.check_trial(t)
+    with pytest.raises(screen.TrialError, match="above its range"):
+        screen.check_trial(
+            {**t, "grid": {"model.max_depth": [2, 3, 4]}}  # a neighbour out of range
+        )
+
+
+def test_model_features_obey_the_sizing_ban() -> None:
+    # owner decision WF-4
+    for bad in (["ewma_vol_168h"], ["sigma_hat"], ["volume"], [], ["rv_24", "rv_24"]):
+        with pytest.raises(screen.TrialError):
+            screen.check_trial(_trial(model={**MODEL, "features": bad}))
+    vol = {"family": "vol", "sigma": "EWMA_72h"}
+    screen.check_trial(_trial(**vol, model={**MODEL, "features": ["ewma_vol_168h"]}))
+
+
+def test_training_windows_are_calendar_months() -> None:
+    # WF-2 (S6D-R2)
+    t = datetime(2024, 3, 31, tzinfo=UTC)
+    assert screen.months_before(t, 1) == datetime(2024, 2, 29, tzinfo=UTC)
+    assert screen.months_before(t, 24) == datetime(2022, 3, 31, tzinfo=UTC)
+    assert screen.months_before(datetime(2024, 2, 29, tzinfo=UTC), 12) == datetime(
+        2023, 2, 28, tzinfo=UTC
+    )
+    assert screen.months_before(datetime(2022, 1, 1, tzinfo=UTC), 24) == datetime(
+        2020, 1, 1, tzinfo=UTC
+    )
+
+
+def test_refits_every_30_days_from_w0() -> None:
+    w0 = datetime(2022, 1, 31, tzinfo=UTC)
+    got = screen.refit_instants(w0, w0 + timedelta(days=1247))
+    assert len(got) == 42 and got[0] == w0 and got[1] == w0 + timedelta(days=30)
+
+
+def test_labels_follow_the_protocol_formula() -> None:
+    # WF-1: log(P[t+H] / P[t]) / (sigma_t * sqrt(H)), sigma from the cost model
+    from aqt.backtest.costs import (
+        ewma_hourly_volatility_bps_series,
+        hourly_log_returns_bps,
+    )
+
+    series = _series("BTCUSDT", list(range(300)), 1.0)
+    sigma = ewma_hourly_volatility_bps_series(hourly_log_returns_bps(series))
+    got = screen.labels(series, sigma, [100, 124], 24)
+    bars = series.bars
+    for j, y in zip([100, 124], got, strict=True):
+        want = math.log(bars[j - 1 + 24].close / bars[j - 1].close) / (
+            sigma[j - 3] / 1e4 * math.sqrt(24)
+        )
+        assert y == want
+    with pytest.raises(screen.RunUnavailable, match="INVALID_SERIES"):
+        screen.labels(series, [0.0] * len(sigma), [100], 24)
+
+
+def test_the_embargo_is_the_frozen_acf_cutoff_or_the_horizon() -> None:
+    # WF-3 (S6D-R1): the frozen rule (gap.py's ACF cutoff), never below H
+    rng = random.Random(4)
+    noise = [rng.gauss(0, 1) for _ in range(700)]
+    want = max(7, gap.cutoff(gap.acf(list(noise), 28), 700))
+    assert screen.embargo_days(noise, 7) == want >= 7
+    # strongly persistent labels: the cutoff exceeds the horizon
+    walk, x = [], 0.0
+    for _ in range(700):
+        x = 0.98 * x + rng.gauss(0, 1)
+        walk.append(x)
+    assert screen.embargo_days(walk, 1) > 1
+    with pytest.raises(screen.RunUnavailable, match="EMBARGO_UNDEFINED"):
+        screen.embargo_days(noise[:28], 7)  # no more rows than lags
+
+
+def test_training_rows_follow_the_boundary_example(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # WF-3: E = 12 days, refit at 00:00 on day 100: day 88 kept, day 89 not
+    monkeypatch.setattr(screen, "embargo_days", lambda ys, h: 12)
+    day0 = datetime(2024, 1, 1, tzinfo=UTC)
+    decisions = [day0 + timedelta(days=d) for d in range(101)]
+    refit = day0 + timedelta(days=100)
+    kept = screen.training_rows(decisions, [0.0] * 101, refit, 168)
+    assert kept[-1] == 88 and 89 not in kept
+    # the window starts 24 calendar months back (all of these are inside)
+    assert kept[0] == 0
+
+
+def test_every_model_class_fits_reproducibly() -> None:
+    # WF-5: one library pipeline per class; same data and seed, same output
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(200, 3))
+    y = x @ np.array([0.5, -0.2, 0.1]) + rng.normal(scale=0.5, size=200)
+    for cls, params in (
+        ("linear", {"fit_intercept": True}),
+        ("ridge", {"alpha": "1.0"}),
+        ("lasso", {"alpha": "0.01"}),
+        ("elastic_net", {"alpha": "0.01", "l1_ratio": "0.5"}),
+        ("logistic", {"C": "1.0"}),
+        ("lightgbm", {"n_estimators": 50, "max_depth": 3, "num_leaves": 8}),
+    ):
+        target = screen.fit_target(cls, list(y))
+        runs = []
+        for _ in range(2):
+            model = screen.build_model(cls, params, seed=7)
+            model.fit(x, target)
+            runs.append(screen.predict(model, cls, x))
+        assert np.array_equal(runs[0], runs[1]), cls
+        assert np.all(np.isfinite(runs[0])), cls
+        if cls == "logistic":
+            assert np.all((runs[0] >= 0) & (runs[0] <= 1))  # predict_proba[:, 1]
+
+
+def test_a_zero_target_is_class_not_up() -> None:
+    # owner decision S6D-R6
+    assert screen.fit_target("logistic", [-0.5, 0.0, 0.5]).tolist() == [0, 0, 1]
+    assert screen.fit_target("ridge", [-0.5, 0.0]).tolist() == [-0.5, 0.0]

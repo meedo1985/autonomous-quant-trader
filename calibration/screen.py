@@ -58,7 +58,7 @@ import random
 import types
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -66,7 +66,7 @@ from typing import Any
 import numpy as np
 
 import aqt.metrics.statistics as st
-from aqt.backtest.costs import CostModelError
+from aqt.backtest.costs import BPS_PER_UNIT, CostModelError
 from aqt.backtest.event_contract import (
     EventContractError,
     EventResult,
@@ -78,6 +78,7 @@ from aqt.data.klines import EXPLORATION, build_exploration_manifest
 from aqt.features.columns import feature_columns
 from aqt.features.factory import FEATURE_NAMES, FeatureFactoryError
 from aqt.metrics.descriptive import _max_drawdown
+from calibration import gap
 from calibration.seeds import sha, stream
 from calibration.semi import SYMBOLS, block_signs
 
@@ -252,7 +253,11 @@ def null_path(source: HourlySource, seed: str, p: int, hours: int) -> np.ndarray
 #   calibration covers (`calibration/rules.py` FAMILIES). There is no fixed-
 #   size class (C-10 (1), REG (A)). `sigma` is "EWMA_168h", or in the vol
 #   family one of the protocol's allowed volatility-family estimators.
-# - TI-5 (S3-R3) `model` is null or {"id", "class", "params", "target"}
+# - TI-5 (S3-R3) `model` is null or {"id", "class", "params", "target",
+#   "features"} (S6a: `features` lists the model's frozen input features,
+#   checked like `s_inputs`, owner decision WF-4; `params` and every grid
+#   value of a `model.<name>` dimension must be on the class's allowlist,
+#   WF-5)
 #   with `class` in the cycle's allowed classes (DRAFT §2.5, unchanged v1.0
 #   value) and `target` "vol_scaled_target" or, required for and only for
 #   "logistic" (protocol `logistic_use`), "sign_of_vol_scaled_target". Both
@@ -383,8 +388,10 @@ def check_trial(trial: dict[str, Any]) -> None:
     model = trial["model"]
     if model is not None:
         model = _mapping(model, "model")
-        if set(model) != {"id", "class", "params", "target"}:
-            raise TrialError("model must be null or {id, class, params, target}")
+        if set(model) != {"id", "class", "params", "target", "features"}:
+            raise TrialError(
+                "model must be null or {id, class, params, target, features}"
+            )
         _text(model["id"], "model id")
         if model["class"] not in MODEL_CLASSES:
             raise TrialError(f"model class must be one of {MODEL_CLASSES}")
@@ -396,6 +403,8 @@ def check_trial(trial: dict[str, Any]) -> None:
             )
         for k, v in _mapping(model["params"], "model params").items():
             _scalar(v, f"model params {k}")
+            check_model_param(model["class"], k, v)
+        check_model_features(trial)
     h = trial["horizon_hours"]
     if type(h) is not int or h not in HORIZONS_HOURS:
         raise TrialError(f"horizon_hours must be one of {HORIZONS_HOURS}")
@@ -428,6 +437,8 @@ def check_trial(trial: dict[str, Any]) -> None:
             name = k[len(MODEL_DIMENSION) :]
             if name not in model_keys or _typed(model["params"][name]) != _typed(v):
                 raise TrialError(f"{k} must be a model param with the point's value")
+            for x in grid[k]:
+                check_model_param(model["class"], name, x)
     check_s_inputs(trial)
 
 
@@ -1027,3 +1038,215 @@ def screen_gates(
     if mismatched:
         out["G-11"] = "CLASS_MISMATCH"
     return out
+
+
+# --- S6a: walk-forward pieces (SCREEN_S6_DESIGN.md revision 4) -------------
+#
+# WF-1 labels, WF-2 schedule, WF-3 purge and embargo, WF-4 model features,
+# WF-5 classes and the parameter allowlist. The model libraries are imported
+# only inside `build_model`, so importing this module loads numpy alone
+# (tests/unit/test_d19_deploy.py).
+
+TRAINING_MONTHS = 24  # l.198
+REFIT_DAYS = 30  # l.199-200
+EMBARGO_LAG_FACTOR = 4  # l.212: max lag 4 * horizon in daily steps
+# WF-5: per class, declarable name -> (kind, low, high, low_inclusive)
+PARAM_RULES: dict[str, dict[str, tuple[str, int | None, int | None, bool]]] = {
+    "linear": {"fit_intercept": ("bool", None, None, True)},
+    "ridge": {
+        "alpha": ("dec", 0, None, False),
+        "fit_intercept": ("bool", None, None, True),
+    },
+    "lasso": {
+        "alpha": ("dec", 0, None, False),
+        "fit_intercept": ("bool", None, None, True),
+    },
+    "elastic_net": {
+        "alpha": ("dec", 0, None, False),
+        "l1_ratio": ("dec", 0, 1, True),
+        "fit_intercept": ("bool", None, None, True),
+    },
+    "logistic": {
+        "C": ("dec", 0, None, False),
+        "fit_intercept": ("bool", None, None, True),
+    },
+    "lightgbm": {
+        "n_estimators": ("int", 1, 300, True),
+        "max_depth": ("int", 1, 3, True),
+        "num_leaves": ("int", 2, 8, True),
+        "min_child_samples": ("int", 1, None, True),
+        "reg_alpha": ("dec", 0, None, True),
+        "reg_lambda": ("dec", 0, None, True),
+    },
+}
+
+
+def check_model_param(cls: str, name: str, value: object) -> None:
+    """WF-5: refuse a parameter outside the class's allowlist or range."""
+    rule = PARAM_RULES[cls].get(name)
+    if rule is None:
+        raise TrialError(f"{cls} does not accept parameter {name!r}")
+    kind, low, high, low_inclusive = rule
+    if kind == "bool":
+        if type(value) is not bool:
+            raise TrialError(f"{cls}.{name} must be a boolean")
+        return
+    if kind == "int":
+        if type(value) is not int:
+            raise TrialError(f"{cls}.{name} must be an integer")
+        parsed: Decimal | None = Decimal(value)
+    else:
+        parsed = _decimal(value) if isinstance(value, str) else None
+    if parsed is None:
+        raise TrialError(f"{cls}.{name} must be a decimal string")
+    number = parsed
+    if low is not None and (number < low or (number == low and not low_inclusive)):
+        raise TrialError(f"{cls}.{name} = {value!r} is below its range")
+    if high is not None and number > high:
+        raise TrialError(f"{cls}.{name} = {value!r} is above its range")
+
+
+def check_model_features(trial: dict[str, Any]) -> None:
+    """WF-4 (owner decision): the model's features obey the `s_inputs` ban."""
+    names = trial["model"]["features"]
+    if not isinstance(names, list) or not names:
+        raise TrialError("model features must be a non-empty list")
+    if len(set(names)) != len(names):
+        raise TrialError("model features repeat a name")
+    banned = {SIGMA_HAT, SIGMA_IDENTICAL_FEATURE.get(trial["sigma"], SIGMA_HAT)}
+    for n in names:
+        if n in banned:
+            raise TrialError(f"model features may not contain {n!r}")
+        if n not in FEATURE_NAMES:
+            raise TrialError(f"model feature {n!r} is not a frozen feature")
+
+
+def months_before(t: datetime, months: int) -> datetime:
+    """WF-2: `t` minus calendar months, same day and time, clamped to the
+    month's last day."""
+    total = t.year * 12 + (t.month - 1) - months
+    year, month = divmod(total, 12)
+    month += 1
+    last = (date(year + month // 12, month % 12 + 1, 1) - timedelta(days=1)).day
+    return t.replace(year=year, month=month, day=min(t.day, last))
+
+
+def refit_instants(w0: datetime, w1: datetime) -> list[datetime]:
+    """WF-2: `w0 + 30k` days while before `w1`."""
+    out = []
+    r = w0
+    while r < w1:
+        out.append(r)
+        r += timedelta(days=REFIT_DAYS)
+    return out
+
+
+def labels(
+    series: BarSeries, sigma_bps: Sequence[float], instants: Sequence[int], hours: int
+) -> list[float]:
+    """WF-1: `y_t` at each decision instant index `j` (bar `j` opens at `t`):
+    `log(close[j - 1 + H] / close[j - 1]) / (sigma_t * sqrt(H))`, sigma_t
+    the cost-model EWMA hourly volatility through the close at `t`
+    (`sigma_bps[j - 3] / 1e4`, as `costs.trade_cost` and `gap.py` G-2)."""
+    bars = series.bars
+    out = []
+    for j in instants:
+        sigma = sigma_bps[j - 3] / BPS_PER_UNIT
+        if not sigma > 0 or not math.isfinite(sigma):
+            raise RunUnavailable("INVALID_SERIES")
+        y = math.log(bars[j - 1 + hours].close / bars[j - 1].close) / (
+            sigma * math.sqrt(hours)
+        )
+        if not math.isfinite(y):
+            raise RunUnavailable("INVALID_SERIES")
+        out.append(y)
+    return out
+
+
+def embargo_days(candidate_labels: Sequence[float], horizon_days: int) -> int:
+    """WF-3: `max(H_days, cutoff)`, the cutoff by `gap.py`'s ACF rule on the
+    window's original candidate labels, daily, lags up to 4 * H_days."""
+    max_lag = EMBARGO_LAG_FACTOR * horizon_days
+    values: list[float | None] = list(candidate_labels)
+    if len(values) <= max_lag or len(set(values)) < 2:
+        raise RunUnavailable("EMBARGO_UNDEFINED")
+    lag = gap.cutoff(gap.acf(values, max_lag), len(values))
+    return max(horizon_days, lag)
+
+
+def training_rows(
+    decisions: Sequence[datetime],
+    ys: Sequence[float],
+    refit: datetime,
+    hours: int,
+) -> list[int]:
+    """WF-2, WF-3: positions (into `decisions`) of the rows retained for the
+    fit at `refit`: inside `[refit - 24 months, refit)`, label realised by the
+    refit (`t + H <= refit`), then `t + E days <= refit`."""
+    start = months_before(refit, TRAINING_MONTHS)
+    horizon = timedelta(hours=hours)
+    candidates = [
+        i
+        for i, t in enumerate(decisions)
+        if start <= t < refit and t + horizon <= refit
+    ]
+    e = embargo_days([ys[i] for i in candidates], hours // 24)
+    return [i for i in candidates if decisions[i] + timedelta(days=e) <= refit]
+
+
+def build_model(cls: str, params: Mapping[str, Any], seed: int) -> Any:
+    """WF-5: the one library pipeline of `cls`, with `params` (already
+    checked) and the model seed."""
+    p: dict[str, Any] = {
+        k: float(v) if isinstance(v, str) else v for k, v in params.items()
+    }
+    if cls == "lightgbm":
+        import lightgbm
+
+        return lightgbm.LGBMRegressor(
+            objective="regression",
+            learning_rate=0.05,
+            deterministic=True,
+            num_threads=1,
+            force_col_wise=True,
+            verbose=-1,
+            seed=seed,
+            **p,
+        )
+    from sklearn import linear_model  # type: ignore[import-untyped]
+    from sklearn.pipeline import make_pipeline  # type: ignore[import-untyped]
+    from sklearn.preprocessing import StandardScaler  # type: ignore[import-untyped]
+
+    estimator: Any
+    if cls == "linear":
+        estimator = linear_model.LinearRegression(**p)
+    elif cls == "ridge":
+        estimator = linear_model.Ridge(random_state=seed, **p)
+    elif cls == "lasso":
+        estimator = linear_model.Lasso(
+            max_iter=10000, selection="cyclic", random_state=seed, **p
+        )
+    elif cls == "elastic_net":
+        estimator = linear_model.ElasticNet(
+            max_iter=10000, selection="cyclic", random_state=seed, **p
+        )
+    elif cls == "logistic":
+        estimator = linear_model.LogisticRegression(
+            l1_ratio=0.0, solver="lbfgs", max_iter=10000, random_state=seed, **p
+        )
+    else:
+        raise TrialError(f"unknown model class {cls!r}")
+    return make_pipeline(StandardScaler(), estimator)
+
+
+def predict(model: Any, cls: str, x: np.ndarray) -> np.ndarray:
+    """WF-7: the logistic score is `predict_proba[:, 1]`; else `predict`."""
+    if cls == "logistic":
+        return np.asarray(model.predict_proba(x)[:, 1], dtype=float)
+    return np.asarray(model.predict(x), dtype=float)
+
+
+def fit_target(cls: str, ys: Sequence[float]) -> np.ndarray:
+    """WF-1 (owner decision S6D-R6): logistic class 1 iff y > 0."""
+    y = np.asarray(ys, dtype=float)
+    return (y > 0).astype(int) if cls == "logistic" else y
