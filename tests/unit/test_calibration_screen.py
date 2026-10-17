@@ -9,6 +9,7 @@ import math
 import random
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -599,6 +600,11 @@ def test_g11_reference_vectors() -> None:
 
 W0 = datetime(2022, 1, 1, tzinfo=UTC)
 WINDOW_H = 24 * 30
+NULL_STREAM = (
+    screen.screen_trial_seed(screen.screen_seed("33" * 32), 0, "t000"),
+    WINDOW,
+    30,  # g days
+)
 
 
 def _module(
@@ -642,10 +648,11 @@ def test_an_honest_trial_has_every_s4b_gate_available(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     trial = _screen_trial(tmp_path, monkeypatch)
-    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H, *NULL_STREAM)
     assert got == {
         **dict.fromkeys(screen.GATES_S4B, None),
         "G-8": screen.NA,
+        "G-11": "INSUFFICIENT_SHIFT_RANGE",
         "G-14": screen.NA,
     }
 
@@ -656,7 +663,7 @@ def test_a_flat_candidate_makes_e_improv_unavailable(
     # s = 0 always: zero exposure, zero daily returns, no Sharpe
     code = "def s(row, params, state):\n    return 0.0\n"
     trial = _screen_trial(tmp_path, monkeypatch, code)
-    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H, *NULL_STREAM)
     assert got["G-3"] == "ZERO_VARIANCE"
     assert got["G-5"] == got["G-6"] == got["G-7"] == "ZERO_VARIANCE"
 
@@ -674,7 +681,7 @@ def test_bad_trial_code_makes_every_run_unavailable(
 ) -> None:
     # an undeclared input is simply absent from the row (C-10 (1))
     trial = _screen_trial(tmp_path, monkeypatch, code)
-    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H, *NULL_STREAM)
     assert set(got.values()) == {reason, screen.NA}  # G-8: no dimension
 
 
@@ -687,7 +694,7 @@ def test_an_overlay_that_rescales_is_refused(
     trial = _screen_trial(
         tmp_path, monkeypatch, overlay="s4b_overlay:o", overlay_sha256=o
     )
-    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H, *NULL_STREAM)
     assert set(got.values()) == {"OVERLAY_VIOLATION", screen.NA}
     ok = _module(
         tmp_path,
@@ -698,7 +705,10 @@ def test_an_overlay_that_rescales_is_refused(
     trial = _screen_trial(
         tmp_path, monkeypatch, overlay="s4b_exit:o", overlay_sha256=ok
     )
-    assert screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)["G-3"] is None
+    assert (
+        screen.screen_gates(trial, _screen_path(), W0, WINDOW_H, *NULL_STREAM)["G-3"]
+        is None
+    )
 
 
 def test_feature_delay_needs_one_more_hour_of_warmup(
@@ -706,13 +716,14 @@ def test_feature_delay_needs_one_more_hour_of_warmup(
 ) -> None:
     # decisions read bar j - 1 (needs j0 >= 4800); G-6 reads j - 2
     trial = _screen_trial(tmp_path, monkeypatch, warmup_hours=4800)
-    got = screen.screen_gates(trial, _screen_path(4800), W0, WINDOW_H)
+    got = screen.screen_gates(trial, _screen_path(4800), W0, WINDOW_H, *NULL_STREAM)
     assert got == {
         "G-3": None,
         "G-5": None,
         "G-6": "INSUFFICIENT_WARMUP",
         "G-7": None,
         "G-8": screen.NA,
+        "G-11": "INSUFFICIENT_SHIFT_RANGE",
         "G-14": screen.NA,
     }
 
@@ -725,12 +736,13 @@ def test_model_and_unbound_sizing_trials_wait_for_their_slices(
         tmp_path, monkeypatch, model=MODEL, s_inputs=["model:m", "ema_dist_168"]
     )
     with pytest.raises(screen.TrialError, match="model trial needs warmup_hours"):
-        screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+        screen.screen_gates(trial, _screen_path(), W0, WINDOW_H, *NULL_STREAM)
     trial = _screen_trial(tmp_path, monkeypatch, family="vol", sigma="HAR_RV")
-    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H, *NULL_STREAM)
     assert got == {
         **dict.fromkeys(screen.GATES_S4B, "SIGMA_UNBOUND"),
         "G-8": screen.NA,
+        "G-11": "SIGMA_UNBOUND",
         "G-14": screen.NA,
     }
     # S4C-R1: with a numeric dimension, G-8 waits like the others
@@ -743,7 +755,7 @@ def test_model_and_unbound_sizing_trials_wait_for_their_slices(
         grid={"k": [1, 2]},
     )
     assert (
-        screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)["G-8"]
+        screen.screen_gates(trial, _screen_path(), W0, WINDOW_H, *NULL_STREAM)["G-8"]
         == "SIGMA_UNBOUND"
     )
 
@@ -797,7 +809,7 @@ def test_the_path_must_cover_warmup_window_and_one_hour(
 ) -> None:
     trial = _screen_trial(tmp_path, monkeypatch)
     with pytest.raises(screen.TrialError, match="path length"):
-        screen.screen_gates(trial, _screen_path()[:-1], W0, WINDOW_H)
+        screen.screen_gates(trial, _screen_path()[:-1], W0, WINDOW_H, *NULL_STREAM)
 
 
 def test_trial_code_state_never_crosses_runs(
@@ -814,10 +826,11 @@ def test_trial_code_state_never_crosses_runs(
         "    return 0.6 if row['ema_dist_168'] > 0 else 0.1\n"
     )
     trial = _screen_trial(tmp_path, monkeypatch, code)
-    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H, *NULL_STREAM)
     assert got == {
         **dict.fromkeys(screen.GATES_S4B, None),
         "G-8": screen.NA,
+        "G-11": "INSUFFICIENT_SHIFT_RANGE",
         "G-14": screen.NA,
     }
 
@@ -828,7 +841,7 @@ def test_a_negative_signal_is_refused(
     # S4B-R2 (C-10 (1)): s >= 0; clipping would hide it
     code = "def s(row, params, state):\n    return row['ema_dist_168']\n"
     trial = _screen_trial(tmp_path, monkeypatch, code)
-    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H, *NULL_STREAM)
     assert set(got.values()) == {"NEGATIVE_SIGNAL", screen.NA}
 
 
@@ -837,12 +850,12 @@ def test_a_constant_signal_trial_is_checked_every_hour(
 ) -> None:
     # S4B-R3 (C-10 (2))
     trial = _screen_trial(tmp_path, monkeypatch, g11_class="constant_signal")
-    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H, *NULL_STREAM)
     assert got["G-11"] == "CLASS_MISMATCH"
     code = "def s(row, params, state):\n    return 0.5\n"
     trial = _screen_trial(tmp_path, monkeypatch, code, g11_class="constant_signal")
-    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
-    assert "G-11" not in got and got["G-3"] is None
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H, *NULL_STREAM)
+    assert got["G-11"] == screen.NA and got["G-3"] is None
 
 
 def test_an_unavailable_eth_check_carries_into_the_btc_gates(
@@ -852,7 +865,7 @@ def test_an_unavailable_eth_check_carries_into_the_btc_gates(
     path = _screen_path().copy()
     path[:, 1, :4] = 100.0
     trial = _screen_trial(tmp_path, monkeypatch)
-    got = screen.screen_gates(trial, path, W0, WINDOW_H)
+    got = screen.screen_gates(trial, path, W0, WINDOW_H, *NULL_STREAM)
     assert got["G-3"] == "INVALID_SERIES"
     assert got["G-5"] == got["G-6"] == got["G-7"] == "G-3:INVALID_SERIES"
 
@@ -934,7 +947,10 @@ def test_g8_runs_the_point_and_every_neighbour(
         parameter_point={"k": 0},
         grid={"k": [0, 5]},
     )
-    assert screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)["G-8"] is None
+    assert (
+        screen.screen_gates(trial, _screen_path(), W0, WINDOW_H, *NULL_STREAM)["G-8"]
+        is None
+    )
     # the neighbour k = 10 cannot be computed: G-8 unavailable, the point's
     # own gates unaffected
     trial = _screen_trial(
@@ -944,7 +960,7 @@ def test_g8_runs_the_point_and_every_neighbour(
         parameter_point={"k": 5},
         grid={"k": [0, 5, 10]},
     )
-    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H, *NULL_STREAM)
     assert got["G-8"] == "INVALID_SERIES"
     assert all(got[g] is None for g in screen.GATES_S4B)
     # the selected point itself failing makes every gate unavailable
@@ -955,7 +971,7 @@ def test_g8_runs_the_point_and_every_neighbour(
         parameter_point={"k": 10},
         grid={"k": [5, 10]},
     )
-    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H, *NULL_STREAM)
     assert set(got.values()) == {"INVALID_SERIES", screen.NA}  # G-14: no model
 
 
@@ -980,7 +996,10 @@ def test_g8_is_na_without_an_ordered_numeric_dimension(
     trial = _screen_trial(
         tmp_path, monkeypatch, parameter_point={"mode": "a"}, grid={"mode": ["a", "b"]}
     )
-    assert screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)["G-8"] == screen.NA
+    assert (
+        screen.screen_gates(trial, _screen_path(), W0, WINDOW_H, *NULL_STREAM)["G-8"]
+        == screen.NA
+    )
 
 
 # --- S6a: walk-forward pieces ----------------------------------------------
@@ -1169,10 +1188,6 @@ def test_a_zero_target_is_class_not_up() -> None:
 # --- S6b: model trials -----------------------------------------------------
 
 MODEL_WARMUP = screen.model_warmup_hours(W0)
-NULL_STREAM = (
-    screen.screen_trial_seed(screen.screen_seed("33" * 32), 0, "t000"),
-    WINDOW,
-)
 MODEL_SIGNAL = "def s(row, params, state):\n    return max(0.0, 0.3 + row['model:m'])\n"
 
 
@@ -1210,6 +1225,7 @@ def test_a_model_trial_runs_every_s4_gate(
     assert got == {
         **dict.fromkeys(screen.GATES_S4B, None),
         "G-8": screen.NA,
+        "G-11": "INSUFFICIENT_SHIFT_RANGE",
         "G-14": None,
     }
     # MR-3: ETH, BTC, and the lagged BTC run; G-5 and G-7 reuse BTC's
@@ -1394,7 +1410,10 @@ def test_g14_is_na_without_a_model_and_needs_its_seed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     trial = _screen_trial(tmp_path, monkeypatch)
-    assert screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)["G-14"] == screen.NA
+    assert (
+        screen.screen_gates(trial, _screen_path(), W0, WINDOW_H, *NULL_STREAM)["G-14"]
+        == screen.NA
+    )
     with pytest.raises(screen.TrialError, match="trial seed"):
         screen.screen_gates(
             _model_trial(tmp_path, monkeypatch), _long_path(), W0, WINDOW_H
@@ -1458,3 +1477,57 @@ def _btc_prepared(
     series = screen.path_series(path, 0, W0 - timedelta(hours=MODEL_WARMUP))
     first, columns = feature_columns(series)
     return series, first, columns
+
+
+# --- S5b: G-11 runs ----------------------------------------------------------
+
+WINDOW_G11_H = 24 * 559  # T - 2m = 499 with m = 30: the shortest G-11 window
+
+
+@functools.cache
+def _g11_path() -> np.ndarray:
+    seed = screen.screen_seed("55" * 32)
+    return screen.null_path(_source(), seed, 0, 4801 + WINDOW_G11_H + 1)
+
+
+def test_g11_runs_every_draw_on_a_long_enough_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runs: list[object] = []
+    real = screen.g11_targets
+
+    def spy(*a: Any) -> list[float]:
+        runs.append(a[-1])
+        return real(*a)
+
+    monkeypatch.setattr(screen, "g11_targets", spy)
+    trial = _screen_trial(tmp_path, monkeypatch)
+    got = screen.screen_gates(trial, _g11_path(), W0, WINDOW_G11_H, *NULL_STREAM)
+    assert got["G-11"] is None
+    want = screen.g11_shifts(NULL_STREAM[0], WINDOW, 559, 30)
+    assert runs == want and len(runs) == 500
+
+
+def test_g11_rotates_s_by_whole_days_at_the_real_hour() -> None:
+    # GR-2: s'_h = s_((h + 24 k) mod 24T); sigma_hat at the real hour
+    n = 48
+    cols = {name: tuple([1.0] * 60) for name in FEATURE_NAMES}
+    cols["ewma_vol_168h"] = tuple([0.5] * 30 + [1.0] * 30)
+    signals = [float(i) / 100 for i in range(n)]
+    trial = {**_trial(), "tau": "0.40"}
+    got = screen.g11_targets(trial, None, signals, cols, 0, [1.0] * 60, 1, n, 1)
+    for i, target in enumerate(got):
+        sigma = cols["ewma_vol_168h"][i]
+        assert target == min(1.0, max(0.0, signals[(i + 24) % n] * 0.4 / sigma))
+
+
+def test_g11_needs_its_streams_and_is_na_for_constant_signals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trial = _screen_trial(tmp_path, monkeypatch)
+    with pytest.raises(screen.TrialError, match="G-11 needs"):
+        screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    code = "def s(row, params, state):\n    return 0.5\n"
+    const = _screen_trial(tmp_path, monkeypatch, code, g11_class="constant_signal")
+    got = screen.screen_gates(const, _screen_path(), W0, WINDOW_H)  # no stream needed
+    assert got["G-11"] == screen.NA

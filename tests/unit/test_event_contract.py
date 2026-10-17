@@ -214,3 +214,15 @@ def test_targets_are_clipped_and_non_finite_targets_refused() -> None:
         run_event_contract(_series(_flat(60)), [float("nan")], 24)
     with pytest.raises(EventContractError):
         run_event_contract(_series(_flat(30)), [0.5] * 10, 24)  # no following open
+
+
+def test_a_precomputed_sigma_gives_identical_results() -> None:
+    # EC-4
+    series = _series(_walk(24 * 5))
+    sigma = ewma_hourly_volatility_bps_series(hourly_log_returns_bps(series))
+    targets = [0.6] * 30 + [0.0] * 30
+    a = run_event_contract(series, targets, 24, delay=1)
+    b = run_event_contract(series, targets, 24, delay=1, sigma_bps=sigma)
+    assert a == b
+    with pytest.raises(EventContractError, match="does not match"):
+        run_event_contract(series, targets, 24, sigma_bps=sigma[:-1])

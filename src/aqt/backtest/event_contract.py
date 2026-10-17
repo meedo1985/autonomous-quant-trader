@@ -43,6 +43,10 @@ Readings EC-n (proposed, for review):
   the unit tests check that identity.
 - EC-3 The run starts flat, with no pending order and an unset clock (C-10
   (4) states it for G-11 draws; it holds for every run here).
+- EC-4 A caller may pass `sigma_bps`, the series' cost-model volatility
+  (`ewma_hourly_volatility_bps_series(hourly_log_returns_bps(series))`),
+  to avoid recomputing it for the many runs of one screen path (G-11's 500
+  draws); a series of the wrong length is refused. Results are identical.
 """
 
 from __future__ import annotations
@@ -120,8 +124,11 @@ def run_event_contract(
     fees: FeeSchedule | None = None,
     stress_multiplier: float = 1.0,
     delay: int = 0,
+    sigma_bps: Sequence[float] | None = None,
 ) -> EventResult:
-    """Run `targets[i]`, decided at instant `start + i`, under C-6."""
+    """Run `targets[i]`, decided at instant `start + i`, under C-6.
+    `sigma_bps`, if given, must be the series' own cost-model volatility
+    (EC-4); it saves recomputing it for many runs on one series."""
     if not isinstance(series, BarSeries):
         raise EventContractError("series must be a BarSeries")
     if delay not in DELAYS or isinstance(delay, bool):
@@ -141,9 +148,13 @@ def run_event_contract(
             raise EventContractError(f"target {i} is not finite: {t!r}")
         clipped.append(min(MAX_EXPOSURE, max(MIN_EXPOSURE, value)))
     per_side_cost_bps(sigma_hourly_bps=0.0, stress_multiplier=stress_multiplier)
-    # ponytail: sigma is recomputed per run (~0.3 s per 30,000 h); pass it in
-    # per path if the S8 cost pilot shows the screen needs it
-    sigma = ewma_hourly_volatility_bps_series(hourly_log_returns_bps(series))
+    sigma = (
+        ewma_hourly_volatility_bps_series(hourly_log_returns_bps(series))
+        if sigma_bps is None
+        else sigma_bps
+    )
+    if len(sigma) != len(bars) - 2:
+        raise EventContractError("sigma_bps does not match the series")
 
     held = MIN_EXPOSURE
     equity = 1.0

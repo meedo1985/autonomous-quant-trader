@@ -792,7 +792,28 @@ STRESS_COST = 2.0
 
 NA = "N/A"
 GATES_S4 = (*GATES_S4B, "G-8")
-GATES = (*GATES_S4, "G-14")
+GATES = (*GATES_S4, "G-11", "G-14")
+
+# --- S5b: G-11 runs (Annex C C-10 (4)-(7)) ----------------------------------
+#
+# Readings GR-n (proposed, for review):
+# - GR-1 The candidate's BTC baseline run (lag 0, 1x, no delay) gives its `s`
+#   series over the window's `24T` hours (`T` = window days) and its
+#   E-IMPROV against the benchmark leg, which every draw shares (C-10 (5)).
+# - GR-2 Draw `i` with shift `k_i` days (S5 `g11_shifts`, with `g` the C2
+#   gap the declaration fixes, passed in as `g_days`): `s'_h =
+#   s_((h + 24 k_i) mod 24T)`; `target_h = overlay(clip(s'_h * tau /
+#   sigma_hat_h, 0, 1))` with `sigma_hat_h` and the overlay's market row at
+#   the real hour, the overlay loaded afresh (fresh state and globals); then
+#   the C-6 baseline run from `w0`, flat, unset clock (C-10 (4)).
+# - GR-3 Availability (C-10 (6)): the candidate's run must be available (its
+#   `s`, `sigma_hat`, products and overlay are checked there, RN-3), the
+#   shift range must exist (`INSUFFICIENT_SHIFT_RANGE`), and every draw's
+#   E-IMPROV must exist; the first failure's reason is reported. Whole days
+#   are guaranteed by `screen_gates`' window check. `constant_signal`
+#   trials are a frozen N/A, unless a run finds their `s` not constant
+#   (`CLASS_MISMATCH`, C-10 (2)). PASS (476 of 500 strictly below) is not
+#   computed.
 
 
 def _decimal(value: object) -> Decimal | None:
@@ -931,6 +952,42 @@ def leg_targets(
     return out, signals
 
 
+def g11_targets(
+    trial: dict[str, Any],
+    overlay: Callable[..., Any] | None,
+    signals: Sequence[float],
+    columns: Mapping[str, tuple[float, ...]],
+    first: int,
+    closes: Sequence[float],
+    j0: int,
+    n: int,
+    shift_days: int,
+) -> list[float]:
+    """GR-2: the targets of the G-11 draw with shift `shift_days`."""
+    tau = float(trial["tau"])
+    state: dict[str, Any] = {}
+    out = []
+    for i in range(n):
+        k = j0 + i - 1 - first
+        sigma_hat = columns["ewma_vol_168h"][k]
+        product = signals[(i + 24 * shift_days) % n] * tau / sigma_hat
+        if not math.isfinite(product):
+            raise RunUnavailable("INVALID_SERIES")
+        target = min(1.0, max(0.0, product))
+        if overlay is not None:
+            market = {m: columns[m][k] for m in FEATURE_NAMES}
+            market["close"] = closes[j0 + i - 1]
+            try:
+                kept = float(overlay(target, market, state))
+            except Exception as e:
+                raise RunUnavailable("TRIAL_CODE_ERROR") from e
+            if kept not in (target, 0.0):
+                raise RunUnavailable("OVERLAY_VIOLATION")
+            target = kept
+        out.append(target)
+    return out
+
+
 def benchmark_targets(
     columns: Mapping[str, tuple[float, ...]], first: int, j0: int, n: int
 ) -> list[float]:
@@ -973,6 +1030,7 @@ def screen_gates(
     window_hours: int,
     trial_seed: str | None = None,
     window_id: str | None = None,
+    g_days: int | None = None,
 ) -> dict[str, str | None]:
     """RN-6, PL-4, G14-n: each gate's result on one path. G-14 (a model
     trial) needs the null-stream `trial_seed` and the C2 `window_id`
@@ -987,29 +1045,39 @@ def screen_gates(
             f"a model trial needs warmup_hours >= {model_warmup_hours(w0)}"
         )
     g14_na = {} if g14_applies(trial) else {"G-14": NA}  # C-12 (1)
+    g11_na = {"G-11": NA} if trial["g11_class"] == "constant_signal" else {}
     if not g14_na and (trial_seed is None or window_id is None):
         raise TrialError("G-14 needs the trial seed and the window id (G14-1)")
+    if not g11_na and (trial_seed is None or window_id is None or g_days is None):
+        raise TrialError("G-11 needs the trial seed, the window id and g (GR-2)")
     if trial["sigma"] != DEFAULT_SIGMA:
-        return {**dict.fromkeys(GATES, "SIGMA_UNBOUND"), **g8_na, **g14_na}
+        return {
+            **dict.fromkeys(GATES, "SIGMA_UNBOUND"),
+            **g8_na,
+            **g11_na,
+            **g14_na,
+        }
     start = w0 - timedelta(hours=warmup)
     prepared: dict[int, tuple[BarSeries, int, dict[str, tuple[float, ...]]]] = {}
+    emissions: dict[tuple[int, int, str], list[float]] = {}
+
+    sigmas: dict[int, tuple[float, ...]] = {}
 
     def prepare(s: int) -> tuple[BarSeries, int, dict[str, tuple[float, ...]]]:
-        if s not in prepared:  # features once per symbol and path
+        if s not in prepared:  # features and cost volatility once per symbol
             series = path_series(path, s, start)
             try:
                 prepared[s] = (series, *feature_columns(series))
-            except FeatureFactoryError as e:
+                sigmas[s] = ewma_hourly_volatility_bps_series(
+                    hourly_log_returns_bps(series)
+                )
+            except (FeatureFactoryError, CostModelError) as e:
                 raise RunUnavailable("FEATURES_UNAVAILABLE") from e
         return prepared[s]
 
-    def run(
-        s: int,
-        cost: float = 1.0,
-        delay: int = 0,
-        lag: int = 0,
-        at: dict[str, Any] = trial,
-    ) -> dict[str, float]:
+    def inputs(
+        s: int, lag: int, at: dict[str, Any]
+    ) -> tuple[BarSeries, int, dict[str, tuple[float, ...]]]:
         series, first, columns = prepare(s)
         if at["model"] is not None:  # MR-1..MR-3
             key = (s, lag, json.dumps(model_params(at), sort_keys=True))
@@ -1018,6 +1086,26 @@ def screen_gates(
                     at, series, first, columns, warmup, window_hours, lag
                 )
             columns = {**columns, f"model:{at['model']['id']}": tuple(emissions[key])}
+        return series, first, columns
+
+    def contract(
+        series: BarSeries, s: int, targets: list[float], **kw: Any
+    ) -> EventResult:
+        try:
+            return run_event_contract(
+                series, targets, warmup, sigma_bps=sigmas[s], **kw
+            )
+        except (EventContractError, CostModelError) as e:
+            raise RunUnavailable("RUN_INVALID") from e
+
+    def run(
+        s: int,
+        cost: float = 1.0,
+        delay: int = 0,
+        lag: int = 0,
+        at: dict[str, Any] = trial,
+    ) -> dict[str, float]:
+        series, first, columns = inputs(s, lag, at)
         closes = [b.close for b in series.bars]
         signal = load(at["signal"], at["signal_sha256"])  # fresh per run
         overlay = (
@@ -1028,20 +1116,46 @@ def screen_gates(
         )
         if class_mismatch(at, np.asarray(signals)):
             mismatched.append(s)
-        legs = []
-        for targets in (
-            candidate,
-            benchmark_targets(columns, first, warmup, window_hours),
-        ):
-            try:
-                legs.append(
-                    run_event_contract(
-                        series, targets, warmup, stress_multiplier=cost, delay=delay
-                    )
-                )
-            except (EventContractError, CostModelError) as e:
-                raise RunUnavailable("RUN_INVALID") from e
+        legs = [
+            contract(series, s, targets, stress_multiplier=cost, delay=delay)
+            for targets in (
+                candidate,
+                benchmark_targets(columns, first, warmup, window_hours),
+            )
+        ]
         return leg_stats(*legs)
+
+    def g11_check(seed: Any, wid: Any, g: Any) -> None:
+        """GR-1..GR-3."""
+        series, first, columns = inputs(0, 0, trial)
+        closes = [b.close for b in series.bars]
+        signal = load(trial["signal"], trial["signal_sha256"])
+        overlay = (
+            None
+            if trial["overlay"] is None
+            else load(trial["overlay"], trial["overlay_sha256"])
+        )
+        candidate, signals = leg_targets(
+            trial, signal, overlay, columns, first, closes, warmup, window_hours, 0
+        )
+        bench = contract(
+            series, 0, benchmark_targets(columns, first, warmup, window_hours)
+        )
+        leg_stats(contract(series, 0, candidate), bench)
+        try:
+            shifts = g11_shifts(seed, wid, window_hours // 24, g)
+        except GateUnavailable as e:
+            raise RunUnavailable(e.reason) from e
+        for k in shifts:
+            fresh = (
+                None
+                if trial["overlay"] is None
+                else load(trial["overlay"], trial["overlay_sha256"])
+            )
+            targets = g11_targets(
+                trial, fresh, signals, columns, first, closes, warmup, window_hours, k
+            )
+            leg_stats(contract(series, 0, targets), bench)
 
     def g14_check(seed: Any, wid: Any) -> None:
         """G14-3..G14-5: the nominee's and every draw's IC must exist."""
@@ -1069,7 +1183,6 @@ def screen_gates(
             spearman_ic([preds[i] for i in keep], ys)
 
     mismatched: list[int] = []
-    emissions: dict[tuple[int, int, str], list[float]] = {}
     out: dict[str, str | None] = {}
     try:
         run(1)
@@ -1095,6 +1208,14 @@ def screen_gates(
             out["G-8"] = None
         except RunUnavailable as e:
             out["G-8"] = e.reason
+    if g11_na:
+        out.update(g11_na)
+    else:
+        try:
+            g11_check(trial_seed, window_id, g_days)
+            out["G-11"] = None
+        except RunUnavailable as e:
+            out["G-11"] = e.reason
     if g14_na:
         out.update(g14_na)
     else:
