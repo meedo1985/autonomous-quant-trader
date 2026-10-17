@@ -722,6 +722,26 @@ def test_the_lagged_candidate_reads_the_previous_row() -> None:
     assert seen == [2.0, 3.0, 1.0, 2.0]  # rows of bars 4, 5 then 3, 4
 
 
+def test_a_non_finite_input_is_unavailable_even_if_the_signal_ignores_it() -> None:
+    # S4B-R4 (C-7 (2)): bar 1's row holds a NaN in a declared input
+    cols = {n: tuple(float(i) for i in range(10)) for n in FEATURE_NAMES}
+    cols["ewma_vol_168h"] = (0.5,) * 10
+    cols["rv_168"] = (1.0, float("nan")) + (1.0,) * 8
+    trial = {
+        **_trial(s_inputs=["ema_dist_168", "rv_168"]),
+        "parameter_point": {},
+        "grid": {},
+    }
+
+    def sig(row: dict[str, float], params: object, state: object) -> float:
+        return 0.1  # never reads rv_168
+
+    closes = [1.0] * 12
+    screen.leg_targets(trial, sig, None, cols, 0, closes, 4, 2, 0)  # bars 3, 4
+    with pytest.raises(screen.RunUnavailable, match="INVALID_SERIES"):
+        screen.leg_targets(trial, sig, None, cols, 0, closes, 2, 2, 0)  # reads bar 1
+
+
 def test_daily_returns_run_from_midnight_to_midnight() -> None:
     eq = tuple(1.0 + 0.01 * (i // 24) for i in range(1, 49))  # flat within days
     result = EventResult(0, (0.0,) * 48, eq, (), 0)
@@ -735,3 +755,56 @@ def test_the_path_must_cover_warmup_window_and_one_hour(
     trial = _screen_trial(tmp_path, monkeypatch)
     with pytest.raises(screen.TrialError, match="path length"):
         screen.screen_gates(trial, _screen_path()[:-1], W0, WINDOW_H)
+
+
+def test_trial_code_state_never_crosses_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # S4B-R1: a module global counting calls would exceed one window if the
+    # module were shared between runs (and could then cache future rows)
+    code = (
+        "CALLS = []\n"
+        "def s(row, params, state):\n"
+        f"    if len(CALLS) >= {WINDOW_H}:\n"
+        "        raise ValueError('state crossed runs')\n"
+        "    CALLS.append(row['ema_dist_168'])\n"
+        "    return 0.6 if row['ema_dist_168'] > 0 else 0.1\n"
+    )
+    trial = _screen_trial(tmp_path, monkeypatch, code)
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    assert got == dict.fromkeys(screen.GATES_S4B, None)
+
+
+def test_a_negative_signal_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # S4B-R2 (C-10 (1)): s >= 0; clipping would hide it
+    code = "def s(row, params, state):\n    return row['ema_dist_168']\n"
+    trial = _screen_trial(tmp_path, monkeypatch, code)
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    assert set(got.values()) == {"NEGATIVE_SIGNAL"}
+
+
+def test_a_constant_signal_trial_is_checked_every_hour(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # S4B-R3 (C-10 (2))
+    trial = _screen_trial(tmp_path, monkeypatch, g11_class="constant_signal")
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    assert got["G-11"] == "CLASS_MISMATCH"
+    code = "def s(row, params, state):\n    return 0.5\n"
+    trial = _screen_trial(tmp_path, monkeypatch, code, g11_class="constant_signal")
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    assert "G-11" not in got and got["G-3"] is None
+
+
+def test_an_unavailable_eth_check_carries_into_the_btc_gates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ETH flat: sigma_hat = 0, so the ETH run is unavailable while BTC runs work
+    path = _screen_path().copy()
+    path[:, 1, :4] = 100.0
+    trial = _screen_trial(tmp_path, monkeypatch)
+    got = screen.screen_gates(trial, path, W0, WINDOW_H)
+    assert got["G-3"] == "INVALID_SERIES"
+    assert got["G-5"] == got["G-6"] == got["G-7"] == "G-3:INVALID_SERIES"

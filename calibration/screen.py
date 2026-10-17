@@ -695,15 +695,24 @@ def g11_shifts_sha256(shifts: list[int]) -> str:
 #   `annualized_forecast_volatility`). The other protocol estimators have no
 #   bound hourly definition yet: a trial sized by one of them is refused
 #   (`SIGMA_UNBOUND`) until one is bound.
-# - RN-3 Per hour (S4b changes TI-2's call form so that look-ahead is
-#   impossible by construction): `s = signal(row, params, state)` with `row`
-#   holding only the trial's `s_inputs` for this hour and `state` a fresh
-#   dict per run; `target = clip(s * tau / sigma_hat, 0, 1)`; then
-#   `overlay(target, market, state)` with `market` every feature and the
-#   close for this hour. A non-finite `s`, a non-finite or non-positive
-#   `sigma_hat`, a non-finite pre-clip product, an exception from trial code
-#   (`TRIAL_CODE_ERROR`) or an overlay output that is neither the target nor
-#   0 (`OVERLAY_VIOLATION`, TI-8) makes the run unavailable.
+# - RN-3 Per hour: `s = signal(row, params, state)` with `row` holding only
+#   the trial's `s_inputs` for this hour; `target = clip(s * tau /
+#   sigma_hat, 0, 1)`; then `overlay(target, market, state)` with `market`
+#   every feature and the close for this hour. Trial code is loaded afresh
+#   for every run (fresh module globals) and gets fresh state dicts, so no
+#   run sees another run's rows (S4B-R1). Each hour, before trial code is
+#   called, every value it will receive and `sigma_hat` must be finite, and
+#   `sigma_hat` positive (`INVALID_SERIES`; C-7 (2) for the lagged run,
+#   input integrity otherwise; S4B-R4; disclosed: the overlay receives every
+#   feature, so a non-finite feature it does not read still counts). Then
+#   `s` must be finite and >= 0 (`INVALID_SERIES`, `NEGATIVE_SIGNAL`, C-10
+#   (1); S4B-R2), the pre-clip product finite, trial code must not raise
+#   (`TRIAL_CODE_ERROR`), and the overlay must return the target or 0
+#   (`OVERLAY_VIOLATION`, TI-8).
+# - RN-3a (S4B-R3) A `constant_signal` trial's `s` is compared with its first
+#   value at every hour of every run (`class_mismatch`); a mismatch in any run
+#   makes G-11 `CLASS_MISMATCH` (C-10 (2)). Each run's `s` series is kept for
+#   the G-11 draws (slice S5 runs).
 # - RN-4 The benchmark leg is `vol_target_exposure(ewma_vol_168h)` of the
 #   same row, run under the same cost multiplier and delay as the candidate,
 #   and never feature-lagged (C-0, C-5, C-7).
@@ -719,7 +728,8 @@ def g11_shifts_sha256(shifts: list[int]) -> str:
 #   reads the row of bar `j - 2` (its inputs at `t - 1h`) for `s`, the sizing
 #   estimator and the overlay, with the benchmark not lagged (C-7 (2)). Each
 #   of G-5..G-7 also needs G-3. A trial with a model is `MODEL_PENDING`
-#   until slice S6.
+#   until slice S6. `screen_gates` reports availability only; PASS or FAIL
+#   is not part of the screen's outcome (§7.2 "Outcome").
 # - RN-7 Null paths carry synthetic timestamps, so the frozen 10 bps fee
 #   fallback applies (`fees=None`).
 
@@ -764,26 +774,35 @@ def leg_targets(
     j0: int,
     n: int,
     lag: int,
-) -> list[float]:
-    """RN-2, RN-3: the candidate's targets at instants `j0 .. j0 + n - 1`,
-    reading the row of bar `j - 1 - lag`."""
+) -> tuple[list[float], list[float]]:
+    """RN-2, RN-3: the candidate's targets and `s` at instants `j0 .. j0 + n
+    - 1`, reading the row of bar `j - 1 - lag`."""
     tau = float(trial["tau"])
     params = signal_params(trial)
     s_state: dict[str, Any] = {}
     o_state: dict[str, Any] = {}
     names = trial["s_inputs"]
-    out = []
+    out: list[float] = []
+    signals: list[float] = []
     for j in range(j0, j0 + n):
         k = j - 1 - lag - first
         if k < 0:
             raise RunUnavailable("INSUFFICIENT_WARMUP")
         sigma_hat = columns["ewma_vol_168h"][k]
+        row = {m: columns[m][k] for m in names}
+        if not all(map(math.isfinite, row.values())):
+            raise RunUnavailable("INVALID_SERIES")
+        if not math.isfinite(sigma_hat) or sigma_hat <= 0:
+            raise RunUnavailable("INVALID_SERIES")
         try:
-            s = float(signal({m: columns[m][k] for m in names}, params, s_state))
+            s = float(signal(row, params, s_state))
         except Exception as e:  # trial code: any failure is unavailability
             raise RunUnavailable("TRIAL_CODE_ERROR") from e
-        if not math.isfinite(s) or not math.isfinite(sigma_hat) or sigma_hat <= 0:
+        if not math.isfinite(s):
             raise RunUnavailable("INVALID_SERIES")
+        if s < 0:
+            raise RunUnavailable("NEGATIVE_SIGNAL")
+        signals.append(s)
         product = s * tau / sigma_hat
         if not math.isfinite(product):
             raise RunUnavailable("INVALID_SERIES")
@@ -791,6 +810,8 @@ def leg_targets(
         if overlay is not None:
             market = {m: columns[m][k] for m in FEATURE_NAMES}
             market["close"] = closes[j - 1 - lag]
+            if not all(map(math.isfinite, market.values())):
+                raise RunUnavailable("INVALID_SERIES")
             try:
                 kept = float(overlay(target, market, o_state))
             except Exception as e:
@@ -799,7 +820,7 @@ def leg_targets(
                 raise RunUnavailable("OVERLAY_VIOLATION")
             target = kept
         out.append(target)
-    return out
+    return out, signals
 
 
 def benchmark_targets(
@@ -848,12 +869,6 @@ def screen_gates(
         return dict.fromkeys(GATES_S4B, "MODEL_PENDING")
     if trial["sigma"] != DEFAULT_SIGMA:
         return dict.fromkeys(GATES_S4B, "SIGMA_UNBOUND")
-    signal = load(trial["signal"], trial["signal_sha256"])
-    overlay = (
-        None
-        if trial["overlay"] is None
-        else load(trial["overlay"], trial["overlay_sha256"])
-    )
     start = w0 - timedelta(hours=warmup)
     prepared: dict[int, tuple[BarSeries, int, dict[str, tuple[float, ...]]]] = {}
 
@@ -871,19 +886,20 @@ def screen_gates(
     ) -> dict[str, float]:
         series, first, columns = prepare(s)
         closes = [b.close for b in series.bars]
+        signal = load(trial["signal"], trial["signal_sha256"])  # fresh per run
+        overlay = (
+            None
+            if trial["overlay"] is None
+            else load(trial["overlay"], trial["overlay_sha256"])
+        )
+        candidate, signals = leg_targets(
+            trial, signal, overlay, columns, first, closes, warmup, window_hours, lag
+        )
+        if class_mismatch(trial, np.asarray(signals)):
+            mismatched.append(s)
         legs = []
         for targets in (
-            leg_targets(
-                trial,
-                signal,
-                overlay,
-                columns,
-                first,
-                closes,
-                warmup,
-                window_hours,
-                lag,
-            ),
+            candidate,
             benchmark_targets(columns, first, warmup, window_hours),
         ):
             try:
@@ -896,6 +912,7 @@ def screen_gates(
                 raise RunUnavailable("RUN_INVALID") from e
         return leg_stats(*legs)
 
+    mismatched: list[int] = []
     out: dict[str, str | None] = {}
     try:
         run(1)
@@ -912,4 +929,6 @@ def screen_gates(
             out[gate] = None if out["G-3"] is None else f"G-3:{out['G-3']}"
         except RunUnavailable as e:
             out[gate] = e.reason
+    if mismatched:
+        out["G-11"] = "CLASS_MISMATCH"
     return out
