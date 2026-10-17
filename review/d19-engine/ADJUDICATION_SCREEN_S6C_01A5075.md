@@ -10,3 +10,7 @@ Adjudicated by Claude Opus 5.5 (`claude-opus-5-5`), 2026-10-17. Review record: `
 Not repaired: none.
 
 Validation: `pytest tests/unit/test_calibration_screen.py tests/unit/test_d19_deploy.py tests/unit/test_event_contract.py tests/unit/test_feature_columns.py` all passed with `-W error::FutureWarning`; ruff check and format clean; mypy clean; lint-imports 6 kept, 0 broken.
+
+## Re-review at da27bcc (`SOL6_SCREEN_S6C_REREVIEW_DA27BCC.md`): S6C-R2 completed
+
+Accepted. `test_g14_runs_the_nominee_and_every_draw_in_every_window` now sets `G14_DRAWS = 4` (a count no other test uses), spies on `spearman_ic` and asserts exactly 1 + 4 IC evaluations, the first equal to the nominee's own predictions (recomputed independently), with every draw `d = 0..3` drawing its own offset in every window `w = 0..2`. A loop that skipped the nominee or hardcoded its draw count fails it.

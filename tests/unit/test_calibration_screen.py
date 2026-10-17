@@ -1413,7 +1413,10 @@ def _longer_path() -> np.ndarray:
 def test_g14_runs_the_nominee_and_every_draw_in_every_window(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # S6C-R2: every refit window draws its own (d, w); 1 + G14_DRAWS pipelines
+    # S6C-R2: every refit window draws its own (d, w), and G-14 scores the
+    # nominee plus exactly G14_DRAWS null pipelines (an unusual count, 4,
+    # shows the loop follows the constant rather than a hardcoded number)
+    monkeypatch.setattr(screen, "G14_DRAWS", 4)
     draws: list[tuple[int, int]] = []
     real_draw = screen.g14_draw
 
@@ -1423,19 +1426,34 @@ def test_g14_runs_the_nominee_and_every_draw_in_every_window(
         draws.append((d, w))
         return real_draw(seed, wid, d, w, n_w, h)
 
-    pipelines: list[object] = []
-    real_wf = screen.walk_forward
+    scored: list[list[float]] = []
+    real_ic = screen.spearman_ic
 
-    def spy_wf(*args: object, **kwargs: object) -> tuple[list[int], list[float]]:
-        if args[6] == 0 and args[1] is not None:  # the G-14 pipelines run at lag 0
-            pipelines.append(args[7] if len(args) > 7 else kwargs.get("draw"))
-        return real_wf(*args, **kwargs)  # type: ignore[arg-type]
+    def spy_ic(predictions: list[float], targets: list[float]) -> float:
+        scored.append(list(predictions))
+        return real_ic(predictions, targets)
 
     monkeypatch.setattr(screen, "g14_draw", spy_draw)
-    monkeypatch.setattr(screen, "walk_forward", spy_wf)
+    monkeypatch.setattr(screen, "spearman_ic", spy_ic)
     trial = _model_trial(tmp_path, monkeypatch)
     got = screen.screen_gates(trial, _longer_path(), W0, WINDOW_LONG_H, *NULL_STREAM)
     assert got["G-14"] is None
-    assert sorted(set(draws)) == [(d, w) for d in range(3) for w in range(3)]
-    null = [p for p in pipelines if p is not None]
-    assert [p[2] for p in null] == [0, 1, 2]  # type: ignore[index]
+    assert sorted(set(draws)) == [(d, w) for d in range(4) for w in range(3)]
+    assert len(scored) == 1 + 4  # the nominee and every draw
+    # the first IC is the nominee's: no draw is taken before it
+    nominee = screen.walk_forward(
+        trial,
+        *_btc_prepared(trial, _longer_path(), WINDOW_LONG_H),
+        MODEL_WARMUP,
+        WINDOW_LONG_H,
+        0,
+    )[1]
+    assert scored[0] == nominee[: len(scored[0])]
+
+
+def _btc_prepared(
+    trial: dict[str, object], path: np.ndarray, window_h: int
+) -> tuple[BarSeries, int, dict[str, tuple[float, ...]]]:
+    series = screen.path_series(path, 0, W0 - timedelta(hours=MODEL_WARMUP))
+    first, columns = feature_columns(series)
+    return series, first, columns
