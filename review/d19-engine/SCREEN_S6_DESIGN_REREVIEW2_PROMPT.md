@@ -1,0 +1,3 @@
+# Re-review 2 prompt: D-19 screen S6 design revision 3
+
+You are an independent adversarial reviewer working read-only, not an authority. You re-reviewed revision 2 at 5d722fd (NOT READY: S6D-R6 for the owner, S6D2-R1; record attached). Attached: revision 3, the owner's S6D-R6 decision, the bar-semantics sources it cites, and Annex C C-0 and C-12. Check that WF-1 records the owner's decision faithfully, and judge the evidence for keeping `t + H <= w1` (S6D2-R1): is the realisation at the close ending at `w1` inside `[w0, w1)` under the cited bar convention, or not? Verdict READY or NOT READY; new findings get stable IDs S6D3-Rn.
