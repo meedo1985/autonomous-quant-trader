@@ -6,7 +6,6 @@ import functools
 import hashlib
 import json
 import math
-import os
 import random
 import sys
 from datetime import UTC, datetime, timedelta
@@ -1915,27 +1914,26 @@ def test_the_cli_pilot_needs_twenty_trials_and_never_overwrites(
         return {"x": 1}
 
     monkeypatch.setattr(cli.screen, "run_screen", fake_run)
-    with pytest.raises(FileExistsError):
+    with pytest.raises(SystemExit):
         cli.main(["pilot", *base, "--raw-root", str(tmp_path), "--out", str(out)])
     assert out.read_bytes() == b"keep" and ran == []  # S7R-R4: refused before work
-    # a failing screen leaves no reserved file behind
-    monkeypatch.setattr(cli.screen, "run_screen", lambda *a, **k: 1 / 0)
-    fresh = tmp_path / "fresh.json"
-    with pytest.raises(ZeroDivisionError):
-        cli.main(["pilot", *base, "--raw-root", str(tmp_path), "--out", str(fresh)])
-    assert not fresh.exists()
-    # S7R2-R1: a file that replaced the reservation is not this run's: kept
-    # (Windows cannot replace an open file, so the case arises on POSIX only)
-    if os.name == "nt":
-        return
-    replaced = tmp_path / "replaced.json"
+    # S7R2-R1: a file created at the path during the screen is never touched;
+    # publishing fails and only the private temporary file is removed
+    late = tmp_path / "late.json"
 
-    def swap(*a: Any, **k: Any) -> dict[str, int]:
-        replaced.unlink()  # another process replaces the path meanwhile
-        replaced.write_bytes(b"theirs")
-        raise RuntimeError("screen failed")
+    def create_meanwhile(*a: Any, **k: Any) -> dict[str, int]:
+        late.write_bytes(b"theirs")
+        return {"x": 1}
 
-    monkeypatch.setattr(cli.screen, "run_screen", swap)
-    with pytest.raises(RuntimeError):
-        cli.main(["pilot", *base, "--raw-root", str(tmp_path), "--out", str(replaced)])
-    assert replaced.read_bytes() == b"theirs"
+    monkeypatch.setattr(cli.screen, "run_screen", create_meanwhile)
+    with pytest.raises(FileExistsError):
+        cli.main(["pilot", *base, "--raw-root", str(tmp_path), "--out", str(late)])
+    assert late.read_bytes() == b"theirs"
+    assert not list(tmp_path.glob(".screen-*.partial"))
+    # a successful run publishes the record
+    good = tmp_path / "good.json"
+    monkeypatch.setattr(cli.screen, "run_screen", fake_run)
+    assert (
+        cli.main(["pilot", *base, "--raw-root", str(tmp_path), "--out", str(good)]) == 0
+    )
+    assert json.loads(good.read_bytes()) == {"x": 1}

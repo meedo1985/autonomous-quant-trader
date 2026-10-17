@@ -23,6 +23,7 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +31,19 @@ sys.path[:0] = [str(ROOT), str(ROOT / "src")]
 
 from calibration import screen  # noqa: E402
 from calibration.seeds import cj, sha  # noqa: E402
+
+
+def publish(out: Path, data: bytes) -> None:
+    """S7-R8, S7R2-R1: write a private temporary file beside `out`, then
+    publish it with a hard link, which fails if `out` exists; cleanup only
+    ever removes the private file, never the published path."""
+    fd, tmp = tempfile.mkstemp(dir=out.parent, prefix=".screen-", suffix=".partial")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.link(tmp, out)  # atomic create-if-absent
+    finally:
+        os.unlink(tmp)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -50,41 +64,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "pilot" and len(trials) != screen.MAX_TRIALS:
         parser.error(f"the pilot screens a {screen.MAX_TRIALS}-trial set (prereg §10)")
     code = args.trial_code.resolve()
-    out = args.out.open("xb")  # S7-R8, S7R-R4: reserved before any work
-    reserved = os.fstat(out.fileno())
-    try:
-        if args.command == "pilot":
-            record = screen.run_screen(
-                trials,
-                screen.load_hourly_source(args.raw_root),
-                screen.C2_W0,
-                screen.C2_WINDOW_DAYS * 24,
-                screen.C2_WINDOW_ID,
-                screen.C2_G_DAYS,
-                workers=args.workers,
-                code_dir=code,
-            )
-        else:
-            record = screen.declare(
-                trials,
-                args.raw_root,
-                args.object,
-                args.posted,
-                ROOT,
-                args.workers,
-                code,
-            )
-        out.write(cj(record))
-        out.close()
-    except BaseException:
-        out.close()
-        try:  # S7R2-R1: remove the path only if it is still this run's file
-            now = os.stat(args.out)
-            if (now.st_dev, now.st_ino) == (reserved.st_dev, reserved.st_ino):
-                args.out.unlink()
-        except FileNotFoundError:
-            pass
-        raise
+    if args.out.exists():  # S7R-R4: refused before any work
+        parser.error(f"{args.out} exists; a record is never overwritten")
+    if args.command == "pilot":
+        record = screen.run_screen(
+            trials,
+            screen.load_hourly_source(args.raw_root),
+            screen.C2_W0,
+            screen.C2_WINDOW_DAYS * 24,
+            screen.C2_WINDOW_ID,
+            screen.C2_G_DAYS,
+            workers=args.workers,
+            code_dir=code,
+        )
+    else:
+        record = screen.declare(
+            trials, args.raw_root, args.object, args.posted, ROOT, args.workers, code
+        )
+    publish(args.out, cj(record))
     if args.command == "pilot":
         print("MEASUREMENT", sha(record))
         return 0

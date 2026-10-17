@@ -19,3 +19,7 @@ Validation: full screen suite (screen, event contract, deploy, feature columns) 
 |---|---|---|
 | S7R-R1 (still open) | **Accept.** Exact-string comparison missed aliases. | `_extend_path` compares `os.path.realpath` of every entry; any spelling of the engine or trial-code directories is removed before placing them. Test `test_an_alias_of_the_trial_code_directory_is_moved_last` (a `..` detour). |
 | S7R2-R1 | **Accept.** Cleanup unlinked by name. | The CLI records the reserved file's `(st_dev, st_ino)` and removes the path only if it still names that file. Test case (POSIX only: Windows cannot replace an open file, so the race cannot arise there). |
+
+## Re-review 3 at da1eaad (`SOL6_SCREEN_S7_REREVIEW3_DA1EAAD.md`): S7R2-R1
+
+Accepted, by removing destination cleanup altogether. The CLI refuses an existing destination before any work, writes the record to a private `mkstemp` file beside it, and publishes with `os.link` (atomic create-if-absent); the `finally` removes only the private file, never the published path. A file created at the destination during the screen makes publishing fail and is left untouched. Test cases: refusal before work, a file created meanwhile (kept, no `.partial` left), a successful publish.
