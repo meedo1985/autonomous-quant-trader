@@ -1,0 +1,5 @@
+# Re-review prompt: D-19 screen slice S3 at 7626e2e
+
+You are an independent adversarial reviewer working read-only, not an authority. You reviewed S3 at 40d1402 (verdict FIX, S3-R1..R6; record attached). Attached: the adjudication, the repair diff 40d1402..7626e2e, and the complete `calibration/screen.py` and its test at 7626e2e. Check that each repair resolves its finding without new defects. In particular: whether `load` (fresh module from the hashed bytes, not registered) still has a bypass, and whether the remaining import binding left to the S7 driver is stated clearly enough; whether the tau/sigma grid rule and `signal_params` let G-8 neighbour runs be expressed; whether the TI-5 reading (G-14 applies to sign-target logistic models) is faithful to C-12 (1) or needs a decision; and that the refusal tests would catch a regression. Out of scope: S1 (accepted) and later slices.
+
+Verdict ACCEPT or FIX. New findings get stable IDs S3R-Rn with severity, file:line and a concrete failure scenario.

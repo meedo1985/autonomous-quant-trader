@@ -1,0 +1,7 @@
+# Review prompt: D-19 screen slice S1 (null paths) at 8bf7188
+
+You are an independent adversarial reviewer working read-only, not an authority. Everything is attached; if your shell works you may read the repository at commit 8bf7188 and run `python -m pytest -q tests/unit/test_calibration_screen.py`, but do not modify files.
+
+Check `calibration/screen.py` (slice S1 of `review/d19-engine/SCREEN_PLAN.md`) against the accepted preregistration §7.2 "Paths" and "Seed", Annex C rev 4 C-10 (3) "Inside the D-19 screen" (D-20 B6), and §13 rev 7g item 1. Assess each reading SP-1..SP-6 in the module docstring: is it faithful to the text, and is any alternative reading materially different? Look for: any departure from the §7.2 reconstruction (sign flip, chaining, first open, volume, no demeaning); a stream or seed that could collide with another stream (C-10 null-stream trial seeds, the engine's §8 seeds); a way exploration-only access could be bypassed; misuse of `semi.stationary_indices` / `semi.block_signs` at hourly scale; float behaviour (log/exp, overflow over ~30,000 hours) that could make a path non-finite or platform-dependent beyond what SP-6 discloses; and whether the tests would catch a broken implementation (sign not shared across symbols, wrong chaining, wrong flip). Out of scope: later slices (trial interface, C-6 runner, gates).
+
+Verdict ACCEPT or FIX. Findings get stable IDs S1-Rn with severity, file:line and a concrete failure scenario.

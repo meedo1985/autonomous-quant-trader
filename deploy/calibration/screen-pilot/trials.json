@@ -1,0 +1,587 @@
+[
+  {
+    "trial_id": "p01",
+    "family": "trend",
+    "signal": "pilot_ema:s",
+    "signal_sha256": "d8f6535619fa550cd2575dbd13943f4a5f7f48b8d704240c1a95a9b25c51cb0c",
+    "overlay": null,
+    "overlay_sha256": null,
+    "s_inputs": [
+      "ema_dist_168"
+    ],
+    "tau": "0.40",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": null,
+    "horizon_hours": 24,
+    "parameter_point": {
+      "k": 5
+    },
+    "grid": {
+      "k": [
+        0,
+        5,
+        10
+      ]
+    },
+    "warmup_hours": 4801
+  },
+  {
+    "trial_id": "p02",
+    "family": "trend",
+    "signal": "pilot_ema:s",
+    "signal_sha256": "d8f6535619fa550cd2575dbd13943f4a5f7f48b8d704240c1a95a9b25c51cb0c",
+    "overlay": null,
+    "overlay_sha256": null,
+    "s_inputs": [
+      "ema_dist_168"
+    ],
+    "tau": "0.60",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": null,
+    "horizon_hours": 72,
+    "parameter_point": {
+      "k": 5
+    },
+    "grid": {
+      "k": [
+        0,
+        5,
+        10
+      ]
+    },
+    "warmup_hours": 4801
+  },
+  {
+    "trial_id": "p03",
+    "family": "trend",
+    "signal": "pilot_ema:s",
+    "signal_sha256": "d8f6535619fa550cd2575dbd13943f4a5f7f48b8d704240c1a95a9b25c51cb0c",
+    "overlay": null,
+    "overlay_sha256": null,
+    "s_inputs": [
+      "ema_dist_168"
+    ],
+    "tau": "0.80",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": null,
+    "horizon_hours": 168,
+    "parameter_point": {
+      "k": 5
+    },
+    "grid": {
+      "k": [
+        0,
+        5,
+        10
+      ]
+    },
+    "warmup_hours": 4801
+  },
+  {
+    "trial_id": "p04",
+    "family": "trend",
+    "signal": "pilot_ema:s",
+    "signal_sha256": "d8f6535619fa550cd2575dbd13943f4a5f7f48b8d704240c1a95a9b25c51cb0c",
+    "overlay": "pilot_exit:o",
+    "overlay_sha256": "a6c241e383ddaf65d4e735f403eef2e7c31d2c6bca4a688ca67feec4d3e6c66e",
+    "s_inputs": [
+      "ema_dist_168"
+    ],
+    "tau": "0.60",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": null,
+    "horizon_hours": 72,
+    "parameter_point": {
+      "k": 5
+    },
+    "grid": {
+      "k": [
+        0,
+        5,
+        10
+      ]
+    },
+    "warmup_hours": 4801
+  },
+  {
+    "trial_id": "p05",
+    "family": "trend",
+    "signal": "pilot_ema:s",
+    "signal_sha256": "d8f6535619fa550cd2575dbd13943f4a5f7f48b8d704240c1a95a9b25c51cb0c",
+    "overlay": "pilot_exit:o",
+    "overlay_sha256": "a6c241e383ddaf65d4e735f403eef2e7c31d2c6bca4a688ca67feec4d3e6c66e",
+    "s_inputs": [
+      "ema_dist_168"
+    ],
+    "tau": "0.40",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": null,
+    "horizon_hours": 72,
+    "parameter_point": {
+      "k": 0
+    },
+    "grid": {
+      "k": [
+        0,
+        5,
+        10
+      ]
+    },
+    "warmup_hours": 4801
+  },
+  {
+    "trial_id": "p06",
+    "family": "trend",
+    "signal": "pilot_breakout:s",
+    "signal_sha256": "03c530e4eeb60fbb1d09e0fe7134d307b836a8ee5df1510ed97c40eb255e9ca8",
+    "overlay": null,
+    "overlay_sha256": null,
+    "s_inputs": [
+      "breakout_720"
+    ],
+    "tau": "0.60",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": null,
+    "horizon_hours": 72,
+    "parameter_point": {
+      "k": 2
+    },
+    "grid": {
+      "k": [
+        1,
+        2,
+        5
+      ]
+    },
+    "warmup_hours": 4801
+  },
+  {
+    "trial_id": "p07",
+    "family": "trend",
+    "signal": "pilot_breakout:s",
+    "signal_sha256": "03c530e4eeb60fbb1d09e0fe7134d307b836a8ee5df1510ed97c40eb255e9ca8",
+    "overlay": null,
+    "overlay_sha256": null,
+    "s_inputs": [
+      "breakout_720"
+    ],
+    "tau": "0.80",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": null,
+    "horizon_hours": 72,
+    "parameter_point": {
+      "k": 5
+    },
+    "grid": {
+      "k": [
+        1,
+        2,
+        5
+      ]
+    },
+    "warmup_hours": 4801
+  },
+  {
+    "trial_id": "p08",
+    "family": "trend",
+    "signal": "pilot_trend200:s",
+    "signal_sha256": "e13564ed9f011dddcc8f87e4728d899a6a0111ce303174290203ccf7a17e827e",
+    "overlay": null,
+    "overlay_sha256": null,
+    "s_inputs": [
+      "trend_200d"
+    ],
+    "tau": "0.60",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": null,
+    "horizon_hours": 72,
+    "parameter_point": {},
+    "grid": {},
+    "warmup_hours": 4801
+  },
+  {
+    "trial_id": "p09",
+    "family": "vol",
+    "signal": "pilot_vol:s",
+    "signal_sha256": "461028e11e8ed6f5e7e72890b4d3be675586ec745cfad7a0d67a8f1c5147098b",
+    "overlay": null,
+    "overlay_sha256": null,
+    "s_inputs": [
+      "rv_24",
+      "rv_720"
+    ],
+    "tau": "0.60",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": null,
+    "horizon_hours": 72,
+    "parameter_point": {
+      "k": 10
+    },
+    "grid": {
+      "k": [
+        5,
+        10,
+        20
+      ]
+    },
+    "warmup_hours": 4801
+  },
+  {
+    "trial_id": "p10",
+    "family": "vol",
+    "signal": "pilot_vol:s",
+    "signal_sha256": "461028e11e8ed6f5e7e72890b4d3be675586ec745cfad7a0d67a8f1c5147098b",
+    "overlay": null,
+    "overlay_sha256": null,
+    "s_inputs": [
+      "rv_24",
+      "rv_720"
+    ],
+    "tau": "0.40",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": null,
+    "horizon_hours": 72,
+    "parameter_point": {
+      "k": 10
+    },
+    "grid": {
+      "k": [
+        5,
+        10,
+        20
+      ]
+    },
+    "warmup_hours": 4801
+  },
+  {
+    "trial_id": "p11",
+    "family": "vol",
+    "signal": "pilot_vol:s",
+    "signal_sha256": "461028e11e8ed6f5e7e72890b4d3be675586ec745cfad7a0d67a8f1c5147098b",
+    "overlay": null,
+    "overlay_sha256": null,
+    "s_inputs": [
+      "rv_24",
+      "rv_720"
+    ],
+    "tau": "0.80",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": null,
+    "horizon_hours": 72,
+    "parameter_point": {
+      "k": 5
+    },
+    "grid": {
+      "k": [
+        5,
+        10,
+        20
+      ]
+    },
+    "warmup_hours": 4801
+  },
+  {
+    "trial_id": "p12",
+    "family": "vol",
+    "signal": "pilot_vol:s",
+    "signal_sha256": "461028e11e8ed6f5e7e72890b4d3be675586ec745cfad7a0d67a8f1c5147098b",
+    "overlay": null,
+    "overlay_sha256": null,
+    "s_inputs": [
+      "rv_24",
+      "rv_720"
+    ],
+    "tau": "0.60",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": null,
+    "horizon_hours": 168,
+    "parameter_point": {
+      "k": 20
+    },
+    "grid": {
+      "k": [
+        5,
+        10,
+        20
+      ]
+    },
+    "warmup_hours": 4801
+  },
+  {
+    "trial_id": "p13",
+    "family": "vol",
+    "signal": "pilot_vol:s",
+    "signal_sha256": "461028e11e8ed6f5e7e72890b4d3be675586ec745cfad7a0d67a8f1c5147098b",
+    "overlay": "pilot_exit:o",
+    "overlay_sha256": "a6c241e383ddaf65d4e735f403eef2e7c31d2c6bca4a688ca67feec4d3e6c66e",
+    "s_inputs": [
+      "rv_24",
+      "rv_720"
+    ],
+    "tau": "0.60",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": null,
+    "horizon_hours": 72,
+    "parameter_point": {
+      "k": 10
+    },
+    "grid": {
+      "k": [
+        5,
+        10,
+        20
+      ]
+    },
+    "warmup_hours": 4801
+  },
+  {
+    "trial_id": "p14",
+    "family": "vol",
+    "signal": "pilot_vol:s",
+    "signal_sha256": "461028e11e8ed6f5e7e72890b4d3be675586ec745cfad7a0d67a8f1c5147098b",
+    "overlay": "pilot_exit:o",
+    "overlay_sha256": "a6c241e383ddaf65d4e735f403eef2e7c31d2c6bca4a688ca67feec4d3e6c66e",
+    "s_inputs": [
+      "rv_24",
+      "rv_720"
+    ],
+    "tau": "0.60",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": null,
+    "horizon_hours": 24,
+    "parameter_point": {
+      "k": 10
+    },
+    "grid": {
+      "k": [
+        5,
+        10,
+        20
+      ]
+    },
+    "warmup_hours": 4801
+  },
+  {
+    "trial_id": "p15",
+    "family": "trend",
+    "signal": "pilot_model:s",
+    "signal_sha256": "d088504777dfb38790401b7f284d8fdd3ee7b1ee708d4f3d0bf5d6b9ea6b44aa",
+    "overlay": null,
+    "overlay_sha256": null,
+    "s_inputs": [
+      "model:m"
+    ],
+    "tau": "0.60",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": {
+      "id": "m",
+      "class": "linear",
+      "params": {
+        "fit_intercept": true
+      },
+      "target": "vol_scaled_target",
+      "features": [
+        "ret_24h",
+        "ret_168h",
+        "ema_dist_72",
+        "rv_168",
+        "breakout_720"
+      ]
+    },
+    "horizon_hours": 72,
+    "parameter_point": {},
+    "grid": {},
+    "warmup_hours": 22344
+  },
+  {
+    "trial_id": "p16",
+    "family": "trend",
+    "signal": "pilot_model:s",
+    "signal_sha256": "d088504777dfb38790401b7f284d8fdd3ee7b1ee708d4f3d0bf5d6b9ea6b44aa",
+    "overlay": null,
+    "overlay_sha256": null,
+    "s_inputs": [
+      "model:m"
+    ],
+    "tau": "0.60",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": {
+      "id": "m",
+      "class": "ridge",
+      "params": {
+        "alpha": "1"
+      },
+      "target": "vol_scaled_target",
+      "features": [
+        "ret_24h",
+        "ret_168h",
+        "ema_dist_72",
+        "rv_168",
+        "breakout_720"
+      ]
+    },
+    "horizon_hours": 72,
+    "parameter_point": {
+      "model.alpha": "1"
+    },
+    "grid": {
+      "model.alpha": [
+        "0.1",
+        "1",
+        "10"
+      ]
+    },
+    "warmup_hours": 22344
+  },
+  {
+    "trial_id": "p17",
+    "family": "trend",
+    "signal": "pilot_model:s",
+    "signal_sha256": "d088504777dfb38790401b7f284d8fdd3ee7b1ee708d4f3d0bf5d6b9ea6b44aa",
+    "overlay": null,
+    "overlay_sha256": null,
+    "s_inputs": [
+      "model:m"
+    ],
+    "tau": "0.60",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": {
+      "id": "m",
+      "class": "lasso",
+      "params": {
+        "alpha": "0.001"
+      },
+      "target": "vol_scaled_target",
+      "features": [
+        "ret_24h",
+        "ret_168h",
+        "ema_dist_72",
+        "rv_168",
+        "breakout_720"
+      ]
+    },
+    "horizon_hours": 72,
+    "parameter_point": {},
+    "grid": {},
+    "warmup_hours": 22344
+  },
+  {
+    "trial_id": "p18",
+    "family": "trend",
+    "signal": "pilot_model:s",
+    "signal_sha256": "d088504777dfb38790401b7f284d8fdd3ee7b1ee708d4f3d0bf5d6b9ea6b44aa",
+    "overlay": null,
+    "overlay_sha256": null,
+    "s_inputs": [
+      "model:m"
+    ],
+    "tau": "0.60",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": {
+      "id": "m",
+      "class": "elastic_net",
+      "params": {
+        "alpha": "0.001",
+        "l1_ratio": "0.5"
+      },
+      "target": "vol_scaled_target",
+      "features": [
+        "ret_24h",
+        "ret_168h",
+        "ema_dist_72",
+        "rv_168",
+        "breakout_720"
+      ]
+    },
+    "horizon_hours": 72,
+    "parameter_point": {},
+    "grid": {},
+    "warmup_hours": 22344
+  },
+  {
+    "trial_id": "p19",
+    "family": "trend",
+    "signal": "pilot_model:s",
+    "signal_sha256": "d088504777dfb38790401b7f284d8fdd3ee7b1ee708d4f3d0bf5d6b9ea6b44aa",
+    "overlay": null,
+    "overlay_sha256": null,
+    "s_inputs": [
+      "model:m"
+    ],
+    "tau": "0.60",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": {
+      "id": "m",
+      "class": "logistic",
+      "params": {
+        "C": "1"
+      },
+      "target": "sign_of_vol_scaled_target",
+      "features": [
+        "ret_24h",
+        "ret_168h",
+        "ema_dist_72",
+        "rv_168",
+        "breakout_720"
+      ]
+    },
+    "horizon_hours": 72,
+    "parameter_point": {},
+    "grid": {},
+    "warmup_hours": 22344
+  },
+  {
+    "trial_id": "p20",
+    "family": "trend",
+    "signal": "pilot_model:s",
+    "signal_sha256": "d088504777dfb38790401b7f284d8fdd3ee7b1ee708d4f3d0bf5d6b9ea6b44aa",
+    "overlay": null,
+    "overlay_sha256": null,
+    "s_inputs": [
+      "model:m"
+    ],
+    "tau": "0.60",
+    "sigma": "EWMA_168h",
+    "g11_class": "signal_timed",
+    "model": {
+      "id": "m",
+      "class": "lightgbm",
+      "params": {
+        "n_estimators": 300,
+        "max_depth": 3,
+        "num_leaves": 8
+      },
+      "target": "vol_scaled_target",
+      "features": [
+        "ret_24h",
+        "ret_168h",
+        "ema_dist_72",
+        "rv_168",
+        "breakout_720"
+      ]
+    },
+    "horizon_hours": 72,
+    "parameter_point": {},
+    "grid": {},
+    "warmup_hours": 22344
+  }
+]
