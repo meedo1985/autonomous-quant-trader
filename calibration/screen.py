@@ -744,17 +744,23 @@ STRESS_COST = 2.0
 #   The ordered numeric tunable dimensions are the trial's grid dimensions
 #   other than `tau` and `sigma` (structural: vol target and the categorical
 #   sizing estimator; the horizon is not a grid dimension) whose grid values
-#   are all numeric: an `int` (not `bool`) or a decimal string. Signal
-#   parameters and `model.<name>` parameters both count.
+#   are all numeric: an `int` (not `bool`) or a decimal string, with at
+#   least two values. Signal parameters and `model.<name>` parameters both
+#   count. A single-value grid entry is a fixed constant, not a tuned
+#   dimension (S4C-R3: it has no neighbour and was not chosen among
+#   alternatives; reading it as a boundary would make every fixed constant a
+#   G-8 FAIL).
 # - PL-2 Values are ordered by their exact decimal value; a +/-1-step
 #   neighbour is the adjacent value in that order, present in the grid. The
 #   neighbour runs change one dimension at a time, through the same
 #   `signal_params` / `model_params` path as the selected point (TI-6).
 # - PL-3 The screen needs availability only (§7.2): G-8 is `N/A` (`NA`, a
 #   frozen N/A, not unavailability) without such a dimension (C-8 step 1),
-#   and `UNAVAILABLE` if the selected point's or any present neighbour's
-#   BTC E-IMPROV, on the baseline run, cannot be computed (C-8 step 2, with
-#   the cause of the first failing run). C-8 steps 3 and 4 (FAIL / PASS) are
+#   decided before anything else, so a trial still `MODEL_PENDING` or
+#   `SIGMA_UNBOUND` gets it too (S4C-R1); and `UNAVAILABLE` if the selected
+#   point's or any present neighbour's BTC E-IMPROV, on the baseline run,
+#   cannot be computed or is not finite (C-8 step 2, with the cause of the
+#   first failing run; S4C-R2). C-8 steps 3 and 4 (FAIL / PASS) are
 #   not part of the screen's outcome.
 # - PL-4 Gate results in `screen_gates`: `None` available, `NA` frozen N/A,
 #   any other string the unavailability reason.
@@ -783,7 +789,7 @@ def plateau_dimensions(trial: dict[str, Any]) -> dict[str, list[Any]]:
             continue
         maybe = [_decimal(v) for v in values]
         keys = [k for k in maybe if k is not None]
-        if len(keys) == len(values):
+        if len(keys) == len(values) >= 2:
             if len(set(keys)) != len(keys):  # e.g. 1 and "1.0": no order
                 raise TrialError(f"grid {name} repeats a number")
             ranked = sorted(range(len(values)), key=keys.__getitem__)
@@ -923,11 +929,12 @@ def leg_stats(candidate: EventResult, benchmark: EventResult) -> dict[str, float
     paired = st.paired_sharpe_statistics(
         daily_returns(candidate), daily_returns(benchmark)
     )
-    if paired.paired_sharpe_improvement is None:
+    improvement = paired.paired_sharpe_improvement
+    if improvement is None or not math.isfinite(improvement):  # S4C-R2
         raise RunUnavailable(paired.reason or "E_IMPROV_UNAVAILABLE")
     mdd = [_max_drawdown((1.0, *r.equity)) for r in (candidate, benchmark)]
     return {
-        "e_improv": paired.paired_sharpe_improvement,
+        "e_improv": improvement,
         "dd_excess": mdd[0] - mdd[1],
         "net_return": candidate.final_equity - 1.0,
     }
@@ -941,10 +948,11 @@ def screen_gates(
     warmup = trial["warmup_hours"]
     if window_hours < 48 or window_hours % 24 or len(path) != warmup + window_hours + 1:
         raise TrialError("path length must be warmup + whole window days + 1 hour")
+    g8_na = {} if plateau_dimensions(trial) else {"G-8": NA}  # PL-3, S4C-R1
     if trial["model"] is not None:
-        return dict.fromkeys(GATES_S4, "MODEL_PENDING")
+        return {**dict.fromkeys(GATES_S4, "MODEL_PENDING"), **g8_na}
     if trial["sigma"] != DEFAULT_SIGMA:
-        return dict.fromkeys(GATES_S4, "SIGMA_UNBOUND")
+        return {**dict.fromkeys(GATES_S4, "SIGMA_UNBOUND"), **g8_na}
     start = w0 - timedelta(hours=warmup)
     prepared: dict[int, tuple[BarSeries, int, dict[str, tuple[float, ...]]]] = {}
 
@@ -1007,8 +1015,8 @@ def screen_gates(
             out[gate] = None if out["G-3"] is None else f"G-3:{out['G-3']}"
         except RunUnavailable as e:
             out[gate] = e.reason
-    if not plateau_dimensions(trial):  # PL-3
-        out["G-8"] = NA
+    if g8_na:
+        out.update(g8_na)
     else:
         try:
             for at in (trial, *plateau_neighbours(trial)):

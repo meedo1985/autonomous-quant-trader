@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import aqt.metrics.statistics as st
 from aqt.backtest.event_contract import EventResult
 from aqt.data.bars import Bar, BarSeries
 from aqt.features.factory import FEATURE_NAMES
@@ -705,10 +706,23 @@ def test_model_and_unbound_sizing_trials_wait_for_their_slices(
         tmp_path, monkeypatch, model=MODEL, s_inputs=["model:m", "ema_dist_168"]
     )
     got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
-    assert set(got.values()) == {"MODEL_PENDING"}
+    assert got == {**dict.fromkeys(screen.GATES_S4B, "MODEL_PENDING"), "G-8": screen.NA}
     trial = _screen_trial(tmp_path, monkeypatch, family="vol", sigma="HAR_RV")
     got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
-    assert set(got.values()) == {"SIGMA_UNBOUND"}
+    assert got == {**dict.fromkeys(screen.GATES_S4B, "SIGMA_UNBOUND"), "G-8": screen.NA}
+    # S4C-R1: with a numeric dimension, G-8 waits like the others
+    trial = _screen_trial(
+        tmp_path,
+        monkeypatch,
+        family="vol",
+        sigma="HAR_RV",
+        parameter_point={"k": 1},
+        grid={"k": [1, 2]},
+    )
+    assert (
+        screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)["G-8"]
+        == "SIGMA_UNBOUND"
+    )
 
 
 def test_the_lagged_candidate_reads_the_previous_row() -> None:
@@ -849,6 +863,11 @@ def test_plateau_dimensions_are_numeric_non_structural_and_ordered_by_value() ->
         screen.plateau_dimensions(
             _trial(parameter_point={"k": 1}, grid={"k": [1, "1.0"]})
         )
+    # S4C-R3: a single value is a fixed constant, not a dimension
+    assert (
+        screen.plateau_dimensions(_trial(parameter_point={"k": 5}, grid={"k": [5]}))
+        == {}
+    )
 
 
 def test_plateau_neighbours_move_one_dimension_one_step() -> None:
@@ -901,6 +920,31 @@ def test_g8_runs_the_point_and_every_neighbour(
     got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
     assert got["G-8"] == "INVALID_SERIES"
     assert all(got[g] is None for g in screen.GATES_S4B)
+    # the selected point itself failing makes every gate unavailable
+    trial = _screen_trial(
+        tmp_path,
+        monkeypatch,
+        PARAM_SIGNAL,
+        parameter_point={"k": 10},
+        grid={"k": [5, 10]},
+    )
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    assert set(got.values()) == {"INVALID_SERIES"}
+
+
+def test_a_non_finite_e_improv_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    # S4C-R2: C-8 step 2 (defence in depth: the R-8 code returns None today)
+    fake = st.PairedSharpeStatistics(
+        candidate=st.SharpeResult(2),
+        benchmark=st.SharpeResult(2),
+        difference_series_sharpe=st.SharpeResult(2),
+        paired_sharpe_improvement=float("nan"),
+        reason=None,
+    )
+    monkeypatch.setattr(st, "paired_sharpe_statistics", lambda c, b: fake)
+    result = EventResult(0, (0.0,) * 48, tuple(1.0 for _ in range(48)), (), 0)
+    with pytest.raises(screen.RunUnavailable, match="E_IMPROV_UNAVAILABLE"):
+        screen.leg_stats(result, result)
 
 
 def test_g8_is_na_without_an_ordered_numeric_dimension(
