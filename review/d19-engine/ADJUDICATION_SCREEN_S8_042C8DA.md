@@ -16,3 +16,11 @@ The sheet names engine commit `e4e7339` (the repaired launcher and summary); the
 Not repaired: none.
 
 Validation: full screen suite 188 passed (`-W error::FutureWarning`); `sh -n d19.sh` clean; ruff, mypy clean.
+
+## Re-review at 85022c3 (`SOL6_SCREEN_S8_REREVIEW_85022C3.md`)
+
+| ID | Decision | Repair |
+|---|---|---|
+| S8R-R1 | **Accept.** | `up` lists running D-19 engine containers and turns a failed docker query into `FAIL: cannot query docker`; every caller checks its status explicitly (a failure inside `$(...)` or an `if` condition would not stop the script by itself); `stop` reports a failed stop. Checked with a failing `docker` stub: `stop` and `screen-pilot` exit 1 with the FAIL line. |
+| S8R-R2 | **Accept.** | `engine` labels every container `aqt-d19-run=1`; `alone` refuses while any labelled container is up and guards `run`, `clean-check` and `screen-pilot`; `stop` stops every labelled container. |
+| S8R-R3 | **Accept.** | Step 0's destination check prints an explicit `ok: app-e39b23d is free` or `STOP: ...` line (no failing command); the sheet says which line carries the old commit. The sheet names the repaired engine commit `336e322`. |

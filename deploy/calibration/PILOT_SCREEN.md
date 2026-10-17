@@ -4,7 +4,7 @@
 
 **What runs.** The 20 example trials in `deploy/calibration/screen-pilot/` (8 trend rules, 6 vol rules, 6 models: linear, ridge, lasso, elastic net, logistic, LightGBM at its largest allowed size), each on all 30 null paths, every screened gate. It is a measurement only: nothing is declared, nothing is decided, and forward paper keeps running untouched.
 
-**Engine commit:** `e4e733935f15c4fdca7c75d9af9d74a59682d449`.
+**Engine commit:** `336e3221a1a5c7d60cf39638900e8baa19d68651`.
 
 **Time:** about 15 minutes of your attention, then about 15 hours of running (an estimate from the laptop: 14 rules ≈ 50 s per path, 5 linear-family models ≈ 4-6 min per path, LightGBM ≈ 20 min per path, on 2 workers). This holds for this mix only: a set of 20 LightGBM trials would take about 100 hours, so the result is reported per kind of trial, not per set size (S8 review).
 
@@ -18,13 +18,13 @@
 cd /opt/aqt-d19/app/deploy/calibration
 sudo sh d19.sh status
 old=$(git -C /opt/aqt-d19/app rev-parse --short HEAD); echo "$old"
-ls -d "/opt/aqt-d19/app-$old" 2>/dev/null && echo "STOP: app-$old already exists"
+if [ -e "/opt/aqt-d19/app-$old" ]; then echo "STOP: app-$old already exists"; else echo "ok: app-$old is free"; fi
 ```
 
-Check before going on (S8-R4):
-- the first line of `status` must not say `Up`;
-- the next line must print `e39b23d`;
-- the last command must print **nothing**. If it prints `STOP: …`, stop and send me the output.
+Check before going on (S8-R4, S8R-R3):
+- the first line `status` prints must not say `Up`;
+- the line printed by `echo "$old"` (after `status`'s own lines) must be `e39b23d`;
+- the last line must be `ok: app-e39b23d is free`. If it says `STOP: …`, stop and send me the output.
 
 Then:
 
@@ -40,15 +40,15 @@ The last line must list `app-cbde711` and `app-e39b23d` (and nothing called `app
 ```sh
 rm -rf /tmp/aqt-d19-src
 git clone https://github.com/meedo1985/autonomous-quant-trader.git /tmp/aqt-d19-src
-git -C /tmp/aqt-d19-src checkout e4e733935f15c4fdca7c75d9af9d74a59682d449
+git -C /tmp/aqt-d19-src checkout 336e3221a1a5c7d60cf39638900e8baa19d68651
 git -C /tmp/aqt-d19-src rev-parse HEAD
-sudo sh /tmp/aqt-d19-src/deploy/calibration/d19.sh install https://github.com/meedo1985/autonomous-quant-trader.git e4e733935f15c4fdca7c75d9af9d74a59682d449
+sudo sh /tmp/aqt-d19-src/deploy/calibration/d19.sh install https://github.com/meedo1985/autonomous-quant-trader.git 336e3221a1a5c7d60cf39638900e8baa19d68651
 cd /opt/aqt-d19/app/deploy/calibration
 sudo sh d19.sh build
 sudo sh d19.sh probe
 ```
 
-The fourth line must print `e4e733935f15c4fdca7c75d9af9d74a59682d449`. **Send me** the line `build` prints (the image id) and the last line of `probe` (it must be `This CPU runs the pinned runtime.`).
+The fourth line must print `336e3221a1a5c7d60cf39638900e8baa19d68651`. **Send me** the line `build` prints (the image id) and the last line of `probe` (it must be `This CPU runs the pinned runtime.`).
 
 ## B. Start the pilot screen
 
