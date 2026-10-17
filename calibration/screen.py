@@ -66,7 +66,12 @@ from typing import Any
 import numpy as np
 
 import aqt.metrics.statistics as st
-from aqt.backtest.costs import BPS_PER_UNIT, CostModelError
+from aqt.backtest.costs import (
+    BPS_PER_UNIT,
+    CostModelError,
+    ewma_hourly_volatility_bps_series,
+    hourly_log_returns_bps,
+)
 from aqt.backtest.event_contract import (
     EventContractError,
     EventResult,
@@ -76,7 +81,11 @@ from aqt.benchmarks.canonical import CanonicalBenchmarkError, vol_target_exposur
 from aqt.data.bars import Bar, BarSeries
 from aqt.data.klines import EXPLORATION, build_exploration_manifest
 from aqt.features.columns import feature_columns
-from aqt.features.factory import FEATURE_NAMES, FeatureFactoryError
+from aqt.features.factory import (
+    FEATURE_NAMES,
+    REQUIRED_HISTORY_BARS,
+    FeatureFactoryError,
+)
 from aqt.metrics.descriptive import _max_drawdown
 from calibration import gap
 from calibration.seeds import sha, stream
@@ -405,6 +414,10 @@ def check_trial(trial: dict[str, Any]) -> None:
             _scalar(v, f"model params {k}")
             check_model_param(model["class"], k, v)
         check_model_features(trial)
+        if trial["warmup_hours"] < MODEL_WARMUP_HOURS:  # S6A-R1, WF-2
+            raise TrialError(
+                f"a model trial needs warmup_hours >= {MODEL_WARMUP_HOURS}"
+            )
     h = trial["horizon_hours"]
     if type(h) is not int or h not in HORIZONS_HOURS:
         raise TrialError(f"horizon_hours must be one of {HORIZONS_HOURS}")
@@ -739,9 +752,9 @@ def g11_shifts_sha256(shifts: list[int]) -> str:
 #   with both legs delayed one instant; G-6 on the BTC run whose candidate
 #   reads the row of bar `j - 2` (its inputs at `t - 1h`) for `s`, the sizing
 #   estimator and the overlay, with the benchmark not lagged (C-7 (2)). Each
-#   of G-5..G-7 also needs G-3. A trial with a model is `MODEL_PENDING`
-#   until slice S6. `screen_gates` reports availability only; PASS or FAIL
-#   is not part of the screen's outcome (§7.2 "Outcome").
+#   of G-5..G-7 also needs G-3. Model trials run since slice S6b (MR-n).
+#   `screen_gates` reports availability only; PASS or FAIL is not part of
+#   the screen's outcome (§7.2 "Outcome").
 # - RN-7 Null paths carry synthetic timestamps, so the frozen 10 bps fee
 #   fallback applies (`fees=None`).
 
@@ -960,8 +973,10 @@ def screen_gates(
     if window_hours < 48 or window_hours % 24 or len(path) != warmup + window_hours + 1:
         raise TrialError("path length must be warmup + whole window days + 1 hour")
     g8_na = {} if plateau_dimensions(trial) else {"G-8": NA}  # PL-3, S4C-R1
-    if trial["model"] is not None:
-        return {**dict.fromkeys(GATES_S4, "MODEL_PENDING"), **g8_na}
+    if trial["model"] is not None and warmup < model_warmup_hours(w0):  # MR-4
+        raise TrialError(
+            f"a model trial needs warmup_hours >= {model_warmup_hours(w0)}"
+        )
     if trial["sigma"] != DEFAULT_SIGMA:
         return {**dict.fromkeys(GATES_S4, "SIGMA_UNBOUND"), **g8_na}
     start = w0 - timedelta(hours=warmup)
@@ -984,6 +999,13 @@ def screen_gates(
         at: dict[str, Any] = trial,
     ) -> dict[str, float]:
         series, first, columns = prepare(s)
+        if at["model"] is not None:  # MR-1..MR-3
+            key = (s, lag, json.dumps(model_params(at), sort_keys=True))
+            if key not in emissions:
+                emissions[key] = model_column(
+                    at, series, first, columns, warmup, window_hours, lag
+                )
+            columns = {**columns, f"model:{at['model']['id']}": tuple(emissions[key])}
         closes = [b.close for b in series.bars]
         signal = load(at["signal"], at["signal_sha256"])  # fresh per run
         overlay = (
@@ -1010,6 +1032,7 @@ def screen_gates(
         return leg_stats(*legs)
 
     mismatched: list[int] = []
+    emissions: dict[tuple[int, int, str], list[float]] = {}
     out: dict[str, str | None] = {}
     try:
         run(1)
@@ -1048,6 +1071,9 @@ def screen_gates(
 # (tests/unit/test_d19_deploy.py).
 
 TRAINING_MONTHS = 24  # l.198
+# S6A-R1: the most hours 24 calendar months can span (731 days, with a leap
+# day) plus the feature history: a model trial's least declarable warm-up
+MODEL_WARMUP_HOURS = 731 * 24 + REQUIRED_HISTORY_BARS
 REFIT_DAYS = 30  # l.199-200
 EMBARGO_LAG_FACTOR = 4  # l.212: max lag 4 * horizon in daily steps
 # WF-5: per class, declarable name -> (kind, low, high, low_inclusive)
@@ -1111,6 +1137,8 @@ def check_model_features(trial: dict[str, Any]) -> None:
     names = trial["model"]["features"]
     if not isinstance(names, list) or not names:
         raise TrialError("model features must be a non-empty list")
+    if not all(isinstance(n, str) for n in names):  # S6A-R4
+        raise TrialError("model features must be names")
     if len(set(names)) != len(names):
         raise TrialError("model features repeat a name")
     banned = {SIGMA_HAT, SIGMA_IDENTICAL_FEATURE.get(trial["sigma"], SIGMA_HAT)}
@@ -1151,6 +1179,8 @@ def labels(
     bars = series.bars
     out = []
     for j in instants:
+        if j < 3 or j - 1 + hours >= len(bars):  # S6A-R3: no wrap-around index
+            raise RunUnavailable("INSUFFICIENT_HISTORY")
         sigma = sigma_bps[j - 3] / BPS_PER_UNIT
         if not sigma > 0 or not math.isfinite(sigma):
             raise RunUnavailable("INVALID_SERIES")
@@ -1163,14 +1193,17 @@ def labels(
     return out
 
 
-def embargo_days(candidate_labels: Sequence[float], horizon_days: int) -> int:
+def embargo_days(daily_labels: Sequence[float | None], horizon_days: int) -> int:
     """WF-3: `max(H_days, cutoff)`, the cutoff by `gap.py`'s ACF rule on the
-    window's original candidate labels, daily, lags up to 4 * H_days."""
+    window's original candidate labels as a calendar-day sequence (`None` for
+    a day without a candidate, so lags are calendar lags; S6A-R2), lags up to
+    4 * H_days."""
     max_lag = EMBARGO_LAG_FACTOR * horizon_days
-    values: list[float | None] = list(candidate_labels)
-    if len(values) <= max_lag or len(set(values)) < 2:
+    values = list(daily_labels)
+    present = [v for v in values if v is not None]
+    if len(present) <= max_lag or len(set(present)) < 2:
         raise RunUnavailable("EMBARGO_UNDEFINED")
-    lag = gap.cutoff(gap.acf(values, max_lag), len(values))
+    lag = gap.cutoff(gap.acf(values, max_lag), len(present))
     return max(horizon_days, lag)
 
 
@@ -1190,7 +1223,13 @@ def training_rows(
         for i, t in enumerate(decisions)
         if start <= t < refit and t + horizon <= refit
     ]
-    e = embargo_days([ys[i] for i in candidates], hours // 24)
+    if not candidates:
+        raise RunUnavailable("TRAINING_ROWS")
+    by_day = {decisions[i].date(): ys[i] for i in candidates}
+    first_day = decisions[candidates[0]].date()
+    span = (decisions[candidates[-1]].date() - first_day).days + 1
+    daily = [by_day.get(first_day + timedelta(days=d)) for d in range(span)]
+    e = embargo_days(daily, hours // 24)
     return [i for i in candidates if decisions[i] + timedelta(days=e) <= refit]
 
 
@@ -1250,3 +1289,97 @@ def fit_target(cls: str, ys: Sequence[float]) -> np.ndarray:
     """WF-1 (owner decision S6D-R6): logistic class 1 iff y > 0."""
     y = np.asarray(ys, dtype=float)
     return (y > 0).astype(int) if cls == "logistic" else y
+
+
+# --- S6b: model trials in the screen runs -----------------------------------
+#
+# Readings MR-n (proposed, for review), on top of the READY S6 design:
+# - MR-1 Every run of a model trial, on either symbol, runs the trial's whole
+#   walk-forward on that symbol's own rows (the trial is one fixed
+#   configuration, protocol `trial_unit`: "BTC and ETH evaluated jointly
+#   inside the same trial"). The ETH run (G-3) therefore fits on ETH; G-14's
+#   rows stay BTC only (C-12 (2)).
+# - MR-2 The nominee's fits use model seed 0. Every allowed configuration
+#   (WF-5) is deterministic: the linear family has no randomness, LightGBM runs
+#   without bagging or feature subsampling, so the seed cannot change a fit;
+#   it is passed for completeness. G-14's null draws use their own seeds
+#   (C-12 (5), slice S6c).
+# - MR-3 Emissions (WF-6): at each 00:00 window decision the latest fit
+#   predicts from that decision's feature row, under G-6 the row one hour
+#   earlier; the signal's `model:<id>` input at instant `j` is the latest
+#   emission at or before `j`. Cost multiplier and execution delay do not
+#   change emissions, so G-5 and G-7 reuse the baseline's.
+# - MR-4 A model trial whose declared warm-up cannot hold its first training
+#   window (24 months before `w0`) plus the feature history is refused at
+#   declaration (`TrialError`), as the design says (WF-2).
+
+
+def model_warmup_hours(w0: datetime) -> int:
+    """MR-4: the least warm-up a model trial needs on a path starting at `w0`."""
+    back = w0 - months_before(w0, TRAINING_MONTHS)
+    return int(back / timedelta(hours=1)) + REQUIRED_HISTORY_BARS
+
+
+def model_column(
+    trial: dict[str, Any],
+    series: BarSeries,
+    first: int,
+    columns: Mapping[str, tuple[float, ...]],
+    j0: int,
+    n: int,
+    lag: int,
+) -> list[float]:
+    """MR-1..MR-3: the hourly `model:<id>` input, indexed like a feature
+    column read at lag `lag` (position `j - 1 - lag - first` for instant
+    `j`); NaN outside the window."""
+    model = trial["model"]
+    cls, hours = model["class"], trial["horizon_hours"]
+    bars = series.bars
+    try:
+        sigma_bps = ewma_hourly_volatility_bps_series(hourly_log_returns_bps(series))
+    except CostModelError as e:
+        raise RunUnavailable("INVALID_SERIES") from e
+    instants = [
+        j
+        for j in range(first + 1, len(bars) - hours + 1)
+        if bars[j].open_time.hour == 0
+    ]
+    times = [bars[j].open_time for j in instants]
+    ys = labels(series, sigma_bps, instants, hours)
+    names = model["features"]
+
+    def row(k: int) -> list[float]:
+        values = [columns[f][k] for f in names]
+        if not all(map(math.isfinite, values)):
+            raise RunUnavailable("INVALID_SERIES")
+        return values
+
+    x = np.array([row(j - 1 - first) for j in instants], dtype=float)
+    target = fit_target(cls, ys)
+    params = model_params(trial)
+    w0, w1 = bars[j0].open_time, bars[j0].open_time + timedelta(hours=n)
+    refits = refit_instants(w0, w1)
+    out = [math.nan] * len(columns[names[0]])
+    for k, r in enumerate(refits):
+        until = refits[k + 1] if k + 1 < len(refits) else w1
+        rows = training_rows(times, ys, r, hours)
+        if len(rows) < 2:
+            raise RunUnavailable("TRAINING_ROWS")
+        try:
+            fitted = build_model(cls, params, seed=0)
+            fitted.fit(x[rows], target[rows])
+        except Exception as e:  # any library failure is unavailability
+            raise RunUnavailable("MODEL_FIT_ERROR") from e
+        for i, t in enumerate(times):
+            if not r <= t < until:
+                continue
+            j = instants[i]
+            try:
+                y = float(predict(fitted, cls, np.array([row(j - 1 - lag - first)]))[0])
+            except RunUnavailable:
+                raise
+            except Exception as e:
+                raise RunUnavailable("MODEL_FIT_ERROR") from e
+            for jj in range(j, min(j + 24, j0 + n)):  # held to the next 00:00
+                out[jj - 1 - lag - first] = y
+    return out

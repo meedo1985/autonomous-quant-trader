@@ -1,0 +1,3 @@
+# Re-review prompt: D-19 screen slice S6a at the head carrying this prompt
+
+You are an independent adversarial reviewer working read-only, not an authority. You reviewed S6a at 664b2ec (FIX, S6A-R1..R4; record attached). Attached: the adjudication, the diff from 664b2ec restricted to the S6a functions and their tests, and `calibration/gap.py`. The same commit also adds S6b (`model_warmup_hours`, `model_column`, the model branch of `screen_gates`), which has its own review; judge only S6a here. Check that each repair resolves its finding without new defects. Verdict ACCEPT or FIX; new findings get stable IDs S6AR-Rn.

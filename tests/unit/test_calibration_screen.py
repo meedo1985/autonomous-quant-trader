@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import math
@@ -15,6 +16,7 @@ import pytest
 import aqt.metrics.statistics as st
 from aqt.backtest.event_contract import EventResult
 from aqt.data.bars import Bar, BarSeries
+from aqt.features.columns import feature_columns
 from aqt.features.factory import FEATURE_NAMES
 from calibration import gap, screen
 from calibration.seeds import sha
@@ -189,6 +191,8 @@ MODEL = {
 
 
 def _trial(**change: object) -> dict[str, object]:
+    if change.get("model") is not None:
+        change = {"warmup_hours": screen.MODEL_WARMUP_HOURS, **change}
     t: dict[str, object] = {
         "trial_id": "t000",
         "family": "trend",
@@ -711,11 +715,12 @@ def test_feature_delay_needs_one_more_hour_of_warmup(
 def test_model_and_unbound_sizing_trials_wait_for_their_slices(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # MR-4: a model trial's warm-up must hold its first training window
     trial = _screen_trial(
         tmp_path, monkeypatch, model=MODEL, s_inputs=["model:m", "ema_dist_168"]
     )
-    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
-    assert got == {**dict.fromkeys(screen.GATES_S4B, "MODEL_PENDING"), "G-8": screen.NA}
+    with pytest.raises(screen.TrialError, match="model trial needs warmup_hours"):
+        screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
     trial = _screen_trial(tmp_path, monkeypatch, family="vol", sigma="HAR_RV")
     got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
     assert got == {**dict.fromkeys(screen.GATES_S4B, "SIGMA_UNBOUND"), "G-8": screen.NA}
@@ -994,6 +999,13 @@ def test_model_parameters_outside_the_allowlist_are_refused(
         screen.check_trial(_trial(model=model))
 
 
+def test_a_model_trial_needs_its_training_window_as_warm_up() -> None:
+    # S6A-R1, WF-2: refused at declaration
+    with pytest.raises(screen.TrialError, match="model trial needs warmup_hours"):
+        screen.check_trial(_trial(model=MODEL, warmup_hours=0))
+    screen.check_trial(_trial(model=MODEL, warmup_hours=screen.MODEL_WARMUP_HOURS))
+
+
 def test_allowed_model_parameters_and_grids_pass() -> None:
     lgbm = {
         **MODEL,
@@ -1014,8 +1026,16 @@ def test_allowed_model_parameters_and_grids_pass() -> None:
 
 
 def test_model_features_obey_the_sizing_ban() -> None:
-    # owner decision WF-4
-    for bad in (["ewma_vol_168h"], ["sigma_hat"], ["volume"], [], ["rv_24", "rv_24"]):
+    # owner decision WF-4; S6A-R4: a non-name is a TrialError, not a TypeError
+    cases: list[object] = [
+        ["ewma_vol_168h"],
+        ["sigma_hat"],
+        ["volume"],
+        [],
+        ["rv_24", "rv_24"],
+        [[]],
+    ]
+    for bad in cases:
         with pytest.raises(screen.TrialError):
             screen.check_trial(_trial(model={**MODEL, "features": bad}))
     vol = {"family": "vol", "sigma": "EWMA_72h"}
@@ -1059,6 +1079,11 @@ def test_labels_follow_the_protocol_formula() -> None:
         assert y == want
     with pytest.raises(screen.RunUnavailable, match="INVALID_SERIES"):
         screen.labels(series, [0.0] * len(sigma), [100], 24)
+    # S6A-R3: an instant before sigma exists never wraps to the series' end
+    with pytest.raises(screen.RunUnavailable, match="INSUFFICIENT_HISTORY"):
+        screen.labels(series, sigma, [2], 24)
+    with pytest.raises(screen.RunUnavailable, match="INSUFFICIENT_HISTORY"):
+        screen.labels(series, sigma, [290], 24)  # P[t+H] beyond the series
 
 
 def test_the_embargo_is_the_frozen_acf_cutoff_or_the_horizon() -> None:
@@ -1067,6 +1092,12 @@ def test_the_embargo_is_the_frozen_acf_cutoff_or_the_horizon() -> None:
     noise = [rng.gauss(0, 1) for _ in range(700)]
     want = max(7, gap.cutoff(gap.acf(list(noise), 28), 700))
     assert screen.embargo_days(noise, 7) == want >= 7
+    # S6A-R2: missing calendar days stay as gaps, as in gap.py
+    gapped: list[float | None] = [
+        v if i % 2 == 0 else None for i, v in enumerate(noise)
+    ]
+    want = max(1, gap.cutoff(gap.acf(gapped, 4), 350))
+    assert screen.embargo_days(gapped, 1) == want
     # strongly persistent labels: the cutoff exceeds the horizon
     walk, x = [], 0.0
     for _ in range(700):
@@ -1120,3 +1151,86 @@ def test_a_zero_target_is_class_not_up() -> None:
     # owner decision S6D-R6
     assert screen.fit_target("logistic", [-0.5, 0.0, 0.5]).tolist() == [0, 0, 1]
     assert screen.fit_target("ridge", [-0.5, 0.0]).tolist() == [-0.5, 0.0]
+
+
+# --- S6b: model trials -----------------------------------------------------
+
+MODEL_WARMUP = screen.model_warmup_hours(W0)
+MODEL_SIGNAL = "def s(row, params, state):\n    return max(0.0, 0.3 + row['model:m'])\n"
+
+
+@functools.cache
+def _long_path() -> np.ndarray:
+    seed = screen.screen_seed("22" * 32)
+    return screen.null_path(_source(), seed, 0, MODEL_WARMUP + WINDOW_H + 1)
+
+
+def _model_trial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **change: object
+) -> dict[str, object]:
+    fields: dict[str, object] = {
+        "model": MODEL,
+        "s_inputs": ["model:m"],
+        "warmup_hours": MODEL_WARMUP,
+        "horizon_hours": 24,
+    }
+    return _screen_trial(tmp_path, monkeypatch, MODEL_SIGNAL, **{**fields, **change})
+
+
+def test_a_model_trial_runs_every_s4_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[int, int]] = []
+    real = screen.model_column
+
+    def counting(*args: object) -> list[float]:
+        calls.append((len(args[1].bars), int(args[-1])))  # type: ignore[attr-defined,call-overload]
+        return real(*args)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(screen, "model_column", counting)
+    trial = _model_trial(tmp_path, monkeypatch)
+    got = screen.screen_gates(trial, _long_path(), W0, WINDOW_H)
+    assert got == {**dict.fromkeys(screen.GATES_S4B, None), "G-8": screen.NA}
+    # MR-3: ETH, BTC, and the lagged BTC run; G-5 and G-7 reuse BTC's
+    assert sorted(lag for _, lag in calls) == [0, 0, 1]
+
+
+def test_a_logistic_model_trial_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    logit = {**MODEL, "class": "logistic", "target": "sign_of_vol_scaled_target"}
+    trial = _model_trial(tmp_path, monkeypatch, model=logit)
+    got = screen.screen_gates(trial, _long_path(), W0, WINDOW_H)
+    assert all(got[g] is None for g in screen.GATES_S4B)
+
+
+def test_emissions_are_held_until_the_next_midnight() -> None:
+    # MR-3 / WF-6: one prediction per 00:00, held for the day; NaN outside
+    trial = {**_trial(model=MODEL, s_inputs=["model:m"]), "horizon_hours": 24}
+    series = screen.path_series(_long_path(), 0, W0 - timedelta(hours=MODEL_WARMUP))
+    first, columns = feature_columns(series)
+    col = screen.model_column(trial, series, first, columns, MODEL_WARMUP, WINDOW_H, 0)
+    window = [col[j - 1 - first] for j in range(MODEL_WARMUP, MODEL_WARMUP + WINDOW_H)]
+    assert all(math.isfinite(v) for v in window)
+    days = [window[d * 24 : d * 24 + 24] for d in range(WINDOW_H // 24)]
+    assert all(len(set(day)) == 1 for day in days) and len({d[0] for d in days}) > 1
+    assert math.isnan(col[MODEL_WARMUP - 2 - first])  # before w0
+    lagged = screen.model_column(
+        trial, series, first, columns, MODEL_WARMUP, WINDOW_H, 1
+    )
+    shifted = [
+        lagged[j - 2 - first] for j in range(MODEL_WARMUP, MODEL_WARMUP + WINDOW_H)
+    ]
+    assert shifted != window  # inference re-run on the lagged features
+
+
+def test_a_failing_fit_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(cls: str, params: object, seed: int) -> object:
+        raise ValueError("library failure")
+
+    monkeypatch.setattr(screen, "build_model", broken)
+    trial = _model_trial(tmp_path, monkeypatch)
+    got = screen.screen_gates(trial, _long_path(), W0, WINDOW_H)
+    assert set(got.values()) == {"MODEL_FIT_ERROR", screen.NA}
