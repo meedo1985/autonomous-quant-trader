@@ -629,7 +629,7 @@ def test_an_honest_trial_has_every_s4b_gate_available(
 ) -> None:
     trial = _screen_trial(tmp_path, monkeypatch)
     got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
-    assert got == dict.fromkeys(screen.GATES_S4B, None)
+    assert got == {**dict.fromkeys(screen.GATES_S4B, None), "G-8": screen.NA}
 
 
 def test_a_flat_candidate_makes_e_improv_unavailable(
@@ -657,7 +657,7 @@ def test_bad_trial_code_makes_every_run_unavailable(
     # an undeclared input is simply absent from the row (C-10 (1))
     trial = _screen_trial(tmp_path, monkeypatch, code)
     got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
-    assert set(got.values()) == {reason}
+    assert set(got.values()) == {reason, screen.NA}  # G-8: no dimension
 
 
 def test_an_overlay_that_rescales_is_refused(
@@ -670,7 +670,7 @@ def test_an_overlay_that_rescales_is_refused(
         tmp_path, monkeypatch, overlay="s4b_overlay:o", overlay_sha256=o
     )
     got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
-    assert set(got.values()) == {"OVERLAY_VIOLATION"}
+    assert set(got.values()) == {"OVERLAY_VIOLATION", screen.NA}
     ok = _module(
         tmp_path,
         monkeypatch,
@@ -689,7 +689,13 @@ def test_feature_delay_needs_one_more_hour_of_warmup(
     # decisions read bar j - 1 (needs j0 >= 4800); G-6 reads j - 2
     trial = _screen_trial(tmp_path, monkeypatch, warmup_hours=4800)
     got = screen.screen_gates(trial, _screen_path(4800), W0, WINDOW_H)
-    assert got == {"G-3": None, "G-5": None, "G-6": "INSUFFICIENT_WARMUP", "G-7": None}
+    assert got == {
+        "G-3": None,
+        "G-5": None,
+        "G-6": "INSUFFICIENT_WARMUP",
+        "G-7": None,
+        "G-8": screen.NA,
+    }
 
 
 def test_model_and_unbound_sizing_trials_wait_for_their_slices(
@@ -772,7 +778,7 @@ def test_trial_code_state_never_crosses_runs(
     )
     trial = _screen_trial(tmp_path, monkeypatch, code)
     got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
-    assert got == dict.fromkeys(screen.GATES_S4B, None)
+    assert got == {**dict.fromkeys(screen.GATES_S4B, None), "G-8": screen.NA}
 
 
 def test_a_negative_signal_is_refused(
@@ -782,7 +788,7 @@ def test_a_negative_signal_is_refused(
     code = "def s(row, params, state):\n    return row['ema_dist_168']\n"
     trial = _screen_trial(tmp_path, monkeypatch, code)
     got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
-    assert set(got.values()) == {"NEGATIVE_SIGNAL"}
+    assert set(got.values()) == {"NEGATIVE_SIGNAL", screen.NA}
 
 
 def test_a_constant_signal_trial_is_checked_every_hour(
@@ -808,3 +814,99 @@ def test_an_unavailable_eth_check_carries_into_the_btc_gates(
     got = screen.screen_gates(trial, path, W0, WINDOW_H)
     assert got["G-3"] == "INVALID_SERIES"
     assert got["G-5"] == got["G-6"] == got["G-7"] == "G-3:INVALID_SERIES"
+
+
+# --- S4c: G-8 --------------------------------------------------------------
+
+
+def test_plateau_dimensions_are_numeric_non_structural_and_ordered_by_value() -> None:
+    # PL-1, PL-2 (owner decision: rule settings count)
+    t = _trial(
+        family="vol",
+        sigma="EWMA_168h",
+        model={**MODEL, "params": {"alpha": "1"}},
+        parameter_point={
+            "k": 72,
+            "mode": "a",
+            "model.alpha": "1",
+            "tau": "0.60",
+            "sigma": "EWMA_168h",
+        },
+        grid={
+            "k": [168, 24, 72],
+            "mode": ["a", "b"],
+            "model.alpha": ["10", "0.1", "1"],
+            "tau": ["0.40", "0.60"],
+            "sigma": ["EWMA_168h", "HAR_RV"],
+        },
+    )
+    screen.check_trial(t)
+    assert screen.plateau_dimensions(t) == {
+        "k": [24, 72, 168],
+        "model.alpha": ["0.1", "1", "10"],
+    }
+    with pytest.raises(screen.TrialError, match="repeats a number"):
+        screen.plateau_dimensions(
+            _trial(parameter_point={"k": 1}, grid={"k": [1, "1.0"]})
+        )
+
+
+def test_plateau_neighbours_move_one_dimension_one_step() -> None:
+    t = _trial(
+        model={**MODEL, "params": {"alpha": "1"}},
+        parameter_point={"k": 24, "model.alpha": "1"},
+        grid={"k": [24, 72, 168], "model.alpha": ["0.1", "1", "10"]},
+    )
+    got = [
+        (n["parameter_point"], n["model"]["params"])
+        for n in screen.plateau_neighbours(t)
+    ]
+    assert got == [
+        ({"k": 72, "model.alpha": "1"}, {"alpha": "1"}),  # k at the edge: one side
+        ({"k": 24, "model.alpha": "0.1"}, {"alpha": "0.1"}),
+        ({"k": 24, "model.alpha": "10"}, {"alpha": "10"}),
+    ]
+    for n in screen.plateau_neighbours(t):
+        screen.check_trial(n)  # every neighbour is a valid declaration
+
+
+PARAM_SIGNAL = (
+    "def s(row, params, state):\n"
+    "    if params['k'] == 10:\n"
+    "        return float('nan')\n"
+    "    return 0.6 if row['ema_dist_168'] > params['k'] / 1000 else 0.1\n"
+)
+
+
+def test_g8_runs_the_point_and_every_neighbour(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trial = _screen_trial(
+        tmp_path,
+        monkeypatch,
+        PARAM_SIGNAL,
+        parameter_point={"k": 0},
+        grid={"k": [0, 5]},
+    )
+    assert screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)["G-8"] is None
+    # the neighbour k = 10 cannot be computed: G-8 unavailable, the point's
+    # own gates unaffected
+    trial = _screen_trial(
+        tmp_path,
+        monkeypatch,
+        PARAM_SIGNAL,
+        parameter_point={"k": 5},
+        grid={"k": [0, 5, 10]},
+    )
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    assert got["G-8"] == "INVALID_SERIES"
+    assert all(got[g] is None for g in screen.GATES_S4B)
+
+
+def test_g8_is_na_without_an_ordered_numeric_dimension(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trial = _screen_trial(
+        tmp_path, monkeypatch, parameter_point={"mode": "a"}, grid={"mode": ["a", "b"]}
+    )
+    assert screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)["G-8"] == screen.NA

@@ -3,8 +3,8 @@
 Build slices (`review/d19-engine/SCREEN_PLAN.md`): S1, the `n_S = 30`
 simulated null hourly BTC/ETH paths; S3, the trial interface; S5, the G-11
 shifts; S4b, trial runs and G-3, G-5, G-6, G-7 (on `aqt.backtest.
-event_contract` and `aqt.features.columns`). Later slices add G-8, G-11,
-G-14 and the driver to this file, which the qualification object binds by
+event_contract` and `aqt.features.columns`); S4c, G-8. Later slices add
+the G-11 runs, G-14 and the driver to this file, which the qualification object binds by
 its bytes (DRAFT R-8, qobj `LATER`); everything it imports must be
 engine-commit code (`SCREEN_PLAN.md` section 3).
 
@@ -59,6 +59,7 @@ import types
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -736,6 +737,81 @@ def g11_shifts_sha256(shifts: list[int]) -> str:
 GATES_S4B = ("G-3", "G-5", "G-6", "G-7")
 STRESS_COST = 2.0
 
+# --- S4c: G-8 (Annex C C-8) -------------------------------------------------
+#
+# Readings PL-n (proposed, for review):
+# - PL-1 (owner decision 2026-10-17, `OWNER_DECISION_G8_RULE_SETTINGS.md`)
+#   The ordered numeric tunable dimensions are the trial's grid dimensions
+#   other than `tau` and `sigma` (structural: vol target and the categorical
+#   sizing estimator; the horizon is not a grid dimension) whose grid values
+#   are all numeric: an `int` (not `bool`) or a decimal string. Signal
+#   parameters and `model.<name>` parameters both count.
+# - PL-2 Values are ordered by their exact decimal value; a +/-1-step
+#   neighbour is the adjacent value in that order, present in the grid. The
+#   neighbour runs change one dimension at a time, through the same
+#   `signal_params` / `model_params` path as the selected point (TI-6).
+# - PL-3 The screen needs availability only (§7.2): G-8 is `N/A` (`NA`, a
+#   frozen N/A, not unavailability) without such a dimension (C-8 step 1),
+#   and `UNAVAILABLE` if the selected point's or any present neighbour's
+#   BTC E-IMPROV, on the baseline run, cannot be computed (C-8 step 2, with
+#   the cause of the first failing run). C-8 steps 3 and 4 (FAIL / PASS) are
+#   not part of the screen's outcome.
+# - PL-4 Gate results in `screen_gates`: `None` available, `NA` frozen N/A,
+#   any other string the unavailability reason.
+
+NA = "N/A"
+GATES_S4 = (*GATES_S4B, "G-8")
+
+
+def _decimal(value: object) -> Decimal | None:
+    if type(value) is int:
+        return Decimal(value)
+    if isinstance(value, str):
+        try:
+            d = Decimal(value)
+        except InvalidOperation:
+            return None
+        return d if d.is_finite() else None
+    return None
+
+
+def plateau_dimensions(trial: dict[str, Any]) -> dict[str, list[Any]]:
+    """PL-1, PL-2: each ordered numeric tunable dimension's grid, in order."""
+    out = {}
+    for name, values in trial["grid"].items():
+        if name in SIZING_DIMENSIONS:
+            continue
+        maybe = [_decimal(v) for v in values]
+        keys = [k for k in maybe if k is not None]
+        if len(keys) == len(values):
+            if len(set(keys)) != len(keys):  # e.g. 1 and "1.0": no order
+                raise TrialError(f"grid {name} repeats a number")
+            ranked = sorted(range(len(values)), key=keys.__getitem__)
+            out[name] = [values[i] for i in ranked]
+    return out
+
+
+def plateau_neighbours(trial: dict[str, Any]) -> list[dict[str, Any]]:
+    """PL-2: the trials at every present +/-1-step neighbour."""
+    out = []
+    point = trial["parameter_point"]
+    for name, ordered in plateau_dimensions(trial).items():
+        i = next(k for k, v in enumerate(ordered) if _typed(v) == _typed(point[name]))
+        for j in (i - 1, i + 1):
+            if 0 <= j < len(ordered):
+                moved = dict(point)
+                moved[name] = ordered[j]
+                if name.startswith(MODEL_DIMENSION):
+                    model = dict(trial["model"])
+                    model["params"] = {
+                        **model["params"],
+                        name[len(MODEL_DIMENSION) :]: ordered[j],
+                    }
+                    out.append({**trial, "parameter_point": moved, "model": model})
+                else:
+                    out.append({**trial, "parameter_point": moved})
+    return out
+
 
 class RunUnavailable(Exception):
     """A run, or the statistic on it, cannot be computed; `reason` says why."""
@@ -860,15 +936,15 @@ def leg_stats(candidate: EventResult, benchmark: EventResult) -> dict[str, float
 def screen_gates(
     trial: dict[str, Any], path: np.ndarray, w0: datetime, window_hours: int
 ) -> dict[str, str | None]:
-    """RN-6: each S4b gate's unavailability reason on one path, or None."""
+    """RN-6, PL-4: each gate's result on one path."""
     check_trial(trial)
     warmup = trial["warmup_hours"]
     if window_hours < 48 or window_hours % 24 or len(path) != warmup + window_hours + 1:
         raise TrialError("path length must be warmup + whole window days + 1 hour")
     if trial["model"] is not None:
-        return dict.fromkeys(GATES_S4B, "MODEL_PENDING")
+        return dict.fromkeys(GATES_S4, "MODEL_PENDING")
     if trial["sigma"] != DEFAULT_SIGMA:
-        return dict.fromkeys(GATES_S4B, "SIGMA_UNBOUND")
+        return dict.fromkeys(GATES_S4, "SIGMA_UNBOUND")
     start = w0 - timedelta(hours=warmup)
     prepared: dict[int, tuple[BarSeries, int, dict[str, tuple[float, ...]]]] = {}
 
@@ -882,20 +958,22 @@ def screen_gates(
         return prepared[s]
 
     def run(
-        s: int, cost: float = 1.0, delay: int = 0, lag: int = 0
+        s: int,
+        cost: float = 1.0,
+        delay: int = 0,
+        lag: int = 0,
+        at: dict[str, Any] = trial,
     ) -> dict[str, float]:
         series, first, columns = prepare(s)
         closes = [b.close for b in series.bars]
-        signal = load(trial["signal"], trial["signal_sha256"])  # fresh per run
+        signal = load(at["signal"], at["signal_sha256"])  # fresh per run
         overlay = (
-            None
-            if trial["overlay"] is None
-            else load(trial["overlay"], trial["overlay_sha256"])
+            None if at["overlay"] is None else load(at["overlay"], at["overlay_sha256"])
         )
         candidate, signals = leg_targets(
-            trial, signal, overlay, columns, first, closes, warmup, window_hours, lag
+            at, signal, overlay, columns, first, closes, warmup, window_hours, lag
         )
-        if class_mismatch(trial, np.asarray(signals)):
+        if class_mismatch(at, np.asarray(signals)):
             mismatched.append(s)
         legs = []
         for targets in (
@@ -929,6 +1007,15 @@ def screen_gates(
             out[gate] = None if out["G-3"] is None else f"G-3:{out['G-3']}"
         except RunUnavailable as e:
             out[gate] = e.reason
+    if not plateau_dimensions(trial):  # PL-3
+        out["G-8"] = NA
+    else:
+        try:
+            for at in (trial, *plateau_neighbours(trial)):
+                run(0, at=at)
+            out["G-8"] = None
+        except RunUnavailable as e:
+            out["G-8"] = e.reason
     if mismatched:
         out["G-11"] = "CLASS_MISMATCH"
     return out
