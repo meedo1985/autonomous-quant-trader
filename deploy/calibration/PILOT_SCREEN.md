@@ -4,9 +4,11 @@
 
 **What runs.** The 20 example trials in `deploy/calibration/screen-pilot/` (8 trend rules, 6 vol rules, 6 models: linear, ridge, lasso, elastic net, logistic, LightGBM at its largest allowed size), each on all 30 null paths, every screened gate. It is a measurement only: nothing is declared, nothing is decided, and forward paper keeps running untouched.
 
-**Engine commit:** `e01e745a…`: use the full hash printed by step A's `rev-parse`.
+**Engine commit:** `e4e733935f15c4fdca7c75d9af9d74a59682d449`.
 
-**Time:** about 15 minutes of your attention, then about 15 hours of running (an estimate from the laptop: 14 rules ≈ 50 s per path, 5 linear-family models ≈ 4-6 min per path, LightGBM ≈ 20 min per path, on 2 workers).
+**Time:** about 15 minutes of your attention, then about 15 hours of running (an estimate from the laptop: 14 rules ≈ 50 s per path, 5 linear-family models ≈ 4-6 min per path, LightGBM ≈ 20 min per path, on 2 workers). This holds for this mix only: a set of 20 LightGBM trials would take about 100 hours, so the result is reported per kind of trial, not per set size (S8 review).
+
+**No other D-19 run may be going:** the launcher refuses to start the screen while a calibration run is up, and the reverse.
 
 **If any command fails, or prints an error, `refused` or `FAIL`, stop there and send me the output.**
 
@@ -16,25 +18,37 @@
 cd /opt/aqt-d19/app/deploy/calibration
 sudo sh d19.sh status
 old=$(git -C /opt/aqt-d19/app rev-parse --short HEAD); echo "$old"
-sudo mv /opt/aqt-d19/app "/opt/aqt-d19/app-$old"
+ls -d "/opt/aqt-d19/app-$old" 2>/dev/null && echo "STOP: app-$old already exists"
 ```
 
-The first line must not say `Up`. The second must print `e39b23d`.
+Check before going on (S8-R4):
+- the first line of `status` must not say `Up`;
+- the next line must print `e39b23d`;
+- the last command must print **nothing**. If it prints `STOP: …`, stop and send me the output.
+
+Then:
+
+```sh
+sudo mv /opt/aqt-d19/app "/opt/aqt-d19/app-$old"
+ls /opt/aqt-d19
+```
+
+The last line must list `app-cbde711` and `app-e39b23d` (and nothing called `app`).
 
 ## A. Install, build, probe
 
 ```sh
 rm -rf /tmp/aqt-d19-src
 git clone https://github.com/meedo1985/autonomous-quant-trader.git /tmp/aqt-d19-src
-git -C /tmp/aqt-d19-src checkout e01e745
+git -C /tmp/aqt-d19-src checkout e4e733935f15c4fdca7c75d9af9d74a59682d449
 git -C /tmp/aqt-d19-src rev-parse HEAD
-sudo sh /tmp/aqt-d19-src/deploy/calibration/d19.sh install https://github.com/meedo1985/autonomous-quant-trader.git "$(git -C /tmp/aqt-d19-src rev-parse HEAD)"
+sudo sh /tmp/aqt-d19-src/deploy/calibration/d19.sh install https://github.com/meedo1985/autonomous-quant-trader.git e4e733935f15c4fdca7c75d9af9d74a59682d449
 cd /opt/aqt-d19/app/deploy/calibration
 sudo sh d19.sh build
 sudo sh d19.sh probe
 ```
 
-**Send me** the full hash (line 4), the line `build` prints (the image id) and the last line of `probe` (it must be `This CPU runs the pinned runtime.`).
+The fourth line must print `e4e733935f15c4fdca7c75d9af9d74a59682d449`. **Send me** the line `build` prints (the image id) and the last line of `probe` (it must be `This CPU runs the pinned runtime.`).
 
 ## B. Start the pilot screen
 
@@ -60,6 +74,6 @@ sudo sh d19.sh screen-status
 sudo sh d19.sh screen-summary
 ```
 
-**Send me** both outputs. `screen-summary` prints one line per trial (seconds, slowest path, gate results), the total worker-hours, and the reference vectors. If it exits with an error instead, send me `sudo docker logs --tail 40 aqt-d19-screen`.
+**Send me** both outputs. `screen-summary` starts with `MEASUREMENT ONLY`, then prints one line per trial (seconds, slowest path, and which gates were **available**: this pilot checks availability, not passes), the total worker-hours, and the reference vectors. If it exits with an error instead, send me `sudo docker logs --tail 40 aqt-d19-screen`.
 
 When we are done I tell you what a 20-trial screen costs, which set sizes are feasible, and the next step (freezing the reference vector, then the screen's §16 PR).
