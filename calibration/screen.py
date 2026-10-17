@@ -2,9 +2,11 @@
 
 Build slices (`review/d19-engine/SCREEN_PLAN.md`): S1, the `n_S = 30`
 simulated null hourly BTC/ETH paths; S3, the trial interface; S5, the G-11
-shifts. Later slices add the event-contract runs and the seven screened
-gates to this file, which the qualification object binds by its bytes
-(DRAFT R-8, qobj `LATER`); it imports only engine-commit code.
+shifts; S4b, trial runs and G-3, G-5, G-6, G-7 (on `aqt.backtest.
+event_contract` and `aqt.features.columns`). Later slices add G-8, G-11,
+G-14 and the driver to this file, which the qualification object binds by
+its bytes (DRAFT R-8, qobj `LATER`); everything it imports must be
+engine-commit code (`SCREEN_PLAN.md` section 3).
 
 §7.2 "Paths", read as follows (readings SP-n, for review):
 - SP-1 Source rows: the exploration-partition 1h bars of BTCUSDT and
@@ -51,19 +53,30 @@ import hashlib
 import importlib
 import importlib.util
 import json
+import math
 import random
 import types
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 import aqt.metrics.statistics as st
-from aqt.data.bars import BarSeries
+from aqt.backtest.costs import CostModelError
+from aqt.backtest.event_contract import (
+    EventContractError,
+    EventResult,
+    run_event_contract,
+)
+from aqt.benchmarks.canonical import CanonicalBenchmarkError, vol_target_exposure
+from aqt.data.bars import Bar, BarSeries
 from aqt.data.klines import EXPLORATION, build_exploration_manifest
-from aqt.features.factory import FEATURE_NAMES
+from aqt.features.columns import feature_columns
+from aqt.features.factory import FEATURE_NAMES, FeatureFactoryError
+from aqt.metrics.descriptive import _max_drawdown
 from calibration.seeds import sha, stream
 from calibration.semi import SYMBOLS, block_signs
 
@@ -224,10 +237,11 @@ def null_path(source: HourlySource, seed: str, p: int, hours: int) -> np.ndarray
 #   can run is either its hashed file or the image. Disclosed: a deliberate
 #   evasion (for example through attribute tricks on objects numpy hands
 #   back) is a false declaration, not something these checks can rule out.
-#   The signal is called as `signal(inputs, params)`: `inputs` holds only
-#   its `s_inputs` (C-10 (1)), name -> hourly array, and `params` is
-#   `signal_params`: `parameter_point` without `tau`, `sigma` and the
-#   `model.` dimensions (S3-R2).
+#   The signal is called once per hour as `signal(row, params, state)`
+#   (RN-3): `row` holds only its `s_inputs` (C-10 (1)) for that hour, name
+#   -> value, `params` is `signal_params`: `parameter_point` without `tau`,
+#   `sigma` and the `model.` dimensions (S3-R2), and `state` is the trial's
+#   own dict, fresh for each run.
 # - TI-3 `s_inputs` entries are frozen feature names (`FEATURE_NAMES`) or
 #   "model:<id>" of the trial's own declared model. Never allowed:
 #   "sigma_hat" (the sizing estimator's output) and, for a trial sized by
@@ -666,3 +680,236 @@ def g11_shifts(
 def g11_shifts_sha256(shifts: list[int]) -> str:
     """GS-5."""
     return sha({"k": shifts})
+
+
+# --- S4b: trial runs on a screen path; G-3, G-5, G-6, G-7 -------------------
+#
+# Readings RN-n (proposed, for review):
+# - RN-1 A screen path has `warmup_hours + window_hours + 1` hours: the last
+#   window decision's segment needs one more open (C-6 (1)). Bar `i` opens
+#   at `w0 + (i - warmup_hours)` hours, so instant `warmup_hours` is `w0`.
+# - RN-2 The decision at instant `j` reads the feature row of decision bar
+#   `j - 1` (`feature_columns`, bit-identical to `compute_features`). The
+#   sizing estimator `EWMA_168h` is that row's `ewma_vol_168h`, the same
+#   number as the canonical estimator by construction (canonical
+#   `annualized_forecast_volatility`). The other protocol estimators have no
+#   bound hourly definition yet: a trial sized by one of them is refused
+#   (`SIGMA_UNBOUND`) until one is bound.
+# - RN-3 Per hour (S4b changes TI-2's call form so that look-ahead is
+#   impossible by construction): `s = signal(row, params, state)` with `row`
+#   holding only the trial's `s_inputs` for this hour and `state` a fresh
+#   dict per run; `target = clip(s * tau / sigma_hat, 0, 1)`; then
+#   `overlay(target, market, state)` with `market` every feature and the
+#   close for this hour. A non-finite `s`, a non-finite or non-positive
+#   `sigma_hat`, a non-finite pre-clip product, an exception from trial code
+#   (`TRIAL_CODE_ERROR`) or an overlay output that is neither the target nor
+#   0 (`OVERLAY_VIOLATION`, TI-8) makes the run unavailable.
+# - RN-4 The benchmark leg is `vol_target_exposure(ewma_vol_168h)` of the
+#   same row, run under the same cost multiplier and delay as the candidate,
+#   and never feature-lagged (C-0, C-5, C-7).
+# - RN-5 Daily returns: equity at each 00:00 instant of the window (initial
+#   equity 1 at `w0`), one return per complete UTC day; E-IMPROV is
+#   `paired_sharpe_statistics(candidate, benchmark).paired_sharpe_improvement`
+#   (R-8 code); `None` makes the statistic unavailable with its reason.
+#   `DD` uses each leg's hourly equity path over the window (`max_drawdown`'s
+#   rule, `descriptive._max_drawdown`); net return is final equity - 1.
+# - RN-6 Gates, screened for availability only (§7.2): G-3 on the ETH
+#   baseline run; G-5 on the BTC run with both legs at 2x; G-7 on the BTC run
+#   with both legs delayed one instant; G-6 on the BTC run whose candidate
+#   reads the row of bar `j - 2` (its inputs at `t - 1h`) for `s`, the sizing
+#   estimator and the overlay, with the benchmark not lagged (C-7 (2)). Each
+#   of G-5..G-7 also needs G-3. A trial with a model is `MODEL_PENDING`
+#   until slice S6.
+# - RN-7 Null paths carry synthetic timestamps, so the frozen 10 bps fee
+#   fallback applies (`fees=None`).
+
+GATES_S4B = ("G-3", "G-5", "G-6", "G-7")
+STRESS_COST = 2.0
+
+
+class RunUnavailable(Exception):
+    """A run, or the statistic on it, cannot be computed; `reason` says why."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def path_series(path: np.ndarray, s: int, start: datetime) -> BarSeries:
+    """RN-1: symbol `s` of a screen path as an hourly series from `start`."""
+    rows = path[:, s]
+    return BarSeries(
+        SYMBOLS[s],
+        tuple(
+            Bar(
+                start + timedelta(hours=i),
+                float(rows[i][OPEN]),
+                float(rows[i][HIGH]),
+                float(rows[i][LOW]),
+                float(rows[i][CLOSE]),
+                float(rows[i][VOLUME]),
+            )
+            for i in range(len(rows))
+        ),
+    )
+
+
+def leg_targets(
+    trial: dict[str, Any],
+    signal: Callable[..., Any],
+    overlay: Callable[..., Any] | None,
+    columns: Mapping[str, tuple[float, ...]],
+    first: int,
+    closes: Sequence[float],
+    j0: int,
+    n: int,
+    lag: int,
+) -> list[float]:
+    """RN-2, RN-3: the candidate's targets at instants `j0 .. j0 + n - 1`,
+    reading the row of bar `j - 1 - lag`."""
+    tau = float(trial["tau"])
+    params = signal_params(trial)
+    s_state: dict[str, Any] = {}
+    o_state: dict[str, Any] = {}
+    names = trial["s_inputs"]
+    out = []
+    for j in range(j0, j0 + n):
+        k = j - 1 - lag - first
+        if k < 0:
+            raise RunUnavailable("INSUFFICIENT_WARMUP")
+        sigma_hat = columns["ewma_vol_168h"][k]
+        try:
+            s = float(signal({m: columns[m][k] for m in names}, params, s_state))
+        except Exception as e:  # trial code: any failure is unavailability
+            raise RunUnavailable("TRIAL_CODE_ERROR") from e
+        if not math.isfinite(s) or not math.isfinite(sigma_hat) or sigma_hat <= 0:
+            raise RunUnavailable("INVALID_SERIES")
+        product = s * tau / sigma_hat
+        if not math.isfinite(product):
+            raise RunUnavailable("INVALID_SERIES")
+        target = min(1.0, max(0.0, product))
+        if overlay is not None:
+            market = {m: columns[m][k] for m in FEATURE_NAMES}
+            market["close"] = closes[j - 1 - lag]
+            try:
+                kept = float(overlay(target, market, o_state))
+            except Exception as e:
+                raise RunUnavailable("TRIAL_CODE_ERROR") from e
+            if kept not in (target, 0.0):
+                raise RunUnavailable("OVERLAY_VIOLATION")
+            target = kept
+        out.append(target)
+    return out
+
+
+def benchmark_targets(
+    columns: Mapping[str, tuple[float, ...]], first: int, j0: int, n: int
+) -> list[float]:
+    """RN-4."""
+    try:
+        return [
+            vol_target_exposure(columns["ewma_vol_168h"][j - 1 - first])
+            for j in range(j0, j0 + n)
+        ]
+    except (CanonicalBenchmarkError, IndexError) as e:
+        raise RunUnavailable("BENCHMARK_INVALID") from e
+
+
+def daily_returns(result: EventResult) -> list[float]:
+    """RN-5: one return per complete UTC day, from 00:00 to 00:00."""
+    marks = [1.0, *result.equity[23::24]]
+    return [b / a - 1.0 for a, b in zip(marks, marks[1:], strict=False)]
+
+
+def leg_stats(candidate: EventResult, benchmark: EventResult) -> dict[str, float]:
+    """RN-5: E-IMPROV, the drawdown difference and the candidate's net return."""
+    paired = st.paired_sharpe_statistics(
+        daily_returns(candidate), daily_returns(benchmark)
+    )
+    if paired.paired_sharpe_improvement is None:
+        raise RunUnavailable(paired.reason or "E_IMPROV_UNAVAILABLE")
+    mdd = [_max_drawdown((1.0, *r.equity)) for r in (candidate, benchmark)]
+    return {
+        "e_improv": paired.paired_sharpe_improvement,
+        "dd_excess": mdd[0] - mdd[1],
+        "net_return": candidate.final_equity - 1.0,
+    }
+
+
+def screen_gates(
+    trial: dict[str, Any], path: np.ndarray, w0: datetime, window_hours: int
+) -> dict[str, str | None]:
+    """RN-6: each S4b gate's unavailability reason on one path, or None."""
+    check_trial(trial)
+    warmup = trial["warmup_hours"]
+    if window_hours < 48 or window_hours % 24 or len(path) != warmup + window_hours + 1:
+        raise TrialError("path length must be warmup + whole window days + 1 hour")
+    if trial["model"] is not None:
+        return dict.fromkeys(GATES_S4B, "MODEL_PENDING")
+    if trial["sigma"] != DEFAULT_SIGMA:
+        return dict.fromkeys(GATES_S4B, "SIGMA_UNBOUND")
+    signal = load(trial["signal"], trial["signal_sha256"])
+    overlay = (
+        None
+        if trial["overlay"] is None
+        else load(trial["overlay"], trial["overlay_sha256"])
+    )
+    start = w0 - timedelta(hours=warmup)
+    prepared: dict[int, tuple[BarSeries, int, dict[str, tuple[float, ...]]]] = {}
+
+    def prepare(s: int) -> tuple[BarSeries, int, dict[str, tuple[float, ...]]]:
+        if s not in prepared:  # features once per symbol and path
+            series = path_series(path, s, start)
+            try:
+                prepared[s] = (series, *feature_columns(series))
+            except FeatureFactoryError as e:
+                raise RunUnavailable("FEATURES_UNAVAILABLE") from e
+        return prepared[s]
+
+    def run(
+        s: int, cost: float = 1.0, delay: int = 0, lag: int = 0
+    ) -> dict[str, float]:
+        series, first, columns = prepare(s)
+        closes = [b.close for b in series.bars]
+        legs = []
+        for targets in (
+            leg_targets(
+                trial,
+                signal,
+                overlay,
+                columns,
+                first,
+                closes,
+                warmup,
+                window_hours,
+                lag,
+            ),
+            benchmark_targets(columns, first, warmup, window_hours),
+        ):
+            try:
+                legs.append(
+                    run_event_contract(
+                        series, targets, warmup, stress_multiplier=cost, delay=delay
+                    )
+                )
+            except (EventContractError, CostModelError) as e:
+                raise RunUnavailable("RUN_INVALID") from e
+        return leg_stats(*legs)
+
+    out: dict[str, str | None] = {}
+    try:
+        run(1)
+        out["G-3"] = None
+    except RunUnavailable as e:
+        out["G-3"] = e.reason
+    for gate, kwargs in (
+        ("G-5", {"cost": STRESS_COST}),
+        ("G-6", {"lag": 1}),
+        ("G-7", {"delay": 1}),
+    ):
+        try:
+            run(0, **kwargs)
+            out[gate] = None if out["G-3"] is None else f"G-3:{out['G-3']}"
+        except RunUnavailable as e:
+            out[gate] = e.reason
+    return out

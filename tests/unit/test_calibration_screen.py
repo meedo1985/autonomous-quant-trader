@@ -10,7 +10,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from aqt.backtest.event_contract import EventResult
 from aqt.data.bars import Bar, BarSeries
+from aqt.features.factory import FEATURE_NAMES
 from calibration import screen
 from calibration.seeds import sha
 
@@ -577,3 +579,159 @@ def test_g11_reference_vectors() -> None:
     assert screen.g11_shifts_sha256(k) == (
         "a63398708b99fbd5f0f5c8cee5f497ae79fab2a2b1bfee0c53577fac82bce911"
     )
+
+
+# --- S4b: trial runs and G-3, G-5, G-6, G-7 --------------------------------
+
+W0 = datetime(2022, 1, 1, tzinfo=UTC)
+WINDOW_H = 24 * 30
+
+
+def _module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, code: str
+) -> str:
+    src = tmp_path / f"{name}.py"
+    src.write_text(code, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    return hashlib.sha256(src.read_bytes()).hexdigest()
+
+
+TREND = (
+    "def s(row, params, state):\n"
+    "    assert set(row) == {'ema_dist_168', 'rv_168'}\n"
+    "    state['n'] = state.get('n', 0) + 1\n"
+    "    return 0.6 if row['ema_dist_168'] > 0 else 0.1\n"
+)
+
+
+def _screen_trial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: str = TREND, **change: object
+) -> dict[str, object]:
+    digest = _module(tmp_path, monkeypatch, "s4b_signal", code)
+    fields: dict[str, object] = {
+        "signal": "s4b_signal:s",
+        "signal_sha256": digest,
+        "s_inputs": ["ema_dist_168", "rv_168"],
+        "warmup_hours": 4801,
+        "parameter_point": {},
+        "grid": {},
+    }
+    return _trial(**{**fields, **change})
+
+
+def _screen_path(warmup: int = 4801) -> np.ndarray:
+    seed = screen.screen_seed("11" * 32)
+    return screen.null_path(_source(), seed, 0, warmup + WINDOW_H + 1)
+
+
+def test_an_honest_trial_has_every_s4b_gate_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trial = _screen_trial(tmp_path, monkeypatch)
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    assert got == dict.fromkeys(screen.GATES_S4B, None)
+
+
+def test_a_flat_candidate_makes_e_improv_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # s = 0 always: zero exposure, zero daily returns, no Sharpe
+    code = "def s(row, params, state):\n    return 0.0\n"
+    trial = _screen_trial(tmp_path, monkeypatch, code)
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    assert got["G-3"] == "ZERO_VARIANCE"
+    assert got["G-5"] == got["G-6"] == got["G-7"] == "ZERO_VARIANCE"
+
+
+@pytest.mark.parametrize(
+    ("code", "reason"),
+    [
+        ("def s(row, params, state):\n    return float('nan')\n", "INVALID_SERIES"),
+        ("def s(row, params, state):\n    return row['ret_1h']\n", "TRIAL_CODE_ERROR"),
+        ("def s(row, params, state):\n    return 1 / 0\n", "TRIAL_CODE_ERROR"),
+    ],
+)
+def test_bad_trial_code_makes_every_run_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: str, reason: str
+) -> None:
+    # an undeclared input is simply absent from the row (C-10 (1))
+    trial = _screen_trial(tmp_path, monkeypatch, code)
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    assert set(got.values()) == {reason}
+
+
+def test_an_overlay_that_rescales_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    o = _module(
+        tmp_path, monkeypatch, "s4b_overlay", "def o(t, m, state):\n    return t / 2\n"
+    )
+    trial = _screen_trial(
+        tmp_path, monkeypatch, overlay="s4b_overlay:o", overlay_sha256=o
+    )
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    assert set(got.values()) == {"OVERLAY_VIOLATION"}
+    ok = _module(
+        tmp_path,
+        monkeypatch,
+        "s4b_exit",
+        "def o(t, m, state):\n    return 0.0 if m['ret_24h'] < -0.05 else t\n",
+    )
+    trial = _screen_trial(
+        tmp_path, monkeypatch, overlay="s4b_exit:o", overlay_sha256=ok
+    )
+    assert screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)["G-3"] is None
+
+
+def test_feature_delay_needs_one_more_hour_of_warmup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # decisions read bar j - 1 (needs j0 >= 4800); G-6 reads j - 2
+    trial = _screen_trial(tmp_path, monkeypatch, warmup_hours=4800)
+    got = screen.screen_gates(trial, _screen_path(4800), W0, WINDOW_H)
+    assert got == {"G-3": None, "G-5": None, "G-6": "INSUFFICIENT_WARMUP", "G-7": None}
+
+
+def test_model_and_unbound_sizing_trials_wait_for_their_slices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trial = _screen_trial(
+        tmp_path, monkeypatch, model=MODEL, s_inputs=["model:m", "ema_dist_168"]
+    )
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    assert set(got.values()) == {"MODEL_PENDING"}
+    trial = _screen_trial(tmp_path, monkeypatch, family="vol", sigma="HAR_RV")
+    got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
+    assert set(got.values()) == {"SIGMA_UNBOUND"}
+
+
+def test_the_lagged_candidate_reads_the_previous_row() -> None:
+    # G-6: the row of bar j - 2; the decision without lag reads bar j - 1
+    cols = {n: tuple(float(i) for i in range(10)) for n in FEATURE_NAMES}
+    cols["ewma_vol_168h"] = (0.5,) * 10
+    seen: list[float] = []
+
+    def sig(row: dict[str, float], params: object, state: object) -> float:
+        seen.append(row["ema_dist_168"])
+        return 0.1
+
+    trial = {**_trial(s_inputs=["ema_dist_168"]), "parameter_point": {}, "grid": {}}
+    closes = [1.0] * 12
+    screen.leg_targets(trial, sig, None, cols, 2, closes, 5, 2, 0)
+    screen.leg_targets(trial, sig, None, cols, 2, closes, 5, 2, 1)
+    assert seen == [2.0, 3.0, 1.0, 2.0]  # rows of bars 4, 5 then 3, 4
+
+
+def test_daily_returns_run_from_midnight_to_midnight() -> None:
+    eq = tuple(1.0 + 0.01 * (i // 24) for i in range(1, 49))  # flat within days
+    result = EventResult(0, (0.0,) * 48, eq, (), 0)
+    got = screen.daily_returns(result)
+    assert got == pytest.approx([eq[23] - 1.0, eq[47] / eq[23] - 1.0])
+
+
+def test_the_path_must_cover_warmup_window_and_one_hour(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trial = _screen_trial(tmp_path, monkeypatch)
+    with pytest.raises(screen.TrialError, match="path length"):
+        screen.screen_gates(trial, _screen_path()[:-1], W0, WINDOW_H)
