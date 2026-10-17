@@ -54,6 +54,7 @@ from aqt.features.factory import (
     RV_WINDOWS,
     SMA_WINDOW,
     FeatureFactoryError,
+    _require_contiguous_hourly,
     _require_finite,
     log_return,
     true_range,
@@ -94,7 +95,6 @@ def feature_columns(series: BarSeries) -> tuple[int, dict[str, tuple[float, ...]
         raise FeatureFactoryError(
             f"features require a {BAR_INTERVAL} series, got {series.interval}"
         )
-    series.require_contiguous()
     bars = series.bars
     n = len(bars)
     first = REQUIRED_HISTORY_BARS - 1
@@ -102,6 +102,7 @@ def feature_columns(series: BarSeries) -> tuple[int, dict[str, tuple[float, ...]
         raise FeatureFactoryError(
             f"{series.symbol} has {n} bars; {REQUIRED_HISTORY_BARS} are required"
         )
+    _require_contiguous_hourly(bars)  # the factory's check, after the length
     closes = [b.close for b in bars]
     returns = [log_return(closes[i + 1], closes[i]) for i in range(n - 1)]
     try:

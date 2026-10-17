@@ -53,8 +53,10 @@ def test_too_short_or_gapped_series_are_refused() -> None:
         feature_columns(_series(REQUIRED_HISTORY_BARS - 1, 3))
     s = _series(REQUIRED_HISTORY_BARS + 5, 3)
     gapped = BarSeries("BTCUSDT", s.bars[:100] + s.bars[101:])
-    with pytest.raises(Exception):  # noqa: B017 - the series refuses a hole
+    with pytest.raises(FeatureFactoryError, match="contiguous"):  # S4AR-R1
         feature_columns(gapped)
+    with pytest.raises(FeatureFactoryError, match="contiguous"):
+        compute_features(gapped, gapped.bars[-1].open_time + gapped.bars[-1].interval)
 
 
 def test_a_value_the_factory_returns_unchecked_is_returned() -> None:
