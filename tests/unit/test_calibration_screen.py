@@ -113,6 +113,22 @@ def test_a_block_never_continues_across_a_missing_hour_or_the_end() -> None:
     assert np.all(steps[(rows[:-1] != gap_row) & (rows[:-1] != len(src.hour) - 1)] == 1)
 
 
+def test_a_close_at_the_high_or_low_stays_within_them_after_chaining() -> None:
+    # S8 pilot: a bar closing at its high gave a path high one rounding step
+    # below the close, and Bar refused it
+    rng = np.random.default_rng(3)
+    n = 20000
+    o = 100 * np.exp(rng.normal(0, 0.01, (n, 2)))
+    c = o * np.exp(rng.normal(0, 0.01, (n, 2)))
+    sampled = np.stack(
+        [o, np.maximum(o, c), np.minimum(o, c), c, np.ones((n, 2))], axis=-1
+    )
+    path = screen.reconstruct(sampled, rng.choice([-1.0, 1.0], n))
+    ohlc = (screen.OPEN, screen.HIGH, screen.LOW, screen.CLOSE)
+    o, h, lo, c = (path[..., k] for k in ohlc)
+    assert np.all(h >= np.maximum(o, c)) and np.all(lo <= np.minimum(o, c))
+
+
 def test_a_path_that_overflows_or_underflows_is_unavailable() -> None:
     # S1-R2: a bar with close 100x open, repeated with sign +1, overflows exp
     bar = np.array([[1.0, 101.0, 1.0, 100.0, 1.0]] * 2)

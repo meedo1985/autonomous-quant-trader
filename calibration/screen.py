@@ -170,7 +170,9 @@ def reconstruct(sampled: np.ndarray, signs: np.ndarray) -> np.ndarray:
     hi, lo, c = (np.log(sampled[..., k] / o) for k in (HIGH, LOW, CLOSE))
     flip = (signs < 0)[:, None]
     hi, lo, c = np.where(flip, -lo, hi), np.where(flip, -hi, lo), np.where(flip, -c, c)
-    log_close = np.log(o[0]) + np.cumsum(c, axis=0)
+    # each close is fl(log_open + c), the same addition as high and low, so
+    # the source bar's OHLC order survives rounding (S8 pilot: high < close)
+    log_close = np.cumsum(np.vstack([np.log(o[0])[None], c]), axis=0)[1:]
     log_open = np.vstack([np.log(o[0])[None], log_close[:-1]])
     out = np.empty_like(sampled)
     out[..., OPEN] = np.exp(log_open)
