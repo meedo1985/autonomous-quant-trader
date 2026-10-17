@@ -109,6 +109,69 @@ root@aqt-server:/opt/aqt-d19/app/deploy/calibration# systemctl status aqt-paper 
      Active: active (running) since Mon 2026-10-05 06:30:33 UTC; 1 week 5 days ago
 ```
 
+The second attempt was later stopped: its linear-family fits ran on an unpinned OpenBLAS (S16S-1), so its timings cannot support the cost decision.
+
+## Third attempt: step S (second attempt stopped)
+
+The owner reported the `stop` itself without its output. The checks afterwards, with the step 0 checks run as single lines (output trimmed: the calibration `status` job list):
+
+```
+root@aqt-server:~# ls -l /var/lib/aqt-d19/; cd /opt/aqt-d19/app/deploy/calibration; sudo sh d19.sh status; git -C /opt/aqt-d19/app rev-parse --short HEAD; ls /opt/aqt-d19; systemctl show aqt-d19.slice -p ControlGroup --value
+-rw-r--r-- 1 systemd-resolve systemd-resolve     0 Oct 17 12:52 screen-pilot.failed-ebdf208.json
+-rw-r--r-- 1 systemd-resolve systemd-resolve     0 Oct 17 14:27 screen-pilot.json
+Exited (0) 13 hours ago
+started 2026-10-16T20:27:30.33631332Z finished 2026-10-17T05:23:56.587136212Z exit 0
+3573e22
+app  app-cbde711  app-e39b23d  app-ebdf208
+/aqt.slice/aqt-d19.slice
+root@aqt-server:/opt/aqt-d19/app/deploy/calibration# sudo sh d19.sh screen-status; sudo find /sys/fs/cgroup/aqt.slice/aqt-d19.slice -name cgroup.procs -exec cat {} +; echo END
+Exited (143) About an hour ago
+started 2026-10-17T14:27:06.036248406Z finished 2026-10-17T17:04:40.058228383Z exit 143
+END
+```
+
+The second attempt ended at 17:04:40Z with exit 143 (SIGTERM, the `stop`). The slice was still listed but held no process (nothing between the command and `END`). The `status` line is the calibration re-pilot, not the screen.
+
+## Third attempt: step 0 (empty record and second-attempt code set aside)
+
+```
+root@aqt-server:/opt/aqt-d19/app/deploy/calibration# sudo mv /var/lib/aqt-d19/screen-pilot.json /var/lib/aqt-d19/screen-pilot.unpinned-3573e22.json; sudo mv /opt/aqt-d19/app /opt/aqt-d19/app-3573e22; ls -l /var/lib/aqt-d19/ | grep screen; ls /opt/aqt-d19
+-rw-r--r-- 1 systemd-resolve systemd-resolve     0 Oct 17 12:52 screen-pilot.failed-ebdf208.json
+-rw-r--r-- 1 systemd-resolve systemd-resolve     0 Oct 17 14:27 screen-pilot.unpinned-3573e22.json
+app-3573e22  app-cbde711  app-e39b23d  app-ebdf208
+```
+
+## Third attempt: step A
+
+The clone and apt output are trimmed. The build's 8 steps all used the cache.
+
+```
+4fed8f5cb078e25ce4b63d681236d63984e6cd77
+Installed engine 4fed8f5cb078e25ce4b63d681236d63984e6cd77. Next: sudo sh d19.sh build
+Successfully tagged aqt-d19:4fed8f5cb078e25ce4b63d681236d63984e6cd77
+Image aqt-d19:4fed8f5cb078e25ce4b63d681236d63984e6cd77 id sha256:54bfcf5394cbd7a40fd3351d2fda6ed61fd7564435fe2f14bcb182f996f9790c
+Next: sudo sh d19.sh probe
+This CPU runs the pinned runtime.
+```
+
+The image id is the same as in the first two attempts.
+
+## Third attempt: step B (started 18:15Z)
+
+Status was read immediately after the start (the 10-minute check is below once received):
+
+```
+root@aqt-server:/opt/aqt-d19/app/deploy/calibration# sudo sh d19.sh screen-pilot
+6b85aa2230883c8e4b9726fe566bd24466efe410cef9e4612c644fc8cc4e0c54
+Started. Progress: sudo sh d19.sh screen-status
+Up Less than a second
+started 2026-10-17T18:15:10.493389752Z finished 0001-01-01T00:00:00Z exit 0
+memory peak so far: 18309120 bytes
+● aqt-paper.service - aqt forward paper trading
+     Loaded: loaded (/etc/systemd/system/aqt-paper.service; enabled; preset: enabled)
+     Active: active (running) since Mon 2026-10-05 06:30:33 UTC; 1 week 5 days ago
+```
+
 ## Step C (results)
 
-Pending: the run is expected to finish about 2026-10-18 05:30Z.
+Pending: the third attempt is expected to finish about 2026-10-18 09:15Z. `screen-summary` must show a single job runtime, the pinned one.
