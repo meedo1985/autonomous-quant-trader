@@ -51,12 +51,24 @@ capped() {  # FE4-2: refuse unless containers really land in the capped slice
         grep -q "/$SLICE/" || { echo "refused: containers are not placed in $SLICE" >&2; exit 1; }
 }
 
-running() {  # running <container>: true if that container is up
-    [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = true ]
+LABEL=aqt-d19-run=1  # S8R-R2: every engine container carries it
+
+up() {  # up [filter...]: ids of running D-19 engine containers; a failed
+    # docker query is an error, never "nothing running" (S8R-R1)
+    docker ps -q --filter "label=$LABEL" --filter status=running "$@" ||
+        { echo "FAIL: cannot query docker" >&2; exit 1; }
 }
 
-alone() {  # S8-R2: calibration and screen runs share the slice; never both
-    if running "$NAME" || running "$NAME-screen"; then
+# Callers check `up`'s status explicitly (`|| exit 1`): a failure inside
+# $(...) or an `if` condition would not stop the script by itself.
+running() {  # running <container>: true if that D-19 container is up
+    out=$(up --filter "name=^$1\$") || exit 1
+    [ -n "$out" ]
+}
+
+alone() {  # S8-R2, S8R-R2: D-19 engine runs share the slice; one at a time
+    ids=$(up) || exit 1
+    if [ -n "$ids" ]; then
         echo "refused: a D-19 run is going (sudo sh d19.sh status / screen-status)" >&2
         exit 1
     fi
@@ -72,7 +84,7 @@ engine() {  # engine [docker run options...] -- <script> [arguments...]
     shift
     # --init: python is not PID 1, so `stop` (SIGTERM) ends it at once.
     # shellcheck disable=SC2086  # $opts is a list of plain flags
-    docker run $opts --init --user 990:990 --network none --read-only \
+    docker run $opts --label "$LABEL" --init --user 990:990 --network none --read-only \
         --tmpfs /tmp --cgroup-parent "$SLICE" --memory 2560m \
         -e AQT_IMAGE_DIGEST="$id" -e HOME=/tmp \
         -v "$APP:/app:ro" -v "$WORK:/work" -w /work \
@@ -164,12 +176,13 @@ status)  # FE4-5, P18-6: state, times, memory, chunks per chain; nothing else
         awk -F/ '{ n[$(NF-2) "/" $(NF-1)]++ } END { for (c in n) print n[c], c }' |
         sort -k2
     ;;
-stop)  # S8-R1: each D-19 container that is up, independently
-    stopped=0
-    for c in "$NAME" "$NAME-screen"; do
-        if running "$c"; then docker stop -t 60 "$c" >/dev/null && echo "stopped $c" && stopped=1; fi
+stop)  # S8-R1, S8R-R1: every D-19 engine container that is up; failures reported
+    ids=$(up) || exit 1
+    [ -n "$ids" ] || { echo "no D-19 run was going"; exit 0; }
+    for id in $ids; do
+        docker stop -t 60 "$id" >/dev/null || { echo "FAIL: could not stop $id" >&2; exit 1; }
+        echo "stopped $id"
     done
-    [ "$stopped" = 1 ] || echo "no D-19 run was going"
     ;;
 screen-pilot)  # S8, prereg §10: one screen of the 20-trial pilot set, measurement only
     [ ! -e "$WORK/screen-pilot.json" ] || { echo "refused: $WORK/screen-pilot.json exists" >&2; exit 1; }
@@ -205,6 +218,7 @@ nonfinite)  # FE-7, FE7-5: non-finite threshold diagnostics, per cell
     engine --rm -- d19_pilot_checks.py nonfinite store
     ;;
 clean-check)  # FE7-2: a clean threshold run equals the interrupted+resumed one
+    alone
     [ ! -e "$WORK/store-clean" ] ||
         { echo "refused: $WORK/store-clean exists; a clean run needs an empty store" >&2; exit 1; }
     engine --rm -- d19_run.py run --definition definition.json         --store store-clean --namespace threshold --raw-root raw
