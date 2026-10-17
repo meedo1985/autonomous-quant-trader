@@ -181,3 +181,52 @@ root@aqt-server:/opt/aqt-d19/app/deploy/calibration# systemctl status aqt-paper 
 ```
 
 (The `systemctl` lines were sent before the run started; forward paper had been running unchanged since 2026-10-05.) Both workers ran in every sample. This run's own peak, 413,155,328 bytes (about 413 MB), read from the run container's `memory.peak`, is in line with the first run (slice peak about 435 MB twelve minutes into its development run, about 467 MB overall). The first run's `memwatch` itself was broken then and fixed later (`ec5349f`), so there is no exact first-run `memwatch` number to compare.
+
+## Step H: results, verbatim (2026-10-17)
+
+`status` (sent before step H):
+
+```
+Exited (0) 3 minutes ago
+started 2026-10-16T20:27:30.33631332Z finished 2026-10-17T05:23:56.587136212Z exit 0
+slice memory peak: 506847232 bytes
+```
+
+with all 13 `dev/...` lines at `2` and all 13 `threshold/...` lines at `4`. The development run took 8 h 56 min 26 s (first run: 9 h 01 min 33 s). The slice peak (about 507 MB) counts since the slice started, so it includes the threshold, clean-check and development runs; this run's own peak is `memwatch`'s 413 MB (step G).
+
+`times dev` (one worker's seconds per 500 development replications):
+
+```
+dev/pilot-q1-clusters-k20: 2238
+dev/pilot-q1-clusters-k5: 1983
+dev/pilot-q1-ind-k1: 1450
+dev/pilot-q2-t5-rho-k20: 2213
+dev/pilot-q2m-k2: 1967
+dev/pilot-q2m-k20: 2154
+dev/pilot-q2m-k5: 1909
+dev/pilot-q3-factor-k20: 2098
+dev/pilot-q4-k5: 1818
+dev/pilot-q5-trend-k20: 2067
+dev/pilot-q5-vol-k20: 2052
+dev/pilot-qj-k2: 3881
+dev/pilot-qj-k20: 4254
+```
+
+`choose`:
+
+```
+z_crit None, family_block_rule largest
+```
+
+`nonfinite`: 0 non-finite in every cell; `all cells: 0 non-finite of 296000`.
+
+`choices.json`: recorded whole, verbatim, in `pilot_fe7_rerun_choices.json` next to this file.
+
+## Comparison with the first run (`PILOT_FE7_EVIDENCE.md`, `pilot_fe7_choices.json`)
+
+- **Results bit-identical.** Every key both `choices.json` files share is equal, except `chain_heads`, `definition_sha256` and `measurement_only`: `cells` (every event count, status and margin), `coverage`, `dev_thresholds_sha256`, `family_block_rule`, `final_thresholds`, `joint`, `m`, `margin_ok`, `qualifies`, `smallest_margin`, `status`, `targets`, `worst_cell_rate_at_1.96`, `z_crit`. The run definition's hash differs because its engine commit differs, and the chain heads carry it. `dev_thresholds_sha256` equal means the threshold numbers themselves are the same bits. The rerun's file also has `alpha_s`, `cell_bounds` and `tests`, which the engine at the first run did not write yet.
+- **Development events unchanged:** `pilot-q3-factor-k20` 1 DSR event (capped 1), `pilot-qj-k20/vol` 4 DSR events, `pilot-qj-k20` 4 joint U_proc events, every other count 0, no U_G events, no non-finite values.
+- **Speed unchanged:** the 13 development times sum to 30,084 s against 30,462 s (-1.2%); cells range from -5.9% to +5.9%. Threshold times were within 1 s per cell (step E), timing lines within about 1% (step D).
+- **Memory:** 413 MB peak with 2 workers.
+
+**Conclusion:** adding scikit-learn and LightGBM to the image changed neither the calibration's numbers nor its cost. The first run's planning estimates (`PILOT_FE7_FINDINGS.md`: about 3,130 worker-hours, about 65-70 days with 2 workers; about 8 days for the I1-8 second block rule; full threshold run under 2 days) stand as measured on the rebuilt image. This closes the re-run condition of D-20 §3a (a) (Annex C C-12 (5)): "the FE-7 re-pilot is re-run on the rebuilt image, with the CPU probe and the interrupt-and-resume test, before the go-ahead". Probe: step A; interrupt-and-resume: steps E and F.
