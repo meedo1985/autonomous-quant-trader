@@ -172,6 +172,18 @@ memory peak so far: 18309120 bytes
      Active: active (running) since Mon 2026-10-05 06:30:33 UTC; 1 week 5 days ago
 ```
 
+Sixteen minutes later:
+
+```
+root@aqt-server:/opt/aqt-d19/app/deploy/calibration# sudo sh d19.sh screen-status; systemctl status aqt-paper --no-pager | head -3
+Up 16 minutes
+started 2026-10-17T18:15:10.493389752Z finished 0001-01-01T00:00:00Z exit 0
+memory peak so far: 571936768 bytes
+● aqt-paper.service - aqt forward paper trading
+     Loaded: loaded (/etc/systemd/system/aqt-paper.service; enabled; preset: enabled)
+     Active: active (running) since Mon 2026-10-05 06:30:33 UTC; 1 week 5 days ago
+```
+
 ## Step C (results)
 
 Pending: the third attempt is expected to finish about 2026-10-18 09:15Z. `screen-summary` must show a single job runtime, the pinned one.
