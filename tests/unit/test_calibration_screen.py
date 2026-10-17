@@ -643,7 +643,11 @@ def test_an_honest_trial_has_every_s4b_gate_available(
 ) -> None:
     trial = _screen_trial(tmp_path, monkeypatch)
     got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
-    assert got == {**dict.fromkeys(screen.GATES_S4B, None), "G-8": screen.NA}
+    assert got == {
+        **dict.fromkeys(screen.GATES_S4B, None),
+        "G-8": screen.NA,
+        "G-14": screen.NA,
+    }
 
 
 def test_a_flat_candidate_makes_e_improv_unavailable(
@@ -709,6 +713,7 @@ def test_feature_delay_needs_one_more_hour_of_warmup(
         "G-6": "INSUFFICIENT_WARMUP",
         "G-7": None,
         "G-8": screen.NA,
+        "G-14": screen.NA,
     }
 
 
@@ -723,7 +728,11 @@ def test_model_and_unbound_sizing_trials_wait_for_their_slices(
         screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
     trial = _screen_trial(tmp_path, monkeypatch, family="vol", sigma="HAR_RV")
     got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
-    assert got == {**dict.fromkeys(screen.GATES_S4B, "SIGMA_UNBOUND"), "G-8": screen.NA}
+    assert got == {
+        **dict.fromkeys(screen.GATES_S4B, "SIGMA_UNBOUND"),
+        "G-8": screen.NA,
+        "G-14": screen.NA,
+    }
     # S4C-R1: with a numeric dimension, G-8 waits like the others
     trial = _screen_trial(
         tmp_path,
@@ -806,7 +815,11 @@ def test_trial_code_state_never_crosses_runs(
     )
     trial = _screen_trial(tmp_path, monkeypatch, code)
     got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
-    assert got == {**dict.fromkeys(screen.GATES_S4B, None), "G-8": screen.NA}
+    assert got == {
+        **dict.fromkeys(screen.GATES_S4B, None),
+        "G-8": screen.NA,
+        "G-14": screen.NA,
+    }
 
 
 def test_a_negative_signal_is_refused(
@@ -943,7 +956,7 @@ def test_g8_runs_the_point_and_every_neighbour(
         grid={"k": [5, 10]},
     )
     got = screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)
-    assert set(got.values()) == {"INVALID_SERIES"}
+    assert set(got.values()) == {"INVALID_SERIES", screen.NA}  # G-14: no model
 
 
 def test_a_non_finite_e_improv_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1156,6 +1169,10 @@ def test_a_zero_target_is_class_not_up() -> None:
 # --- S6b: model trials -----------------------------------------------------
 
 MODEL_WARMUP = screen.model_warmup_hours(W0)
+NULL_STREAM = (
+    screen.screen_trial_seed(screen.screen_seed("33" * 32), 0, "t000"),
+    WINDOW,
+)
 MODEL_SIGNAL = "def s(row, params, state):\n    return max(0.0, 0.3 + row['model:m'])\n"
 
 
@@ -1189,8 +1206,12 @@ def test_a_model_trial_runs_every_s4_gate(
 
     monkeypatch.setattr(screen, "model_column", counting)
     trial = _model_trial(tmp_path, monkeypatch)
-    got = screen.screen_gates(trial, _long_path(), W0, WINDOW_H)
-    assert got == {**dict.fromkeys(screen.GATES_S4B, None), "G-8": screen.NA}
+    got = screen.screen_gates(trial, _long_path(), W0, WINDOW_H, *NULL_STREAM)
+    assert got == {
+        **dict.fromkeys(screen.GATES_S4B, None),
+        "G-8": screen.NA,
+        "G-14": None,
+    }
     # MR-3: ETH, BTC, and the lagged BTC run; G-5 and G-7 reuse BTC's
     assert sorted(lag for _, lag in calls) == [0, 0, 1]
 
@@ -1200,7 +1221,7 @@ def test_a_logistic_model_trial_runs(
 ) -> None:
     logit = {**MODEL, "class": "logistic", "target": "sign_of_vol_scaled_target"}
     trial = _model_trial(tmp_path, monkeypatch, model=logit)
-    got = screen.screen_gates(trial, _long_path(), W0, WINDOW_H)
+    got = screen.screen_gates(trial, _long_path(), W0, WINDOW_H, *NULL_STREAM)
     assert all(got[g] is None for g in screen.GATES_S4B)
 
 
@@ -1232,5 +1253,145 @@ def test_a_failing_fit_is_unavailable(
 
     monkeypatch.setattr(screen, "build_model", broken)
     trial = _model_trial(tmp_path, monkeypatch)
-    got = screen.screen_gates(trial, _long_path(), W0, WINDOW_H)
-    assert set(got.values()) == {"MODEL_FIT_ERROR", screen.NA}
+    got = screen.screen_gates(trial, _long_path(), W0, WINDOW_H, *NULL_STREAM)
+    assert set(got.values()) == {"MODEL_FIT_ERROR", screen.NA}  # G-8 N/A
+
+
+@pytest.fixture(autouse=True)
+def _fast_g14(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    # every model trial in these tests runs G-14; 3 draws keep them fast
+    if "test_g14_reference" not in request.node.name:
+        monkeypatch.setattr(screen, "G14_DRAWS", 3)
+
+
+# --- S6b repairs and S6c: G-14 ---------------------------------------------
+
+
+def test_emissions_cover_every_window_decision_at_long_horizons(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # S6B-R1: H = 168 h; the last week's decisions still get predictions
+    trial = _model_trial(tmp_path, monkeypatch, horizon_hours=168)
+    got = screen.screen_gates(trial, _long_path(), W0, WINDOW_H, *NULL_STREAM)
+    assert all(got[g] is None for g in screen.GATES_S4B) and got["G-14"] is None
+
+
+def test_g6_reinfers_from_exactly_the_previous_hour_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # MR-3 / WF-6: under G-6 the inference rows are the bars closing at
+    # t - 1h (row j - 2); training rows are not lagged
+    seen: list[np.ndarray] = []
+    real = screen.predict
+
+    def spy(model: object, cls: str, x: np.ndarray) -> np.ndarray:
+        seen.append(np.array(x))
+        return real(model, cls, x)
+
+    monkeypatch.setattr(screen, "predict", spy)
+    trial = {**_trial(model=MODEL, s_inputs=["model:m"]), "horizon_hours": 24}
+    series = screen.path_series(_long_path(), 0, W0 - timedelta(hours=MODEL_WARMUP))
+    first, columns = feature_columns(series)
+    window, preds = screen.walk_forward(
+        trial, series, first, columns, MODEL_WARMUP, WINDOW_H, 1
+    )
+    names = MODEL["features"]
+    want = np.array([[columns[f][j - 2 - first] for f in names] for j in window])
+    assert np.array_equal(np.vstack(seen), want)
+    assert len(preds) == len(window) == WINDOW_H // 24
+
+
+def test_g14_draws_follow_the_annex_stream() -> None:
+    # G14-1 (C-12 (5)): json.dumps([..., "shuffled_labels_null", "BTCUSDT",
+    # "1.0", window id, d, w])
+    import random as _random
+
+    material = (
+        '["aqt.statistics.stream.v1","' + "ab" * 32 + '",'
+        '"f3ba9362c5f1512fd24600775df2aa048a7e701c8f40c8cb00e97c2c644f515c",'
+        '"shuffled_labels_null","BTCUSDT","1.0",' + json.dumps(WINDOW) + ",4,1]"
+    )
+    seed = hashlib.sha256(material.encode()).hexdigest()
+    rng = _random.Random(int.from_bytes(bytes.fromhex(seed), "big"))
+    n_w, h = 120, 7
+    m = n_w - 2 * h + 1
+    while (r := rng.getrandbits(m.bit_length())) >= m:
+        pass
+    assert screen.g14_draw("ab" * 32, WINDOW, 4, 1, n_w, h) == (
+        h + r,
+        rng.getrandbits(31),
+    )
+
+
+def test_g14_shift_range_boundary() -> None:
+    # G14-2 (S6D-R4): n_w = 2h allows the single offset h; 2h - 1 does not
+    offset, _ = screen.g14_draw("ab" * 32, WINDOW, 0, 0, 14, 7)
+    assert offset == 7
+    with pytest.raises(screen.RunUnavailable, match="NO_SHIFT_RANGE"):
+        screen.g14_draw("ab" * 32, WINDOW, 0, 0, 13, 7)
+
+
+def test_g14_reference_vectors() -> None:
+    """Frozen with screen.py (WF-8): n = (120, 365), h = 7."""
+    got = [
+        screen.g14_draw("ab" * 32, WINDOW, d, w, n, 7)
+        for d in (0, 499)
+        for w, n in enumerate((120, 365))
+    ]
+    assert got == REF_G14
+    assert screen.g14_grid_sha256("ab" * 32, WINDOW, (120, 365), 7) == REF_G14_GRID
+
+
+REF_G14 = [(52, 1547148029), (200, 1720495609), (42, 329123030), (302, 1969132963)]
+REF_G14_GRID = "5eb80b73256d75d628a4562ec04631b090eea5efcf461ff9148a04b5b4f8d643"
+
+
+def test_spearman_ic_uses_midranks() -> None:
+    # G14-4: ties share their mean rank; IC is the Pearson correlation of ranks
+    assert screen.midranks([3.0, 1.0, 3.0, 2.0]).tolist() == [3.5, 1.0, 3.5, 2.0]
+    assert screen.spearman_ic([1, 2, 3, 4], [10, 20, 30, 40]) == pytest.approx(1.0)
+    assert screen.spearman_ic([1, 2, 3, 4], [4, 3, 2, 1]) == pytest.approx(-1.0)
+    with pytest.raises(screen.RunUnavailable, match="CONSTANT_IC_INPUT"):
+        screen.spearman_ic([1, 1, 1], [1, 2, 3])
+
+
+def test_a_null_pipeline_shifts_labels_circularly_within_each_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # G14-3: the fit labels of a draw are np.roll(original, -offset)
+    seen: list[np.ndarray] = []
+    real = screen.build_model
+
+    def spy(cls: str, params: object, seed: int) -> object:
+        model = real(cls, params, seed)  # type: ignore[arg-type]
+        fit = model.fit
+
+        def recording(x: np.ndarray, y: np.ndarray) -> object:
+            seen.append(np.asarray(y).copy())
+            return fit(x, y)
+
+        model.fit = recording
+        return model
+
+    monkeypatch.setattr(screen, "build_model", spy)
+    monkeypatch.setattr(screen, "g14_draw", lambda *a: (8, 1))
+    trial = {**_trial(model=MODEL, s_inputs=["model:m"]), "horizon_hours": 24}
+    series = screen.path_series(_long_path(), 0, W0 - timedelta(hours=MODEL_WARMUP))
+    first, columns = feature_columns(series)
+    screen.walk_forward(trial, series, first, columns, MODEL_WARMUP, WINDOW_H, 0)
+    screen.walk_forward(
+        trial, series, first, columns, MODEL_WARMUP, WINDOW_H, 0, ("ab" * 32, WINDOW, 0)
+    )
+    original, shifted = seen[0], seen[len(seen) // 2]
+    assert np.array_equal(shifted, np.roll(original, -8))
+
+
+def test_g14_is_na_without_a_model_and_needs_its_seed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trial = _screen_trial(tmp_path, monkeypatch)
+    assert screen.screen_gates(trial, _screen_path(), W0, WINDOW_H)["G-14"] == screen.NA
+    with pytest.raises(screen.TrialError, match="trial seed"):
+        screen.screen_gates(
+            _model_trial(tmp_path, monkeypatch), _long_path(), W0, WINDOW_H
+        )

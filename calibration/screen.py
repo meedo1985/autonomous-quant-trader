@@ -414,7 +414,8 @@ def check_trial(trial: dict[str, Any]) -> None:
             _scalar(v, f"model params {k}")
             check_model_param(model["class"], k, v)
         check_model_features(trial)
-        if trial["warmup_hours"] < MODEL_WARMUP_HOURS:  # S6A-R1, WF-2
+        w = trial["warmup_hours"]
+        if type(w) is int and w < MODEL_WARMUP_HOURS:  # S6A-R1, S6AR-R1, WF-2
             raise TrialError(
                 f"a model trial needs warmup_hours >= {MODEL_WARMUP_HOURS}"
             )
@@ -791,6 +792,7 @@ STRESS_COST = 2.0
 
 NA = "N/A"
 GATES_S4 = (*GATES_S4B, "G-8")
+GATES = (*GATES_S4, "G-14")
 
 
 def _decimal(value: object) -> Decimal | None:
@@ -965,9 +967,16 @@ def leg_stats(candidate: EventResult, benchmark: EventResult) -> dict[str, float
 
 
 def screen_gates(
-    trial: dict[str, Any], path: np.ndarray, w0: datetime, window_hours: int
+    trial: dict[str, Any],
+    path: np.ndarray,
+    w0: datetime,
+    window_hours: int,
+    trial_seed: str | None = None,
+    window_id: str | None = None,
 ) -> dict[str, str | None]:
-    """RN-6, PL-4: each gate's result on one path."""
+    """RN-6, PL-4, G14-n: each gate's result on one path. G-14 (a model
+    trial) needs the null-stream `trial_seed` and the C2 `window_id`
+    (G14-1)."""
     check_trial(trial)
     warmup = trial["warmup_hours"]
     if window_hours < 48 or window_hours % 24 or len(path) != warmup + window_hours + 1:
@@ -977,8 +986,11 @@ def screen_gates(
         raise TrialError(
             f"a model trial needs warmup_hours >= {model_warmup_hours(w0)}"
         )
+    g14_na = {} if g14_applies(trial) else {"G-14": NA}  # C-12 (1)
+    if not g14_na and (trial_seed is None or window_id is None):
+        raise TrialError("G-14 needs the trial seed and the window id (G14-1)")
     if trial["sigma"] != DEFAULT_SIGMA:
-        return {**dict.fromkeys(GATES_S4, "SIGMA_UNBOUND"), **g8_na}
+        return {**dict.fromkeys(GATES, "SIGMA_UNBOUND"), **g8_na, **g14_na}
     start = w0 - timedelta(hours=warmup)
     prepared: dict[int, tuple[BarSeries, int, dict[str, tuple[float, ...]]]] = {}
 
@@ -1031,6 +1043,31 @@ def screen_gates(
                 raise RunUnavailable("RUN_INVALID") from e
         return leg_stats(*legs)
 
+    def g14_check(seed: Any, wid: Any) -> None:
+        """G14-3..G14-5: the nominee's and every draw's IC must exist."""
+        series, first, columns = prepare(0)
+        bars = series.bars
+        hours = trial["horizon_hours"]
+        w1 = w0 + timedelta(hours=window_hours)
+        pipelines = [None, *((seed, wid, d) for d in range(G14_DRAWS))]
+        window: list[int] = []
+        ys: list[float] = []
+        for draw in pipelines:
+            window, preds = walk_forward(
+                trial, series, first, columns, warmup, window_hours, 0, draw
+            )
+            keep = [
+                i
+                for i, j in enumerate(window)
+                if bars[j].open_time + timedelta(hours=hours) < w1
+            ]
+            if not ys:
+                sigma = ewma_hourly_volatility_bps_series(
+                    hourly_log_returns_bps(series)
+                )
+                ys = labels(series, sigma, [window[i] for i in keep], hours)
+            spearman_ic([preds[i] for i in keep], ys)
+
     mismatched: list[int] = []
     emissions: dict[tuple[int, int, str], list[float]] = {}
     out: dict[str, str | None] = {}
@@ -1058,6 +1095,14 @@ def screen_gates(
             out["G-8"] = None
         except RunUnavailable as e:
             out["G-8"] = e.reason
+    if g14_na:
+        out.update(g14_na)
+    else:
+        try:
+            g14_check(trial_seed, window_id)
+            out["G-14"] = None
+        except RunUnavailable as e:
+            out["G-14"] = e.reason
     if mismatched:
         out["G-11"] = "CLASS_MISMATCH"
     return out
@@ -1294,30 +1339,102 @@ def fit_target(cls: str, ys: Sequence[float]) -> np.ndarray:
 # --- S6b: model trials in the screen runs -----------------------------------
 #
 # Readings MR-n (proposed, for review), on top of the READY S6 design:
-# - MR-1 Every run of a model trial, on either symbol, runs the trial's whole
-#   walk-forward on that symbol's own rows (the trial is one fixed
-#   configuration, protocol `trial_unit`: "BTC and ETH evaluated jointly
-#   inside the same trial"). The ETH run (G-3) therefore fits on ETH; G-14's
-#   rows stay BTC only (C-12 (2)).
+# - MR-1 (owner decision 2026-10-17, `OWNER_DECISION_MR1_ETH_OWN_FIT.md`)
+#   Every run of a model trial, on either symbol, runs the trial's whole
+#   walk-forward on that symbol's own rows; the ETH run (G-3) fits on ETH.
+#   G-14's rows stay BTC only (C-12 (2)).
 # - MR-2 The nominee's fits use model seed 0. Every allowed configuration
 #   (WF-5) is deterministic: the linear family has no randomness, LightGBM runs
 #   without bagging or feature subsampling, so the seed cannot change a fit;
 #   it is passed for completeness. G-14's null draws use their own seeds
 #   (C-12 (5), slice S6c).
-# - MR-3 Emissions (WF-6): at each 00:00 window decision the latest fit
-#   predicts from that decision's feature row, under G-6 the row one hour
-#   earlier; the signal's `model:<id>` input at instant `j` is the latest
-#   emission at or before `j`. Cost multiplier and execution delay do not
-#   change emissions, so G-5 and G-7 reuse the baseline's.
+# - MR-3 Emissions (WF-6): at every 00:00 window decision (S6B-R1: also
+#   those whose label is not yet realised; only training needs realised
+#   labels) the latest fit predicts from that decision's feature row,
+#   under G-6 the row one hour earlier; the signal's `model:<id>` input at
+#   instant `j` is the latest emission at or before `j`. Cost multiplier and
+#   execution delay do not change emissions, so G-5 and G-7 reuse the
+#   baseline's.
 # - MR-4 A model trial whose declared warm-up cannot hold its first training
 #   window (24 months before `w0`) plus the feature history is refused at
-#   declaration (`TrialError`), as the design says (WF-2).
+#   declaration (`TrialError`), as the design says (WF-2). The feature
+#   history is exactly `REQUIRED_HISTORY_BARS`: the first training decision
+#   `j` reads row `j - 1`, which needs `j - 1 >= REQUIRED_HISTORY_BARS - 1`
+#   (S6B-R3; the design's "+ 1" is corrected to this).
 
 
 def model_warmup_hours(w0: datetime) -> int:
     """MR-4: the least warm-up a model trial needs on a path starting at `w0`."""
     back = w0 - months_before(w0, TRAINING_MONTHS)
     return int(back / timedelta(hours=1)) + REQUIRED_HISTORY_BARS
+
+
+def walk_forward(
+    trial: dict[str, Any],
+    series: BarSeries,
+    first: int,
+    columns: Mapping[str, tuple[float, ...]],
+    j0: int,
+    n: int,
+    lag: int,
+    draw: tuple[str, str, int] | None = None,
+) -> tuple[list[int], list[float]]:
+    """MR-1..MR-3, G14-3: the model's prediction at every 00:00 window
+    decision instant (S6B-R1: inference covers the whole window; training
+    uses the rows whose label is realised by the refit). `draw` is
+    `(trial_seed_hex, window_id, d)` for a G-14 null pipeline."""
+    model = trial["model"]
+    cls, hours = model["class"], trial["horizon_hours"]
+    bars = series.bars
+    try:
+        sigma_bps = ewma_hourly_volatility_bps_series(hourly_log_returns_bps(series))
+    except CostModelError as e:
+        raise RunUnavailable("INVALID_SERIES") from e
+    train = [
+        j
+        for j in range(first + 1, len(bars) - hours + 1)
+        if bars[j].open_time.hour == 0
+    ]
+    times = [bars[j].open_time for j in train]
+    ys = labels(series, sigma_bps, train, hours)
+    names = model["features"]
+
+    def row(k: int) -> list[float]:
+        values = [columns[f][k] for f in names]
+        if not all(map(math.isfinite, values)):
+            raise RunUnavailable("INVALID_SERIES")
+        return values
+
+    x = np.array([row(j - 1 - first) for j in train], dtype=float)
+    target = fit_target(cls, ys)
+    params = model_params(trial)
+    w0, w1 = bars[j0].open_time, bars[j0].open_time + timedelta(hours=n)
+    window = [j for j in range(j0, j0 + n) if bars[j].open_time.hour == 0]
+    refits = refit_instants(w0, w1)
+    out: list[float] = []
+    for k, r in enumerate(refits):
+        until = refits[k + 1] if k + 1 < len(refits) else w1
+        rows = training_rows(times, ys, r, hours)
+        if len(rows) < 2:
+            raise RunUnavailable("TRAINING_ROWS")
+        fit_y, seed = target[rows], 0
+        if draw is not None:  # G14-3: circular shift within the window
+            offset, seed = g14_draw(
+                draw[0], draw[1], draw[2], k, len(rows), hours // 24
+            )
+            fit_y = np.roll(fit_y, -offset)  # label[(r + offset) mod n_w]
+        due = [j for j in window if r <= bars[j].open_time < until]
+        try:
+            fitted = build_model(cls, params, seed=seed)
+            fitted.fit(x[rows], fit_y)
+            if due:
+                xs = np.array([row(j - 1 - lag - first) for j in due], dtype=float)
+                out.extend(float(v) for v in predict(fitted, cls, xs))
+        except RunUnavailable:
+            raise
+        except Exception as e:  # any library failure is unavailability
+            raise RunUnavailable("MODEL_FIT_ERROR") from e
+    return window, out
 
 
 def model_column(
@@ -1329,57 +1446,109 @@ def model_column(
     n: int,
     lag: int,
 ) -> list[float]:
-    """MR-1..MR-3: the hourly `model:<id>` input, indexed like a feature
-    column read at lag `lag` (position `j - 1 - lag - first` for instant
-    `j`); NaN outside the window."""
-    model = trial["model"]
-    cls, hours = model["class"], trial["horizon_hours"]
-    bars = series.bars
-    try:
-        sigma_bps = ewma_hourly_volatility_bps_series(hourly_log_returns_bps(series))
-    except CostModelError as e:
-        raise RunUnavailable("INVALID_SERIES") from e
-    instants = [
-        j
-        for j in range(first + 1, len(bars) - hours + 1)
-        if bars[j].open_time.hour == 0
-    ]
-    times = [bars[j].open_time for j in instants]
-    ys = labels(series, sigma_bps, instants, hours)
-    names = model["features"]
-
-    def row(k: int) -> list[float]:
-        values = [columns[f][k] for f in names]
-        if not all(map(math.isfinite, values)):
-            raise RunUnavailable("INVALID_SERIES")
-        return values
-
-    x = np.array([row(j - 1 - first) for j in instants], dtype=float)
-    target = fit_target(cls, ys)
-    params = model_params(trial)
-    w0, w1 = bars[j0].open_time, bars[j0].open_time + timedelta(hours=n)
-    refits = refit_instants(w0, w1)
-    out = [math.nan] * len(columns[names[0]])
-    for k, r in enumerate(refits):
-        until = refits[k + 1] if k + 1 < len(refits) else w1
-        rows = training_rows(times, ys, r, hours)
-        if len(rows) < 2:
-            raise RunUnavailable("TRAINING_ROWS")
-        try:
-            fitted = build_model(cls, params, seed=0)
-            fitted.fit(x[rows], target[rows])
-        except Exception as e:  # any library failure is unavailability
-            raise RunUnavailable("MODEL_FIT_ERROR") from e
-        for i, t in enumerate(times):
-            if not r <= t < until:
-                continue
-            j = instants[i]
-            try:
-                y = float(predict(fitted, cls, np.array([row(j - 1 - lag - first)]))[0])
-            except RunUnavailable:
-                raise
-            except Exception as e:
-                raise RunUnavailable("MODEL_FIT_ERROR") from e
-            for jj in range(j, min(j + 24, j0 + n)):  # held to the next 00:00
-                out[jj - 1 - lag - first] = y
+    """MR-3: the hourly `model:<id>` input, indexed like a feature column
+    read at lag `lag` (position `j - 1 - lag - first` for instant `j`); each
+    emission held to the next 00:00; NaN outside the window."""
+    window, preds = walk_forward(trial, series, first, columns, j0, n, lag)
+    out = [math.nan] * len(columns[trial["model"]["features"][0]])
+    for j, y in zip(window, preds, strict=True):
+        for jj in range(j, min(j + 24, j0 + n)):
+            out[jj - 1 - lag - first] = y
     return out
+
+
+# --- S6c: G-14 (Annex C C-12; design WF-7, WF-8) ----------------------------
+#
+# Readings G14-n (proposed, for review):
+# - G14-1 Stream (C-12 (5), "built as in C-10 (3) with purpose
+#   "shuffled_labels_null" and trailing indices d, w in place of 500"): the
+#   seed is the SHA-256 of `json.dumps([SEED_DOMAIN, trial_seed_hex,
+#   CONVENTION_DOCUMENT_SHA256, "shuffled_labels_null", "BTCUSDT", "1.0",
+#   evaluation_window_id, d, w], separators=(",", ":"), ensure_ascii=False)`;
+#   one `random.Random` per (d, w); `offset = h + draw(n_w - 2h + 1)`, then
+#   `model_seed = getrandbits(31)`; `h = horizon_days`. Inside the screen the
+#   trial seed is `screen_trial_seed` (S5 GS-1) and the window id the C2
+#   window's (GS-1), both passed in by the driver.
+# - G14-2 `NO_SHIFT_RANGE` iff a window has `n_w < 2h` (S6D-R4).
+# - G14-3 Draw d: in every window, the retained rows' fit labels are the
+#   original ones circularly shifted (`label[(r + offset) mod n_w]`, rows in
+#   time order; the embargo stays the one computed from original labels,
+#   WF-3); the whole pipeline is refit with `model_seed`; the OOS predictions
+#   of that window's decisions are kept. For logistic trials the classes are
+#   shifted (the class of a shifted label is the shifted class).
+# - G14-4 IC (WF-7): one pooled Spearman IC per pipeline, midranks of the
+#   predictions against midranks of the continuous target, over the BTC
+#   baseline's 00:00 window decisions with `t + H < w1`. A constant
+#   prediction or target is `CONSTANT_IC_INPUT`; any fit failure
+#   `MODEL_FIT_ERROR`.
+# - G14-5 The screen needs availability: the nominee and all 500 draws must
+#   each give an IC. PASS (at least 476 strictly below) is not computed.
+
+G14_DRAWS = 500
+G14_PURPOSE = "shuffled_labels_null"
+
+
+def g14_draw(
+    trial_seed_hex: str, window_id: str, d: int, w: int, n_w: int, h: int
+) -> tuple[int, int]:
+    """G14-1, G14-2: `(offset, model_seed)` of draw `d` in window `w`."""
+    if n_w < 2 * h:
+        raise RunUnavailable("NO_SHIFT_RANGE")
+    material = json.dumps(
+        [
+            st.SEED_DOMAIN,
+            trial_seed_hex,
+            st.CONVENTION_DOCUMENT_SHA256,
+            G14_PURPOSE,
+            G11_ASSET,
+            G11_COST,
+            window_id,
+            d,
+            w,
+        ],
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    seed = hashlib.sha256(material.encode("utf-8")).hexdigest()
+    generator = random.Random(int.from_bytes(bytes.fromhex(seed), "big"))
+    offset = h + _draw(generator, n_w - 2 * h + 1)
+    return offset, generator.getrandbits(31)
+
+
+def g14_grid_sha256(
+    trial_seed_hex: str, window_id: str, sizes: Sequence[int], h: int
+) -> str:
+    """WF-8: the full `d x w` grid's hash, `d`-major."""
+    grid = [
+        [d, w, *g14_draw(trial_seed_hex, window_id, d, w, n, h)]
+        for d in range(G14_DRAWS)
+        for w, n in enumerate(sizes)
+    ]
+    return sha({"grid": grid})
+
+
+def midranks(values: Sequence[float]) -> np.ndarray:
+    """Average ranks (1-based), ties sharing their mean rank."""
+    v = np.asarray(values, dtype=float)
+    order = np.argsort(v, kind="mergesort")
+    ranks = np.empty(len(v))
+    i = 0
+    while i < len(v):
+        j = i
+        while j + 1 < len(v) and v[order[j + 1]] == v[order[i]]:
+            j += 1
+        ranks[order[i : j + 1]] = (i + j) / 2 + 1
+        i = j + 1
+    return ranks
+
+
+def spearman_ic(predictions: Sequence[float], targets: Sequence[float]) -> float:
+    """G14-4: the Pearson correlation of the midranks."""
+    if len(set(predictions)) < 2 or len(set(targets)) < 2:
+        raise RunUnavailable("CONSTANT_IC_INPUT")
+    a, b = midranks(predictions), midranks(targets)
+    a, b = a - a.mean(), b - b.mean()
+    ic = float((a * b).sum() / math.sqrt((a * a).sum() * (b * b).sum()))
+    if not math.isfinite(ic):
+        raise RunUnavailable("CONSTANT_IC_INPUT")
+    return ic
