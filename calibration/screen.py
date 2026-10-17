@@ -1478,9 +1478,9 @@ def model_column(
 #   shifted (the class of a shifted label is the shifted class).
 # - G14-4 IC (WF-7): one pooled Spearman IC per pipeline, midranks of the
 #   predictions against midranks of the continuous target, over the BTC
-#   baseline's 00:00 window decisions with `t + H < w1`. A constant
-#   prediction or target is `CONSTANT_IC_INPUT`; any fit failure
-#   `MODEL_FIT_ERROR`.
+#   baseline's 00:00 window decisions with `t + H < w1`. A non-finite
+#   prediction or target is `NONFINITE_IC_INPUT` (S6C-R1), a constant one
+#   `CONSTANT_IC_INPUT`; any fit failure `MODEL_FIT_ERROR`.
 # - G14-5 The screen needs availability: the nominee and all 500 draws must
 #   each give an IC. PASS (at least 476 strictly below) is not computed.
 
@@ -1544,6 +1544,8 @@ def midranks(values: Sequence[float]) -> np.ndarray:
 
 def spearman_ic(predictions: Sequence[float], targets: Sequence[float]) -> float:
     """G14-4: the Pearson correlation of the midranks."""
+    if not all(map(math.isfinite, [*predictions, *targets])):  # S6C-R1
+        raise RunUnavailable("NONFINITE_IC_INPUT")
     if len(set(predictions)) < 2 or len(set(targets)) < 2:
         raise RunUnavailable("CONSTANT_IC_INPUT")
     a, b = midranks(predictions), midranks(targets)

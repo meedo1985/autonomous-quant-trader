@@ -1340,6 +1340,7 @@ def test_g14_reference_vectors() -> None:
     ]
     assert got == REF_G14
     assert screen.g14_grid_sha256("ab" * 32, WINDOW, (120, 365), 7) == REF_G14_GRID
+    assert screen.G14_DRAWS == 500  # S6C-R2: production count (tests patch it)
 
 
 REF_G14 = [(52, 1547148029), (200, 1720495609), (42, 329123030), (302, 1969132963)]
@@ -1353,6 +1354,9 @@ def test_spearman_ic_uses_midranks() -> None:
     assert screen.spearman_ic([1, 2, 3, 4], [4, 3, 2, 1]) == pytest.approx(-1.0)
     with pytest.raises(screen.RunUnavailable, match="CONSTANT_IC_INPUT"):
         screen.spearman_ic([1, 1, 1], [1, 2, 3])
+    # S6C-R1: a NaN prediction never ranks into a finite IC
+    with pytest.raises(screen.RunUnavailable, match="NONFINITE_IC_INPUT"):
+        screen.spearman_ic([1.0, float("nan"), 3.0, 4.0], [1, 2, 3, 4])
 
 
 def test_a_null_pipeline_shifts_labels_circularly_within_each_window(
@@ -1395,3 +1399,43 @@ def test_g14_is_na_without_a_model_and_needs_its_seed(
         screen.screen_gates(
             _model_trial(tmp_path, monkeypatch), _long_path(), W0, WINDOW_H
         )
+
+
+WINDOW_LONG_H = 24 * 61  # three refits: w0, w0 + 30 d, w0 + 60 d
+
+
+@functools.cache
+def _longer_path() -> np.ndarray:
+    seed = screen.screen_seed("44" * 32)
+    return screen.null_path(_source(), seed, 0, MODEL_WARMUP + WINDOW_LONG_H + 1)
+
+
+def test_g14_runs_the_nominee_and_every_draw_in_every_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # S6C-R2: every refit window draws its own (d, w); 1 + G14_DRAWS pipelines
+    draws: list[tuple[int, int]] = []
+    real_draw = screen.g14_draw
+
+    def spy_draw(
+        seed: str, wid: str, d: int, w: int, n_w: int, h: int
+    ) -> tuple[int, int]:
+        draws.append((d, w))
+        return real_draw(seed, wid, d, w, n_w, h)
+
+    pipelines: list[object] = []
+    real_wf = screen.walk_forward
+
+    def spy_wf(*args: object, **kwargs: object) -> tuple[list[int], list[float]]:
+        if args[6] == 0 and args[1] is not None:  # the G-14 pipelines run at lag 0
+            pipelines.append(args[7] if len(args) > 7 else kwargs.get("draw"))
+        return real_wf(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(screen, "g14_draw", spy_draw)
+    monkeypatch.setattr(screen, "walk_forward", spy_wf)
+    trial = _model_trial(tmp_path, monkeypatch)
+    got = screen.screen_gates(trial, _longer_path(), W0, WINDOW_LONG_H, *NULL_STREAM)
+    assert got["G-14"] is None
+    assert sorted(set(draws)) == [(d, w) for d in range(3) for w in range(3)]
+    null = [p for p in pipelines if p is not None]
+    assert [p[2] for p in null] == [0, 1, 2]  # type: ignore[index]
