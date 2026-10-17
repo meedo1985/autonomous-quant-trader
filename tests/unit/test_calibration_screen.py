@@ -1973,8 +1973,11 @@ def test_the_pilot_summary_reports_seconds_and_gates() -> None:
         "reference_vectors": {"paths": "a", "g11": "b", "g14": "c"},
     }
     lines = cli.summary(record)
-    assert lines[0] == "p01: 2 paths, 120 s total, slowest 70 s; G-14:N/A x2, G-3:ok x2"
-    assert lines[1].startswith("p20: 1 paths, 1200 s total") and "G-3:X x1" in lines[1]
-    assert lines[2] == "all trials: 1320 worker-seconds (0.4 worker-hours)"
-    assert lines[3] == "availability: SOME_UNAVAILABLE"
-    assert '"paths": "a"' in lines[4]
+    assert lines[0].startswith("MEASUREMENT ONLY")  # S8-R3
+    assert lines[1] == (
+        "p01: 2 paths, 120 s total, slowest 70 s; G-14:N/A x2, G-3:available x2"
+    )
+    assert lines[2].startswith("p20: 1 paths, 1200 s total") and "G-3:X x1" in lines[2]
+    assert lines[3] == "all trials: 1320 worker-seconds (0.4 worker-hours)"
+    assert lines[4] == "availability: SOME_UNAVAILABLE"
+    assert '"paths": "a"' in lines[5]

@@ -51,6 +51,17 @@ capped() {  # FE4-2: refuse unless containers really land in the capped slice
         grep -q "/$SLICE/" || { echo "refused: containers are not placed in $SLICE" >&2; exit 1; }
 }
 
+running() {  # running <container>: true if that container is up
+    [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = true ]
+}
+
+alone() {  # S8-R2: calibration and screen runs share the slice; never both
+    if running "$NAME" || running "$NAME-screen"; then
+        echo "refused: a D-19 run is going (sudo sh d19.sh status / screen-status)" >&2
+        exit 1
+    fi
+}
+
 engine() {  # engine [docker run options...] -- <script> [arguments...]
     id=$(docker image inspect --format '{{.Id}}' "$(tag)")
     capped "$id"
@@ -136,6 +147,7 @@ record)
     engine --rm -- d19_run_definition.py record "$@"
     ;;
 run)
+    alone
     docker rm "$NAME" >/dev/null 2>&1 || true
     engine -d --name "$NAME" -- d19_run.py run --definition definition.json \
         --store store --namespace "$2" --raw-root raw
@@ -145,18 +157,23 @@ status)  # FE4-5, P18-6: state, times, memory, chunks per chain; nothing else
     docker ps -a --filter "name=^$NAME\$" --format '{{.Status}}'
     # FE7-3: the run's own start, finish and exit (kept until the next run)
     docker inspect -f 'started {{.State.StartedAt}} finished {{.State.FinishedAt}} exit {{.State.ExitCode}}'         "$NAME" 2>/dev/null || true
-    # FE7-4: the capped slice's exact peak memory since it started
-    echo "slice memory peak: $(systemctl show "$SLICE" -p MemoryPeak --value) bytes"
+    # FE7-4: the capped slice's exact peak memory since it started, shared by
+    # calibration and screen runs (S8-R2; `memwatch` gives a run's own peak)
+    echo "slice memory peak (all D-19 runs since the slice started): $(systemctl show "$SLICE" -p MemoryPeak --value) bytes"
     find "$WORK/store" -name 'chunk-*.json' 2>/dev/null |
         awk -F/ '{ n[$(NF-2) "/" $(NF-1)]++ } END { for (c in n) print n[c], c }' |
         sort -k2
     ;;
-stop)
-    docker stop -t 60 "$NAME"
-    docker stop -t 60 "$NAME-screen" >/dev/null 2>&1 || true
+stop)  # S8-R1: each D-19 container that is up, independently
+    stopped=0
+    for c in "$NAME" "$NAME-screen"; do
+        if running "$c"; then docker stop -t 60 "$c" >/dev/null && echo "stopped $c" && stopped=1; fi
+    done
+    [ "$stopped" = 1 ] || echo "no D-19 run was going"
     ;;
 screen-pilot)  # S8, prereg §10: one screen of the 20-trial pilot set, measurement only
     [ ! -e "$WORK/screen-pilot.json" ] || { echo "refused: $WORK/screen-pilot.json exists" >&2; exit 1; }
+    alone
     docker rm "$NAME-screen" >/dev/null 2>&1 || true
     engine -d --name "$NAME-screen" -- d19_screen.py pilot \
         --trials /app/deploy/calibration/screen-pilot/trials.json \
@@ -168,7 +185,7 @@ screen-status)  # S8: state, times and this run's memory high-water mark
     docker ps -a --filter "name=^$NAME-screen\$" --format '{{.Status}}'
     docker inspect -f 'started {{.State.StartedAt}} finished {{.State.FinishedAt}} exit {{.State.ExitCode}}' \
         "$NAME-screen" 2>/dev/null || true
-    if [ "$(docker inspect -f '{{.State.Running}}' "$NAME-screen" 2>/dev/null)" = true ]; then
+    if running "$NAME-screen"; then
         pid=$(docker inspect -f '{{.State.Pid}}' "$NAME-screen")
         echo "memory peak so far: $(cat "/sys/fs/cgroup$(cut -d: -f3 "/proc/$pid/cgroup")/memory.peak") bytes"
     fi

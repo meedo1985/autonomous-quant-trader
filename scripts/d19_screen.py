@@ -51,7 +51,11 @@ def summary(record: dict[str, object]) -> list[str]:
     """S8: what the cost pilot reports, one line per trial plus totals."""
     runs = record["runs"]
     assert isinstance(runs, list)
-    lines, total = [], 0.0
+    lines = [  # S8-R3: availability, not passes; never a declaration
+        "MEASUREMENT ONLY (prereg §10 pilot): gate results are availability, "
+        "not passes; nothing here is a declaration outcome"
+    ]
+    total = 0.0
     for tid in sorted({r["trial_id"] for r in runs}):
         own = [r for r in runs if r["trial_id"] == tid]
         secs = [float(r.get("seconds", 0.0)) for r in own]
@@ -59,7 +63,7 @@ def summary(record: dict[str, object]) -> list[str]:
         results: dict[str, int] = {}
         for r in own:
             for gate, value in r["gates"].items():
-                key = f"{gate}:{'ok' if value is None else value}"
+                key = f"{gate}:{'available' if value is None else value}"
                 results[key] = results.get(key, 0) + 1
         lines.append(
             f"{tid}: {len(own)} paths, {sum(secs):.0f} s total, "
