@@ -9,7 +9,7 @@
           --object DIR --posted SHA [--workers N]
       the screen a declaration lists: checks the posted qualification
       object, its code, runtime, the exploration bars and the screen's
-      frozen reference vectors first (DR-6). Exit 0 VALID, 2 INVALID.
+      frozen reference vectors first (DR-6). Exit 0 SCREEN_AVAILABLE, 2 INVALID.
   summary --record RECORD.json
       a measurement record's seconds per trial (total and slowest path), its
       gate results per trial, and the screen's reference vectors (S8).
@@ -22,14 +22,23 @@ bytes); this script only parses arguments.
 
 from __future__ import annotations
 
-import argparse
-import json
+import os
 import sys
+import tempfile
 from pathlib import Path
-from typing import BinaryIO
 
+# S16S-1: the pinned runtime and no bytecode, as d19_run.py, before NumPy or
+# any engine module is imported (workers re-run these lines on import)
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_CORETYPE"] = "Haswell"
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "src")]
+sys.dont_write_bytecode = True
+sys.pycache_prefix = tempfile.mkdtemp(prefix="d19-no-bytecode-")
+
+import argparse  # noqa: E402
+import json  # noqa: E402
+from typing import BinaryIO  # noqa: E402
 
 from calibration import screen  # noqa: E402
 from calibration.seeds import cj, sha  # noqa: E402
@@ -125,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
         print("MEASUREMENT", sha(record))
         return 0
     print(record["outcome"], sha(record))
-    return 0 if record["outcome"] == "VALID" else 2
+    return 0 if record["outcome"] == "SCREEN_AVAILABLE" else 2
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import functools
 import hashlib
 import json
 import math
+import os
 import random
 import sys
 from datetime import UTC, datetime, timedelta
@@ -1850,7 +1851,7 @@ def test_a_declaration_record_needs_the_checks_and_names_the_object(
         screen, "FROZEN_REFERENCE_VECTORS", screen.screen_reference_vectors()
     )
     record = screen.declare([trial], tmp_path, tmp_path, "f" * 64, tmp_path, workers=1)
-    assert record["outcome"] == "VALID"
+    assert record["outcome"] == "SCREEN_AVAILABLE"
     assert record["qualification_object_sha256"] == "f" * 64
     assert "measurement_only" not in record and "availability" not in record
     assert all("seconds" not in r for r in record["runs"])
@@ -1874,27 +1875,71 @@ def test_a_declaration_record_needs_the_checks_and_names_the_object(
 def test_check_object_verifies_every_manifest_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # S7-R7: choices.json and every other listed file, not three of them
+    # S7-R7: choices.json and every other listed file, not three of them;
+    # S16S-2: a qualifying report and a freeze record, as d19_heldout's gate
     from calibration import mapping
 
+    def write(files: dict[str, bytes]) -> str:
+        for name, data in files.items():
+            (tmp_path / name).write_bytes(data)
+        manifest = {n: hashlib.sha256(d).hexdigest() for n, d in files.items()}
+        (tmp_path / "manifest.json").write_bytes(json.dumps(manifest).encode())
+        return sha(manifest)
+
+    defn = {"prereg_sha256": hashlib.sha256(b"p").hexdigest()}
     files = {
-        "definition.json": b"{}",
+        "definition.json": json.dumps(defn).encode(),
         "mapping.py": b"m",
         "screen.py": b"s",
-        "choices.json": b"c",
+        "choices.json": b'{"qualifies": true, "margin_ok": true}',
+        "freeze.json": b"{}",
+        "preregistration.md": b"p",
     }
-    for name, data in files.items():
-        (tmp_path / name).write_bytes(data)
-    manifest = {n: hashlib.sha256(d).hexdigest() for n, d in files.items()}
-    (tmp_path / "manifest.json").write_bytes(json.dumps(manifest).encode())
+    posted = write(files)
     monkeypatch.setattr(screen, "check_screen_code", lambda *a: None)
     monkeypatch.setattr(mapping, "check_runtime", lambda defn: None)
-    assert screen.check_object(tmp_path, sha(manifest), tmp_path) == {}
+    assert screen.check_object(tmp_path, posted, tmp_path) == defn
+    posted = write({**files, "preregistration.md": b"other"})
+    with pytest.raises(ValueError, match="preregistration"):
+        screen.check_object(tmp_path, posted, tmp_path)
+    posted = write(files)
     (tmp_path / "choices.json").write_bytes(b"changed")
     with pytest.raises(ValueError, match="choices.json"):
-        screen.check_object(tmp_path, sha(manifest), tmp_path)
+        screen.check_object(tmp_path, posted, tmp_path)
     with pytest.raises(ValueError, match="posted"):
         screen.check_object(tmp_path, "0" * 64, tmp_path)
+    for report in (b'{"qualifies": false, "margin_ok": true}', b'{"qualifies": true}'):
+        posted = write({**files, "choices.json": report})
+        with pytest.raises(ValueError, match="does not qualify"):
+            screen.check_object(tmp_path, posted, tmp_path)
+    (tmp_path / "freeze.json").unlink()
+    posted = write({n: d for n, d in files.items() if n != "freeze.json"})
+    with pytest.raises(ValueError, match="no freeze.json"):
+        screen.check_object(tmp_path, posted, tmp_path)
+
+
+def test_the_cli_starts_on_the_pinned_runtime_without_bytecode() -> None:
+    # S16S-1: declare's bytecode and runtime checks hold in the CLI's process
+    import subprocess
+
+    script = Path(__file__).parents[2] / "scripts" / "d19_screen.py"
+    code = (
+        "import importlib.util as iu, os, sys\n"
+        f"spec = iu.spec_from_file_location('cli', {str(script)!r})\n"
+        "spec.loader.exec_module(iu.module_from_spec(spec))\n"
+        "from calibration import dsr, rundef\n"
+        "print(rundef.bytecode_problem())\n"
+        "print(all(os.environ[k] == v for k, v in dsr.V_ENVIRONMENT.items()))\n"
+    )
+    env = {k: v for k, v in os.environ.items() if not k.startswith("OPENBLAS")}
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    assert out == ["None", "True"]
 
 
 def test_the_cli_pilot_needs_twenty_trials_and_never_overwrites(

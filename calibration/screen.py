@@ -1698,8 +1698,11 @@ def spearman_ic(predictions: Sequence[float], targets: Sequence[float]) -> float
 #   interface refuses (`TrialError`), including trial code that does not load
 #   from its declared bytes, refuses the whole screen before any run: every
 #   trial's code is loaded and checked first (S7-R6).
-# - DR-4 A declaration's outcome is `VALID` iff every recorded gate result is
-#   available or a frozen N/A; otherwise `INVALID` (P18-1). No `m` is spent.
+# - DR-4 A declaration's screen outcome is `SCREEN_AVAILABLE` iff every
+#   recorded gate result is available or a frozen N/A; otherwise `INVALID`
+#   (P18-1). No `m` is spent. `SCREEN_AVAILABLE` is necessary, not sufficient
+#   (S16S-4): the declaration itself must still check §1's |J_f| and `g`,
+#   the §3.6 mapping and §12 item 2's measured-cost feasibility.
 # - DR-5 The record holds the inputs and their hashes, every run's gate
 #   results, the screen's reference vectors and `screen_sha256`, this file's
 #   bytes; a declaration record adds the outcome and the posted
@@ -1798,10 +1801,23 @@ def check_object(obj: Path, posted_sha256: str, root: Path) -> dict[str, Any]:
         if hashlib.sha256(data).hexdigest() != digest:
             raise ValueError(f"{name} does not match the object's manifest")
         files[name] = data
-    for name in ("definition.json", "mapping.py", "screen.py"):
+    for name in (
+        "choices.json",
+        "definition.json",
+        "freeze.json",
+        "mapping.py",
+        "preregistration.md",
+        "screen.py",
+    ):
         if name not in files:
             raise ValueError(f"the object has no {name}")
+    report = json.loads(files["choices.json"])  # S16S-2: as d19_heldout's gate
+    if not (report.get("qualifies") is True and report.get("margin_ok") is True):
+        raise ValueError("the object's method does not qualify")
     defn: dict[str, Any] = json.loads(files["definition.json"])
+    prereg = hashlib.sha256(files["preregistration.md"]).hexdigest()
+    if prereg != defn.get("prereg_sha256"):  # S16S-2: as qobj's builder
+        raise ValueError("the preregistration is not the run definition's")
     check_screen_code(
         defn,
         root,
@@ -1990,7 +2006,9 @@ def declare(
         del r["seconds"]  # timing is measurement evidence, not declared
     del record["measurement_only"]
     record["qualification_object_sha256"] = posted_sha256
-    record["outcome"] = (
-        "VALID" if record.pop("availability") == "ALL_AVAILABLE" else "INVALID"
+    record["outcome"] = (  # S16S-4: screen availability, not a valid declaration
+        "SCREEN_AVAILABLE"
+        if record.pop("availability") == "ALL_AVAILABLE"
+        else "INVALID"
     )
     return record
