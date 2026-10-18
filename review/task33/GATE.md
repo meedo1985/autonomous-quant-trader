@@ -25,9 +25,9 @@ Out of scope and untouched: the paper app, governor, execution, protocol, frozen
 | Criterion | Evidence |
 |---|---|
 | Every panel renders on synthetic files | `test_every_panel_renders_with_its_labels` |
-| Four states, never a crash, nothing invented; concurrent append and corrupt record | `test_the_four_states`, `test_missing_inputs_show_no_data_never_numbers` |
-| Red for a stale report, a stale bar, a refusal | `test_health_is_red` (3 cases) |
-| Malicious strings escaped and inert | `test_file_text_is_escaped`; CSP `default-src 'none'` |
+| Four states, never a crash, nothing invented; concurrent append and corrupt record | `test_the_four_states`, `test_each_input_shows_its_own_state` (pending reports, torn incident ledger, unreadable bars), `test_a_malformed_complete_report_is_invalid_not_a_crash` (4 shapes), `test_missing_inputs_show_no_data_never_numbers` (T33-1, T33-4) |
+| Red for a stale or future report, a stale bar, a refusal; governor refusals shown | `test_health_is_red` (3 cases), `test_future_report_is_red`, `test_governor_refusals_are_shown_not_red` (T33-2) |
+| Malicious strings escaped and inert | `test_file_text_is_escaped` (text), `test_attribute_text_is_escaped` (SVG attribute, T33-4); CSP `default-src 'none'` |
 | Staged and renamed; no partial page | `test_build_renames_a_finished_page_into_place` |
 | "As of" shown; a stopped generator keeps its time | same test, and the page header |
 | `L-02` raw, effective, method, reason; fallback labelled; no date | `test_every_panel_renders_with_its_labels`, `test_fallback_count_is_labelled` |
@@ -46,7 +46,7 @@ Out of scope and untouched: the paper app, governor, execution, protocol, frozen
 | `ruff check .` | exit 0 |
 | `mypy src` | exit 0, no issues in 54 files; `mypy src/aqt/dashboard.py scripts/dashboard.py` exit 0 |
 | `lint-imports` | exit 0, 7 contracts kept |
-| `pytest tests/unit/test_dashboard.py` | exit 0, 11 passed |
+| `pytest tests/unit/test_dashboard.py` | exit 0, 11 passed; after the T33 repairs, 20 passed |
 | `pytest --ignore-glob="tests/unit/test_calibration_*"` | exit 0, 1804 passed, 9 skipped |
 | CI YAML parses | `yaml.safe_load` ok |
 
@@ -64,7 +64,7 @@ No file under `docs/`, `protocols/`, `schemas/`, `specs/` and no `FROZEN_HASHES.
 | G33-2 | NON-BLOCKING | The incidents panel shows raw payload JSON (escaped); readable, not pretty. |
 | G33-3 | BLOCKER, repaired | **Found by the CI dry run, not by any review.** At `97a4160` the check printed `FAIL cannot read /etc/aqt/telegram` (run 39118454935; the other 10 checks PASS). `InaccessiblePaths=` mounts a mode-000 node, and `CAP_DAC_READ_SEARCH`, the unit's one capability, bypasses file modes. So the proposal's setting (section 2) did not hide the token. Repair: `TemporaryFileSystem=/etc/aqt:ro` plus `BindReadOnlyPaths=/etc/aqt/deployments.jsonl`: inside the unit the token file does not exist. This deviates from the setting the proposal names; its stated boundary ("cannot read the credential") is unchanged, and the CI check now tests it. |
 | G33-4 | BLOCKER, repaired | Found by the CI dry run at `c1e4b3e`: `SystemCallFilter=` kills a process that makes a filtered call (the check's `io_uring_setup` probe dumped core). Repair: `SystemCallErrorNumber=EPERM`, so the call fails cleanly. |
-| G33-5 | NON-BLOCKING, disclosed | The capability reads every file visible in the unit, for example `/etc/shadow`. The proposal claims no more ("not: it can read only the input files"); nothing can leave, because the unit has no socket but the journal's, and the code writes only the page. |
+| G33-5 | NON-BLOCKING, disclosed (narrowed after T33-5) | The capability reads every file visible in the unit, for example `/etc/shadow`. The proposal claims no more ("not: it can read only the input files"). The code reads only the listed inputs, and the unit has no socket but the journal's. But the page itself leaves the server by design, and it shows incident payloads (escaped). A secret that the app wrote into an incident would appear in the copy. The tested boundary is the token file only. |
 
 ## Sandbox on Linux (CI `runbook-dry-run`, run 39118571234, commit `6eb05e6`, Ubuntu 24.04)
 

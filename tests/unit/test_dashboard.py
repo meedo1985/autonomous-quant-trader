@@ -197,3 +197,77 @@ def test_sandbox_check_reports_each_boundary(tmp_path: Path) -> None:
     assert not (tmp_path / ".aqt-dashboard-check").exists()
     assert results["cannot open a socket (inet)"] is False
     assert "io_uring_setup is refused" in results
+
+
+def test_future_report_is_red(tmp_path: Path) -> None:
+    # T33-2: a clock or file from the future is not healthy
+    data, record = _server(tmp_path, report_at=NOW + timedelta(hours=1))
+    assert "<section class=red><h2>Health" in dashboard.render(data, record, NOW)
+
+
+def test_governor_refusals_are_shown_not_red(tmp_path: Path) -> None:
+    # T33-2 (partly agreed): the governor refusing is the governor working
+    data, record = _server(tmp_path)
+    page = dashboard.render(data, record, NOW)
+    assert "Governor refusals in the last step: 2" in page
+    assert "class=red" not in page
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"at": NOW.isoformat(), "l02": {}, "report": None},
+        {
+            "at": NOW.isoformat(),
+            "l02": {},
+            "report": {"governor_refusals": {"cap": "2"}},
+        },
+        {"at": "yesterday", "l02": {}, "report": {}},
+        [1, 2],
+    ],
+)
+def test_a_malformed_complete_report_is_invalid_not_a_crash(
+    tmp_path: Path, bad: object
+) -> None:
+    # T33-1
+    data, record = _server(tmp_path)
+    with (data / dashboard.REPORTS).open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(bad) + "\n")
+    page = dashboard.render(data, record, NOW)
+    assert "reports: invalid line 3" in page
+    assert "<section class=red><h2>Health" in page
+    assert "Raw decisions" not in page
+
+
+def test_each_input_shows_its_own_state(tmp_path: Path) -> None:
+    # T33-4: pending reports, a torn incident ledger, unreadable bars
+    data, record = _server(tmp_path)
+    with (data / dashboard.REPORTS).open("a", encoding="utf-8") as handle:
+        handle.write('{"at": "2026')
+    with (data / dashboard.INCIDENTS).open("ab") as handle:
+        handle.write(b'{"entry_hash"')
+    (data / dashboard.BARS).unlink()
+    (data / dashboard.BARS).mkdir()  # reading a directory fails: unreadable
+    page = dashboard.render(data, record, NOW)
+    assert "reports: pending last line is still being written" in page
+    assert "incidents: pending" in page
+    assert "bars: invalid unreadable" in page
+    assert "Raw decisions 5" in page  # complete rows before the pending line
+
+
+def test_attribute_text_is_escaped(tmp_path: Path) -> None:
+    # T33-4: an asset name lands in an SVG attribute
+    data, record = _server(tmp_path)
+    row = _report(NOW)
+    row["report"]["final_balances"] = {'X" onload="alert(1)': "1"}
+    _lines(data / dashboard.REPORTS, [row])
+    page = dashboard.render(data, record, NOW)
+    assert 'onload="alert' not in page
+    assert "X&quot; onload=&quot;alert(1) balance" in page
+
+
+def test_panels_show_their_data_time(tmp_path: Path) -> None:
+    # T33-3
+    data, record = _server(tmp_path)
+    page = dashboard.render(data, record, NOW)
+    assert page.count(f"Latest values from the report at {NOW.isoformat()}") == 2

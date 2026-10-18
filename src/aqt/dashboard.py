@@ -52,11 +52,45 @@ class Source:
     note: str = ""
 
 
-def read_jsonl(path: Path) -> Source:
+def report_problem(row: object) -> str | None:
+    """Why a forward report row cannot be shown, or None (T33-1)."""
+    if not isinstance(row, dict):
+        return "not a JSON object"
+    if _when(row.get("at")) is None:
+        return "'at' is not a time with a zone"
+    step, count = row.get("report"), row.get("l02")
+    if not isinstance(step, dict) or not isinstance(count, dict):
+        return "'report' or 'l02' is not an object"
+    for key, kind in (
+        ("final_balances", dict),
+        ("governor_refusals", dict),
+        ("refused", list),
+    ):
+        if not isinstance(step.get(key, kind()), kind):
+            return f"'{key}' is not a {kind.__name__}"
+    refusals = step.get("governor_refusals", {})
+    if not all(type(n) is int for n in refusals.values()):
+        return "'governor_refusals' holds a non-integer"
+    return None
+
+
+def bar_problem(row: object) -> str | None:
+    """Why a bar store row cannot be shown, or None; a row without
+    `open_time` (a gap record) is kept and not shown."""
+    if not isinstance(row, dict):
+        return "not a JSON object"
+    if "open_time" in row and _when(row["open_time"]) is None:
+        return "'open_time' is not a time with a zone"
+    return None
+
+
+def read_jsonl(
+    path: Path, problem: Callable[[object], str | None] = lambda row: None
+) -> Source:
     """Complete, newline-terminated JSON rows of `path` (DB-4). An
     unterminated last line is a write in progress: the rows before it are
-    kept and the source is pending. Any unparsable complete line makes the
-    whole source invalid."""
+    kept and the source is pending. Any unparsable complete line, or a row
+    `problem` refuses, makes the whole source invalid (T33-1)."""
     try:
         data = path.read_bytes()
     except FileNotFoundError:
@@ -69,6 +103,10 @@ def read_jsonl(path: Path) -> Source:
         rows = tuple(json.loads(line) for line in lines)
     except ValueError as error:  # JSON and UTF-8 errors alike
         return Source(INVALID, note=f"not valid JSON lines: {error}")
+    for number, row in enumerate(rows, 1):
+        why = problem(row)
+        if why is not None:
+            return Source(INVALID, note=f"line {number}: {why}")
     if tail:
         return Source(PENDING, rows, "last line is still being written")
     return Source(VALID, rows) if rows else Source(ABSENT, note="empty")
@@ -125,19 +163,22 @@ def _state(source: Source, label: str) -> str:
 
 def health(reports: Source, bars: Source, now: datetime) -> tuple[bool, str]:
     """DB-5: the last reported step, its age and the last bar's age. Red on a
-    stale report, a stale bar, a reported refusal, or unknown data."""
-    last = reports.rows[-1] if reports.rows else None
-    step = last.get("report", {}) if isinstance(last, dict) else {}
-    at = _when(last.get("at")) if isinstance(last, dict) else None
-    bar_rows = [r for r in bars.rows if isinstance(r, dict) and "open_time" in r]
+    stale or future report or bar (T33-2), a reported refusal, or unknown
+    data. Rows are already checked by `report_problem` and `bar_problem`.
+    Governor refusals are shown, not red: they are the governor working."""
+    last = reports.rows[-1] if reports.rows else {"report": {}}
+    step = last["report"]
+    at = _when(last.get("at"))
+    bar_rows = [r for r in bars.rows if "open_time" in r]
     opened = _when(bar_rows[-1]["open_time"]) if bar_rows else None
     closed = opened + timedelta(hours=1) if opened else None
     refused = step.get("refused") or []
+    governor = sum(step.get("governor_refusals", {}).values())
     red = (
         at is None
         or closed is None
-        or now - at > STALE
-        or now - closed > STALE
+        or not timedelta(0) <= now - at <= STALE
+        or not timedelta(0) <= now - closed <= STALE
         or bool(refused)
     )
     body = (
@@ -147,7 +188,7 @@ def health(reports: Source, bars: Source, now: datetime) -> tuple[bool, str]:
         f"<p>Age of the last report: {_e(_age(now, at))}. "
         f"Age of the last bar (since its close): {_e(_age(now, closed))}.</p>"
         f"<p>Refusals in the last step: {_e(', '.join(map(str, refused)) or 'none')}"
-        "</p>"
+        f". Governor refusals in the last step: {_e(governor)}.</p>"
     )
     return red, body
 
@@ -175,26 +216,27 @@ def balances(reports: Source) -> str:
     """DB-6: each asset on its own scale, with its unit; no equity line."""
     series: dict[str, list[float]] = {}
     for row in reports.rows:
-        held = (
-            row.get("report", {}).get("final_balances", {})
-            if isinstance(row, dict)
-            else {}
-        )
-        for asset, amount in held.items() if isinstance(held, dict) else ():
+        for asset, amount in row["report"].get("final_balances", {}).items():
             number = _number(amount)
             if number is not None:
                 series.setdefault(str(asset), []).append(number)
     if not series:
         return "<p>no data</p>"
-    return "".join(_spark(values, asset) for asset, values in sorted(series.items()))
+    return _data_time(reports) + "".join(
+        _spark(values, asset) for asset, values in sorted(series.items())
+    )
+
+
+def _data_time(reports: Source) -> str:
+    """T33-3: the time of the report a panel's latest values come from."""
+    return f"<p>Latest values from the report at {_e(reports.rows[-1]['at'])}.</p>"
 
 
 def l02(reports: Source) -> str:
     """DB-7, DBR-1: counts, method and reason; no completion date."""
-    last = reports.rows[-1] if reports.rows else None
-    count = last.get("l02") if isinstance(last, dict) else None
-    if not isinstance(count, dict):
+    if not reports.rows:
         return "<p>no data</p>"
+    count = reports.rows[-1]["l02"]
     method = count.get("method")
     note = (
         "<p>This count uses the fallback method. It is not the same quantity "
@@ -202,7 +244,7 @@ def l02(reports: Source) -> str:
         if method == FALLBACK
         else ""
     )
-    return (
+    return _data_time(reports) + (
         f"<p>Raw decisions {_e(count.get('raw_decisions'))}; effective decisions "
         f"{_e(count.get('effective_decisions'))} of the {_e(count.get('target'))} "
         f"needed; method {_e(method)}; reason {_e(count.get('reason') or 'none')}."
@@ -214,11 +256,10 @@ def activity(reports: Source) -> str:
     """DB-8: totals per reported step, newest first."""
     rows = []
     for row in reversed(reports.rows[-SHOWN:]):
-        step = row.get("report", {}) if isinstance(row, dict) else {}
-        refusals = step.get("governor_refusals", {})
-        total = sum(refusals.values()) if isinstance(refusals, dict) else "?"
+        step = row["report"]
+        total = sum(step.get("governor_refusals", {}).values())
         cells = (
-            row.get("at") if isinstance(row, dict) else "?",
+            row["at"],
             step.get("hours"),
             step.get("scheduled_decisions"),
             step.get("authorizations"),
@@ -264,8 +305,8 @@ def code_identity(source: Source) -> str:
 
 def render(data: Path, deployments: Path, now: datetime) -> str:
     """The whole page, computed as of `now` (DBR-2)."""
-    reports = read_jsonl(data / REPORTS)
-    bars = read_jsonl(data / BARS)
+    reports = read_jsonl(data / REPORTS, report_problem)
+    bars = read_jsonl(data / BARS, bar_problem)
     incident_log = read_ledger(data / INCIDENTS)
     record = read_ledger(deployments)
     red, health_body = health(reports, bars, now)
