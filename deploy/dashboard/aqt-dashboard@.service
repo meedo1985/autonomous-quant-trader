@@ -18,7 +18,11 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/var/lib/aqt-dashboard
-InaccessiblePaths=-/etc/aqt/telegram
+# /etc/aqt is an empty read-only directory inside the unit, with only the
+# deployment record mounted back: the token is not there at all. A mode-000
+# InaccessiblePaths= mount would not hide it from CAP_DAC_READ_SEARCH.
+TemporaryFileSystem=/etc/aqt:ro
+BindReadOnlyPaths=/etc/aqt/deployments.jsonl
 PrivateDevices=yes
 PrivateTmp=yes
 ProtectKernelTunables=yes

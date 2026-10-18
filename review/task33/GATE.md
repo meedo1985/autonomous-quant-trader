@@ -62,5 +62,8 @@ No file under `docs/`, `protocols/`, `schemas/`, `specs/` and no `FROZEN_HASHES.
 |---|---|---|
 | G33-1 | NON-BLOCKING | `_io_uring_refused` uses the x86-64 syscall number 425; the server is x86-64 (Haswell probe). On another architecture the check would test the wrong call. |
 | G33-2 | NON-BLOCKING | The incidents panel shows raw payload JSON (escaped); readable, not pretty. |
+| G33-3 | BLOCKER, repaired | **Found by the CI dry run, not by any review.** At `97a4160` the check printed `FAIL cannot read /etc/aqt/telegram` (run 39118454935; the other 10 checks PASS). `InaccessiblePaths=` mounts a mode-000 node, and `CAP_DAC_READ_SEARCH`, the unit's one capability, bypasses file modes. So the proposal's setting (section 2) did not hide the token. Repair: `TemporaryFileSystem=/etc/aqt:ro` plus `BindReadOnlyPaths=/etc/aqt/deployments.jsonl`: inside the unit the token file does not exist. This deviates from the setting the proposal names; its stated boundary ("cannot read the credential") is unchanged, and the CI check now tests it. |
+| G33-4 | BLOCKER, repaired | Found by the CI dry run at `c1e4b3e`: `SystemCallFilter=` kills a process that makes a filtered call (the check's `io_uring_setup` probe dumped core). Repair: `SystemCallErrorNumber=EPERM`, so the call fails cleanly. |
+| G33-5 | NON-BLOCKING, disclosed | The capability reads every file visible in the unit, for example `/etc/shadow`. The proposal claims no more ("not: it can read only the input files"); nothing can leave, because the unit has no socket but the journal's, and the code writes only the page. |
 
 **LOCAL GATE:** local checks PASS; the sandbox claims wait for the CI dry run on the PR.
