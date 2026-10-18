@@ -1,0 +1,7 @@
+# Review prompt: D-19 screen slice S3 (trial interface) at 40d1402
+
+You are an independent adversarial reviewer working read-only, not an authority. Everything is attached; if your shell works you may read the repository at 40d1402 and run `python -m pytest -q tests/unit/test_calibration_screen.py`, but do not modify files.
+
+Check the S3 part of `calibration/screen.py` (from "S3: the trial interface") against Annex C rev 4 C-10 (1)-(2) (declared mapping, `s_inputs`, the REG (A) ban and its required falsifier test, sizing, overlay, `g11_class`), C-12 (1) and (8) (G-14 applicability, model classes), C-8 (G-8 grid), DRAFT §2.5, and the frozen protocol lines attached (exposure mapping, allowed estimators, vol target grid, model classes, horizons, feature factory). Assess readings TI-1..TI-7: faithful, and is any alternative materially different? Look for: a declaration the interface accepts that the text forbids (or refuses one it allows); a way `σ̂` or an identical feature could reach `s` through the interface (other than the disclosed deliberate rebuild); weaknesses in `load` (hash of a different file than the one imported, a cached module, a package `__init__`); hash ambiguity in `trial_sha256` / `trial_set_sha256`; anything later slices (C-6 runs, G-8, G-11, G-14) will need that the interface cannot express; and whether the tests would catch a broken implementation. Out of scope: S1 (accepted), the C-6 runner and the gates themselves.
+
+Verdict ACCEPT or FIX. Findings get stable IDs S3-Rn with severity, file:line and a concrete failure scenario.

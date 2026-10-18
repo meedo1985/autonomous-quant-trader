@@ -1,0 +1,9 @@
+# Review prompt: D-19 screen slice S2 (C-6 event contract) at the head carrying this prompt
+
+You are an independent adversarial reviewer working read-only, not an authority. This is a §16 review of protected backtester code. Everything is attached; if your shell works you may read the repository and run `python -m pytest -q tests/unit/test_event_contract.py`, but do not modify files.
+
+Check `src/aqt/backtest/event_contract.py` against Annex C rev 4 C-6 (all clauses), C-7 (1) (G-7 execution delay), C-5 (2x cost), the frozen BACKTESTER_SPEC_v1 and COST_MODEL_v1, and the Cycle-1 backtester it must agree with at delay 0 (`aqt.backtest.engine.run_backtest`, `aqt.benchmarks.canonical.rebalance`, `aqt.backtest.costs`). Assess readings EC-1..EC-3. Look for: any departure from the C-6 order of steps (fill due orders, then decide against held, then order, then drop at the end); the band, 00:00 and 24 h rules; the reduction-to-0 exception; the reduction clamp and "increase fills as ordered"; when the clock is set and to what instant; drift between fills; cost timing under delay (sigma at the decision, fee at the fill, as `costs.trade_cost`); off-by-one errors in instants, fills or segment returns; and whether the tests (an exact identity with the Cycle-1 backtester at delay 0, one test per rule) would catch a broken implementation. Also judge the placement: a new module in `src/aqt/backtest/` that nothing in the paper app or Cycle-1 backtester calls, intended to be merged before the D-19 full run's definition so the engine commit binds it (`SCREEN_PLAN.md` section 3).
+
+Out of scope: S1, S3, S5 (accepted); the feature delay of G-6, the gates themselves and the overlay (later slices).
+
+Verdict ACCEPT or FIX. Findings get stable IDs S2-Rn with severity, file:line and a concrete failure scenario.

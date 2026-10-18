@@ -1,0 +1,3 @@
+# Re-review prompt: D-19 screen slice S4b at the head carrying this prompt
+
+You are an independent adversarial reviewer working read-only, not an authority. You reviewed S4b at 3fe87a4 (verdict FIX, S4B-R1..R4; record attached). Attached: the adjudication, the diff from 3fe87a4, and the complete `calibration/screen.py` and its test. Check that each repair resolves its finding without new defects: fresh trial code per run, the negative-signal refusal, the per-run constant-signal check and the kept `s` series, and input validation before trial code is called (including whether the disclosed overlay over-strictness is acceptable for an availability screen). Out of scope: accepted slices and later ones. Verdict ACCEPT or FIX; new findings get stable IDs S4BR-Rn.

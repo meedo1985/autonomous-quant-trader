@@ -1,0 +1,7 @@
+# Review prompt: D-19 screen slice S6 design (walk-forward models and G-14), before any code
+
+You are an independent adversarial reviewer working read-only, not an authority. No code exists yet; review the design `SCREEN_S6_DESIGN.md` (attached) against the frozen protocol (target l.103-110, models l.153-175, validation l.196-214, trial accounting), Annex C rev 4 C-7 (2), C-10 (1), C-12, DRAFT rev 9 §2.5 and the owner decisions attached (S3R-R3: G-14 applies to logistic sign models; WF-4: the sizing-estimator ban covers model inputs, decided 2026-10-17).
+
+For each reading WF-1..WF-8: is it faithful, is any alternative materially different, and is anything that C-12 or the protocol requires missing? In particular: WF-3's recommendation to use the cycle constant `gap_embargo.value_days` as the walk-forward embargo instead of a per-window ACF cutoff; WF-2's schedule (first refit at `w0`, every 30 days, training on the previous 730 days); the purge rule; WF-5's class mapping and the parameters a declaration may set; WF-6's emission and G-6 lag of model inputs; WF-7's draw, offset and IC definitions; and whether the cost estimate in section 3 is right in kind. Say which items are genuinely the owner's to decide and which are drafting choices.
+
+Verdict READY (build S6a as designed, with any listed conditions) or NOT READY. Findings get stable IDs S6D-Rn with severity and a concrete scenario.

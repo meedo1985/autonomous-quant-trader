@@ -176,6 +176,82 @@ def test_a_qualifying_run_gives_an_object_hashed_by_its_manifest(
     assert not out.with_name(out.name + ".partial").exists()  # QO-7: renamed
 
 
+def test_a_reader_accepts_a_built_object_and_refuses_a_lesser_one(
+    tmp_path: Path, fakes: None
+) -> None:
+    # S16SR-1: qobj.read re-checks the builder's refusals from the files
+    kwargs = _setup(tmp_path)
+    qobj.build(**kwargs)
+    out = kwargs["out"]
+    names = json.loads((out / "manifest.json").read_bytes())
+    files = {n: (out / n).read_bytes() for n in names}
+    report, defn = qobj.read(files)
+    assert report["qualifies"] is True and defn["prereg_sha256"]
+    assert set(json.loads(files["freeze.json"])) == qobj.FREEZE_KEYS  # S16SR3-1
+
+    def changed(name: str, **items: object) -> dict[str, bytes]:
+        return {**files, name: cj({**json.loads(files[name]), **items})}
+
+    def without(name: str, key: str) -> dict[str, bytes]:
+        content = json.loads(files[name])
+        del content[key]
+        return {**files, name: cj(content)}
+
+    keys = json.loads(files["choices.json"])["chain_heads"]
+    freeze = json.loads(files["freeze.json"])
+    late = int(datetime.fromisoformat(freeze["threshold_started"]).timestamp()) + 1
+    spaced = freeze["threshold_started"].replace("T", " ")
+
+    minimal = {  # the shape the screen's reader used to accept
+        "definition.json": files["definition.json"],
+        "mapping.py": b"m",
+        "screen.py": b"s",
+        "preregistration.md": files["preregistration.md"],
+        "choices.json": b'{"qualifies": true, "margin_ok": true}',
+        "freeze.json": b"{}",
+    }
+    cell = CELL["cell_id"]
+    for bad, why in (
+        (minimal, "files are not"),
+        (changed("choices.json", m=2, tests=[]), "test manifest"),
+        (changed("choices.json", cells={cell: {"status": "odd"}}), "known status"),
+        (changed("choices.json", margin_ok=False), "does not qualify"),
+        (changed("freeze.json", allocation={}), "allocation"),
+        (changed("freeze.json", definition_sha256="0" * 64), "freeze"),
+        ({**files, "preregistration.md": b"other"}, "preregistration"),
+        # S16SR2-1: a head per manifest chain, each a digest, none genesis
+        (changed("choices.json", chain_heads={}), "chain head"),
+        (changed("choices.json", chain_heads=dict.fromkeys(keys, "x")), "chain head"),
+        (changed("choices.json", chain_heads=dict.fromkeys(keys, "0" * 64)), "head"),
+        # S16SR2-2, S16SR3-1: the freeze's fields exactly as build writes them
+        (without("freeze.json", "host_provenance_sha256"), "fields are not"),
+        (without("freeze.json", "definition_commit"), "fields are not"),
+        (without("freeze.json", "threshold_started"), "fields are not"),
+        (without("freeze.json", "definition_committed_unix"), "fields are not"),
+        (changed("freeze.json", extra=1), "fields are not"),
+        (changed("freeze.json", host_provenance_sha256={}), "host provenance"),
+        (changed("freeze.json", definition_commit="abc1234"), "commit id"),
+        (changed("freeze.json", threshold_started="soon"), "start time"),
+        (changed("freeze.json", threshold_started=spaced), "as build writes"),
+        (changed("freeze.json", definition_committed_unix="1"), "before the threshold"),
+        (
+            changed("freeze.json", definition_committed_unix=late),
+            "before the threshold",
+        ),
+    ):
+        with pytest.raises(ValueError, match=why):
+            qobj.read(bad)
+
+
+def test_the_builder_needs_the_full_definition_commit(
+    tmp_path: Path, fakes: None
+) -> None:
+    kwargs = _setup(tmp_path)  # S16SR2-2: `read` refuses a short id
+    with pytest.raises(ValueError, match="full commit id"):
+        qobj.build(**{**kwargs, "definition_commit": kwargs["definition_commit"][:7]})
+    assert not kwargs["out"].exists()
+
+
 def _not_qualifying(k, p):  # type: ignore[no-untyped-def]
     report = json.loads((p / "choices.json").read_bytes())
     report["qualifies"] = False

@@ -1,0 +1,3 @@
+# Re-review 4 prompt: D-19 screen slice S8
+
+You are an independent adversarial reviewer working read-only, not an authority. Your re-review 3 at 893eaeb found S8R3-R1..R2 (record attached). Attached: the adjudication addendum, the diff of `d19.sh`, `PILOT_SCREEN.md`, the CI workflow and the launcher test since 893eaeb, and both owner-facing files. Check each finding is resolved without new defects (in particular: the lock cannot deadlock or be bypassed by a launcher command that starts an engine container; the slice count fails closed; step 0 runs correctly with the old launcher installed), and that the sheet's commit holds the repaired launcher. Verdict ACCEPT or FIX; new findings get stable IDs S8R4-Rn.

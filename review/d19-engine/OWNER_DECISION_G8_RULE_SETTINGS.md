@@ -1,0 +1,9 @@
+# Owner decision: G-8 covers a rule-based trial's numeric settings
+
+- Date: 2026-10-17
+- Context: screen slice S4c (G-8, Annex C rev 4 C-8). C-8 takes its dimensions from the frozen inclusion rule, protocol l.254-262: `tunable_dimensions: "model_or_estimator_parameters_only"`, `structural_dimensions: ["horizon", "vol_target", "sizing_estimator"]`. The text does not say whether a rule-based signal's own numeric parameters (for example a moving-average length) are "model or estimator parameters".
+- Asked (verbatim): "The plateau test (G-8) checks that a strategy's chosen setting isn't a lucky spike: settings next to it must do at least half as well, and the chosen setting can't sit at the edge of the tested range. The rules apply it to 'model or estimator parameters' and exclude the horizon and the volatility target. Should it also apply to a rule-based strategy's own settings, such as the length of a moving average?"
+- Options offered: "Yes, include rule settings (Recommended)": stricter, any tuned numeric setting except horizon and volatility target is checked; "No, model settings only": looser, rule-based trials without a model skip G-8.
+- Owner's answer, verbatim: "Yes, include rule settings (Recommended)"
+- Recorded meaning: in `calibration/screen.py` the ordered numeric tunable dimensions of C-8 are every numeric grid dimension of the trial's `parameter_point` (signal parameters and `model.<name>` parameters) except the structural ones (`tau`; `sigma`, the sizing estimator, which is categorical; the horizon is a top-level field, not a grid dimension). This is the screen's binding of C-8's dimension rule. It does not amend Annex C; if Annex C is revised before signing, this reading should be written into C-8.
+- Recorded by the AI from the owner's answer; the AI did not choose for the owner.

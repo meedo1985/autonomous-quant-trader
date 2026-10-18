@@ -1,0 +1,3 @@
+# Re-review prompt: D-19 screen slices S6a and S6b at the head carrying this prompt
+
+You are an independent adversarial reviewer working read-only, not an authority. You re-reviewed S6a (FIX, S6AR-R1) and reviewed S6b (FIX, S6B-R1..R3) at b00d59b; records attached. Attached: the adjudication, the owner's MR-1 decision, the diff from b00d59b, and the complete `calibration/screen.py`. The same commit adds S6c (G-14), which has its own review; judge here only S6AR-R1 and S6B-R1..R3: the warm-up type check, inference at every window decision through `walk_forward` / `model_column`, MR-1 recording the owner's decision, and the corrected warm-up bound in the design. Verdict ACCEPT or FIX; new findings get stable IDs S6ABR-Rn.

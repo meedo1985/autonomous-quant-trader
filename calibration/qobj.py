@@ -66,6 +66,18 @@ FREEZE_REVIEWS = "review/d19-engine/FREEZE_REVIEWS.json"
 REPORT = ("cells", "m", "tests", "targets", "family_block_rule", "z_crit",
           "final_thresholds", "cell_bounds", "alpha_s", "chain_heads")  # fmt: skip
 NAMESPACES = ("threshold", "dev")
+# freeze.json's fields, exactly as `build` writes them (S16SR3-1)
+FREEZE_KEYS = {"definition_sha256", "definition_commit", "definition_committed_unix",
+               "threshold_started", "host_provenance_sha256", "allocation"}  # fmt: skip
+
+
+def _hex(value: object, n: int) -> bool:
+    """`value` is `n` lowercase hex digits (a SHA-256 or a full commit id)."""
+    return (
+        isinstance(value, str)
+        and len(value) == n
+        and set(value) <= set("0123456789abcdef")
+    )
 
 
 def _git(root: Path, *args: str) -> bytes:
@@ -200,6 +212,101 @@ def _reviewed(root: Path, files: dict[str, bytes]) -> None:
             raise ValueError(f"BO-4: {name} has no committed review record")
 
 
+def read(files: dict[str, bytes]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """S16SR-1: what a reader can re-check of `build`'s refusals from the
+    object's own (manifest-checked) files, without the run's store: exactly
+    the built file set, a qualification run at the prescribed counts, the
+    preregistration and exploration manifest the definition names, every §4
+    report item with M tests of the cell manifest, one known status per unit,
+    a qualifying method, and the freeze's definition hash and allocation.
+    Returns (choices report, definition); ValueError otherwise."""
+    from calibration import choices, reduce  # noqa: PLC0415
+
+    built = set(ENGINE) | set(LATER)
+    built |= {"definition.json", "choices.json", "exploration_manifest.json"}
+    if set(files) != built | {"freeze.json"}:
+        raise ValueError("the object's files are not the qualification object's")
+    defn: dict[str, Any] = json.loads(files["definition.json"])
+    manifest_ = defn["cell_manifest"]
+    if manifest_.get("purpose") != "qualification":
+        raise ValueError("not a qualification run")
+    if manifest_.get("replications") != rundef.PRESCRIBED:
+        raise ValueError(f"not the prescribed counts {rundef.PRESCRIBED}")
+    prereg = hashlib.sha256(files["preregistration.md"]).hexdigest()
+    if prereg != defn["prereg_sha256"]:
+        raise ValueError("the preregistration is not the run definition's")
+    explore = json.loads(files["exploration_manifest.json"])
+    if explore.get("manifest_sha256") != defn["exploration_manifest_sha256"]:
+        raise ValueError("the exploration manifest is not the run definition's")
+    report: dict[str, Any] = json.loads(files["choices.json"])
+    if absent := [k for k in REPORT if k not in report]:
+        raise ValueError(f"choices.json lacks §4 items: {absent}")
+    cells = generator.cells_from_manifest(manifest_)
+    tests = choices.test_manifest([(c.cell_id, c.law) for c in cells])
+    if report["tests"] != tests or report["m"] != len(tests):
+        raise ValueError("the test manifest is not the cell manifest's")
+    units = {
+        u
+        for c in cells
+        for u in (
+            [f"{c.cell_id}/{f}" for f in reduce.FAMILIES]
+            if c.law == "semi-joint"
+            else [c.cell_id]
+        )
+    }
+    statuses = ("qualifying", "demoted_availability", "demoted_cap")  # choices.py
+    if set(report["cells"]) != units or any(
+        r.get("status") not in statuses for r in report["cells"].values()
+    ):
+        raise ValueError("choices.json needs one known status per manifest unit")
+    if not (report.get("qualifies") is True and report.get("margin_ok") is True):
+        raise ValueError("the method does not qualify (§5 step 6)")
+    freeze = json.loads(files["freeze.json"])
+    if not isinstance(freeze, dict) or set(freeze) != FREEZE_KEYS:  # S16SR3-1
+        raise ValueError("the freeze's fields are not the ones build writes")
+    final = {
+        u: r["held_out"]
+        for u, r in report["cells"].items()
+        if r["status"] == "qualifying"
+    }
+    if freeze.get("definition_sha256") != rundef.definition_sha256(defn):
+        raise ValueError("the freeze is not the run definition's")
+    # S16SR2-1, S16SR2-2: one digest per threshold and dev chain of the
+    # manifest, and the freeze's commit and times as build writes them; the
+    # digests themselves are checked against the store at the freeze
+    keys = {f"{ns}/{c.cell_id}" for c in cells for ns in NAMESPACES}
+
+    def digests(value: object) -> bool:
+        return (
+            isinstance(value, dict)
+            and set(value) == keys
+            and all(_hex(v, 64) for v in value.values())
+        )
+
+    heads = report["chain_heads"]
+    if not digests(heads) or chunks.GENESIS in heads.values():
+        raise ValueError("choices.json needs a chain head per manifest chain")
+    if not digests(freeze.get("host_provenance_sha256")):
+        raise ValueError("the freeze needs a host provenance hash per chain")
+    commit, when = (
+        freeze.get("definition_commit"),
+        freeze.get("definition_committed_unix"),
+    )
+    if not _hex(commit, 40):
+        raise ValueError("the freeze needs the definition's full commit id")
+    try:
+        started = datetime.fromisoformat(freeze["threshold_started"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("the freeze needs the threshold start time") from error
+    if started.isoformat() != freeze["threshold_started"]:  # S16SR3-1
+        raise ValueError("the threshold start time is not as build writes it")
+    if type(when) is not int or started.tzinfo is None or when >= started.timestamp():
+        raise ValueError("the freeze's commit time is not before the threshold start")
+    if freeze.get("allocation") != final or set(final.values()) - set(choices.HELD_OUT):
+        raise ValueError("the allocation is not the final cells' 20k/40k")
+    return report, defn
+
+
 def build(
     *,
     root: Path,
@@ -220,6 +327,8 @@ def build(
     run's); `root` is the checkout holding the later files. Refuses
     (ValueError) with nothing at `out`."""
     stage = out.with_name(out.name + ".partial")
+    if not _hex(definition_commit, 40):  # S16SR2-2: as `read` checks it
+        raise ValueError("definition_commit must be the full commit id")
     if out.exists() or stage.exists():
         raise ValueError(f"{out} or its staging directory already exists")
     data = definition.read_bytes()
