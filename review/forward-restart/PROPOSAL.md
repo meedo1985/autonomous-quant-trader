@@ -20,30 +20,40 @@ A start scheduled for 14:01:30 worked.
 
 So a start that fetches bars, finds a pending window and comes more than 5 minutes after the hour is refused. The owner must then start again inside the first 5 minutes of an hour.
 
-## 2. Proposed change (the smallest one)
+## 2. Proposed change (revised after Sol's review FR-1..FR-4)
 
-In `scripts/run_forward_paper.py` `main`, before the first step:
-- if the time now is later than **:04** past the hour (`STEP_OFFSET` plus a 3-minute margin, which stays below the 5-minute limit);
-- then log one INFO line, "waiting until HH:01 so the start check sees a fresh bar", and sleep until the next hour plus `STEP_OFFSET`;
-- then enter the loop exactly as today.
+In `scripts/run_forward_paper.py` `main`, after the deployment check and the Telegram channel set-up, and before the first step:
+- the service always waits until the next scheduled slot, the next hour plus `STEP_OFFSET` (:01);
+- it logs one INFO line: "waiting until HH:01 UTC for the first step";
+- it then enters the loop exactly as today.
 
-About 5 lines, plus a test.
+There is no cut-off minute to justify. A start at 14:00:30 waits 30 s; a start at 14:01:10 waits until 15:01 (FR-1, FR-2). Every first step then runs at the same moment as every normal hourly step. So its freshness margin is the one every step already has, not a new one.
 
-**What does not change:**
-- the 5-minute lag rule and every other start check (alert test, deployment approval, saved state, health);
-- the missed-hour `LOOP_LAG` report;
-- the replay of missed hours;
-- `--once` (a manual one-step run).
+About 5 lines, plus a test. `--once` (a manual one-step run) is unchanged and still runs at once.
 
-The wait happens **before** any check, so a start that should be refused for another reason is still refused, only up to an hour later.
+**A residual, not introduced by this change (FR-2).** `step()` takes `now` before fetching bars, and the lag check uses that time. A slow fetch is therefore measured as of before the fetch. This holds for every hourly step today; the change does not touch it. Reported here for completeness; not proposed now.
 
-## 3. Trade-offs, for the owner
+## 3. What changes and what does not, for the owner
 
-- **For:** a restart works at any minute; nobody has to time it. An outage costs at most one more waiting hour, and those hours are reported and replayed as today.
-- **Against:**
-  - A refusal for another reason (for example an overdue alert test) shows up only after the wait, up to an hour later, instead of at once.
-  - Mitigation, not proposed now: run the alert-test and deployment checks before waiting. That is a larger change to protected start-up code.
-- **Not considered:** raising `max_loop_lag_s`. That weakens a safety limit, which is an owner value in the deployment settings.
+**Rules that do not change:**
+- the 5-minute lag rule;
+- the alert-test, deployment, saved-state and health checks;
+- the `LOOP_LAG` missed-hour report;
+- the replay of missed hours.
+
+**Outcomes that do change (FR-4):**
+- The first step runs up to about an hour later.
+- It can therefore fetch one more bar, cover one more hour, and report one more missed hour, later.
+- The missed hours are still reported and replayed, never skipped.
+
+**When the owner sees a refusal (FR-3):**
+- **At once, before the wait:** the deployment approval check and the Telegram channel set-up (they run before it today).
+- **Only after the wait (up to about an hour):** everything reached through `run_step`. That is the alert-test check, the saved-state and refuse-marker checks, the health checks and the startup reconciliation.
+- **During the wait,** `systemctl status aqt-paper` shows **active (running)** and the log shows the "waiting until" line, although no step has run yet. So after a restart the owner checks the log after HH:03, not just the status.
+
+**Against:** a late refusal (for example an overdue alert test) is seen up to an hour later than today. Mitigation, not proposed now: run the alert-test check before the wait, which is a larger change to protected start-up code.
+
+**Not considered:** raising `max_loop_lag_s`. That weakens a safety limit, which is an owner value in the deployment settings.
 
 ## 4. Governance
 
@@ -58,4 +68,4 @@ The wait happens **before** any check, so a start that should be refused for ano
 
 ## 5. Question for the owner
 
-- **Q-R1.** Approve building this change (the start waits until :01 of the next hour when it is later than :04)?
+- **Q-R1.** Approve building this change (at start, the service always waits for the next :01 step)?
