@@ -114,7 +114,7 @@ jobs:
           echo '{"at": "2026-10-18T12:00:00+00:00", "l02": {"raw_decisions": 1}, "report": {"final_balances": {"USDT": "1000"}, "refused": []}}' | sudo -u aqt tee $D/forward/account-1/forward_reports.jsonl >/dev/null
           echo '{"open_time": "2026-10-18T11:00:00+00:00"}' | sudo -u aqt tee $D/live/BTCUSDT-1h.jsonl >/dev/null
           sudo -u aqt touch $D/forward/account-1/incidents.jsonl
-          sudo -u aqt chmod 600 $D/forward/account-1/* $D/live/*
+          sudo -u aqt sh -c "chmod 600 $D/forward/account-1/* $D/live/*"  # globbed as aqt
           sudo install -o aqt -g aqt -m 600 /dev/null /etc/aqt/telegram
           echo "not a real token" | sudo tee /etc/aqt/telegram >/dev/null
           ss -ltnH | sort > /tmp/ports.before
