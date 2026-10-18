@@ -85,8 +85,59 @@ Oct 18 13:05:22 aqt-server python[326490]: {"at":"2026-10-18T13:05:20.420605Z","
 Oct 18 13:05:23 aqt-server python[326490]: {"at":"2026-10-18T10:00:00.000000Z","fields":{"decision":"REFUSE_START","reason":"health check at start: LOOP_LAG {'lag_ms': 320420, 'max_lag_ms': 300000}"},"kind":"STARTUP","severity":"CRITICAL"}
 ```
 
-The owner then scheduled the start for 14:01:30 UTC (`systemd-run --on-calendar="2026-10-18 14:01:30 UTC" /usr/bin/systemctl start aqt-paper`). The owner reported, in his words: "all is done and woeks as you tell". No status output was pasted for this start, so it is recorded as the owner's report and not verified here.
+The owner then scheduled the start for 14:01:30 UTC:
 
-**Missed hours:** the quoted alerts name 10:00 and 11:00 as missed. By design (Task 29) every missed hour is reported as CRITICAL `LOOP_LAG` and run late, as a replay would run it, never skipped. That 10:00–13:00 were in fact all run is **not verified** here: no output of the 14:01:30 step was pasted (T33F-3). One report can cover several hours, so counting reports would not show it (T33FR-1). It is checked in the step cursor, `sudo tail -n 4 /var/lib/aqt/data/forward/account-1/forward_cursor.jsonl`: a `START` covering 10:00 to 14:00, then its matching `END` not refused.
+```
+root@aqt-server:/tmp# sudo systemd-run --on-calendar="2026-10-18 14:01:30 UTC" /usr/bin/systemctl start aqt-paper
+Running timer as unit: run-p326906-i328322.timer
+Will run service as unit: run-p326906-i328322.service
+root@aqt-server:/tmp# systemctl status aqt-paper --no-pager | head -3
+● aqt-paper.service - aqt forward paper trading
+     Loaded: loaded (/etc/systemd/system/aqt-paper.service; enabled; preset: enabled)
+     Active: active (running) since Sun 2026-10-18 14:01:43 UTC; 1min 44s ago
+```
+
+**Missed hours: run late and verified (T33F-3, T33FR-1, T33FR2-1).** The owner ran three read-only checks. Each one locates its records by time, not by position.
+
+**The step cursor**, `sudo grep '2026-10-18T1[0-4]' .../forward_cursor.jsonl | cut -c1-400`. Its payloads, with the hash fields left out (all 10 lines are in the owner's paste):
+
+| seq | recorded | payload |
+|---|---|---|
+| 642 | 10:01:00 | START `09:00`→`10:00` |
+| 643 | 10:01:00 | END refused false |
+| 644 | 11:01:00 | START `10:00`→`11:00` |
+| 645 | 11:01:00 | END refused **true** (alert test overdue) |
+| 646 | 12:38:41 | START `10:00`→`12:00` |
+| 647 | 12:38:41 | END refused **true** (lag) |
+| 648 | 13:05:20 | START `10:00`→`13:00` |
+| 649 | 13:05:20 | END refused **true** (lag) |
+| 650 | 14:01:44 | START `10:00`→`14:00` |
+| 651 | 14:01:44 | END **refused false** |
+
+**The reports** at 13:00–15:59, matched fields only:
+
+```
+"at": "2026-10-18T13:05:20.420605+00:00"
+"final_mode": "REFUSED"
+"hours": 3
+"refused": ["health check at start: LOOP_LAG {'lag_ms': 320420, 'max_lag_ms': 300000}"]
+"scheduled_decisions": 0
+"at": "2026-10-18T14:01:44.190723+00:00"
+"final_mode": "RUNNING"
+"hours": 4
+"refused": []
+"scheduled_decisions": 0
+```
+
+**The operation events** from 10:00 to 14:59, counted by kind:
+
+```
+      3 "kind":"LOOP_LAG"
+      2 "kind":"SHUTDOWN"
+      4 "kind":"STARTUP"
+      9 "record_type":"aqt.monitoring.event.v1"
+```
+
+So the 14:01:44 step ran the four hours from 10:00 to 13:00 in one window, without refusal, and the report it wrote after its cursor `END` shows `RUNNING` with 4 hours. There are 3 `LOOP_LAG` events, which fits the three late starts (12:38, 13:05, 14:01); the count alone does not tie each event to a start. No decision fell in these hours (`scheduled_decisions: 0`; the baseline decides at 00:00). The refused steps' journal state was not saved, so each later step started again at 10:00, as the cursor shows. No hour was skipped.
 
 **Finding F-RESTART (open, for an owner decision):** a manual start in the middle of an hour always refuses. A proposal (the start waits until the next hour's step) would change protected forward-paper code, so it needs the owner's approval, review and §16.
