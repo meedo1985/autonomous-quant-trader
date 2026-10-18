@@ -203,10 +203,9 @@ def health(reports: Source, bars: Source, now: datetime) -> tuple[bool, str]:
     return red, body
 
 
-def _spark(values: Sequence[float], unit: str) -> str:
-    """One inline SVG line; numbers only, already checked finite."""
-    if not values:
-        return "<p>no data</p>"
+def _spark(values: Sequence[float], unit: str, at: str) -> str:
+    """One inline SVG line; numbers only, already checked finite. `at` is
+    the time of the report the last value comes from (T33R2-1)."""
     low, high = min(values), max(values)
     span = (high - low) or 1.0
     step = 600 / max(len(values) - 1, 1)
@@ -218,22 +217,24 @@ def _spark(values: Sequence[float], unit: str) -> str:
         f'<svg viewBox="0 0 600 120" width="100%" height="120" role="img" '
         f'aria-label="{_e(unit)} balance"><polyline fill="none" '
         f'stroke="currentColor" stroke-width="2" points="{points}"/></svg>'
-        f"<p>{_e(unit)}: last {values[-1]:g}, low {low:g}, high {high:g}</p>"
+        f"<p>{_e(unit)}: last {values[-1]:g} (report at {_e(at)}), "
+        f"low {low:g}, high {high:g}</p>"
     )
 
 
 def balances(reports: Source) -> str:
     """DB-6: each asset on its own scale, with its unit; no equity line."""
     series: dict[str, list[float]] = {}
-    for row in reports.rows:
+    last_at: dict[str, str] = {}
+    for row in reports.rows:  # amounts are checked numbers (T33R-2)
         for asset, amount in row["report"].get("final_balances", {}).items():
-            number = _number(amount)
-            if number is not None:
-                series.setdefault(str(asset), []).append(number)
+            series.setdefault(str(asset), []).append(float(amount))
+            last_at[str(asset)] = str(row["at"])
     if not series:
         return "<p>no data</p>"
-    return _data_time(reports) + "".join(
-        _spark(values, asset) for asset, values in sorted(series.items())
+    return "".join(
+        _spark(values, asset, last_at[asset])
+        for asset, values in sorted(series.items())
     )
 
 

@@ -270,7 +270,8 @@ def test_panels_show_their_data_time(tmp_path: Path) -> None:
     # T33-3
     data, record = _server(tmp_path)
     page = dashboard.render(data, record, NOW)
-    assert page.count(f"Latest values from the report at {NOW.isoformat()}") == 2
+    assert f"Latest values from the report at {NOW.isoformat()}" in page  # L-02
+    assert f"BTC: last 0.01 (report at {NOW.isoformat()})" in page
 
 
 def test_an_unrepresentable_bar_is_invalid_not_a_crash(tmp_path: Path) -> None:
@@ -291,3 +292,18 @@ def test_a_non_numeric_balance_is_invalid(tmp_path: Path) -> None:
     page = dashboard.render(data, record, NOW)
     assert "reports: invalid line 2" in page
     assert "BTC: last" not in page
+
+
+def test_an_asset_missing_from_the_latest_report_keeps_its_own_time(
+    tmp_path: Path,
+) -> None:
+    # T33R2-1: BTC at 11:00, then only ETH at 12:00
+    data, record = _server(tmp_path)
+    early, late = _report(NOW - timedelta(hours=1)), _report(NOW)
+    late["report"]["final_balances"] = {"ETH": "2"}
+    _lines(data / dashboard.REPORTS, [early, late])
+    page = dashboard.render(data, record, NOW)
+    assert (
+        f"BTC: last 0.01 (report at {(NOW - timedelta(hours=1)).isoformat()})" in page
+    )
+    assert f"ETH: last 2 (report at {NOW.isoformat()})" in page
