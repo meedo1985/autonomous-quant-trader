@@ -1,0 +1,31 @@
+# Read-only dashboard generator (Task 33, review/roadmap/DASHBOARD_PROPOSAL.md
+# section 2). %i is `build` (the timer) or `check` (the sandbox checks).
+# It reads through CAP_DAC_READ_SEARCH only; the filesystem is read-only to it
+# except /var/lib/aqt-dashboard; it has no socket but the journal's.
+[Unit]
+Description=aqt read-only dashboard (%i)
+
+[Service]
+Type=oneshot
+User=aqt-dash
+Group=aqt-dash
+UMask=0022
+Environment=PYTHONPATH=/opt/aqt-dashboard/app/src
+ExecStart=/usr/bin/python3 -S -B /opt/aqt-dashboard/app/scripts/dashboard.py %i
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/aqt-dashboard
+InaccessiblePaths=-/etc/aqt/telegram
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+PrivateNetwork=yes
+RestrictAddressFamilies=none
+SystemCallArchitectures=native
+SystemCallFilter=~io_uring_setup

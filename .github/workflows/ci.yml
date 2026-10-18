@@ -106,6 +106,29 @@ jobs:
           done
       - name: The service file is valid
         run: sudo systemd-analyze verify /etc/systemd/system/aqt-paper.service
+      - name: Task 33, dashboard install, sandbox checks and page (RUNBOOK.md section 9)
+        run: |
+          # synthetic inputs, private to `aqt` (mode 600), so reading them needs the capability
+          D=/var/lib/aqt/data
+          sudo -u aqt mkdir -p $D/forward/account-1 $D/live
+          echo '{"at": "2026-10-18T12:00:00+00:00", "l02": {"raw_decisions": 1}, "report": {"final_balances": {"USDT": "1000"}, "refused": []}}' | sudo -u aqt tee $D/forward/account-1/forward_reports.jsonl >/dev/null
+          echo '{"open_time": "2026-10-18T11:00:00+00:00"}' | sudo -u aqt tee $D/live/BTCUSDT-1h.jsonl >/dev/null
+          sudo -u aqt touch $D/forward/account-1/incidents.jsonl
+          sudo -u aqt chmod 600 $D/forward/account-1/* $D/live/*
+          sudo install -o aqt -g aqt -m 600 /dev/null /etc/aqt/telegram
+          echo "not a real token" | sudo tee /etc/aqt/telegram >/dev/null
+          ss -ltnH | sort > /tmp/ports.before
+          cd /tmp && sudo sh "$GITHUB_WORKSPACE/deploy/dashboard/install.sh" /tmp/app.bundle "$COMMIT"
+          ss -ltnH | sort > /tmp/ports.after
+          diff /tmp/ports.before /tmp/ports.after  # no listening port added
+          sudo systemctl start aqt-dashboard@check.service || { sudo journalctl -u aqt-dashboard@check.service -o cat --no-pager; exit 1; }
+          sudo journalctl -u aqt-dashboard@check.service -o cat --no-pager
+          P=/var/lib/aqt-dashboard/page
+          test "$(stat -c %a $P/index.html)" = 644
+          test -z "$(find $P -mindepth 1 ! -name index.html)"
+          grep -q "Latest approved commit: <code>$COMMIT</code>" $P/index.html
+          if sudo -u aqt-dash cat /etc/aqt/telegram 2>/dev/null; then echo "aqt-dash reads the token outside its unit"; exit 1; fi
+          systemctl is-enabled aqt-dashboard.timer
       - name: Step 5 on a modified checkout is refused, logged, not retried
         run: |
           cd /tmp

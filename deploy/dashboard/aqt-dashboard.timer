@@ -1,0 +1,11 @@
+# Rebuild the dashboard page every 15 minutes (Task 33).
+[Unit]
+Description=aqt read-only dashboard, every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+Unit=aqt-dashboard@build.service
+
+[Install]
+WantedBy=timers.target

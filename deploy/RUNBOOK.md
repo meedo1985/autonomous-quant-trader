@@ -116,3 +116,31 @@ record.
 sudo systemctl stop aqt-paper
 sudo systemctl disable aqt-paper
 ```
+
+## 9. Read-only dashboard (Task 33)
+
+A page that shows the paper app's recorded activity. It has no button and no
+web server: a sandboxed job rebuilds a static page every 15 minutes, and you
+copy it to your laptop. Design and reviews:
+`review/roadmap/DASHBOARD_PROPOSAL.md`. Install only a commit you merged:
+
+```sh
+ss -ltnH | sort > /tmp/ports.before
+curl -fsSLO https://raw.githubusercontent.com/meedo1985/autonomous-quant-trader/<commit>/deploy/dashboard/install.sh
+sudo sh install.sh https://github.com/meedo1985/autonomous-quant-trader.git <commit>
+ss -ltnH | sort > /tmp/ports.after; diff /tmp/ports.before /tmp/ports.after && echo "ok: no port added"
+sudo systemctl start aqt-dashboard@check.service; sudo journalctl -u aqt-dashboard@check.service -o cat --no-pager | tail -12
+```
+
+Every line of the check must start with `PASS`. The check runs inside the
+page builder's own sandbox: it can read the app's files, cannot write under
+`/var/lib/aqt`, `/etc/aqt` or `/opt`, cannot read the Telegram token, and
+cannot open a network or Unix socket. Send the output to be recorded.
+
+On the laptop: put the server's address into `deploy/dashboard/copy-dashboard.bat`
+in place of `SERVER`, save it to the Desktop, and double-click it. It copies
+the page and opens it. The page says **"As of"** a time: if that is more than
+30 minutes old, the page builder is not running
+(`systemctl status aqt-dashboard.timer`).
+
+To remove it: `sudo systemctl disable --now aqt-dashboard.timer`.
