@@ -66,4 +66,29 @@ No file under `docs/`, `protocols/`, `schemas/`, `specs/` and no `FROZEN_HASHES.
 | G33-4 | BLOCKER, repaired | Found by the CI dry run at `c1e4b3e`: `SystemCallFilter=` kills a process that makes a filtered call (the check's `io_uring_setup` probe dumped core). Repair: `SystemCallErrorNumber=EPERM`, so the call fails cleanly. |
 | G33-5 | NON-BLOCKING, disclosed | The capability reads every file visible in the unit, for example `/etc/shadow`. The proposal claims no more ("not: it can read only the input files"); nothing can leave, because the unit has no socket but the journal's, and the code writes only the page. |
 
-**LOCAL GATE:** local checks PASS; the sandbox claims wait for the CI dry run on the PR.
+## Sandbox on Linux (CI `runbook-dry-run`, run 39118571234, commit `6eb05e6`, Ubuntu 24.04)
+
+The real install, with synthetic inputs private to `aqt` (mode 600):
+
+```
+PASS can read /var/lib/aqt/data/forward/account-1/forward_reports.jsonl
+PASS can read /var/lib/aqt/data/live/BTCUSDT-1h.jsonl
+PASS can read /var/lib/aqt/data/forward/account-1/incidents.jsonl
+PASS can read /etc/aqt/deployments.jsonl
+PASS cannot write in /var/lib/aqt
+PASS cannot write in /etc/aqt
+PASS cannot write in /opt
+PASS cannot read /etc/aqt/telegram
+PASS cannot open a socket (inet)
+PASS cannot open a socket (Unix)
+PASS io_uring_setup is refused
+```
+
+The job also checked that:
+- no listening port was added (port diff);
+- the page is mode 644 and alone in `page/`;
+- the page shows the approved commit;
+- `aqt-dash` cannot read the token outside its unit;
+- the timer is `enabled`.
+
+**LOCAL GATE: PASS**, including the sandbox on Linux. Outstanding: Sol's build review, the owner's §16 PR review, and the end-to-end copy on the owner's server after merge.
