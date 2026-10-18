@@ -35,7 +35,7 @@ aqt-dashboard@check.service: Failed with result 'exit-code'.
 Failed to start aqt-dashboard@check.service - aqt read-only dashboard (check).
 ```
 
-**The one FAIL is explained by a missing file.** `ls -l /var/lib/aqt/data/forward/account-1/` (below) shows no `incidents.jsonl`: the app has never recorded an incident. The check treated an input not written yet as unreadable; the page itself shows it as "absent". This does **not** show that the dashboard can read the file once it exists. That stays unverified until the file exists and the check passes it (T33F-2). Repair on branch `task33-followup`: an absent input passes only if reading it finds no file **and** its directory lists without that name; any other read failure still fails (T33F-1). The other ten checks passed on the server, including "cannot read /etc/aqt/telegram". The check is to be run again after the repair is installed.
+**The one FAIL is explained by a missing file.** `ls -l /var/lib/aqt/data/forward/account-1/` (below) shows no `incidents.jsonl` at that time (T33FR3-2: absent now; the listing does not show the history). The check treated an absent input as unreadable; the page itself shows it as "absent". This does **not** show that the dashboard can read the file once it exists. That stays unverified until the file exists and the check passes it (T33F-2). Repair on branch `task33-followup`: an absent input passes only if reading it finds no file **and** its directory lists without that name; any other read failure still fails (T33F-1). The other ten checks passed on the server, including "cannot read /etc/aqt/telegram". The check is to be run again after the repair is installed.
 
 ```
 /var/lib/aqt/data/forward/account-1/:
@@ -53,7 +53,7 @@ total 1260
 
 Not caused by the dashboard; it happened about 1.5 h before the install. `systemctl status aqt-paper` showed `Active: failed (Result: exit-code) since Sun 2026-10-18 11:01:03 UTC`.
 
-From `journalctl -u aqt-paper -n 40`, trimmed: the 37 report lines before it (steps from 2026-10-17 00:01 to 2026-10-18 10:01, all `final_mode` `RUNNING`, `refused` empty) are left out. The last lines, verbatim:
+From `journalctl -u aqt-paper -n 40`, trimmed: the 37 report lines before it are left out; they are in the owner's paste in the session and are not described here (T33FR3-2). The last lines, verbatim:
 
 ```
 Oct 18 11:01:02 aqt-server python[1038]: {"at":"2026-10-18T10:00:00.000000Z","fields":{"decision":"REFUSE_START","reason":"alert channel test overdue: last acknowledged test sent 2026-10-11 10:46:15.513515+00:00"},"kind":"STARTUP","severity":"CRITICAL"}
@@ -99,24 +99,26 @@ root@aqt-server:/tmp# systemctl status aqt-paper --no-pager | head -3
 
 **Missed hours: run late and verified (T33F-3, T33FR-1, T33FR2-1).** The owner ran three read-only checks. Each one locates its records by time, not by position.
 
-**The step cursor**, `sudo grep '2026-10-18T1[0-4]' .../forward_cursor.jsonl | cut -c1-400`. Its payloads, with the hash fields left out (all 10 lines are in the owner's paste):
-
-| seq | recorded | payload |
-|---|---|---|
-| 642 | 10:01:00 | START `09:00`→`10:00` |
-| 643 | 10:01:00 | END refused false |
-| 644 | 11:01:00 | START `10:00`→`11:00` |
-| 645 | 11:01:00 | END refused **true** (alert test overdue) |
-| 646 | 12:38:41 | START `10:00`→`12:00` |
-| 647 | 12:38:41 | END refused **true** (lag) |
-| 648 | 13:05:20 | START `10:00`→`13:00` |
-| 649 | 13:05:20 | END refused **true** (lag) |
-| 650 | 14:01:44 | START `10:00`→`14:00` |
-| 651 | 14:01:44 | END **refused false** |
-
-**The reports** at 13:00–15:59, matched fields only:
+**The step cursor**, verbatim:
 
 ```
+root@aqt-server:/tmp# sudo grep '2026-10-18T1[0-4]' /var/lib/aqt/data/forward/account-1/forward_cursor.jsonl | cut -c1-400
+{"entry_hash":"4b909f7f2460e4932ef48fd2ed65feaa19cc17d08abaca385725a34024f082ef","payload":{"end":"2026-10-18T10:00:00+00:00","start":"2026-10-18T09:00:00+00:00","step":"START"},"previous_hash":"84b3155ec7cf71f1fbc781557eb6afe260c6ae881d712fa614783725e55582c9","record_type":"aqt.app.forward_cursor.v1","recorded_at_utc":"2026-10-18T10:01:00Z","sequence":642}
+{"entry_hash":"d96a8a450595669e70ddfb87a8f7e973f217b837bb72ae531ee5824fe055b5af","payload":{"refused":false,"step":"END"},"previous_hash":"4b909f7f2460e4932ef48fd2ed65feaa19cc17d08abaca385725a34024f082ef","record_type":"aqt.app.forward_cursor.v1","recorded_at_utc":"2026-10-18T10:01:00Z","sequence":643}
+{"entry_hash":"c49b1948f9d128eb5173002ec84c8d17b2488368af4a642bb5e2c2d9c6dcd40c","payload":{"end":"2026-10-18T11:00:00+00:00","start":"2026-10-18T10:00:00+00:00","step":"START"},"previous_hash":"d96a8a450595669e70ddfb87a8f7e973f217b837bb72ae531ee5824fe055b5af","record_type":"aqt.app.forward_cursor.v1","recorded_at_utc":"2026-10-18T11:01:00Z","sequence":644}
+{"entry_hash":"df619dd7672833ce34502e714d276970d72f8865070c3814f2ce2030ea615483","payload":{"refused":true,"step":"END"},"previous_hash":"c49b1948f9d128eb5173002ec84c8d17b2488368af4a642bb5e2c2d9c6dcd40c","record_type":"aqt.app.forward_cursor.v1","recorded_at_utc":"2026-10-18T11:01:00Z","sequence":645}
+{"entry_hash":"c83d4a59a6a51555afe0e821cd7168b02c527e3687faaadc73801a51cc685385","payload":{"end":"2026-10-18T12:00:00+00:00","start":"2026-10-18T10:00:00+00:00","step":"START"},"previous_hash":"df619dd7672833ce34502e714d276970d72f8865070c3814f2ce2030ea615483","record_type":"aqt.app.forward_cursor.v1","recorded_at_utc":"2026-10-18T12:38:41Z","sequence":646}
+{"entry_hash":"95db1d129ed0a90a877497f1c7e26c745c39bc58c40fba73ca730cbcf21a84b4","payload":{"refused":true,"step":"END"},"previous_hash":"c83d4a59a6a51555afe0e821cd7168b02c527e3687faaadc73801a51cc685385","record_type":"aqt.app.forward_cursor.v1","recorded_at_utc":"2026-10-18T12:38:41Z","sequence":647}
+{"entry_hash":"e316c1cce688784bac6aaf9cc78f2e4261490c34736f4626a0adbfb300c5f2ee","payload":{"end":"2026-10-18T13:00:00+00:00","start":"2026-10-18T10:00:00+00:00","step":"START"},"previous_hash":"95db1d129ed0a90a877497f1c7e26c745c39bc58c40fba73ca730cbcf21a84b4","record_type":"aqt.app.forward_cursor.v1","recorded_at_utc":"2026-10-18T13:05:20Z","sequence":648}
+{"entry_hash":"7cca760e2cfcda06d98a1df335e84540fad6a48599623d2a8e3f0987b7d7fb4a","payload":{"refused":true,"step":"END"},"previous_hash":"e316c1cce688784bac6aaf9cc78f2e4261490c34736f4626a0adbfb300c5f2ee","record_type":"aqt.app.forward_cursor.v1","recorded_at_utc":"2026-10-18T13:05:20Z","sequence":649}
+{"entry_hash":"3cf979a20e3c5e46623c430ef52dd53a11ec64e4d3d315e10d3a7c6f3a0b70fb","payload":{"end":"2026-10-18T14:00:00+00:00","start":"2026-10-18T10:00:00+00:00","step":"START"},"previous_hash":"7cca760e2cfcda06d98a1df335e84540fad6a48599623d2a8e3f0987b7d7fb4a","record_type":"aqt.app.forward_cursor.v1","recorded_at_utc":"2026-10-18T14:01:44Z","sequence":650}
+{"entry_hash":"9bd9e5d378c8f9f728a8e2bd5632882ce163e0e42e1aa4d39eb2893781cd4583","payload":{"refused":false,"step":"END"},"previous_hash":"3cf979a20e3c5e46623c430ef52dd53a11ec64e4d3d315e10d3a7c6f3a0b70fb","record_type":"aqt.app.forward_cursor.v1","recorded_at_utc":"2026-10-18T14:01:44Z","sequence":651}
+```
+
+**The reports**, verbatim:
+
+```
+root@aqt-server:/tmp# sudo grep '"at": "2026-10-18T1[3-5]' /var/lib/aqt/data/forward/account-1/forward_reports.jsonl | grep -o '"at": "[^"]*"\|"hours": [0-9]*\|"refused": \[[^]]*\]\|"final_mode": "[A-Z]*"\|"scheduled_decisions": [0-9]*'
 "at": "2026-10-18T13:05:20.420605+00:00"
 "final_mode": "REFUSED"
 "hours": 3
@@ -129,15 +131,16 @@ root@aqt-server:/tmp# systemctl status aqt-paper --no-pager | head -3
 "scheduled_decisions": 0
 ```
 
-**The operation events** from 10:00 to 14:59, counted by kind:
+**The operation events**, verbatim:
 
 ```
+root@aqt-server:/tmp# sudo grep '2026-10-18T1[0-4]' /var/lib/aqt/data/forward/account-1/operations.jsonl | grep -o '"kind":"[A-Z_]*"\|"record_type":"[^"]*"' | sort | uniq -c
       3 "kind":"LOOP_LAG"
       2 "kind":"SHUTDOWN"
       4 "kind":"STARTUP"
       9 "record_type":"aqt.monitoring.event.v1"
 ```
 
-So the 14:01:44 step ran the four hours from 10:00 to 13:00 in one window, without refusal, and the report it wrote after its cursor `END` shows `RUNNING` with 4 hours. There are 3 `LOOP_LAG` events, which fits the three late starts (12:38, 13:05, 14:01); the count alone does not tie each event to a start. No decision fell in these hours (`scheduled_decisions: 0`; the baseline decides at 00:00). The refused steps' journal state was not saved, so each later step started again at 10:00, as the cursor shows. No hour was skipped.
+So the 14:01:44 step ran the four hours from 10:00 to 13:00 in one window, without refusal, and the report it wrote after its cursor `END` shows `RUNNING` with 4 hours. There are 3 `LOOP_LAG` events, which fits the three late starts (12:38, 13:05, 14:01); the count alone does not tie each event to a start. The report shows `scheduled_decisions: 0` for that step. Each refused step was followed by a step whose window starts again at 10:00, as the cursor shows. What this establishes: the step covering 10:00 to 14:00 completed without refusal, and no event kind other than `LOOP_LAG`, `SHUTDOWN` and `STARTUP` appears in these hours. It does not by itself prove that every hour inside the window was processed. That is the loop's tested replay behaviour (Task 29), not observed hour by hour here (T33FR3-2).
 
 **Finding F-RESTART (open, for an owner decision):** a manual start in the middle of an hour always refuses. A proposal (the start waits until the next hour's step) would change protected forward-paper code, so it needs the owner's approval, review and §16.
