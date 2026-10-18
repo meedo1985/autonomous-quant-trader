@@ -82,6 +82,14 @@ systemctl status aqt-paper
 A refused start (exit code 2) is not retried; a crash is, and the app then
 refuses by itself while an earlier error is unresolved (Task 27).
 
+After any start, the app waits for the next :01 past the hour before its
+first step (F-RESTART). Until then `status` already says `active (running)`
+and the log's last line is `waiting until … UTC for the first step`. Check
+the log after that time:
+`journalctl -u aqt-paper --since -10min --no-pager | grep -v '"l02"'`. A
+refusal (for example an overdue alert test) shows there, and the service is
+then `failed`.
+
 ## 6. Logs
 
 - Screen output: `journalctl -u aqt-paper`.

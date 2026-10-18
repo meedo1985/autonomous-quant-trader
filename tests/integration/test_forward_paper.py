@@ -430,6 +430,48 @@ def test_the_script_retries_a_failed_fetch_and_stops_on_a_refusal(
     assert len(calls) == steps
 
 
+@pytest.mark.parametrize(
+    ("now", "first"),
+    [
+        (
+            datetime(2026, 10, 18, 14, 0, 30, tzinfo=UTC),
+            datetime(2026, 10, 18, 14, 1, tzinfo=UTC),
+        ),
+        (
+            datetime(2026, 10, 18, 14, 1, 10, tzinfo=UTC),
+            datetime(2026, 10, 18, 15, 1, tzinfo=UTC),
+        ),
+        (
+            datetime(2026, 10, 18, 14, 1, tzinfo=UTC),
+            datetime(2026, 10, 18, 15, 1, tzinfo=UTC),
+        ),
+        (
+            datetime(2026, 10, 18, 23, 59, tzinfo=UTC),
+            datetime(2026, 10, 19, 0, 1, tzinfo=UTC),
+        ),
+    ],
+)
+def test_the_first_step_waits_for_the_next_slot(now: datetime, first: datetime) -> None:
+    """F-RESTART (FRR-1): the next occurrence of HH:01 UTC."""
+    assert _script().first_slot(now) == first
+
+
+def test_the_service_waits_before_its_first_step_and_once_does_not(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-RESTART: without --once the service sleeps before its first step;
+    with --once it steps at once."""
+    script = _script()
+    events: list[str] = []
+    monkeypatch.setattr(script, "step", lambda *_: events.append("step") or 2)
+    monkeypatch.setattr(script.time, "sleep", lambda _: events.append("sleep"))
+    assert script.main(_args(tmp_path)) == 2
+    assert events == ["sleep", "step"]
+    events.clear()
+    assert script.main(_args(tmp_path, "--once")) == 2
+    assert events == ["step"]
+
+
 def test_the_script_checks_the_deployment_before_anything_else(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
