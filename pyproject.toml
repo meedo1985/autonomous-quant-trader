@@ -105,3 +105,17 @@ forbidden_modules = [
     "aqt.monitoring",
 ]
 allow_indirect_imports = false
+
+[[tool.importlinter.contracts]]
+name = "The dashboard only reads: no execution, governor, app, research, model or lockbox code"
+type = "forbidden"
+source_modules = ["aqt.dashboard"]
+forbidden_modules = [
+    "aqt.execution",
+    "aqt.governor",
+    "aqt.app",
+    "aqt.research",
+    "aqt.models",
+    "aqt.lockbox_eval",
+]
+allow_indirect_imports = false
