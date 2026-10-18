@@ -51,7 +51,7 @@ total 1260
 
 ## 2. Forward paper stopped at 11:01 UTC: weekly alert test overdue
 
-The failure is stamped 11:01:03 UTC, before the owner began the dashboard install in this session; the install output carries no timestamp (T33FR4-2). `systemctl status aqt-paper` showed `Active: failed (Result: exit-code) since Sun 2026-10-18 11:01:03 UTC`.
+The failure is stamped 11:01:03 UTC. The install output carries no timestamp, so no order between the two is claimed (T33FR5-1). `systemctl status aqt-paper` showed `Active: failed (Result: exit-code) since Sun 2026-10-18 11:01:03 UTC`.
 
 From `journalctl -u aqt-paper -n 40`, trimmed: the 37 report lines before it are left out; they are in the owner's paste in the session and are not described here (T33FR3-2). The last lines, verbatim:
 
@@ -143,4 +143,4 @@ root@aqt-server:/tmp# sudo grep '2026-10-18T1[0-4]' /var/lib/aqt/data/forward/ac
 
 So the 14:01:44 step's window of 10:00 to 14:00 (four hours) completed without refusal, and the report written after its cursor `END` shows `RUNNING` with `hours: 4`. There are 3 `LOOP_LAG` events, which fits the three late starts (12:38, 13:05, 14:01); the count alone does not tie each event to a start. The report shows `scheduled_decisions: 0` for that step. Each refused step was followed by a step whose window starts again at 10:00, as the cursor shows. What this establishes: the step covering 10:00 to 14:00 completed without refusal, and no event kind other than `LOOP_LAG`, `SHUTDOWN` and `STARTUP` appears in these hours. It does not by itself prove that every hour inside the window was processed. That is the loop's tested replay behaviour (Task 29), not observed hour by hour here (T33FR3-2).
 
-**Finding F-RESTART (open, for an owner decision):** by the code's rule above (step at start; 5-minute lag against the newest bar close), a manual start more than 5 minutes after the hour is refused. It was observed twice here (12:38:41, 13:05:20); the rule, not the two observations, is what makes it general (T33FR4-2). A proposal (the start waits until the next hour's step) would change protected forward-paper code, so it needs the owner's approval, review and §16.
+**Finding F-RESTART (open, for an owner decision):** by the code's rule above, a start is refused when its first step fetches bars successfully, finds a pending window, and the start health check sees more than 300 s of lag against the newest bar close. A failed fetch returns 1 without that check, and no pending window returns without a report (T33FR5-2). It was observed twice here (12:38:41, 13:05:20); the rule, not the two observations, is what makes it general (T33FR4-2). A proposal (the start waits until the next hour's step) would change protected forward-paper code, so it needs the owner's approval, review and §16.
