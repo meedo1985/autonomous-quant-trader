@@ -78,7 +78,7 @@ decision: REFUSE_START
 reason: health check at start: LOOP_LAG {'lag_ms': 2321110, 'max_lag_ms': 300000}
 ```
 
-Cause, from the code: `scripts/run_forward_paper.py` runs a step immediately at start. `aqt.app.forward.observation` sets `scheduled` to the close of the newest bar, and `paper_loop`'s start check refuses a lag above `max_loop_lag_s = 300`. A start more than 5 minutes after the hour is therefore always refused. A retry at 13:05:20 missed by 20 seconds (`journalctl -u aqt-paper --since 13:00 | grep -v '"l02"'`):
+Cause, from the code: `scripts/run_forward_paper.py` runs a step immediately at start. `aqt.app.forward.observation` sets `scheduled` to the close of the newest bar, and `paper_loop`'s start check refuses a lag above `max_loop_lag_s = 300`. So a start is refused when its first step fetches bars, finds a pending window, and the check sees more than 300 s of lag (T33FR6-1). A retry at 13:05:20 missed by 20 seconds (`journalctl -u aqt-paper --since 13:00 | grep -v '"l02"'`):
 
 ```
 Oct 18 13:05:22 aqt-server python[326490]: {"at":"2026-10-18T13:05:20.420605Z","fields":{"first_missed":"2026-10-18T10:00:00+00:00","last_missed":"2026-10-18T11:00:00+00:00","missed_hours":2,"note":"run late, as a replay would run them"},"kind":"LOOP_LAG","severity":"CRITICAL"}
