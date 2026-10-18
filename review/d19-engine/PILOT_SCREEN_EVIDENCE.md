@@ -186,4 +186,58 @@ memory peak so far: 571936768 bytes
 
 ## Step C (results)
 
-Pending: the third attempt is expected to finish about 2026-10-18 09:15Z. `screen-summary` must show a single job runtime, the pinned one.
+Status once it had finished, then the summary (owner's terminal, 2026-10-18, pasted in chat; verbatim):
+
+```
+root@aqt-server:/opt/aqt-d19/app/deploy/calibration# sudo sh d19.sh screen-status
+Exited (0) 36 minutes ago
+started 2026-10-17T18:15:10.493389752Z finished 2026-10-18T06:01:40.134404456Z exit 0
+MEASUREMENT 635bcd5e6a3f1afdc974cdf6ee5b03f7a92ec6f0f2350ba29bc99e824ce8d450
+root@aqt-server:/opt/aqt-d19/app/deploy/calibration# systemctl status aqt-paper --no-pager | head -3
+● aqt-paper.service - aqt forward paper trading
+     Loaded: loaded (/etc/systemd/system/aqt-paper.service; enabled; preset: enabled)
+     Active: active (running) since Mon 2026-10-05 06:30:33 UTC; 1 week 6 days ago
+root@aqt-server:/opt/aqt-d19/app/deploy/calibration# sudo sh d19.sh screen-summary
+MEASUREMENT ONLY (prereg §10 pilot): gate results are availability, not passes; nothing here is a declaration outcome
+p01: 30 paths, 1306 s total, slowest 47 s; G-11:available x30, G-14:N/A x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:available x30
+p02: 30 paths, 1276 s total, slowest 46 s; G-11:available x30, G-14:N/A x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:available x30
+p03: 30 paths, 1189 s total, slowest 44 s; G-11:available x30, G-14:N/A x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:available x30
+p04: 30 paths, 2073 s total, slowest 73 s; G-11:available x30, G-14:N/A x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:available x30
+p05: 30 paths, 2127 s total, slowest 74 s; G-11:available x30, G-14:N/A x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:available x30
+p06: 30 paths, 1005 s total, slowest 36 s; G-11:available x30, G-14:N/A x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:available x30
+p07: 30 paths, 1032 s total, slowest 37 s; G-11:available x30, G-14:N/A x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:available x30
+p08: 30 paths, 1252 s total, slowest 51 s; G-11:available x30, G-14:N/A x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:N/A x30
+p09: 30 paths, 1456 s total, slowest 51 s; G-11:available x30, G-14:N/A x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:available x30
+p10: 30 paths, 1615 s total, slowest 57 s; G-11:available x30, G-14:N/A x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:available x30
+p11: 30 paths, 1587 s total, slowest 56 s; G-11:available x30, G-14:N/A x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:available x30
+p12: 30 paths, 1217 s total, slowest 45 s; G-11:available x30, G-14:N/A x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:available x30
+p13: 30 paths, 2268 s total, slowest 79 s; G-11:available x30, G-14:N/A x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:available x30
+p14: 30 paths, 2266 s total, slowest 80 s; G-11:available x30, G-14:N/A x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:available x30
+p15: 30 paths, 6881 s total, slowest 240 s; G-11:available x30, G-14:available x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:N/A x30
+p16: 30 paths, 7001 s total, slowest 253 s; G-11:available x30, G-14:available x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:available x30
+p17: 30 paths, 6940 s total, slowest 245 s; G-11:available x30, G-14:available x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:N/A x30
+p18: 30 paths, 6927 s total, slowest 244 s; G-11:available x30, G-14:available x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:N/A x30
+p19: 30 paths, 8522 s total, slowest 298 s; G-11:available x30, G-14:available x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:N/A x30
+p20: 30 paths, 26196 s total, slowest 898 s; G-11:available x30, G-14:available x30, G-3:available x30, G-5:available x30, G-6:available x30, G-7:available x30, G-8:N/A x30
+all trials: 84135 worker-seconds (23.4 worker-hours)
+availability: ALL_AVAILABLE
+job runtimes (S16SR-1): ['{"OPENBLAS_CORETYPE": "Haswell", "OPENBLAS_NUM_THREADS": "1"}']
+reference vectors: {"g11": "a63398708b99fbd5f0f5c8cee5f497ae79fab2a2b1bfee0c53577fac82bce911", "g14": "5eb80b73256d75d628a4562ec04631b090eea5efcf461ff9148a04b5b4f8d643", "paths": "99e244543c3bc0e906d85fd5b607e4a45a595183e9eee4a646f3d2b86d5d2152"}
+```
+
+Checks:
+- Exit 0. Wall time 11 h 46 min 30 s (42,390 s). 84,135 worker-seconds / 42,390 s = 1.98, so both workers stayed busy.
+- One job runtime, the pinned one: the S16S-1 repair holds.
+- `g11` and `g14` equal `FROZEN_REFERENCE_VECTORS` in `calibration/screen.py` at `4fed8f5`. `paths` (`99e24454…2152`) is the value S8 must freeze.
+- Forward paper trading was not affected.
+- G-8 is `N/A` on p08 and on five of the six model trials (all but p16). This is the frozen N/A of PL-3 (`calibration/screen.py`, `g8_na`): these trials have no plateau dimension. It is not unavailability, so `ALL_AVAILABLE` is consistent.
+
+Cost by kind of trial (arithmetic on the rows above; a measurement only, nothing is declared):
+
+| Kind | Trials | Worker-s, sum | Per trial (worker-h) | Per trial and path (s) |
+|---|---|---|---|---|
+| Rules (8 trend, 6 vol) | p01–p14 | 21,669 | 0.43 | 52 |
+| Linear-family models | p15–p19 | 36,271 | 2.0 | 242 |
+| LightGBM, largest allowed size | p20 | 26,196 | 7.3 | 873 |
+
+On 2 workers, a 20-trial set made only of one kind would take about 4.3 h (rules), 20 h (linear family) or 73 h (LightGBM) of wall time. Whether a size is feasible under prereg §12 item 2 is the owner's decision, not this record's.
