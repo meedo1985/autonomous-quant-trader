@@ -34,7 +34,7 @@ Every page states, in a banner: **"Paper trading, simulated money. This shows th
 
 ## 2. How it works (the simplest design that is safe)
 
-1. **A small script, `scripts/dashboard.py`.** Python standard library only, with no new dependency. It reads the files above and writes one self-contained HTML page with the charts drawn inline (SVG). It imports nothing from `execution`, `governor` or the paper loop, and an import-boundary contract enforces that.
+1. **A small module, `src/aqt/dashboard.py`, with a thin `scripts/dashboard.py` entry point.** Python standard library only, with no new dependency. It reads the files above and writes one self-contained HTML page with the charts drawn inline (SVG). The code sits inside the `aqt` package because import-linter contracts only cover `aqt.*` modules, and a new `forbidden` contract stops `aqt.dashboard` from importing `aqt.execution`, `aqt.governor`, `aqt.app`, `aqt.research`, `aqt.models` or `aqt.lockbox_eval`. The script holds no logic.
 2. **A systemd timer runs it every 15 minutes** as a separate account with read-only access to `/var/lib/aqt/data`. It writes only its own page (`/var/lib/aqt-dashboard/index.html`).
 3. **The page is not on the internet.** The server's firewall stays as it is (SSH only). The owner sees the page through the SSH connection they already use: one line opens a private tunnel, then the owner opens `http://localhost:8080` in the browser. A tiny standard-library web server serves the page **on the server's localhost only**. I give the line as a one-click file on the Desktop, like the other commands.
 
@@ -57,7 +57,7 @@ About 300–400 changed lines, one session, on its own branch and PR.
 - with a missing or empty file, it shows "no data" for that panel, never a crash and never invented numbers;
 - with a bar older than 2 hours, the health panel is red;
 - a test proves the script opens every file read-only and writes only its own page;
-- the import contract forbids importing `execution` and `governor`;
+- the new import contract (section 2, item 1) is kept, and `lint-imports` fails if `aqt.dashboard` imports a forbidden package;
 - the runbook gains the install steps and the one-line tunnel;
 - full validation is recorded, and Sol reviews it.
 
