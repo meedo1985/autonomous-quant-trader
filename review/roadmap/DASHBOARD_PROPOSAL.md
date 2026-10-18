@@ -25,21 +25,23 @@ From the files the service already writes under `/var/lib/aqt/data/` (read-only)
 |---|---|---|
 | Health | last complete line of `forward/account-1/forward_reports.jsonl`; last bar of `live/BTCUSDT-1h.jsonl` | Labelled **"last reported step"**: its time, `final_mode`, refusals, health-breach hours. Separately, the age of the last report and the age of the last bar. **Red** when the last report is older than 2 hours, when the bar is older than 2 hours, or when the last step reported a refusal. A recent bar alone never shows the service as running (DB-5). |
 | Balances | `final_balances` per report | BTC and USDT balances with their units, on **separate** scales. No equity line in this task: the reports hold no time-matched price, and the page does not invent one (DB-6). |
-| `L-02` status | the `l02` field | Effective decisions so far, out of the 240 needed, with the method (primary or fallback); when unavailable, the reason. **No completion date** (DB-7). Labelled a waiting condition, not evidence of an edge. |
+| `L-02` status | the `l02` field | `raw_decisions`, `effective_decisions`, `method` and, when unavailable, `reason`, against the target 240. When the method is the fallback, the panel says so: the fallback count is not the same quantity as the primary one (`LOSS_BOUND_DEFAULTS.md`), so the page doesn't present it as interchangeable (DBR-1). **No completion date** (DB-7). Labelled a waiting condition, not evidence of an edge. |
 | Activity | `scheduled_decisions`, `orders_sent`, `governor_refusals`, `authorizations` | Labelled **"per reported step"**: one step can cover hours across days, so no per-day counts (DB-8). |
-| Incidents | `forward/account-1/incidents.jsonl` | The last 20, newest first. |
-| Code identity | `/etc/aqt/deployments.jsonl` | Labelled **"latest approved commit"**. Not "running commit": the record does not prove what the process runs (DB-8). |
+| Incidents | `forward/account-1/incidents.jsonl` | The last 20, newest first, only after the whole hash chain verifies with `aqt.core.ledger.verify_ledger`; otherwise "invalid", with the reason (DBR-4). |
+| Code identity | `/etc/aqt/deployments.jsonl` | Labelled **"latest approved commit"**, shown only when the whole ledger verifies (`aqt.core.ledger.verify_ledger`) and its final record is an approval; otherwise "unknown" (DBR-4). Not "running commit": the record does not prove what the process runs (DB-8). |
 
 Each panel shows the time of the data it shows. For each input file it distinguishes four states: absent, pending (an incomplete last line, being written), invalid or unreadable (with the reason), and valid. Only complete, newline-terminated records are read (DB-4).
 
-Every page states, in a banner: **"Paper trading, simulated money. This shows that the machinery runs, not that the strategy has an edge."**
+Every page states, in a banner: **"Paper trading, simulated money. This shows the app's recorded activity, not that the strategy has an edge."**
+
+The top of the page shows **"as of <generation time>"**, and every age and health colour is computed at that time. The page is static, so if the generator stops, the page stops updating. The owner checks the "as of" time; a page more than 30 minutes old means the dashboard itself is not updating, whatever its colours say (DBR-2).
 
 ## 2. How it works (the simplest design that is safe)
 
 1. **A small module, `src/aqt/dashboard.py`, with a thin `scripts/dashboard.py` entry point.** Python standard library only, with no new dependency. It reads the files above and writes one self-contained HTML page with the charts drawn inline (SVG). The code sits inside the `aqt` package because import-linter contracts only cover `aqt.*` modules, and a new `forbidden` contract stops `aqt.dashboard` from importing `aqt.execution`, `aqt.governor`, `aqt.app`, `aqt.research`, `aqt.models` or `aqt.lockbox_eval`. The script holds no logic.
    Every text that comes from a file is HTML-escaped, in text and in attributes. Plotted numbers are checked to be finite before drawing. The page carries a strict content-security policy (no scripts) (DB-2).
 2. **Two accounts, least privilege (DB-1).** `/var/lib/aqt` is mode `700` (`deploy/install.sh`), so read access is granted explicitly, not assumed:
-   - **`aqt-dash`, the generator**, run by a systemd timer every 15 minutes. It has read access only to the input files above, and traverse access to their directories (POSIX ACLs, with default ACLs so new files stay readable). It has no write access to app data, code, `/etc/aqt` or service controls. It can write only to `/var/lib/aqt-dashboard/www/`, and it replaces `index.html` atomically (write a temporary file, then rename).
+   - **`aqt-dash`, the generator**, run by a systemd timer every 15 minutes. It has read access only to the input files above, and traverse access to their directories (POSIX ACLs, with default ACLs so new files stay readable). It has no write access to app data, code, `/etc/aqt` or service controls. It writes the new page in `/var/lib/aqt-dashboard/staging/`, outside the served directory but on the same filesystem, then renames it to `/var/lib/aqt-dashboard/www/index.html` atomically. It writes nowhere else. The served directory never holds anything but the finished page, so no partial file and no directory listing can be served (DBR-3).
    - **`aqt-web`, the web server**: `python3 -m http.server --bind 127.0.0.1 8080 --directory /var/lib/aqt-dashboard/www`, as its own unit. It can read only that directory, which holds only the page.
    - The runbook steps check these permissions on the installed server (for example, that `aqt-dash` cannot write a test file under `/var/lib/aqt`). A unit test alone cannot establish them.
 3. **The page is not on the internet (DB-3).** The firewall stays SSH only. The web server binds `127.0.0.1` explicitly, and the bind is checked, because `http.server` listens on all interfaces by default. The owner opens a tunnel that is also bound to loopback on the laptop (`ssh -L 127.0.0.1:8080:127.0.0.1:8080 ...`), then opens `http://localhost:8080`. The line comes as a one-click Desktop file.
@@ -65,7 +67,10 @@ Its own branch and PR. A rough size of one session is an estimate, not a conditi
 - for each input file, the four states (absent, pending partial line, invalid or unreadable, valid) are shown distinctly, never a crash and never invented numbers; tests cover a concurrent append and a corrupt record;
 - the health panel is red for a stale report, a stale bar and a reported refusal, each tested;
 - a synthetic malicious string (`<script>`, a quote inside an attribute) in incidents and refusals appears escaped and inert;
-- the page is replaced atomically;
+- the page is staged outside the served directory and renamed into it; on the server, a request for any other path is refused and no directory listing is served;
+- the "as of" time is shown, and a test with a stopped generator (an old page) shows the "as of" time unchanged;
+- the `L-02` panel shows raw and effective counts, the method and the reason, and labels a fallback count;
+- a tampered `deployments.jsonl` or `incidents.jsonl` (one byte changed) shows "unknown" or "invalid", never a commit or incidents;
 - the labels "last reported step", "per reported step" and "latest approved commit" appear, with no equity line and no `L-02` date;
 - the new import contract (section 2, item 1) is kept, and `lint-imports` fails if `aqt.dashboard` imports a forbidden package;
 - on the server: the web server is not reachable on the external interface, `aqt-dash` cannot write under `/var/lib/aqt`, and `aqt-web` can read only its directory. These checks are runbook steps, and their outputs are recorded;
