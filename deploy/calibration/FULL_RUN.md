@@ -26,7 +26,7 @@ In the commands:
 
 I give you all three in a Notepad file.
 
-**If any command fails, or prints an error, `refused`, `STOP` or `FAIL`, stop there and send me the output.**
+**Run every line on its own, one at a time; never paste a block. If any line fails, or prints an error, `refused`, `STOP` or `FAIL`, stop there and send me the output.** Each line that depends on a check stops by itself when the check fails (FSR-1).
 
 ## S. Set the earlier runs' files aside (nothing is deleted) (FS-2)
 
@@ -42,7 +42,7 @@ if ! cg=$(systemctl show aqt-d19.slice -p ControlGroup --value); then echo "STOP
 Check: neither status says `Up`, and the last line starts `ok:`. Then move each file, refusing to overwrite and stopping at the first failure:
 
 ```sh
-cd /var/lib/aqt-d19 && for f in definition.json cells.json store choices.json; do if [ -e "$f" ]; then if [ -e "$f.repilot-e39b23d" ]; then echo "STOP: $f.repilot-e39b23d exists"; break; fi; sudo mv "$f" "$f.repilot-e39b23d" || { echo "STOP: mv $f failed"; break; }; fi; done; ls
+(cd /var/lib/aqt-d19 && for f in definition.json cells.json store choices.json; do if [ -e "$f" ]; then [ ! -e "$f.repilot-e39b23d" ] || { echo "STOP: $f.repilot-e39b23d exists"; exit 1; }; mv "$f" "$f.repilot-e39b23d" || { echo "STOP: mv $f failed"; exit 1; }; fi; done; ls)
 ```
 
 Check: no `STOP` line. The listing shows the `*.repilot-e39b23d` names, plus `raw`, `manifests` and the screen-pilot records, which stay. A development run reads only the chains bound to its own definition, so the moved chains could not enter it in any case.
@@ -50,11 +50,10 @@ Check: no `STOP` line. The listing shows the `*.repilot-e39b23d` names, plus `ra
 ## A. Set the current engine aside; install, build, probe
 
 ```sh
-old=$(git -C /opt/aqt-d19/app rev-parse --short HEAD); echo "$old"; [ ! -e "/opt/aqt-d19/app-$old" ] && echo "ok: app-$old is free"
-sudo mv /opt/aqt-d19/app "/opt/aqt-d19/app-$old"
+old=$(git -C /opt/aqt-d19/app rev-parse --short HEAD) && echo "$old" && if [ -e "/opt/aqt-d19/app-$old" ]; then echo "STOP: app-$old exists"; else sudo mv /opt/aqt-d19/app "/opt/aqt-d19/app-$old" && echo "ok: moved to app-$old"; fi
 rm -rf /tmp/aqt-d19-src
 git clone https://github.com/meedo1985/autonomous-quant-trader.git /tmp/aqt-d19-src
-git -C /tmp/aqt-d19-src checkout <<ENGINE_COMMIT>>
+git -C /tmp/aqt-d19-src checkout <<ENGINE_COMMIT>> && echo "ok: checked out"
 sudo sh /tmp/aqt-d19-src/deploy/calibration/d19.sh install https://github.com/meedo1985/autonomous-quant-trader.git <<ENGINE_COMMIT>>
 git -C /opt/aqt-d19/app rev-parse HEAD
 cd /opt/aqt-d19/app/deploy/calibration
@@ -62,7 +61,7 @@ sudo sh d19.sh build
 sudo sh d19.sh probe
 ```
 
-Check: the first line ends with `ok: app-… is free`. The **installed** checkout's `rev-parse HEAD` prints `<<ENGINE_COMMIT>>` in full (FS-3). **Send me** the image id that `build` prints and the last line of `probe` (`This CPU runs the pinned runtime.`).
+Check: the first line ends with `ok: moved to app-…`, and the checkout line with `ok: checked out`. The **installed** checkout's `rev-parse HEAD` prints `<<ENGINE_COMMIT>>` in full (FS-3). **Send me** the image id that `build` prints and the last line of `probe` (`This CPU runs the pinned runtime.`).
 
 ## B. Automatic reboots off (P6)
 
@@ -75,10 +74,10 @@ The last line must say `"false"`. Security updates still install. When the whole
 
 ## C. Cell list and run definition, checked before anything runs (FS-3)
 
-The exploration archives (`raw`) and the BTC manifest (`manifests`) are already in `/var/lib/aqt-d19` from the re-pilot. Running `manifests` again with this engine is a check: it writes nothing if its result is byte-identical to the existing manifest, and refuses (`refusing to replace a different existing file`) if not. In that case, stop and send me the output.
+The exploration archives (`raw`) and the BTC manifest (`manifests`) are already in `/var/lib/aqt-d19` from the re-pilot. Running `manifests` again with this engine is a check: it writes nothing if its result is byte-identical to the existing manifest, and refuses (`refusing to replace a different existing file`) if not. In that case, stop and send me the output. Go on only after the line `ok: manifest unchanged` (FSR-1).
 
 ```sh
-sudo sh d19.sh manifests
+sudo sh d19.sh manifests && echo "ok: manifest unchanged"
 sudo install -o 990 -g 990 -m 644 /opt/aqt-d19/app/deploy/calibration/qualification-cells.json /var/lib/aqt-d19/cells.json
 sha256sum /opt/aqt-d19/app/deploy/calibration/qualification-cells.json /var/lib/aqt-d19/cells.json
 sudo sh d19.sh record --out definition.json \
@@ -119,21 +118,16 @@ systemctl status aqt-paper --no-pager | head -3
 
 `memwatch` takes 10 minutes; it records the run's own memory peak with 2 workers running. **Send me** all three outputs: the run `Up`, a memory peak, and forward paper `active (running)`.
 
-**Weekly check (FS-5).** Run these, and send me the output:
+**Weekly check (FS-5).** Run these, and send me the **whole** output:
 
 ```sh
-sudo sh d19.sh status | grep -c ' threshold/'
-sudo sh d19.sh status | head -3
+sudo sh d19.sh status
 systemctl status aqt-paper --no-pager | head -3
 ```
 
-The first number is how many of the 104 cells have started. `status` lists a cell only once it has a chunk, so I compare the list with the 104 expected ids and report any missing or unexpected one.
+`status` lists one line per started cell (`<chunks> threshold/<cell id>`). It lists a cell only once it has a chunk. I compare every listed id with the 104 ids of `qualification-cells.json`, the file whose hash you checked in step C. I report any expected id that is missing, any unexpected id, and the chunk counts.
 
-**Finished** when `status` shows `Exited (0)` and this prints `104`:
-
-```sh
-sudo sh d19.sh status | grep -c '^600 threshold/'
-```
+**Finished** when `status` shows `Exited (0)` and my comparison shows all 104 expected ids at `600 threshold/`, and no other `threshold/` line. A count of 104 lines alone is not enough: an unexpected id could stand in for a missing one.
 
 **If `status` shows `Exited` with a code other than 0 (FS-4):** collect, then stop. Do not restart yet:
 
@@ -155,11 +149,7 @@ sudo sh d19.sh status
 systemctl status aqt-paper --no-pager | head -3
 ```
 
-The weekly check, the failure rule and the resume rule are the same as in D, with `dev` in place of `threshold`. **Finished** when `status` shows `Exited (0)` and this prints `104`:
-
-```sh
-sudo sh d19.sh status | grep -c '^24 dev/'
-```
+The weekly check (the whole `status` output), the failure rule and the resume rule are the same as in D, with `dev` in place of `threshold`. **Finished** when `status` shows `Exited (0)` and my comparison shows all 104 expected ids at `24 dev/` and no other `dev/` line.
 
 ## F. Choices
 
