@@ -21,4 +21,20 @@ Oct 18 17:22:22 aqt-server python[329043]: waiting until 2026-10-18 18:01 UTC fo
 
 The approved commit is the one the server runs. A start at 17:22:21 waits for 18:01, as `first_slot` specifies.
 
-**Pending:** the first step after 18:01, to be checked with `journalctl` and `systemctl status`.
+## The first step after the wait (checked at about 18:06 UTC)
+
+`journalctl --since "2026-10-18 17:55" --until "2026-10-18 18:10" | grep -v '"l02"'` printed `-- No entries --`. That check could not show a normal step: a step's only screen line is its report, which contains `"l02"` and is filtered out, and the service's stdout reaches the journal in blocks (on 2026-10-18 the report lines of earlier steps appeared together at 11:01:02). `systemctl status` showed `Active: active (running) since Sun 2026-10-18 17:22:21 UTC; 44min ago`; a refused step would have stopped the service.
+
+The step record on disk, verbatim (each line cut at 300 characters by the command):
+
+```
+root@aqt-server:/tmp# sudo tail -n 2 /var/lib/aqt/data/forward/account-1/forward_cursor.jsonl | cut -c1-300
+{"entry_hash":"8a1dbe2337fa211b8aa7910c8213174767f24ede91be52d98f7b353037ddba93","payload":{"end":"2026-10-18T18:00:00+00:00","start":"2026-10-18T17:00:00+00:00","step":"START"},"previous_hash":"9904b553f54df0f9b2ecbfeba20caa18b688e22311d8c51fbbaa51504be4180b","record_type":"aqt.app.forward_cursor.v
+{"entry_hash":"121dbc0e5610960189a7a6e3fe23820af9a7f36dedca43845b6f0de487a2bd1b","payload":{"refused":false,"step":"END"},"previous_hash":"8a1dbe2337fa211b8aa7910c8213174767f24ede91be52d98f7b353037ddba93","record_type":"aqt.app.forward_cursor.v1","recorded_at_utc":"2026-10-18T18:01:00Z","sequence":6
+root@aqt-server:/tmp# sudo tail -c 700 /var/lib/aqt/data/forward/account-1/forward_reports.jsonl
+95a1e52b25dc3d2c8f2683878b49327ae", "data_manifest_hash": "12dce0bb6174a6dfda4540ba93e70f9ae3ae02f149d297ff97ace89a59ee468e", "events": 2, "final_balances": {"BTC": "0.11519", "USDT": "18.92443642790740705860511"}, "final_mode": "RUNNING", "governor_refusals": {"INSIDE_REBALANCE_BAND": 1}, "health_breach_hours": 0, "hours": 1, "note": "Bar count is not sample size. Paper run on the exploration partition against the simulator; no edge, Sharpe, or promotion claim is made.", "orders_sent": 0, "predictor": "VOL_TARGET_BUY_AND_HOLD", "protocol_hash": "d22efb8989cb31a1d673000bba1e69baf5e0965bb400a8798aa966a3035d8b26", "refused": [], "run_id": "forward-1-20261018T1700Z", "scheduled_decisions": 0}}
+```
+
+So the first step after the start ran at the 18:01 slot. Its window was 17:00 to 18:00 (one hour), its `END` is `refused: false`, and its report (run `forward-1-20261018T1700Z`) shows `RUNNING` with `refused` empty. The START line's own time is cut off by `cut -c1-300`; the END is recorded at `2026-10-18T18:01:00Z`.
+
+**Note for later checks:** use the step cursor and the report file, not `journalctl` with the `"l02"` filter.
