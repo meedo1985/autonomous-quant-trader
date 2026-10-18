@@ -144,3 +144,28 @@ root@aqt-server:/tmp# sudo grep '2026-10-18T1[0-4]' /var/lib/aqt/data/forward/ac
 So the 14:01:44 step's window of 10:00 to 14:00 (four hours) completed without refusal, and the report written after its cursor `END` shows `RUNNING` with `hours: 4`. There are 3 `LOOP_LAG` events, which fits the three late starts (12:38, 13:05, 14:01); the count alone does not tie each event to a start. The report shows `scheduled_decisions: 0` for that step. Each refused step was followed by a step whose window starts again at 10:00, as the cursor shows. What this establishes: the step covering 10:00 to 14:00 completed without refusal, and no event kind other than `LOOP_LAG`, `SHUTDOWN` and `STARTUP` appears in these hours. It does not by itself prove that every hour inside the window was processed. That is the loop's tested replay behaviour (Task 29), not observed hour by hour here (T33FR3-2).
 
 **Finding F-RESTART (open, for an owner decision):** by the code's rule above, a start is refused when its first step fetches bars successfully, finds a pending window, and the start health check sees more than 300 s of lag against the newest bar close. A failed fetch returns 1 without that check, and no pending window returns without a report (T33FR5-2). It was observed twice here (12:38:41, 13:05:20); the rule, not the two observations, is what makes it general (T33FR4-2). A proposal (the start waits until the next hour's step) would change protected forward-paper code, so it needs the owner's approval, review and §16.
+
+## 4. The fixed check on the server (PR #64, commit `4d7f11f`)
+
+```
+root@aqt-server:/tmp# sudo git -C /opt/aqt-dashboard/app fetch --quiet origin
+root@aqt-server:/tmp# sudo git -C /opt/aqt-dashboard/app checkout --quiet 4d7f11f19f88de9b9016bb6c3f674cdccf2eea12
+root@aqt-server:/tmp# sudo chmod -R go-w /opt/aqt-dashboard; git -C /opt/aqt-dashboard/app rev-parse HEAD
+4d7f11f19f88de9b9016bb6c3f674cdccf2eea12
+root@aqt-server:/tmp# sudo systemctl start aqt-dashboard@check.service; sudo journalctl -u aqt-dashboard@check.service -o cat --no-pager | tail -13
+PASS can read /var/lib/aqt/data/forward/account-1/forward_reports.jsonl
+PASS can read /var/lib/aqt/data/live/BTCUSDT-1h.jsonl
+PASS /var/lib/aqt/data/forward/account-1/incidents.jsonl is absent; can list /var/lib/aqt/data/forward/account-1
+PASS can read /etc/aqt/deployments.jsonl
+PASS cannot write in /var/lib/aqt
+PASS cannot write in /etc/aqt
+PASS cannot write in /opt
+PASS cannot read /etc/aqt/telegram
+PASS cannot open a socket (inet)
+PASS cannot open a socket (Unix)
+PASS io_uring_setup is refused
+aqt-dashboard@check.service: Deactivated successfully.
+Finished aqt-dashboard@check.service - aqt read-only dashboard (check).
+```
+
+All 11 checks pass on the server. Reading `incidents.jsonl` once it exists stays unverified until that file exists (T33F-2).
