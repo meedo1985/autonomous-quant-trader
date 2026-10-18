@@ -2,7 +2,7 @@
 
 **Status:** PROPOSAL. Nothing here is authorized until the owner approves it.
 **Author:** Claude Opus 5.5 (`claude-opus-5-5`), coding AI, advisory only (Constitution sections 15 and 16).
-**Date:** 2026-10-18.
+**Date:** 2026-10-18. Revised the same day after Sol's review (`DASHBOARD_SOL_REVIEW_807022F.md`, DB-1..DB-9).
 **Asked by the owner:** "draft the dashboard proposal" (2026-10-18). Today the owner sees the app only through Telegram alerts and server commands.
 
 ## 0. What it is, and what it is not
@@ -23,45 +23,56 @@ From the files the service already writes under `/var/lib/aqt/data/` (read-only)
 
 | Panel | Source | Shows |
 |---|---|---|
-| Health | last line of `forward/account-1/forward_reports.jsonl`; last bar of `live/BTCUSDT-1h.jsonl` | Last step time, last bar time, mode (`final_mode`), refusals, health-breach hours. Red when the last bar is older than 2 hours. |
-| Account | `final_balances` over time | Paper equity and position over time, as one line chart. |
-| `L-02` progress | the `l02` field | Effective decisions so far out of 240, with the method (primary or fallback), and a rough date at today's pace. |
-| Activity | `scheduled_decisions`, `orders_sent`, `governor_refusals`, `authorizations` | Counts per day. |
+| Health | last complete line of `forward/account-1/forward_reports.jsonl`; last bar of `live/BTCUSDT-1h.jsonl` | Labelled **"last reported step"**: its time, `final_mode`, refusals, health-breach hours. Separately, the age of the last report and the age of the last bar. **Red** when the last report is older than 2 hours, when the bar is older than 2 hours, or when the last step reported a refusal. A recent bar alone never shows the service as running (DB-5). |
+| Balances | `final_balances` per report | BTC and USDT balances with their units, on **separate** scales. No equity line in this task: the reports hold no time-matched price, and the page does not invent one (DB-6). |
+| `L-02` status | the `l02` field | Effective decisions so far, out of the 240 needed, with the method (primary or fallback); when unavailable, the reason. **No completion date** (DB-7). Labelled a waiting condition, not evidence of an edge. |
+| Activity | `scheduled_decisions`, `orders_sent`, `governor_refusals`, `authorizations` | Labelled **"per reported step"**: one step can cover hours across days, so no per-day counts (DB-8). |
 | Incidents | `forward/account-1/incidents.jsonl` | The last 20, newest first. |
-| Code identity | `/etc/aqt/deployments.jsonl` | The approved commit the service runs. |
+| Code identity | `/etc/aqt/deployments.jsonl` | Labelled **"latest approved commit"**. Not "running commit": the record does not prove what the process runs (DB-8). |
+
+Each panel shows the time of the data it shows. For each input file it distinguishes four states: absent, pending (an incomplete last line, being written), invalid or unreadable (with the reason), and valid. Only complete, newline-terminated records are read (DB-4).
 
 Every page states, in a banner: **"Paper trading, simulated money. This shows that the machinery runs, not that the strategy has an edge."**
 
 ## 2. How it works (the simplest design that is safe)
 
 1. **A small module, `src/aqt/dashboard.py`, with a thin `scripts/dashboard.py` entry point.** Python standard library only, with no new dependency. It reads the files above and writes one self-contained HTML page with the charts drawn inline (SVG). The code sits inside the `aqt` package because import-linter contracts only cover `aqt.*` modules, and a new `forbidden` contract stops `aqt.dashboard` from importing `aqt.execution`, `aqt.governor`, `aqt.app`, `aqt.research`, `aqt.models` or `aqt.lockbox_eval`. The script holds no logic.
-2. **A systemd timer runs it every 15 minutes** as a separate account with read-only access to `/var/lib/aqt/data`. It writes only its own page (`/var/lib/aqt-dashboard/index.html`).
-3. **The page is not on the internet.** The server's firewall stays as it is (SSH only). The owner sees the page through the SSH connection they already use: one line opens a private tunnel, then the owner opens `http://localhost:8080` in the browser. A tiny standard-library web server serves the page **on the server's localhost only**. I give the line as a one-click file on the Desktop, like the other commands.
+   Every text that comes from a file is HTML-escaped, in text and in attributes. Plotted numbers are checked to be finite before drawing. The page carries a strict content-security policy (no scripts) (DB-2).
+2. **Two accounts, least privilege (DB-1).** `/var/lib/aqt` is mode `700` (`deploy/install.sh`), so read access is granted explicitly, not assumed:
+   - **`aqt-dash`, the generator**, run by a systemd timer every 15 minutes. It has read access only to the input files above, and traverse access to their directories (POSIX ACLs, with default ACLs so new files stay readable). It has no write access to app data, code, `/etc/aqt` or service controls. It can write only to `/var/lib/aqt-dashboard/www/`, and it replaces `index.html` atomically (write a temporary file, then rename).
+   - **`aqt-web`, the web server**: `python3 -m http.server --bind 127.0.0.1 8080 --directory /var/lib/aqt-dashboard/www`, as its own unit. It can read only that directory, which holds only the page.
+   - The runbook steps check these permissions on the installed server (for example, that `aqt-dash` cannot write a test file under `/var/lib/aqt`). A unit test alone cannot establish them.
+3. **The page is not on the internet (DB-3).** The firewall stays SSH only. The web server binds `127.0.0.1` explicitly, and the bind is checked, because `http.server` listens on all interfaces by default. The owner opens a tunnel that is also bound to loopback on the laptop (`ssh -L 127.0.0.1:8080:127.0.0.1:8080 ...`), then opens `http://localhost:8080`. The line comes as a one-click Desktop file.
 
-**Why not a public web page with a password.** It would open a new port to the internet, need TLS certificates and a login, and become something to defend. The tunnel gives the same page with no new attack surface. The trade-off: the owner can't open it from a phone without SSH.
+**What the tunnel does and does not add.** It adds no port reachable from the internet. While the tunnel is open, programs on the owner's laptop and local users on the server can read the page. That is acceptable for a read-only page about paper money. It is not "no attack surface".
 
-**Phone alternative (option B, can be added later):** a daily Telegram message with the same summary (equity, `L-02` progress, health). It reuses the existing bot, with no new port. Recommended as a follow-up if the owner wants it on the phone.
+**Why not a public web page with a password.** It would open a new port to the internet, need TLS certificates and a login, and become something to defend. The trade-off: the owner can't open it from a phone without SSH.
+
+**Phone alternative (option B, can be added later):** a daily Telegram message with the same summary (balances, `L-02` status, health). It reuses the existing bot, with no new port. Recommended as a follow-up if the owner wants it on the phone.
 
 ## 3. Relation to the roadmap
 
 - It does not change the timeline of anything. It can be built while the D-19 calibration runs (about 2½ months), which needs no coding.
-- It overlaps **Task 32** (monthly evidence report): both read the same files. The summary code is written once, and Task 32 can reuse it later.
-- **Not §16 protected** in the drafter's reading: it reads only, and touches no execution, governor, protocol or statistics code. A different-model review (Sol) is still planned. The owner decides whether it needs the §16 PR review; the drafter recommends yes, because it runs on the trading server.
+- It reads some of the files **Task 32** (monthly evidence report) will read. Whether Task 32 can reuse any of its code is decided when Task 32's requirements are set, not promised here (DB-9).
+- **Not §16 protected** in the drafter's reading, and Sol agrees (DB-9): a presentation-only page is outside the components §16 lists. This holds only while the implementation stays outside them: it must not import or change execution, governor, protocol or statistics code. The build gets its own Sol review. The owner decides whether it needs the §16 PR review; the drafter recommends yes, because it runs on the trading server.
 
 ## 4. Size and acceptance
 
-About 300–400 changed lines, one session, on its own branch and PR.
+Its own branch and PR. A rough size of one session is an estimate, not a condition (DB-9).
 
 **Accept:**
 - run on a copy of synthetic account files, it renders every panel;
-- with a missing or empty file, it shows "no data" for that panel, never a crash and never invented numbers;
-- with a bar older than 2 hours, the health panel is red;
-- a test proves the script opens every file read-only and writes only its own page;
+- for each input file, the four states (absent, pending partial line, invalid or unreadable, valid) are shown distinctly, never a crash and never invented numbers; tests cover a concurrent append and a corrupt record;
+- the health panel is red for a stale report, a stale bar and a reported refusal, each tested;
+- a synthetic malicious string (`<script>`, a quote inside an attribute) in incidents and refusals appears escaped and inert;
+- the page is replaced atomically;
+- the labels "last reported step", "per reported step" and "latest approved commit" appear, with no equity line and no `L-02` date;
 - the new import contract (section 2, item 1) is kept, and `lint-imports` fails if `aqt.dashboard` imports a forbidden package;
+- on the server: the web server is not reachable on the external interface, `aqt-dash` cannot write under `/var/lib/aqt`, and `aqt-web` can read only its directory. These checks are runbook steps, and their outputs are recorded;
 - the runbook gains the install steps and the one-line tunnel;
-- full validation is recorded, and Sol reviews it.
+- full validation is recorded, and Sol reviews the build.
 
-**Server steps for the owner (after merge):** install the timer and the localhost server (about 6 commands, from a Notepad file), then open the page through the tunnel.
+**Server steps for the owner (after merge):** install the two accounts, the timer and the localhost server, and run the permission checks (about 10 commands, from a Notepad file). Then open the page through the tunnel.
 
 ## 5. Questions for the owner
 
