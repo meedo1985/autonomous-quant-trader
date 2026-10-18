@@ -71,6 +71,9 @@ def report_problem(row: object) -> str | None:
     refusals = step.get("governor_refusals", {})
     if not all(type(n) is int for n in refusals.values()):
         return "'governor_refusals' holds a non-integer"
+    # T33R-2: a skipped amount would show an older value under a newer time
+    if any(_number(v) is None for v in step.get("final_balances", {}).values()):
+        return "'final_balances' holds a non-number"
     return None
 
 
@@ -79,8 +82,15 @@ def bar_problem(row: object) -> str | None:
     `open_time` (a gap record) is kept and not shown."""
     if not isinstance(row, dict):
         return "not a JSON object"
-    if "open_time" in row and _when(row["open_time"]) is None:
+    if "open_time" not in row:
+        return None
+    opened = _when(row["open_time"])
+    if opened is None:
         return "'open_time' is not a time with a zone"
+    try:
+        opened + timedelta(hours=1)
+    except OverflowError:  # T33R-1: its close is not a representable time
+        return "'open_time' has no representable close"
     return None
 
 

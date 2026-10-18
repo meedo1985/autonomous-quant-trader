@@ -271,3 +271,23 @@ def test_panels_show_their_data_time(tmp_path: Path) -> None:
     data, record = _server(tmp_path)
     page = dashboard.render(data, record, NOW)
     assert page.count(f"Latest values from the report at {NOW.isoformat()}") == 2
+
+
+def test_an_unrepresentable_bar_is_invalid_not_a_crash(tmp_path: Path) -> None:
+    # T33R-1
+    data, record = _server(tmp_path)
+    _lines(data / dashboard.BARS, [{"open_time": "9999-12-31T23:30:00+00:00"}])
+    page = dashboard.render(data, record, NOW)
+    assert "bars: invalid line 1" in page
+    assert "<section class=red><h2>Health" in page
+
+
+def test_a_non_numeric_balance_is_invalid(tmp_path: Path) -> None:
+    # T33R-2: never an older value under a newer time
+    data, record = _server(tmp_path)
+    late = _report(NOW)
+    late["report"]["final_balances"] = {"BTC": "n/a"}
+    _lines(data / dashboard.REPORTS, [_report(NOW - timedelta(hours=1)), late])
+    page = dashboard.render(data, record, NOW)
+    assert "reports: invalid line 2" in page
+    assert "BTC: last" not in page
