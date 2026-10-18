@@ -42,7 +42,8 @@ The top of the page shows **"as of <generation time>"**, and every age and healt
    Every text that comes from a file is HTML-escaped, in text and in attributes. Plotted numbers are checked to be finite before drawing. The page carries a strict content-security policy (no scripts) (DB-2).
 2. **Two accounts, least privilege (DB-1).** `/var/lib/aqt` is mode `700` (`deploy/install.sh`), so read access is granted explicitly, not assumed:
    - **`aqt-dash`, the generator**, run by a systemd timer every 15 minutes. It has read access only to the input files above, and traverse access to their directories (POSIX ACLs, with default ACLs so new files stay readable). It has no write access to app data, code, `/etc/aqt` or service controls. It writes the new page in `/var/lib/aqt-dashboard/staging/`, outside the served directory but on the same filesystem, then renames it to `/var/lib/aqt-dashboard/www/index.html` atomically. It writes nowhere else. The served directory never holds anything but the finished page, so no partial file and no directory listing can be served (DBR-3).
-   - **`aqt-web`, the web server**: `python3 -m http.server --bind 127.0.0.1 8080 --directory /var/lib/aqt-dashboard/www`, as its own unit. It can read only that directory, which holds only the page.
+   - **`aqt-web`, the web server**: `python3 -m http.server --bind 127.0.0.1 8080 --directory /var/lib/aqt-dashboard/www`, as its own unit. The unit has `ConditionPathExists=/var/lib/aqt-dashboard/www/index.html`, and the install publishes a first page before enabling it, so the server never starts on an empty directory and never lists it (DBR2-1). The unit also has `ProtectSystem=strict`, `ProtectHome=yes` and `InaccessiblePaths=/var/lib/aqt /etc/aqt /opt/aqt /opt/aqt-d19`. The claim is narrow: `aqt-web` cannot read the AQT data, the deployment record or the code. It is not "it can read only one directory" (DBR2-2).
+   - The served directory holds one regular file, `index.html`, written by the generator. It never holds a symbolic link, because `http.server` would follow one out of the directory (DBR2-2).
    - The runbook steps check these permissions on the installed server (for example, that `aqt-dash` cannot write a test file under `/var/lib/aqt`). A unit test alone cannot establish them.
 3. **The page is not on the internet (DB-3).** The firewall stays SSH only. The web server binds `127.0.0.1` explicitly, and the bind is checked, because `http.server` listens on all interfaces by default. The owner opens a tunnel that is also bound to loopback on the laptop (`ssh -L 127.0.0.1:8080:127.0.0.1:8080 ...`), then opens `http://localhost:8080`. The line comes as a one-click Desktop file.
 
@@ -67,13 +68,13 @@ Its own branch and PR. A rough size of one session is an estimate, not a conditi
 - for each input file, the four states (absent, pending partial line, invalid or unreadable, valid) are shown distinctly, never a crash and never invented numbers; tests cover a concurrent append and a corrupt record;
 - the health panel is red for a stale report, a stale bar and a reported refusal, each tested;
 - a synthetic malicious string (`<script>`, a quote inside an attribute) in incidents and refusals appears escaped and inert;
-- the page is staged outside the served directory and renamed into it; on the server, a request for any other path is refused and no directory listing is served;
+- the page is staged outside the served directory and renamed into it; on the server, `find /var/lib/aqt-dashboard/www -mindepth 1 ! -name index.html` prints nothing and `index.html` is a regular file (no other file, no symbolic link), so no other file is served; the web unit does not start before the first page exists (startup order tested);
 - the "as of" time is shown, and a test with a stopped generator (an old page) shows the "as of" time unchanged;
 - the `L-02` panel shows raw and effective counts, the method and the reason, and labels a fallback count;
 - a tampered `deployments.jsonl` or `incidents.jsonl` (one byte changed) shows "unknown" or "invalid", never a commit or incidents;
 - the labels "last reported step", "per reported step" and "latest approved commit" appear, with no equity line and no `L-02` date;
 - the new import contract (section 2, item 1) is kept, and `lint-imports` fails if `aqt.dashboard` imports a forbidden package;
-- on the server: the web server is not reachable on the external interface, `aqt-dash` cannot write under `/var/lib/aqt`, and `aqt-web` can read only its directory. These checks are runbook steps, and their outputs are recorded;
+- on the server: the web server is not reachable on the external interface, `aqt-dash` cannot write under `/var/lib/aqt`, and `aqt-web` cannot read `/var/lib/aqt`, `/etc/aqt` or the code. These checks are runbook steps, and their outputs are recorded;
 - the runbook gains the install steps and the one-line tunnel;
 - full validation is recorded, and Sol reviews the build.
 
