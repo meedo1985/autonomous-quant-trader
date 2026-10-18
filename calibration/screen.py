@@ -1745,9 +1745,11 @@ C2_WINDOW_ID = json.dumps(
     separators=(",", ":"),
 )
 # DR-6 (S7-R4): the screen's frozen reference vectors; "paths" (floats) is
-# frozen from the pinned image by slice S8, and `declare` refuses until then
+# frozen from the pinned image by slice S8: the third pilot's screen-summary
+# (review/d19-engine/PILOT_SCREEN_EVIDENCE.md, engine 4fed8f5, image
+# 54bfcf5394cb); `declare` refuses a None value
 FROZEN_REFERENCE_VECTORS: dict[str, str | None] = {
-    "paths": None,
+    "paths": "99e244543c3bc0e906d85fd5b607e4a45a595183e9eee4a646f3d2b86d5d2152",
     "g11": "a63398708b99fbd5f0f5c8cee5f497ae79fab2a2b1bfee0c53577fac82bce911",
     "g14": "5eb80b73256d75d628a4562ec04631b090eea5efcf461ff9148a04b5b4f8d643",
 }

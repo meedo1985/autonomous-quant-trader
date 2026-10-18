@@ -1810,11 +1810,14 @@ def test_run_screen_finds_trial_code_from_code_dir_alone(
 
 
 def test_the_screen_reference_vectors_are_frozen_where_exact() -> None:
-    # S7-R4: g11 and g14 are exact everywhere; the float path waits for S8
+    # S7-R4: g11 and g14 are exact everywhere; the float path is bit-exact
+    # only on the pinned image, so S8 froze the server's value
     got = screen.screen_reference_vectors()
     assert got["g11"] == screen.FROZEN_REFERENCE_VECTORS["g11"]
     assert got["g14"] == screen.FROZEN_REFERENCE_VECTORS["g14"]
-    assert screen.FROZEN_REFERENCE_VECTORS["paths"] is None
+    assert screen.FROZEN_REFERENCE_VECTORS["paths"] == (
+        "99e244543c3bc0e906d85fd5b607e4a45a595183e9eee4a646f3d2b86d5d2152"
+    )
 
 
 def test_c2_constants_follow_the_engine() -> None:
@@ -1847,6 +1850,11 @@ def test_a_declaration_record_needs_the_checks_and_names_the_object(
     defn = {"exploration_source": {"manifest_sha256": src.identity["manifest_sha256"]}}
     _declarable(monkeypatch, defn, src)
     trial = _screen_trial(tmp_path, monkeypatch, CONST, g11_class="constant_signal")
+    monkeypatch.setattr(
+        screen,
+        "FROZEN_REFERENCE_VECTORS",
+        {**screen.FROZEN_REFERENCE_VECTORS, "paths": None},
+    )
     with pytest.raises(ValueError, match="not frozen yet"):
         screen.declare([trial], tmp_path, tmp_path, "f" * 64, tmp_path, workers=1)
     monkeypatch.setattr(
