@@ -307,3 +307,10 @@ def test_an_asset_missing_from_the_latest_report_keeps_its_own_time(
         f"BTC: last 0.01 (report at {(NOW - timedelta(hours=1)).isoformat()})" in page
     )
     assert f"ETH: last 2 (report at {NOW.isoformat()})" in page
+
+
+def test_sandbox_check_accepts_an_input_not_written_yet(tmp_path: Path) -> None:
+    # server 2026-10-18: incidents.jsonl does not exist until a first incident
+    missing = tmp_path / "incidents.jsonl"
+    results = dict(dashboard.sandbox_check([missing], [], tmp_path / "secret"))
+    assert results[f"{missing} is absent; can list {tmp_path}"] is True
