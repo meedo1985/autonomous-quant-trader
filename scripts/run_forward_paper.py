@@ -7,10 +7,10 @@ Usage:
 
 Each step appends Binance's newly closed public 1h bars to the store, then runs
 the paper loop (baseline only, simulator only) over every decision hour whose
-fill bar has closed, resuming the account from its journal
-(`aqt.app.forward`). Without `--once` it waits for the next :01 past the hour
-(`first_slot`; review/forward-restart/PROPOSAL.md), then steps a minute after
-every hour until stopped. The configuration's `start` is the account's first decision hour; its
+fill bar has closed, resuming the account from its journal (`aqt.app.forward`).
+Without `--once` it waits for the next :01 past the hour (`first_slot`;
+review/forward-restart/PROPOSAL.md), then steps a minute after every hour until
+stopped. The configuration's `start` is the account's first decision hour; its
 `end` is not used. Reads no exchange credential and refuses to run while any
 Binance key variable is set; with `--telegram` it reads only the owner's
 Telegram token (D-8). No real money is involved (owner answer Q-C, 2026-10-04).

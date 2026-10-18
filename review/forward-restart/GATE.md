@@ -37,3 +37,16 @@ Unchanged: every start check, the lag limit, the `LOOP_LAG` report, the replay, 
 No frozen file changed.
 
 **LOCAL GATE: PASS.** Outstanding: Sol build review, owner §16 PR review, server update (RUNBOOK §7).
+
+## Correction (after CI, 2026-10-18)
+
+The validation table was run **before** a last edit of the module description in `scripts/run_forward_paper.py`. That edit left a 95-character line. CI `checks` failed on it (`ruff check`: E501 at line 13; run on head `46674e3`), and the table's `ruff check` row did not hold for the committed code. Repair: the paragraph is rewrapped; the text and the code are unchanged. Re-run after the repair:
+
+| Command | Result |
+|---|---|
+| `ruff check .` | exit 0 |
+| `ruff format --check .` | exit 0, 176 files already formatted |
+| `mypy scripts/run_forward_paper.py` | exit 0 |
+| `pytest tests/integration/test_forward_paper.py` | exit 0, 26 passed |
+
+The diff of the repair is whitespace within the docstring only (4 lines). It came after Sol's build review and the owner's review of `46674e3`.
