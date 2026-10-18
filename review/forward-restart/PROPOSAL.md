@@ -23,13 +23,13 @@ So a start that fetches bars, finds a pending window and comes more than 5 minut
 ## 2. Proposed change (revised after Sol's review FR-1..FR-4)
 
 In `scripts/run_forward_paper.py` `main`, after the deployment check and the Telegram channel set-up, and before the first step:
-- the service always waits until the next scheduled slot, the next hour plus `STEP_OFFSET` (:01);
+- the service always waits until the **next occurrence of HH:01 UTC**: the current hour's :01 if set-up finishes before it, otherwise the following hour's :01 (FRR-1). This is not the loop's "next hour plus `STEP_OFFSET`", which from 14:00:30 would skip 14:01;
 - it logs one INFO line: "waiting until HH:01 UTC for the first step";
 - it then enters the loop exactly as today.
 
 There is no cut-off minute to justify. A start at 14:00:30 waits 30 s; a start at 14:01:10 waits until 15:01 (FR-1, FR-2). Every first step then runs at the same moment as every normal hourly step. So its freshness margin is the one every step already has, not a new one.
 
-About 5 lines, plus a test. `--once` (a manual one-step run) is unchanged and still runs at once.
+About 5 lines, plus boundary tests: a start at 14:00:30 waits until 14:01, a start at 14:01:10 waits until 15:01, and `--once` still runs at once (FRR-1).
 
 **A residual, not introduced by this change (FR-2).** `step()` takes `now` before fetching bars, and the lag check uses that time. A slow fetch is therefore measured as of before the fetch. This holds for every hourly step today; the change does not touch it. Reported here for completeness; not proposed now.
 
