@@ -378,11 +378,19 @@ def sandbox_check(
     (section 4): each line is a check and whether it held."""
     results: list[tuple[str, bool]] = []
     for path in readable:
-        if path.exists():
-            results.append((f"can read {path}", _try(path.read_bytes)))
-        else:  # not written yet, e.g. no incident ever: the page shows "absent"
-            listed = _try(partial(os.listdir, path.parent))
-            results.append((f"{path} is absent; can list {path.parent}", listed))
+        try:
+            path.read_bytes()
+            results.append((f"can read {path}", True))
+        except FileNotFoundError:
+            # not written yet (no incident ever): absent only if its directory
+            # lists and does not name it, so a dangling link fails (T33F-1)
+            try:
+                absent = path.name not in os.listdir(path.parent)
+            except OSError:
+                absent = False
+            results.append((f"{path} is absent; can list {path.parent}", absent))
+        except OSError:
+            results.append((f"can read {path}", False))
     for directory in unwritable:
         probe = directory / ".aqt-dashboard-check"
         wrote = _try(partial(probe.touch, exist_ok=False))

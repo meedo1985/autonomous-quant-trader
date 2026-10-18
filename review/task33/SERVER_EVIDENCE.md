@@ -35,7 +35,7 @@ aqt-dashboard@check.service: Failed with result 'exit-code'.
 Failed to start aqt-dashboard@check.service - aqt read-only dashboard (check).
 ```
 
-**The one FAIL is a defect of the check, not of the sandbox.** `ls -l /var/lib/aqt/data/forward/account-1/` (below) shows no `incidents.jsonl`: the app has never recorded an incident. The check treated an input not written yet as unreadable. The page itself shows such an input as "absent". Repair on branch `task33-followup`: an absent input passes when its directory can be listed. Every security boundary passed on the server, including "cannot read /etc/aqt/telegram". The server check is to be run again after that repair is installed.
+**The one FAIL is explained by a missing file.** `ls -l /var/lib/aqt/data/forward/account-1/` (below) shows no `incidents.jsonl`: the app has never recorded an incident. The check treated an input not written yet as unreadable; the page itself shows it as "absent". This does **not** show that the dashboard can read the file once it exists. That stays unverified until the file exists and the check passes it (T33F-2). Repair on branch `task33-followup`: an absent input passes only if reading it finds no file **and** its directory lists without that name; any other read failure still fails (T33F-1). The other ten checks passed on the server, including "cannot read /etc/aqt/telegram". The check is to be run again after the repair is installed.
 
 ```
 /var/lib/aqt/data/forward/account-1/:
@@ -61,7 +61,7 @@ Oct 18 11:01:03 aqt-server systemd[1]: aqt-paper.service: Main process exited, c
 Oct 18 11:01:03 aqt-server systemd[1]: aqt-paper.service: Failed with result 'exit-code'.
 ```
 
-This is the designed refusal (D-2: a weekly acknowledged test). The owner ran the test and acknowledged it (RUNBOOK §4). The Telegram alerts that then arrived prove the channel works.
+This is the designed refusal (D-2: a weekly acknowledged test). The owner reports that he sent the test and acknowledged it (RUNBOOK §4); no command output of that step was pasted, so it is recorded as the owner's report (T33F-4). The Telegram alerts quoted below show that messages are delivered. The next start passed the test check, since it refused only on lag.
 
 ## 3. Two refused restarts: the start check's 5-minute lag
 
@@ -87,6 +87,6 @@ Oct 18 13:05:23 aqt-server python[326490]: {"at":"2026-10-18T10:00:00.000000Z","
 
 The owner then scheduled the start for 14:01:30 UTC (`systemd-run --on-calendar="2026-10-18 14:01:30 UTC" /usr/bin/systemctl start aqt-paper`). The owner reported, in his words: "all is done and woeks as you tell". No status output was pasted for this start, so it is recorded as the owner's report and not verified here.
 
-**Missed hours:** 10:00 to 13:00 UTC were not run on time. They are reported as CRITICAL `LOOP_LAG` and are run late, as a replay would run them (Task 29). They are not skipped.
+**Missed hours:** the quoted alerts name 10:00 and 11:00 as missed. By design (Task 29) every missed hour is reported as CRITICAL `LOOP_LAG` and run late, as a replay would run it, never skipped. That 10:00–13:00 were in fact all run is **not verified** here: no output of the 14:01:30 step was pasted (T33F-3). It can be checked with `grep -c '"2026-10-18T1[0-3]' /var/lib/aqt/data/forward/account-1/forward_reports.jsonl` or on the dashboard.
 
 **Finding F-RESTART (open, for an owner decision):** a manual start in the middle of an hour always refuses. A proposal (the start waits until the next hour's step) would change protected forward-paper code, so it needs the owner's approval, review and §16.
