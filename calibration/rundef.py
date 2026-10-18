@@ -261,19 +261,28 @@ def counts(manifest: object) -> dict[str, int]:
     return dict(counts)
 
 
-def run_plan(manifest: object) -> dict[str, int]:
+# DR2-1: the preregistration hash the owner accepted (prereg §12 item 1),
+# pinned from the acceptance record once the key record is complete
+# (deploy/calibration/FULL_RUN.md P1-P3). None refuses every qualification run.
+ACCEPTED_PREREG_SHA256: str | None = None
+
+
+def run_plan(manifest: object, prereg_sha256: str | None = None) -> dict[str, int]:
     """`counts`, for a run to be started or recorded: a qualification run is
-    still refused (DR2-1). Reading finished chains uses `counts` (QO-1)."""
+    admitted only for the accepted preregistration (DR2-1), the hash of the
+    run definition's preregistration. Reading finished chains uses `counts`
+    (QO-1)."""
     plan = counts(manifest)
     if isinstance(manifest, dict) and manifest.get("purpose") == "qualification":
-        # DR2-1: still refused. The accepted preregistration hash is pinned
-        # only after the owner's key record, and the qualification object
-        # (with the S16-2 and S16-4 obligations) is not built. T_C2 is fixed
-        # (grid.T_C2); the image, re-pilot and go-ahead are done (FE-4, FE-7).
-        raise ValueError(
-            "qualification runs are refused until the accepted preregistration "
-            "hash and the qualification object exist"
-        )
+        # T_C2 is fixed (grid.T_C2); the image, re-pilot and go-ahead are
+        # done (FE-4, FE-7); the qualification object is built (qobj, with
+        # S16-4 as QO-6). S16-2, the definition committed before the first
+        # chunk, is a sheet step (FULL_RUN.md step C).
+        if ACCEPTED_PREREG_SHA256 is None or prereg_sha256 != ACCEPTED_PREREG_SHA256:
+            raise ValueError(
+                "qualification runs are refused until the accepted preregistration "
+                "hash is pinned, and then only for that preregistration (DR2-1)"
+            )
     return plan
 
 

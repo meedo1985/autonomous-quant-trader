@@ -207,7 +207,7 @@ def dev_bounds(
     """Each cell's development thresholds (§3.5 item 2): its `T` level's
     pool over every cell's complete, verified threshold chain, for its `K`.
     ChainError if any chain is incomplete or broken."""
-    count = rundef.run_plan(defn["cell_manifest"])["threshold"]
+    count = rundef.run_plan(defn["cell_manifest"], defn["prereg_sha256"])["threshold"]
     binding = rundef.definition_sha256(defn)
     chains = [
         chunks.Chain(
@@ -251,7 +251,7 @@ def worker(
     gating = rundef.start_gate(defn, ROOT)
     manifest = defn["cell_manifest"]
     cells = {c.cell_id: c for c in cells_from_manifest(manifest)}
-    replications = rundef.run_plan(manifest)[namespace]
+    replications = rundef.run_plan(manifest, defn["prereg_sha256"])[namespace]
     if defn["seed_spec"] != rundef.seed_spec(defn["prereg_sha256"]):
         raise ValueError("seed specification is not the §8 one (DR2-2)")
     cell, anchor = cells[cell_id], defn["seed_spec"]["anchor"]
@@ -303,7 +303,7 @@ def main(argv: list[str] | None = None) -> int:
         cells = cells_from_manifest(defn["cell_manifest"])  # DR-2
         if args.raw_root is None and any(c.law in SEMI_LAWS for c in cells):
             raise ValueError("Q5 cells need --raw-root")
-        rundef.run_plan(defn["cell_manifest"])  # DR-3
+        rundef.run_plan(defn["cell_manifest"], defn["prereg_sha256"])  # DR-3, DR2-1
         gating = rundef.start_gate(defn, ROOT)  # fail fast; workers check again
         bounds = (
             dev_bounds(defn, args.store, gating, cells)

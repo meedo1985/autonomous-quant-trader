@@ -124,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
         exploration = args.exploration_manifest.read_bytes()
         try:  # DR-2, DR-3: a bad manifest never enters a run definition
             cells = cells_from_manifest(manifest)
-            rundef.run_plan(manifest)
+            rundef.run_plan(manifest, hashlib.sha256(prereg).hexdigest())  # DR2-1
         except ValueError as error:
             print(f"cell manifest: {error}", file=sys.stderr)
             return 1

@@ -1,0 +1,737 @@
+{
+  "purpose": "qualification",
+  "replications": {
+    "threshold": 300000,
+    "dev": 12000
+  },
+  "cells": [
+    {
+      "cell_id": "gaussian.independent.k1.t1240",
+      "k": 1,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "gaussian.independent.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "gaussian.independent.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "gaussian.independent.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "gaussian.equi0.5.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "equi0.5"
+    },
+    {
+      "cell_id": "gaussian.equi0.5.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "equi0.5"
+    },
+    {
+      "cell_id": "gaussian.equi0.5.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "equi0.5"
+    },
+    {
+      "cell_id": "gaussian.equi0.9.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "gaussian.equi0.9.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "gaussian.equi0.9.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "gaussian.equi0.99.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "equi0.99"
+    },
+    {
+      "cell_id": "gaussian.equi0.99.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "equi0.99"
+    },
+    {
+      "cell_id": "gaussian.equi0.99.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "equi0.99"
+    },
+    {
+      "cell_id": "gaussian.near_duplicates.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "near_duplicates"
+    },
+    {
+      "cell_id": "gaussian.near_duplicates.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "near_duplicates"
+    },
+    {
+      "cell_id": "gaussian.near_duplicates.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "near_duplicates"
+    },
+    {
+      "cell_id": "gaussian.exact_duplicate.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "exact_duplicate"
+    },
+    {
+      "cell_id": "gaussian.exact_duplicate.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "exact_duplicate"
+    },
+    {
+      "cell_id": "gaussian.exact_duplicate.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "exact_duplicate"
+    },
+    {
+      "cell_id": "gaussian.opposites.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "gaussian.opposites.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "gaussian.opposites.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "gaussian.clusters.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "clusters"
+    },
+    {
+      "cell_id": "gaussian.clusters.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "clusters"
+    },
+    {
+      "cell_id": "gaussian.factor.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "factor"
+    },
+    {
+      "cell_id": "gaussian.factor.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "gaussian",
+      "dependence": "factor"
+    },
+    {
+      "cell_id": "t5.independent.k1.t1240",
+      "k": 1,
+      "t": 1240,
+      "law": "t5",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "t5.independent.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "t5",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "t5.independent.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "t5",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "t5.independent.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "t5",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "t5.equi0.9.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "t5",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "t5.equi0.9.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "t5",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "t5.equi0.9.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "t5",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "t5.opposites.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "t5",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "t5.opposites.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "t5",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "t5.opposites.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "t5",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "skewtp.independent.k1.t1240",
+      "k": 1,
+      "t": 1240,
+      "law": "skewt+",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "skewtp.independent.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "skewt+",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "skewtp.independent.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "skewt+",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "skewtp.independent.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "skewt+",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "skewtp.equi0.9.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "skewt+",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "skewtp.equi0.9.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "skewt+",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "skewtp.equi0.9.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "skewt+",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "skewtp.opposites.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "skewt+",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "skewtp.opposites.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "skewt+",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "skewtp.opposites.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "skewt+",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "skewt-.independent.k1.t1240",
+      "k": 1,
+      "t": 1240,
+      "law": "skewt-",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "skewt-.independent.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "skewt-",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "skewt-.independent.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "skewt-",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "skewt-.independent.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "skewt-",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "skewt-.equi0.9.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "skewt-",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "skewt-.equi0.9.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "skewt-",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "skewt-.equi0.9.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "skewt-",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "skewt-.opposites.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "skewt-",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "skewt-.opposites.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "skewt-",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "skewt-.opposites.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "skewt-",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "garch.independent.k1.t1240",
+      "k": 1,
+      "t": 1240,
+      "law": "garch",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "garch.independent.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "garch",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "garch.independent.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "garch",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "garch.independent.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "garch",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "garch.equi0.9.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "garch",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "garch.equi0.9.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "garch",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "garch.equi0.9.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "garch",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "garch.opposites.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "garch",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "garch.opposites.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "garch",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "garch.opposites.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "garch",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "ar0.2.independent.k1.t1240",
+      "k": 1,
+      "t": 1240,
+      "law": "ar0.2",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "ar0.2.independent.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "ar0.2",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "ar0.2.independent.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "ar0.2",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "ar0.2.independent.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "ar0.2",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "ar0.2.equi0.9.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "ar0.2",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "ar0.2.equi0.9.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "ar0.2",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "ar0.2.equi0.9.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "ar0.2",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "ar0.2.opposites.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "ar0.2",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "ar0.2.opposites.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "ar0.2",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "ar0.2.opposites.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "ar0.2",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "ar0.5.independent.k1.t1240",
+      "k": 1,
+      "t": 1240,
+      "law": "ar0.5",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "ar0.5.independent.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "ar0.5",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "ar0.5.independent.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "ar0.5",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "ar0.5.independent.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "ar0.5",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "ar0.5.equi0.9.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "ar0.5",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "ar0.5.equi0.9.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "ar0.5",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "ar0.5.equi0.9.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "ar0.5",
+      "dependence": "equi0.9"
+    },
+    {
+      "cell_id": "ar0.5.opposites.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "ar0.5",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "ar0.5.opposites.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "ar0.5",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "ar0.5.opposites.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "ar0.5",
+      "dependence": "opposites"
+    },
+    {
+      "cell_id": "garch.factor.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "garch",
+      "dependence": "factor"
+    },
+    {
+      "cell_id": "garch.factor.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "garch",
+      "dependence": "factor"
+    },
+    {
+      "cell_id": "unequal.independent.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "unequal",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "unequal.independent.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "unequal",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "unequal.independent.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "unequal",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "mixed_ar.independent.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "mixed_ar",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "mixed_ar.independent.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "mixed_ar",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "mixed_ar.independent.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "mixed_ar",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "semi-trend.independent.k1.t1240",
+      "k": 1,
+      "t": 1240,
+      "law": "semi-trend",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "semi-trend.independent.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "semi-trend",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "semi-trend.independent.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "semi-trend",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "semi-trend.independent.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "semi-trend",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "semi-vol.independent.k1.t1240",
+      "k": 1,
+      "t": 1240,
+      "law": "semi-vol",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "semi-vol.independent.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "semi-vol",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "semi-vol.independent.k5.t1240",
+      "k": 5,
+      "t": 1240,
+      "law": "semi-vol",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "semi-vol.independent.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "semi-vol",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "semi-joint.independent.k2.t1240",
+      "k": 2,
+      "t": 1240,
+      "law": "semi-joint",
+      "dependence": "independent"
+    },
+    {
+      "cell_id": "semi-joint.independent.k20.t1240",
+      "k": 20,
+      "t": 1240,
+      "law": "semi-joint",
+      "dependence": "independent"
+    }
+  ]
+}
