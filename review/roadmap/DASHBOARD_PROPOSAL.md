@@ -44,14 +44,14 @@ The top of the page shows **"as of <generation time>"**, and every age and healt
    - `AmbientCapabilities=CAP_DAC_READ_SEARCH` and `CapabilityBoundingSet=CAP_DAC_READ_SEARCH`: on paths visible to it, it can read files and search directories whatever their modes. It has no other privilege.
    - `ProtectSystem=strict`, `ProtectHome=yes` and `ReadWritePaths=/var/lib/aqt-dashboard`: the regular filesystem is read-only to it, except its own directory. `ProtectSystem=strict` does not cover `/dev`, `/proc` and `/sys`, so `PrivateDevices=yes`, `ProtectKernelTunables=yes`, `ProtectControlGroups=yes` and `ProtectProc=invisible` are added for those (DBR4-2).
    - `InaccessiblePaths=/etc/aqt/telegram`: the bot credential is hidden from it.
-   - `PrivateNetwork=yes` and `RestrictAddressFamilies=none`: it can open **no socket of any family**, including Unix sockets, so it cannot talk to the app or anything else over a socket (DBR4-1).
+   - `PrivateNetwork=yes` and `RestrictAddressFamilies=none`: it has no network, and `socket(2)` refuses every address family, Unix included (DBR4-1). systemd's restriction does not cover `socketpair()`, sockets created through `io_uring`, or sockets passed in. The unit passes none in, and `SystemCallFilter=~io_uring_setup` closes `io_uring`. A `socketpair()` connects the process only to itself. The claim is limited to what the server checks test (DBR5-1).
    - `NoNewPrivileges=yes`.
 
    The claims are narrow, and each one is tested on the server inside the same sandbox (section 4):
    - it can read the input files;
    - it cannot read the credential;
    - it cannot write under `/var/lib/aqt`, `/etc/aqt` or `/opt`;
-   - it cannot open an inet or a Unix socket.
+   - `socket(2)` fails for inet and Unix sockets, and `io_uring_setup` is refused.
 
    Nothing beyond the tested boundaries is claimed. In particular, it is **not** "it can read only the input files". It writes the new page in `/var/lib/aqt-dashboard/staging/`, then renames it to `/var/lib/aqt-dashboard/page/index.html` (same filesystem, atomic). `/var/lib/aqt-dashboard` and `page/` are mode `755` and the page `644`, so the owner's login can traverse to it and copy it (DBR4-3). The page holds only what the panels show: it contains no credential and no file other than itself. The runbook steps check this on the installed server; a unit test alone cannot establish it.
 3. **No web server, nothing on the internet (DB-3, DBR3-1).** The firewall stays SSH only, and the server runs no web server at all. The owner copies the finished page to the laptop with the SSH access they already have (`scp <server>:/var/lib/aqt-dashboard/page/index.html "%USERPROFILE%\Desktop\aqt-dashboard.html"`, an absolute local destination; DBR4-3), then double-clicks it. The command comes as a one-click Desktop file. This removes every serving question (bind address, directory listing, symbolic links, a tunnel) instead of guarding against each.
@@ -81,7 +81,7 @@ Its own branch and PR. A rough size of one session is an estimate, not a conditi
 - a tampered `deployments.jsonl` or `incidents.jsonl` (one byte changed) shows "unknown" or "invalid", never a commit or incidents;
 - the labels "last reported step", "per reported step" and "latest approved commit" appear, with no equity line and no `L-02` date;
 - the new import contract (section 2, item 1) is kept, and `lint-imports` fails if `aqt.dashboard` imports a forbidden package;
-- on the server, run inside the generator's own sandbox (`systemd-run` with the unit's settings): it can read the input files, cannot write a test file under `/var/lib/aqt`, `/etc/aqt` or `/opt`, cannot read `/etc/aqt/telegram`, and cannot open an inet or a Unix socket. These checks are runbook steps, and their outputs are recorded;
+- on the server, run inside the generator's own sandbox (`systemd-run` with the unit's settings): it can read the input files, cannot write a test file under `/var/lib/aqt`, `/etc/aqt` or `/opt`, cannot read `/etc/aqt/telegram`, `socket(2)` fails for inet and Unix sockets, and `io_uring_setup` is refused. These checks are runbook steps, and their outputs are recorded;
 - no listening port is added (`ss -ltn` before and after the install is the same);
 - after the first generation, the owner's own Desktop file copies the page end to end, and the copy opens (recorded);
 - the runbook gains the install steps and the one-line copy command;
