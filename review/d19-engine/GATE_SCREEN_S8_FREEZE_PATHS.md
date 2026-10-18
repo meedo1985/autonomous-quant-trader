@@ -9,7 +9,7 @@ Reviewer: Claude Opus 5.5 (`claude-opus-5-5`), 2026-10-18, applying `task-gate-r
 - `calibration/screen.py`: `"paths": None` becomes `"99e244543c3bc0e906d85fd5b607e4a45a595183e9eee4a646f3d2b86d5d2152"`. The comment names the evidence.
 - `tests/unit/test_calibration_screen.py`: asserts the frozen value. The `not frozen yet` refusal is still tested, with `paths` patched back to `None`.
 
-No other logic changes. `screen_reference_vectors()` and the `declare` guards are unchanged.
+At `f475f46` no other logic changed. Sol's review then added one `declare` guard (`f3e3313`, S8F-1): it refuses when the record's vectors differ from the ones it validated before the run. Test added. `screen_reference_vectors()` is unchanged.
 
 ## Provenance (scientific reproducibility)
 
@@ -17,7 +17,7 @@ No other logic changes. `screen_reference_vectors()` and the `declare` guards ar
 - The record computes it with `run_screen` → `screen_reference_vectors()` in the `d19_screen.py` process. That process sets `OPENBLAS_NUM_THREADS=1` and `OPENBLAS_CORETYPE=Haswell` at import (`scripts/d19_screen.py:32-33`). The summary shows one job runtime, the pinned one.
 - The same pilot reproduced `g11` and `g14` exactly as already frozen: the input and code path are the ones expected.
 - The laptop gives `paths` = `9d247856…6f4b`: not the pinned image, so a different value is expected for the float path (S7-R4). This is why the test asserts the constant and does not recompute it.
-- **Limitation:** the value comes from one computation on the server. It is not reproduced independently. `declare` recomputes the vectors and refuses on any difference from the frozen ones (`calibration/screen.py`, `declare`). That catches drift (another image, runtime or code), not an error that the same computation repeats: the check shows agreement with the server's computation, not that the value is correct. (Wording narrowed after Sol's re-review, S8FR-1.)
+- **Limitation:** the value comes from one computation on the server. It is not reproduced independently. `declare` recomputes the vectors and refuses on any difference from the frozen ones (`calibration/screen.py`, `declare`). That catches drift that changes the computed vector (another image, runtime or code), not an error that the same computation repeats: the check shows agreement with the server's computation, not that the value is correct. (Wording narrowed after Sol's re-review, S8FR-1.)
 - **Corrected after Sol's review (S8F-1, `SOL6_SCREEN_S8_FREEZE_B713811.md`):** at `f475f46` that check covered only the vectors computed before the run. The record's copy, computed again after trial code loads, was not compared. `declare` now refuses when they differ. Trial code runs in-process, so no check here can stop deliberately hostile trial code.
 
 ## Quant review
@@ -46,6 +46,6 @@ The CI calibration job pins `numpy==2.5.3`, `scikit-learn==1.9.1` and `lightgbm=
 
 | ID | Class | Finding |
 |---|---|---|
-| G-FP-1 | NON-BLOCKING | Single server computation (see Limitation). It fails closed. A second computation comes free with the first real `declare`. |
+| G-FP-1 | NON-BLOCKING | Single server computation (see Limitation). `declare` refuses a vector mismatch. The first real `declare` repeats the same computation, so it is not independent validation of the value. |
 
 **LOCAL GATE: PASS.** The independent review and the owner's §16 PR review are outstanding. `calibration/screen.py` is in qobj's `REVIEWED` set.
