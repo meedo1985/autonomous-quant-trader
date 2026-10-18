@@ -1992,6 +1992,8 @@ def declare(
     )
     if any(r["runtime"] != dsr.V_ENVIRONMENT for r in record["runs"]):
         raise ValueError("a screen job ran off the pinned runtime (S16SR-1)")
+    if record["reference_vectors"] != vectors:  # S8F-1: trial code loaded since
+        raise ValueError("the screen's reference vectors changed during the run")
     for r in record["runs"]:
         del r["seconds"]  # timing is measurement evidence, not declared
     del record["measurement_only"]

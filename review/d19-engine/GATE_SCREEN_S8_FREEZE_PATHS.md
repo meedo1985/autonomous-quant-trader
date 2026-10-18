@@ -18,6 +18,7 @@ No other logic changes. `screen_reference_vectors()` and the `declare` guards ar
 - The same pilot reproduced `g11` and `g14` exactly as already frozen: the input and code path are the ones expected.
 - The laptop gives `paths` = `9d247856…6f4b`: not the pinned image, so a different value is expected for the float path (S7-R4). This is why the test asserts the constant and does not recompute it.
 - **Limitation:** the value comes from one computation on the server. It is not reproduced independently. This fails closed: `declare` recomputes the vectors and refuses on any difference (`calibration/screen.py`, `declare`). A wrong frozen value blocks a declaration; it cannot pass a wrong screen.
+- **Corrected after Sol's review (S8F-1, `SOL6_SCREEN_S8_FREEZE_B713811.md`):** at `f475f46` that check covered only the vectors computed before the run. The record's copy, computed again after trial code loads, was not compared. `declare` now refuses when they differ. Trial code runs in-process, so no check here can stop deliberately hostile trial code.
 
 ## Quant review
 
@@ -31,7 +32,7 @@ The change touches no data flow, timing, costs, partitions or selection. The app
 | `ruff check .` | exit 0, all checks passed |
 | `mypy src` | exit 0, no issues in 55 files |
 | `lint-imports` | exit 0, 6 contracts kept, 0 broken |
-| `pytest tests/unit/test_calibration_screen.py` | exit 0, 163 passed |
+| `pytest tests/unit/test_calibration_screen.py` | exit 0, 163 passed (rerun after the S8F-1 repair: exit 0, 163 passed; format, lint, mypy, lint-imports clean) |
 | `pytest --ignore-glob="tests/unit/test_calibration_*"` | exit 0, 1814 passed, 9 skipped |
 | `pytest tests/unit/test_calibration_*.py tests/unit/test_d19_deploy.py --deselect tests/unit/test_calibration_screen.py` | exit 0, 297 passed, 163 deselected (the screen file, run above) |
 

@@ -1872,6 +1872,18 @@ def test_a_declaration_record_needs_the_checks_and_names_the_object(
     with pytest.raises(ValueError, match="pinned runtime"):
         screen.declare([trial], tmp_path, tmp_path, "f" * 64, tmp_path, workers=1)
     monkeypatch.setenv("OPENBLAS_CORETYPE", "Haswell")
+    # vectors changed after the check, e.g. by trial code: refused (S8F-1)
+    run = screen.run_screen
+
+    def drifted(*a: Any, **k: Any) -> dict[str, Any]:
+        record = run(*a, **k)
+        record["reference_vectors"] = {**record["reference_vectors"], "paths": "d"}
+        return record
+
+    monkeypatch.setattr(screen, "run_screen", drifted)
+    with pytest.raises(ValueError, match="changed during the run"):
+        screen.declare([trial], tmp_path, tmp_path, "f" * 64, tmp_path, workers=1)
+    monkeypatch.setattr(screen, "run_screen", run)
     # other exploration bars than the run definition's: refused
     other = screen.HourlySource(
         src.bars, src.hour, {"manifest_sha256": {"BTCUSDT": "c" * 64}}
