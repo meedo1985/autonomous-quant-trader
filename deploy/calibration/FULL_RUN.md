@@ -36,13 +36,13 @@ Run these one at a time. First check that no D-19 process is running at all:
 cd /opt/aqt-d19/app/deploy/calibration
 sudo sh d19.sh status
 sudo sh d19.sh screen-status
-if ! cg=$(systemctl show aqt-d19.slice -p ControlGroup --value); then echo "STOP: cannot read aqt-d19.slice"; elif [ -z "$cg" ]; then echo "ok: no D-19 process is running"; elif [ -n "$(sudo find "/sys/fs/cgroup$cg" -name cgroup.procs -exec cat {} +)" ]; then echo "STOP: D-19 processes are running"; else echo "ok: no D-19 process is running"; fi
+if ! cg=$(systemctl show aqt-d19.slice -p ControlGroup --value); then echo "STOP: cannot read aqt-d19.slice"; elif [ -z "$cg" ]; then echo "ok: no D-19 process is running"; elif ! procs=$(sudo find "/sys/fs/cgroup$cg" -name cgroup.procs -exec cat {} +); then echo "STOP: cannot read the processes of aqt-d19.slice"; elif [ -n "$procs" ]; then echo "STOP: D-19 processes are running"; else echo "ok: no D-19 process is running"; fi
 ```
 
 Check: neither status says `Up`, and the last line starts `ok:`. Then move each file, refusing to overwrite and stopping at the first failure:
 
 ```sh
-(cd /var/lib/aqt-d19 && for f in definition.json cells.json store choices.json; do if [ -e "$f" ]; then [ ! -e "$f.repilot-e39b23d" ] || { echo "STOP: $f.repilot-e39b23d exists"; exit 1; }; mv "$f" "$f.repilot-e39b23d" || { echo "STOP: mv $f failed"; exit 1; }; fi; done; ls)
+sudo sh -c 'cd /var/lib/aqt-d19 || exit 1; for f in definition.json cells.json store choices.json; do if [ -e "$f" ]; then [ ! -e "$f.repilot-e39b23d" ] || { echo "STOP: $f.repilot-e39b23d exists"; exit 1; }; mv "$f" "$f.repilot-e39b23d" || { echo "STOP: mv $f failed"; exit 1; }; fi; done; ls'
 ```
 
 Check: no `STOP` line. The listing shows the `*.repilot-e39b23d` names, plus `raw`, `manifests` and the screen-pilot records, which stay. A development run reads only the chains bound to its own definition, so the moved chains could not enter it in any case.
@@ -79,13 +79,13 @@ The exploration archives (`raw`) and the BTC manifest (`manifests`) are already 
 ```sh
 sudo sh d19.sh manifests && echo "ok: manifest unchanged"
 sudo install -o 990 -g 990 -m 644 /opt/aqt-d19/app/deploy/calibration/qualification-cells.json /var/lib/aqt-d19/cells.json
-sha256sum /opt/aqt-d19/app/deploy/calibration/qualification-cells.json /var/lib/aqt-d19/cells.json
+sudo sha256sum /opt/aqt-d19/app/deploy/calibration/qualification-cells.json /var/lib/aqt-d19/cells.json
 sudo sh d19.sh record --out definition.json \
     --prereg-commit <<PREREG_COMMIT>> \
     --engine-commit <<ENGINE_COMMIT>> --cell-manifest cells.json \
     --exploration-manifest manifests/exploration-BTCUSDT-1h.json --raw-root raw
 sudo cat /var/lib/aqt-d19/definition.json
-sha256sum /var/lib/aqt-d19/definition.json
+sudo sha256sum /var/lib/aqt-d19/definition.json
 ```
 
 Check: the two cell-list hashes are equal. **Send me** everything from `record` on. Before you go on, I check against the file that:
@@ -100,7 +100,7 @@ Check: the two cell-list hashes are equal. **Send me** everything from `record` 
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/meedo1985/autonomous-quant-trader/<<DEFINITION_COMMIT>>/<<DEFINITION_PATH>> | sha256sum
-sha256sum /var/lib/aqt-d19/definition.json
+sudo sha256sum /var/lib/aqt-d19/definition.json
 ```
 
 The two hashes must be equal. That proves the committed file is the one that will run. **Do not start step D before both match.**
