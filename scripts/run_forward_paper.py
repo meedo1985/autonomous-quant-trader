@@ -8,8 +8,9 @@ Usage:
 Each step appends Binance's newly closed public 1h bars to the store, then runs
 the paper loop (baseline only, simulator only) over every decision hour whose
 fill bar has closed, resuming the account from its journal
-(`aqt.app.forward`). Without `--once` it steps a minute after every hour until
-stopped. The configuration's `start` is the account's first decision hour; its
+(`aqt.app.forward`). Without `--once` it waits for the next :01 past the hour
+(`first_slot`; review/forward-restart/PROPOSAL.md), then steps a minute after
+every hour until stopped. The configuration's `start` is the account's first decision hour; its
 `end` is not used. Reads no exchange credential and refuses to run while any
 Binance key variable is set; with `--telegram` it reads only the owner's
 Telegram token (D-8). No real money is involved (owner answer Q-C, 2026-10-04).
@@ -58,6 +59,14 @@ REPORTS = "forward_reports.jsonl"
 REFUSALS = Path("data/forward/deployment_refusals.jsonl")  # under the working dir
 WARM_UP = (VOL_TARGET_HALF_LIFE_HOURS + 2) * timedelta(hours=1)
 """Bars the baseline needs before its first decision, plus its decision bar."""
+
+
+def first_slot(now: datetime) -> datetime:
+    """The next occurrence of HH:01 UTC (`STEP_OFFSET` after an hour): this
+    hour's if it is still ahead, else the next hour's. A start at once could
+    fall past the start check's lag limit (review/forward-restart/PROPOSAL.md)."""
+    slot = now.replace(minute=0, second=0, microsecond=0) + STEP_OFFSET
+    return slot if now < slot else slot + timedelta(hours=1)
 
 
 def step(
@@ -170,6 +179,10 @@ def main(argv: list[str] | None = None) -> int:
         except ChannelError as error:
             return refuse(sinks, f"telegram: {error}")
         sinks.append(telegram)
+    if not args.once:  # F-RESTART: the first step runs at a slot, like every step
+        wake = first_slot(datetime.now(UTC))
+        print(f"waiting until {wake:%Y-%m-%d %H:%M} UTC for the first step", flush=True)
+        time.sleep(max(0.0, (wake - datetime.now(UTC)).total_seconds()))
     while True:
         code = step(config, store, account, sinks, channel, args.deployment_record)
         if args.once or code == 2:
