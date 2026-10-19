@@ -517,6 +517,27 @@ def _driver(root: Path, out: Path, store: Path, *args: str,
                           text=True, check=False)  # fmt: skip
 
 
+def test_the_driver_refuses_a_preregistration_hash_its_commit_does_not_have(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """DR21-R1: a definition asserting a hash (and seeds anchored to it) that
+    the named commit's preregistration bytes do not have computes nothing."""
+    root, out = recorded
+    defn = rundef.load(out)
+    assert rundef.prereg_problem(defn, root) is None
+    forged = "c" * 64
+    defn["prereg_sha256"], defn["seed_spec"] = forged, rundef.seed_spec(forged)
+    assert "does not have the recorded hash" in str(rundef.prereg_problem(defn, root))
+    path = tmp_path / "forged.json"
+    rundef.write(path, defn)
+    done = _driver(root, path, tmp_path / "store", "--namespace", "threshold")
+    assert done.returncode == 1
+    assert "does not have the recorded hash" in done.stderr
+    assert not (tmp_path / "store").exists()
+    defn["prereg_commit"] = "0" * 40
+    assert "cannot read" in str(rundef.prereg_problem(defn, root))
+
+
 def test_the_driver_runs_one_bound_chain_per_cell_and_resumes(
     recorded: tuple[Path, Path], tmp_path: Path
 ) -> None:
@@ -1522,7 +1543,7 @@ def test_a_qualification_run_needs_the_pinned_accepted_preregistration(
 
     manifest = grid.manifest(grid.T_C2, dict(rundef.PRESCRIBED))
     accepted, other = "a" * 64, "b" * 64
-    assert rundef.ACCEPTED_PREREG_SHA256 is None
+    monkeypatch.setattr(rundef, "ACCEPTED_PREREG_SHA256", None)  # DR21-R2
     for prereg in (None, accepted):
         with pytest.raises(ValueError, match="qualification runs are refused"):
             rundef.run_plan(manifest, prereg)

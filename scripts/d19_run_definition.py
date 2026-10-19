@@ -45,18 +45,11 @@ from aqt.data.manifest import canonical_json_bytes  # noqa: E402
 from calibration import rundef, semi  # noqa: E402
 from calibration.generator import SEMI_LAWS, cells_from_manifest  # noqa: E402
 
-PREREG_PATH = (
-    "review/governance-statistics-amendment/d19-preregistration/PREREGISTRATION.md"
-)
+PREREG_PATH = rundef.PREREG_PATH
 
 
 def _git(*args: str) -> bytes:
-    """Git without replacement objects (R4-2): `refs/replace` can never stand
-    a different tree in for the commit ID that is recorded."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    # No GIT_DIR/GIT_WORK_TREE/... override can point at another repository (R6-2).
-    return subprocess.run(["git", "--no-replace-objects", "-C", str(ROOT), *args],
-                          capture_output=True, check=True, env=env).stdout  # fmt: skip
+    return rundef.git(ROOT, *args)
 
 
 def _head() -> str:

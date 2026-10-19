@@ -249,6 +249,8 @@ def worker(
     if rundef.definition_sha256(defn) != expected:  # DR4-1
         raise ValueError("the run definition changed after the run started")
     gating = rundef.start_gate(defn, ROOT)
+    if (problem := rundef.prereg_problem(defn, ROOT)) is not None:
+        raise ValueError(problem)  # DR21-R1
     manifest = defn["cell_manifest"]
     cells = {c.cell_id: c for c in cells_from_manifest(manifest)}
     replications = rundef.run_plan(manifest, defn["prereg_sha256"])[namespace]
@@ -303,6 +305,8 @@ def main(argv: list[str] | None = None) -> int:
         cells = cells_from_manifest(defn["cell_manifest"])  # DR-2
         if args.raw_root is None and any(c.law in SEMI_LAWS for c in cells):
             raise ValueError("Q5 cells need --raw-root")
+        if (problem := rundef.prereg_problem(defn, ROOT)) is not None:
+            raise ValueError(problem)  # DR21-R1
         rundef.run_plan(defn["cell_manifest"], defn["prereg_sha256"])  # DR-3, DR2-1
         gating = rundef.start_gate(defn, ROOT)  # fail fast; workers check again
         bounds = (

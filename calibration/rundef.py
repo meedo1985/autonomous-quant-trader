@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import platform
+import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -284,6 +285,33 @@ def run_plan(manifest: object, prereg_sha256: str | None = None) -> dict[str, in
                 "hash is pinned, and then only for that preregistration (DR2-1)"
             )
     return plan
+
+
+PREREG_PATH = (
+    "review/governance-statistics-amendment/d19-preregistration/PREREGISTRATION.md"
+)
+
+
+def git(root: Path, *args: str) -> bytes:
+    """Git without replacement objects (R4-2): `refs/replace` can never stand
+    a different tree in for the commit ID that is recorded."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    # No GIT_DIR/GIT_WORK_TREE/... override can point at another repository (R6-2).
+    return subprocess.run(["git", "--no-replace-objects", "-C", str(root), *args],
+                          capture_output=True, check=True, env=env).stdout  # fmt: skip
+
+
+def prereg_problem(defn: dict[str, Any], root: Path) -> str | None:
+    """DR21-R1: the hash a run binds (admission, seeds) must be the hash of
+    the preregistration bytes at the commit the run definition names."""
+    commit = defn["prereg_commit"]
+    try:
+        prereg = git(root, "show", f"{commit}:{PREREG_PATH}")
+    except (OSError, subprocess.CalledProcessError):
+        return f"cannot read {PREREG_PATH} at {commit}"
+    if hashlib.sha256(prereg).hexdigest() != defn["prereg_sha256"]:
+        return f"the preregistration at {commit} does not have the recorded hash"
+    return None
 
 
 def bytecode_problem() -> str | None:
