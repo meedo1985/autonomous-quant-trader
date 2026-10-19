@@ -305,7 +305,10 @@ def prereg_problem(defn: dict[str, Any], root: Path) -> str | None:
     """DR21-R1: the hash a run binds (admission, seeds) must be the hash of
     the preregistration bytes at the commit the run definition names."""
     commit = defn["prereg_commit"]
-    try:
+    try:  # DR21R-R1: a full commit ID, never a moving name or a tree
+        resolved = git(root, "rev-parse", "--verify", f"{commit}^{{commit}}")
+        if resolved.decode().strip() != commit:
+            return f"prereg_commit {commit!r} is not a full commit ID"
         prereg = git(root, "show", f"{commit}:{PREREG_PATH}")
     except (OSError, subprocess.CalledProcessError):
         return f"cannot read {PREREG_PATH} at {commit}"

@@ -536,6 +536,12 @@ def test_the_driver_refuses_a_preregistration_hash_its_commit_does_not_have(
     assert not (tmp_path / "store").exists()
     defn["prereg_commit"] = "0" * 40
     assert "cannot read" in str(rundef.prereg_problem(defn, root))
+    # DR21R-R1: an honest hash under a moving name or short ID is refused
+    honest = rundef.load(out)
+    full = honest["prereg_commit"]
+    for name in ("HEAD", full[:12], f"{full}^{{tree}}"):
+        named = {**honest, "prereg_commit": name}
+        assert rundef.prereg_problem(named, root) is not None, name
 
 
 def test_the_driver_runs_one_bound_chain_per_cell_and_resumes(
