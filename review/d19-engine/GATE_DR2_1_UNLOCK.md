@@ -31,8 +31,8 @@ Reviewer: Claude Opus 5.5 (`claude-opus-5-5`), 2026-10-18, applying `task-gate-r
 | `ruff format --check .`, `ruff check .` | exit 0 |
 | `mypy src` | exit 0 |
 | `lint-imports` | exit 0, 7 kept |
-| `pytest tests/unit/test_calibration_*.py tests/unit/test_d19_deploy.py` | RESULT_PENDING |
+| `pytest tests/unit/test_calibration_*.py tests/unit/test_d19_deploy.py` | 462 passed (16 min 24 s), exit 0 |
 
 No frozen file changed.
 
-**LOCAL GATE:** pending the test run.
+**LOCAL GATE:** PASS.
