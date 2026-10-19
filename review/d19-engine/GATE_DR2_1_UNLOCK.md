@@ -36,3 +36,20 @@ Reviewer: Claude Opus 5.5 (`claude-opus-5-5`), 2026-10-18, applying `task-gate-r
 No frozen file changed.
 
 **LOCAL GATE:** PASS.
+
+## Repair of Sol's review (DR21-R1, DR21-R2), 2026-10-19
+
+Review `SOL6_DR2_1_UNLOCK_REVIEW_C536943.md` (FIX); adjudication `ADJUDICATION_DR2_1_UNLOCK_C536943.md`; repair commit `2057ad3`.
+
+| Command | Result |
+|---|---|
+| `ruff format --check .`, `ruff check .` | exit 0 |
+| `mypy src` | exit 0 |
+| `lint-imports` | exit 0, 7 kept |
+| `pytest tests/unit/test_calibration_*.py tests/unit/test_d19_deploy.py` (repair uncommitted) | 454 passed, 9 failed: every failure is `test_calibration_heldout.py`'s check that the loaded `scripts/d19_run.py` equals the committed one, which an uncommitted edit fails by design |
+| `pytest tests/unit/test_calibration_heldout.py` at `2057ad3` (clean tree) | 20 passed |
+| new DR21-R1 test against the old `scripts/d19_run.py` | fails (reproduced) |
+
+No frozen file changed.
+
+**LOCAL GATE (repair):** PASS.
