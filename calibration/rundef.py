@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import platform
+import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -261,20 +262,59 @@ def counts(manifest: object) -> dict[str, int]:
     return dict(counts)
 
 
-def run_plan(manifest: object) -> dict[str, int]:
+# DR2-1: the preregistration hash the owner accepted (prereg §12 item 1),
+# pinned from the acceptance record once the key record is complete
+# (deploy/calibration/FULL_RUN.md P1-P3). None refuses every qualification run.
+ACCEPTED_PREREG_SHA256: str | None = None
+
+
+def run_plan(manifest: object, prereg_sha256: str | None = None) -> dict[str, int]:
     """`counts`, for a run to be started or recorded: a qualification run is
-    still refused (DR2-1). Reading finished chains uses `counts` (QO-1)."""
+    admitted only for the accepted preregistration (DR2-1), the hash of the
+    run definition's preregistration. Reading finished chains uses `counts`
+    (QO-1)."""
     plan = counts(manifest)
     if isinstance(manifest, dict) and manifest.get("purpose") == "qualification":
-        # DR2-1: still refused. The accepted preregistration hash is pinned
-        # only after the owner's key record, and the qualification object
-        # (with the S16-2 and S16-4 obligations) is not built. T_C2 is fixed
-        # (grid.T_C2); the image, re-pilot and go-ahead are done (FE-4, FE-7).
-        raise ValueError(
-            "qualification runs are refused until the accepted preregistration "
-            "hash and the qualification object exist"
-        )
+        # T_C2 is fixed (grid.T_C2); the image, re-pilot and go-ahead are
+        # done (FE-4, FE-7); the qualification object is built (qobj, with
+        # S16-4 as QO-6). S16-2, the definition committed before the first
+        # chunk, is a sheet step (FULL_RUN.md step C).
+        if ACCEPTED_PREREG_SHA256 is None or prereg_sha256 != ACCEPTED_PREREG_SHA256:
+            raise ValueError(
+                "qualification runs are refused until the accepted preregistration "
+                "hash is pinned, and then only for that preregistration (DR2-1)"
+            )
     return plan
+
+
+PREREG_PATH = (
+    "review/governance-statistics-amendment/d19-preregistration/PREREGISTRATION.md"
+)
+
+
+def git(root: Path, *args: str) -> bytes:
+    """Git without replacement objects (R4-2): `refs/replace` can never stand
+    a different tree in for the commit ID that is recorded."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    # No GIT_DIR/GIT_WORK_TREE/... override can point at another repository (R6-2).
+    return subprocess.run(["git", "--no-replace-objects", "-C", str(root), *args],
+                          capture_output=True, check=True, env=env).stdout  # fmt: skip
+
+
+def prereg_problem(defn: dict[str, Any], root: Path) -> str | None:
+    """DR21-R1: the hash a run binds (admission, seeds) must be the hash of
+    the preregistration bytes at the commit the run definition names."""
+    commit = defn["prereg_commit"]
+    try:  # DR21R-R1: a full commit ID, never a moving name or a tree
+        resolved = git(root, "rev-parse", "--verify", f"{commit}^{{commit}}")
+        if resolved.decode().strip() != commit:
+            return f"prereg_commit {commit!r} is not a full commit ID"
+        prereg = git(root, "show", f"{commit}:{PREREG_PATH}")
+    except (OSError, subprocess.CalledProcessError):
+        return f"cannot read {PREREG_PATH} at {commit}"
+    if hashlib.sha256(prereg).hexdigest() != defn["prereg_sha256"]:
+        return f"the preregistration at {commit} does not have the recorded hash"
+    return None
 
 
 def bytecode_problem() -> str | None:

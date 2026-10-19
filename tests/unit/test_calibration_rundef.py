@@ -517,6 +517,33 @@ def _driver(root: Path, out: Path, store: Path, *args: str,
                           text=True, check=False)  # fmt: skip
 
 
+def test_the_driver_refuses_a_preregistration_hash_its_commit_does_not_have(
+    recorded: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """DR21-R1: a definition asserting a hash (and seeds anchored to it) that
+    the named commit's preregistration bytes do not have computes nothing."""
+    root, out = recorded
+    defn = rundef.load(out)
+    assert rundef.prereg_problem(defn, root) is None
+    forged = "c" * 64
+    defn["prereg_sha256"], defn["seed_spec"] = forged, rundef.seed_spec(forged)
+    assert "does not have the recorded hash" in str(rundef.prereg_problem(defn, root))
+    path = tmp_path / "forged.json"
+    rundef.write(path, defn)
+    done = _driver(root, path, tmp_path / "store", "--namespace", "threshold")
+    assert done.returncode == 1
+    assert "does not have the recorded hash" in done.stderr
+    assert not (tmp_path / "store").exists()
+    defn["prereg_commit"] = "0" * 40
+    assert "cannot read" in str(rundef.prereg_problem(defn, root))
+    # DR21R-R1: an honest hash under a moving name or short ID is refused
+    honest = rundef.load(out)
+    full = honest["prereg_commit"]
+    for name in ("HEAD", full[:12], f"{full}^{{tree}}"):
+        named = {**honest, "prereg_commit": name}
+        assert rundef.prereg_problem(named, root) is not None, name
+
+
 def test_the_driver_runs_one_bound_chain_per_cell_and_resumes(
     recorded: tuple[Path, Path], tmp_path: Path
 ) -> None:
@@ -1499,3 +1526,35 @@ def test_a_qj_development_record_is_each_familys_section_2_computation(
             assert stored[family]["u_g"] == gates.u_g(
                 x, legs.candidates[:, cols], legs.benchmark, top, seed
             )
+
+
+def test_the_qualification_cell_list_is_the_grid() -> None:
+    """FULL_RUN.md P3: the file the owner installs is exactly the 104-cell
+    qualifying grid at T_C2 with the prescribed counts."""
+    from calibration import grid
+
+    path = ROOT / "deploy" / "calibration" / "qualification-cells.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    assert manifest == grid.manifest(grid.T_C2, dict(rundef.PRESCRIBED))
+    assert len(manifest["cells"]) == 104
+    assert rundef.counts(manifest) == rundef.PRESCRIBED
+
+
+def test_a_qualification_run_needs_the_pinned_accepted_preregistration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DR2-1: refused while nothing is pinned, refused for any other
+    preregistration, admitted only for the pinned one."""
+    from calibration import grid
+
+    manifest = grid.manifest(grid.T_C2, dict(rundef.PRESCRIBED))
+    accepted, other = "a" * 64, "b" * 64
+    monkeypatch.setattr(rundef, "ACCEPTED_PREREG_SHA256", None)  # DR21-R2
+    for prereg in (None, accepted):
+        with pytest.raises(ValueError, match="qualification runs are refused"):
+            rundef.run_plan(manifest, prereg)
+    monkeypatch.setattr(rundef, "ACCEPTED_PREREG_SHA256", accepted)
+    for prereg in (None, other):
+        with pytest.raises(ValueError, match="qualification runs are refused"):
+            rundef.run_plan(manifest, prereg)
+    assert rundef.run_plan(manifest, accepted) == rundef.PRESCRIBED
