@@ -53,3 +53,19 @@ Review `SOL6_DR2_1_UNLOCK_REVIEW_C536943.md` (FIX); adjudication `ADJUDICATION_D
 No frozen file changed.
 
 **LOCAL GATE (repair):** PASS.
+
+## Repair of Sol's re-review (DR21R-R1), 2026-10-19
+
+Re-review `SOL6_DR2_1_UNLOCK_REREVIEW_3799BC5.md` (FIX); adjudication `ADJUDICATION_DR2_1_UNLOCK_REREVIEW_3799BC5.md`; repair commit `e38df13`.
+
+| Command | Result |
+|---|---|
+| `ruff format --check .`, `ruff check .` | exit 0 |
+| `mypy src` | exit 0 |
+| `lint-imports` | exit 0, 7 kept |
+| `pytest tests/unit/test_calibration_*.py tests/unit/test_d19_deploy.py` at `5aabeb3` (clean tree) | 463 passed (17 min 26 s), exit 0 |
+| extended DR21-R1 test against the previous `calibration/rundef.py` | fails (`AssertionError: HEAD`) |
+
+No frozen file changed.
+
+**LOCAL GATE (repair 2):** PASS.
