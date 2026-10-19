@@ -16,7 +16,7 @@
 | Coin `F_Qn` outpoint | `<<F_Q1 txid:vout>>` | `<<F_Q2 txid:vout>>` |
 | Amount (sat) | `<<F_Q1 amount>>` | `<<F_Q2 amount>>` |
 | Block height | `<<F_Q1 height>>` | `<<F_Q2 height>>` |
-| Deadline `D_Qn` | `<<D_Q1>>` | fixed later, in the attempt-2 record (DF5-3) |
+| Deadline `D_Qn` | `1000000` (owner, 2026-10-19) | fixed later, in the attempt-2 record (DF5-3) |
 
 Keys: `KEY_RECORD_DRAFT.md` (2026-10-12; each public key hashes to its address).
 
@@ -44,5 +44,5 @@ The accepted preregistration is `PREREGISTRATION.md` with the `<<ACCEPTANCE: ...
 ## 5. Owner's answers (verbatim, recorded at acceptance)
 
 `<<question and answer: the values in §1 are your coins>>`
-`<<question and answer: D_Q1>>`
+**D_Q1 (2026-10-19, before funding).** Asked, with options: "Deadline D_Q1 for the attempt-1 Bitcoin post: if the post is not in a block by this height, attempt 1 is void and its key is used up. A late deadline costs nothing; an early one can cost an attempt. Which deadline?" Options: "1,000,000 (Recommended)" (expected about end of April 2027: the ~2½-month run from November, choice and freeze, planned post by 2027-03-31, plus the rule's 30-day margin); "1,010,000" (about 10 weeks later, ~mid July 2027). Owner's answer, verbatim (the option label chosen): "1,000,000 (Recommended)". The check `D_Q1` > acceptance height is made at acceptance.
 `<<question and answer: accept, completing the acceptance of D-19>>`
