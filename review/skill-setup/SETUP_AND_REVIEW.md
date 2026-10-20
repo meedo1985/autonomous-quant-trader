@@ -196,3 +196,20 @@ installed skills only when relevant; installing them does not run them.
 /root/autonomous-quant-trader/AGENTS.md: 2411a4cb8dcd97f57682f58f578b4b4172b46d081de790d2b79951e94e4cfc7d
 
 /root/.codex/AGENTS.md: e7a5580ba6ca1fbac8b5d1a183c5709aec4d07b47b86a226b1a60e228d8ebc6d
+
+## Update 2026-10-20: ponytail skills to 5.3.2
+
+Requested by the owner ("check if there is any update for the plugin and skill and make it").
+Done by Claude Opus 5.5 (`claude-opus-5-5`).
+
+- Source: DietrichGebert/ponytail @ `09c434ab73ca43761c5d8b0c5d341926c2fba710`, the Claude Code plugin release 5.3.2 (`claude plugin update ponytail@ponytail`). `~/.codex/skills/ponytail/SKILL.md` and `~/.codex/skills/ponytail-review/SKILL.md` were replaced with that release's `skills/ponytail/SKILL.md` and `skills/ponytail-review/SKILL.md`. The old copies are backed up locally (not in the repository).
+- SHA-256 after the update: `ponytail/SKILL.md` `f18008471528f0adde90a560d053f85935eed5cee26c447b7177ad24472bcf32`; `ponytail-review/SKILL.md` `affa0eedca467b58699fafbea28f6f85352aa3e7f23785964bf42f029a291504`.
+- Inspection (fresh, as this record requires for updates): both files read in full against the old ones. Markdown only; no scripts, hooks, network calls or dependencies. `ponytail` is shorter and adds an `off` level. `ponytail-review` widens from complexity-only to a full quality review (correctness, safety, load, tests, speed, leanness).
+- Project rule unchanged: a `ponytail-review` is still not a substitute for `task-gate-review`, `scientific-reproducibility-review`, `quant-code-review`, the Sol or Claude adversarial reviews, or any §16 review. AGENTS.md's wording ("Use `ponytail-review` for complexity review") stays correct as a use; it is not a limit on the skill.
+- Same day, Claude Code plugins: `ponytail` 4.10.1 → 5.3.2 and `agent-skills` 0.6.12 → 0.6.13 (user scope). The agent-skills update needed git's `url.https://github.com/.insteadOf git@github.com:` for that one command (no GitHub SSH host key on this computer); no git configuration was changed. `document-skills`, `playwright`, `pyright-lsp` were already current. find-skills, gh-fix-ci and security-best-practices are not installed in this Windows Codex home, so nothing was updated for them.
+
+Reproduce on another computer (replaces the ponytail line above):
+
+```bash
+python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py --repo DietrichGebert/ponytail --ref 09c434ab73ca43761c5d8b0c5d341926c2fba710 --path skills/ponytail skills/ponytail-review
+```
