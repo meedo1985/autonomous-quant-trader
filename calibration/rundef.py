@@ -265,7 +265,10 @@ def counts(manifest: object) -> dict[str, int]:
 # DR2-1: the preregistration hash the owner accepted (prereg §12 item 1),
 # pinned from the acceptance record once the key record is complete
 # (deploy/calibration/FULL_RUN.md P1-P3). None refuses every qualification run.
-ACCEPTED_PREREG_SHA256: str | None = None
+# Accepted 2026-10-20 at 53489db (review/d19-engine/ACCEPTANCE_RECORD.md §4).
+ACCEPTED_PREREG_SHA256: str | None = (
+    "ffadd2b5cdc72fa663ba5a0661f47fcdc2615ad8f660122b7611eb57e8f09f71"
+)
 
 
 def run_plan(manifest: object, prereg_sha256: str | None = None) -> dict[str, int]:
