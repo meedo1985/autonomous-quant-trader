@@ -1,6 +1,6 @@
 # D-19 full calibration run (threshold and development): your command sheet
 
-**Status: DRAFT.** Do not run any of it yet. Prepared on 2026-10-18 and revised after Sol's review (FS-1..FS-5), so the run can start soon after its preconditions hold. The blanks are marked `<<...>>`; each is filled only when its input exists.
+**Status: READY, 2026-10-20.** P1-P5 hold; start only when you say so (P6 is step B). Prepared on 2026-10-18 and revised after Sol's review (FS-1..FS-5). The engine commit, acceptance commit and preregistration hash are filled in; the remaining `<<...>>` blanks are filled only when their input exists (step C).
 
 **What it is.** Freeze-order steps 3 and 4 of the preregistration (§4): the threshold run over every qualifying cell, then development (§5). You gave the go-ahead at the measured cost: about 3,130 worker-hours, about 2½ months with 2 workers (`review/d19-engine/OWNER_DECISION_FE7_GO_AHEAD.md`). It qualifies nothing by itself. The freeze, the `AQTQ1` post and held-out certification come later, each with its own sheet. Forward paper keeps running, and nothing here touches it.
 
@@ -10,9 +10,9 @@
 
 | # | Precondition | Source |
 |---|---|---|
-| P1 | The complete key record: `A_Q1`, `A_Q2` (recorded 2026-10-12) and the funded coins `F_Q1`, `F_Q2` with outpoint, amount and height, each address checked as never spent from and holding only its coin (OF1-3), and `D_Q1` | prereg §4 channel; `review/d19-engine/KEY_RECORD_DRAFT.md` |
-| P2 | Your acceptance record, with those values substituted and the accepted preregistration hash pinned | prereg §12 item 1 |
-| P3 | A merged engine change that admits a qualification run only with that accepted hash (today `rundef.run_plan` refuses, DR2-1). It also adds `deploy/calibration/qualification-cells.json`, tested equal to `grid.manifest(T_C2, PRESCRIBED)`. It gets Sol's review and **your §16 PR review**, and it implements the reviewed "by the freeze" build order | `calibration/rundef.py`; `OWNER_DECISION_BUILD_ORDER.md` |
+| P1 | The complete key record: `A_Q1`, `A_Q2` (recorded 2026-10-12) and the funded coins `F_Q1`, `F_Q2` with outpoint, amount and height, each address checked as never spent from and holding only its coin (OF1-3), and `D_Q1` | **holds** (2026-10-20): `review/d19-engine/KEY_RECORD_DRAFT.md`, `ACCEPTANCE_RECORD.md` §1-§2 |
+| P2 | Your acceptance record, with those values substituted and the accepted preregistration hash pinned | **holds**: `review/d19-engine/ACCEPTANCE_RECORD.md`, commit `53489db`, PR #68 |
+| P3 | A merged engine change that admits a qualification run only with that accepted hash (DR2-1; before the pin `rundef.run_plan` refused every qualification run). It also adds `deploy/calibration/qualification-cells.json`, tested equal to `grid.manifest(T_C2, PRESCRIBED)`. It gets Sol's review and **your §16 PR review**, and it implements the reviewed "by the freeze" build order | **holds**: PR #66 plus pin PR #69 (merged `eeaa728`), Sol `SOL6_PIN_REVIEW_C123D44.md`, owner `OWNER_REVIEW_PR68_69.md` |
 | P4 | The build-order reading relied on by P3 has its independent review recorded | **holds**: `review/d19-engine/SOL6_BUILD_ORDER_REVIEW_D321147.md` |
 | P5 | `T_C2 = 1240` fixed | **holds**: `calibration/grid.py`, owner decision on GAP-1 |
 | P6 | Automatic reboots off for the whole run | §13 item 6; your decision "3 off"; step B |
@@ -20,11 +20,11 @@
 Until P1–P3 hold, the engine refuses step C's `record` and step D's `run` for qualification. That is the intended guard, not a fault.
 
 In the commands:
-- `<<ENGINE_COMMIT>>` is the full 40-character merged commit of P3;
-- `<<PREREG_COMMIT>>` is the commit of your acceptance record (P2);
-- `<<PREREG_SHA256>>` is the accepted preregistration hash.
+- `eeaa7282e3b7c87790c162d679016c290d5f4ea5` is the full 40-character merged commit of P3;
+- `53489db90e0a8764075503513f20c7f0fe17b97d` is the commit of your acceptance record (P2);
+- `ffadd2b5cdc72fa663ba5a0661f47fcdc2615ad8f660122b7611eb57e8f09f71` is the accepted preregistration hash.
 
-I give you all three in a Notepad file.
+They are filled in below (2026-10-20): engine `eeaa728`, acceptance `53489db`, hash `ffadd2b5…9f71`. I also give them to you in a Notepad file.
 
 **Run every line on its own, one at a time; never paste a block. If any line fails, or prints an error, `refused`, `STOP` or `FAIL`, stop there and send me the output.** Each line that depends on a check stops by itself when the check fails (FSR-1).
 
@@ -53,15 +53,15 @@ Check: no `STOP` line. The listing shows the `*.repilot-e39b23d` names, plus `ra
 old=$(git -C /opt/aqt-d19/app rev-parse --short HEAD) && echo "$old" && if [ -e "/opt/aqt-d19/app-$old" ]; then echo "STOP: app-$old exists"; else sudo mv /opt/aqt-d19/app "/opt/aqt-d19/app-$old" && echo "ok: moved to app-$old"; fi
 rm -rf /tmp/aqt-d19-src
 git clone https://github.com/meedo1985/autonomous-quant-trader.git /tmp/aqt-d19-src
-git -C /tmp/aqt-d19-src checkout <<ENGINE_COMMIT>> && echo "ok: checked out"
-sudo sh /tmp/aqt-d19-src/deploy/calibration/d19.sh install https://github.com/meedo1985/autonomous-quant-trader.git <<ENGINE_COMMIT>>
+git -C /tmp/aqt-d19-src checkout eeaa7282e3b7c87790c162d679016c290d5f4ea5 && echo "ok: checked out"
+sudo sh /tmp/aqt-d19-src/deploy/calibration/d19.sh install https://github.com/meedo1985/autonomous-quant-trader.git eeaa7282e3b7c87790c162d679016c290d5f4ea5
 git -C /opt/aqt-d19/app rev-parse HEAD
 cd /opt/aqt-d19/app/deploy/calibration
 sudo sh d19.sh build
 sudo sh d19.sh probe
 ```
 
-Check: the first line ends with `ok: moved to app-…`, and the checkout line with `ok: checked out`. The **installed** checkout's `rev-parse HEAD` prints `<<ENGINE_COMMIT>>` in full (FS-3). **Send me** the image id that `build` prints and the last line of `probe` (`This CPU runs the pinned runtime.`).
+Check: the first line ends with `ok: moved to app-…`, and the checkout line with `ok: checked out`. The **installed** checkout's `rev-parse HEAD` prints `eeaa7282e3b7c87790c162d679016c290d5f4ea5` in full (FS-3). **Send me** the image id that `build` prints and the last line of `probe` (`This CPU runs the pinned runtime.`).
 
 ## B. Automatic reboots off (P6)
 
@@ -81,16 +81,16 @@ sudo sh d19.sh manifests && echo "ok: manifest unchanged"
 sudo install -o 990 -g 990 -m 644 /opt/aqt-d19/app/deploy/calibration/qualification-cells.json /var/lib/aqt-d19/cells.json
 sudo sha256sum /opt/aqt-d19/app/deploy/calibration/qualification-cells.json /var/lib/aqt-d19/cells.json
 sudo sh d19.sh record --out definition.json \
-    --prereg-commit <<PREREG_COMMIT>> \
-    --engine-commit <<ENGINE_COMMIT>> --cell-manifest cells.json \
+    --prereg-commit 53489db90e0a8764075503513f20c7f0fe17b97d \
+    --engine-commit eeaa7282e3b7c87790c162d679016c290d5f4ea5 --cell-manifest cells.json \
     --exploration-manifest manifests/exploration-BTCUSDT-1h.json --raw-root raw
 sudo cat /var/lib/aqt-d19/definition.json
 sudo sha256sum /var/lib/aqt-d19/definition.json
 ```
 
 Check: the two cell-list hashes are equal. **Send me** everything from `record` on. Before you go on, I check against the file that:
-- the preregistration hash is `<<PREREG_SHA256>>`;
-- the engine commit is `<<ENGINE_COMMIT>>`;
+- the preregistration hash is `ffadd2b5cdc72fa663ba5a0661f47fcdc2615ad8f660122b7611eb57e8f09f71`;
+- the engine commit is `eeaa7282e3b7c87790c162d679016c290d5f4ea5`;
 - the cell manifest is the 104-cell qualification list with the prescribed counts;
 - the image id is the one `build` printed.
 
