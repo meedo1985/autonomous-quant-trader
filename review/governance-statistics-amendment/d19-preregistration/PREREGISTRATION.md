@@ -260,7 +260,7 @@ The adjudications are `ADJUDICATION_AA981D8.md`, `ADJUDICATION_71357D4.md`, `ADJ
 
 **Channel for `<<OWNER Q-1>>` (by substitution into O-6a SPEC rev 5 `84fca9c` §3–§7):**
 - **Prefix.** `AQTQ1`. The scriptPubKey is exactly `6a 25 41 51 54 51 31` followed by the 32-byte `qualification_object_sha256`, 39 bytes in all.
-- **Keys and coins.** Attempt `n` ∈ {1, 2} has its own key `A_Qn`, bound coin `F_Qn` and deadline height `D_Qn`. `A_Q1`, `F_Q1`, `D_Q1`, `A_Q2` and `F_Q2` are fixed at the preregistration's acceptance, as `<<ACCEPTANCE: A_Q1, F_Q1, D_Q1, A_Q2, F_Q2>>`. `D_Q2` is fixed only in the attempt-2 record, before its post (DF5-3, DS5-1).
+- **Keys and coins.** Attempt `n` ∈ {1, 2} has its own key `A_Qn`, bound coin `F_Qn` and deadline height `D_Qn`. `A_Q1`, `F_Q1`, `D_Q1`, `A_Q2` and `F_Q2` are fixed at the preregistration's acceptance, as recorded in `review/d19-engine/ACCEPTANCE_RECORD.md` (2026-10-20): `A_Q1` = `bc1qccn3q8ja6wq4cefuzzzdv3nckjuedqw95wmdws`; `F_Q1` = `00ceaef0e0f6348ff881177661cf45916696bf5674329e5fd2f3def03a2a7e7d:0` (5,500 sat, height 972,269); `D_Q1` = 1,000,000; `A_Q2` = `bc1qj9jzenczghkav85jyn82vnplch5wqtwahdqray`; `F_Q2` = `0aa682d2f10e6c139d6521299849d0fb9ff18d9349c3e4821887491ed3f330cc:0` (5,709 sat, height 972,270). `D_Q2` is fixed only in the attempt-2 record, before its post (DF5-3, DS5-1).
 - **Horizons (DF4-2).**
   - O-6a's "after signing" becomes "after acceptance of this preregistration".
   - Both "before C2 ends" and "before C2's evaluation is final" become "before the owner's accept or reject of certification (§12 item 4)".
