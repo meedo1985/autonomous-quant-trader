@@ -17,24 +17,14 @@ Sol's independent checks: the acceptance commit changes one preregistration line
 
 ## Reviewer's final output (verbatim)
 
-The shell is currently failing before commands start, so I’m using the available browser and repository views to continue the read-only checks. The explorer API URLs also failed through the web fetch tool; I’ll make one UI attempt before treating live coin status as unverified.
-mcp: cua_repl/js started
-mcp: cua_repl/js (completed)
-mcp: codex_apps/github.search_repositories started
-mcp: codex_apps/github.search_repositories (completed)
-mcp: codex_apps/github.fetch_commit started
-mcp: codex_apps/github.fetch_commit started
-mcp: codex_apps/github.fetch_file started
-mcp: codex_apps/github.fetch_file started
-mcp: codex_apps/github.fetch_file started
-mcp: codex_apps/github.fetch_file started
-mcp: codex_apps/github.fetch_file (failed)
-mcp: codex_apps/github.fetch_file (failed)
-mcp: codex_apps/github.fetch_commit (failed)
-mcp: codex_apps/github.fetch_file (failed)
-mcp: codex_apps/github.fetch_commit (completed)
-mcp: codex_apps/github.fetch_file (completed)
-mcp: cua_repl/js started
-mcp: cua_repl/js (failed)
-web search: 
-web search: site:mempool.space/address/bc1qccn3q8ja6wq4cefuzzzdv3nckjuedqw95wmdws ...
+**Verdict: FIX — the pin diff is sound, but P3 is not yet satisfied.**
+
+**PIN-R1 — BLOCKER — [`FULL_RUN.md:13`](https://github.com/meedo1985/autonomous-quant-trader/blob/53489db90e0a8764075503513f20c7f0fe17b97d/deploy/calibration/FULL_RUN.md#L13), [`rundef.py:268`](https://github.com/meedo1985/autonomous-quant-trader/blob/main/calibration/rundef.py#L268).** Merged [PR #66](https://github.com/meedo1985/autonomous-quant-trader/pull/66) supplies the guard, but GitHub `main` still pins `None`, and commit `c123d447` is not fetchable there. If the sheet uses the merged #66 engine now, a qualification run is refused; if it tries to check out `c123d447` from GitHub now, checkout fails. Merge the pin through its §16 review before marking P3 satisfied or starting the sheet.
+
+The other requested checks support the supplied diff:
+
+- The [acceptance commit](https://github.com/meedo1985/autonomous-quant-trader/commit/53489db90e0a8764075503513f20c7f0fe17b97d) changes one preregistration line. Its addresses, outpoints, amounts, heights, and `D_Q1 = 1,000,000` agree with both records; `D_Q2` remains deferred. The record includes the OF1-3 checks and the owner’s selected answers.
+- I independently decoded the **45,509 committed blob bytes** at `53489db` and computed SHA-256 `ffadd2b5cdc72fa663ba5a0661f47fcdc2615ad8f660122b7611eb57e8f09f71`, matching the pin. The blob has LF line endings; `git show` reads those committed bytes.
+- The supplied guard rejects `None` and other hashes. The record and run paths check the hash against the preregistration at the named commit before computing. The new `HEAD` blob test would fail after a committed edit to that file.
+
+I could not independently rerun the reported 304 tests: the local shell failed before launching commands. Both explorers were inaccessible through the available web tools, so I could not independently confirm current funding or unspent status. This read-only review has not been committed as the project’s required review record.
