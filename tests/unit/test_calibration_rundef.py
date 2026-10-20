@@ -1558,3 +1558,12 @@ def test_a_qualification_run_needs_the_pinned_accepted_preregistration(
         with pytest.raises(ValueError, match="qualification runs are refused"):
             rundef.run_plan(manifest, prereg)
     assert rundef.run_plan(manifest, accepted) == rundef.PRESCRIBED
+
+
+def test_the_pinned_hash_is_the_committed_preregistration() -> None:
+    """DR2-1 pin: the committed preregistration is the accepted one, so any
+    later edit to it fails here rather than at a qualification run."""
+    import hashlib
+
+    prereg = rundef.git(ROOT, "show", f"HEAD:{rundef.PREREG_PATH}")
+    assert hashlib.sha256(prereg).hexdigest() == rundef.ACCEPTED_PREREG_SHA256
