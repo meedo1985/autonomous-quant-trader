@@ -228,6 +228,7 @@ jobs:
           # code) and refuses this pilot run, leaving no object
           sudo git clone --quiet /tmp/app.bundle /opt/aqt-d19/build
           sudo git -C /opt/aqt-d19/build checkout --quiet "$COMMIT"
+          sudo chmod -R go-w /opt/aqt-d19/build  # as FREEZE_HELDOUT.md step G0
           # (`! cmd` would not fail this step under bash -e)
           if sudo sh d19.sh freeze "$(printf '%040d' 0)"; then exit 1; fi  # FP2-R2: not the build's commit
           out=$(sudo sh d19.sh freeze "$COMMIT" 2>&1) && exit 1
