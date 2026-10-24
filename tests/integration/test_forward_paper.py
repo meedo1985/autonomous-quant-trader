@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import importlib.util
+import os
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -491,6 +493,87 @@ def test_the_script_checks_the_deployment_before_anything_else(
     log = (tmp_path / script.REFUSALS).read_text()
     assert "REFUSE_START" in log and "deployment: " in log
     assert not (tmp_path / "a").exists() and not (tmp_path / "s").exists()
+
+
+def test_a_crash_is_alerted_then_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PA-1: an error no step handles is a CRITICAL alert, then exit 1."""
+    script = _script()
+
+    def full_disk(*_: object) -> int:
+        raise OSError(errno.ENOSPC, "No space left on device", "/var/lib/aqt/x")
+
+    monkeypatch.setattr(script, "step", full_disk)
+    monkeypatch.setattr(script.time, "sleep", lambda _: None)
+    with pytest.raises(OSError, match="No space"):
+        script.main(_args(tmp_path))
+    logged = read_entries(AccountDir(tmp_path / "account").operations_path)
+    assert [e.payload["kind"] for e in logged] == ["SHUTDOWN"]
+    assert logged[0].payload["severity"] == "CRITICAL"
+    assert logged[0].payload["fields"] == {
+        "crashed": "OSError",
+        "reason": "No space left on device",
+    }
+
+
+def test_a_crash_alert_never_carries_the_error_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA2-R1: only the type; an error's own text may hold a secret."""
+    script = _script()
+
+    def leaky(*_: object) -> int:
+        raise OSError(errno.EIO, "password=hunter2")  # CA3-R1
+
+    monkeypatch.setattr(script, "step", leaky)
+    monkeypatch.setattr(script.time, "sleep", lambda _: None)
+    with pytest.raises(OSError, match="hunter2"):
+        script.main(_args(tmp_path))
+    path = AccountDir(tmp_path / "account").operations_path
+    assert "hunter2" not in path.read_text("utf-8")
+    fields = read_entries(path)[0].payload["fields"]
+    assert fields == {"crashed": "OSError", "reason": os.strerror(errno.EIO)}
+
+
+def test_a_crash_with_an_unknown_error_number_is_still_alerted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA4-R1: os.strerror would overflow; the alert goes out without it."""
+    script = _script()
+
+    def odd(*_: object) -> int:
+        raise OSError(1 << 100, "failure")
+
+    monkeypatch.setattr(script, "step", odd)
+    monkeypatch.setattr(script.time, "sleep", lambda _: None)
+    with pytest.raises(OSError):
+        script.main(_args(tmp_path))
+    path = AccountDir(tmp_path / "account").operations_path
+    fields = read_entries(path)[0].payload["fields"]
+    assert fields == {"crashed": "OSError", "reason": None}
+
+
+class _Unprintable(OSError):
+    def __str__(self) -> str:
+        raise SystemExit(2)  # CA-R1: would look like a refusal to systemd
+
+
+def test_a_crash_whose_text_or_alert_fails_is_still_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA-R1: neither a failing error text nor a failing stderr replaces the
+    crash, so the exit stays 1 (restarted), never 2."""
+    script = _script()
+
+    def unprintable(*_: object) -> int:
+        raise _Unprintable
+
+    monkeypatch.setattr(script, "step", unprintable)
+    monkeypatch.setattr(script.time, "sleep", lambda _: None)
+    monkeypatch.setattr(script.sys, "stderr", None)  # print() to it fails
+    with pytest.raises(_Unprintable):
+        script.main(_args(tmp_path))
 
 
 def _local_orders(state: AccountState) -> list[object]:

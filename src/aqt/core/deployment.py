@@ -77,12 +77,15 @@ def _shared(record: Path) -> bool:
 
 
 def _git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603 - fixed argv, no shell
-        ("git", "-C", str(root), *arguments),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        return subprocess.run(  # noqa: S603 - fixed argv, no shell
+            ("git", "-C", str(root), *arguments),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as error:  # CA2-R3: e.g. no git; a refusal, not a crash
+        raise DeploymentError(f"git could not run: {type(error).__name__}") from None
 
 
 def approved_code(record: Path, root: Path) -> SourceBundle:
@@ -108,16 +111,19 @@ def approved_code(record: Path, root: Path) -> SourceBundle:
     if _git(root, "merge-base", "--is-ancestor", approved, MAIN).returncode:
         raise DeploymentError(f"{approved} is not on {MAIN}")
     status = _git(root, "status", "--porcelain", "--untracked-files=all")
+    listed = _git(root, "ls-files", "-v")
     masked = [
-        line
-        for line in _git(root, "ls-files", "-v").stdout.splitlines()
-        if line[:1] in {"h", "s", "S"}
+        line for line in listed.stdout.splitlines() if line[:1] in {"h", "s", "S"}
     ]
-    ignored = _git(
+    others = _git(
         root, "ls-files", "--others", "--ignored", "--exclude-standard",
         "--", "src", "scripts", "configs",
-    ).stdout.splitlines()  # fmt: skip
-    if status.returncode or status.stdout.strip() or masked or ignored:
+    )  # fmt: skip
+    ignored = others.stdout.splitlines()
+    # A failed git call is a refusal, never an empty list (audit finding PA-2).
+    if any(r.returncode for r in (status, listed, others)):
+        raise DeploymentError("git could not check the checkout")
+    if status.stdout.strip() or masked or ignored:
         changed = (status.stdout.strip().splitlines() + masked + ignored)[:5]
         raise DeploymentError(f"checkout differs from its commit: {changed}")
     return source

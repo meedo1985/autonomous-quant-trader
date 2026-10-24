@@ -22,12 +22,16 @@ A failed fetch (network, Binance, clock skew) is alerted and retried at the
 next hour; its hours stay pending. A refused step stops the program with exit
 code 2, which is never retried (`deploy/aqt-paper.service`): the refusal is
 already logged and alerted, and the owner resolves it. With `--once`, exit code
-0 is a step that ran or had nothing to do, 1 a failed fetch, 2 a refusal.
+0 is a step that ran or had nothing to do, 1 a failed fetch, 2 a refusal. Any
+other error during a step is a crash: alerted (best effort) as a CRITICAL
+`SHUTDOWN` naming only its type, then raised, so it exits 1 and the service
+restarts it.
 """
 
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -142,6 +146,26 @@ def refuse(sinks: list[Sink], reason: str) -> int:
     return 2
 
 
+def crashed(sinks: list[Sink], error: Exception) -> None:
+    """Alert a CRITICAL `SHUTDOWN` for an error no step handles (audit finding
+    PA-1). Best effort: when even this fails, stderr is tried, and the caller
+    re-raises the original error in every case (CA-R1, CA2-R4)."""
+    try:  # CA-R1: even the error's text may fail; nothing here replaces it
+        # CA2-R1, CA3-R1: never text the raiser chose; only the operating
+        # system's own words for the error number ("No space left on device")
+        number = error.errno if isinstance(error, OSError) else None
+        reason = os.strerror(number) if number in errno.errorcode else None  # CA4-R1
+        crash = {"crashed": type(error).__name__, "reason": reason}
+        AlertRouter(sinks).emit(
+            Event(EventKind.SHUTDOWN, Severity.CRITICAL, datetime.now(UTC), crash)
+        )
+    except BaseException as failure:  # noqa: BLE001 - the crash itself is raised
+        try:
+            print(f"Crash not alerted ({type(failure).__name__})", file=sys.stderr)
+        except BaseException:  # noqa: BLE001, S110 - nowhere left to say it
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Forward paper trading (Task 29)")
     parser.add_argument("--config", type=Path, required=True)
@@ -184,7 +208,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"waiting until {wake:%Y-%m-%d %H:%M} UTC for the first step", flush=True)
         time.sleep(max(0.0, (wake - datetime.now(UTC)).total_seconds()))
     while True:
-        code = step(config, store, account, sinks, channel, args.deployment_record)
+        try:
+            code = step(config, store, account, sinks, channel, args.deployment_record)
+        except Exception as error:
+            crashed(sinks, error)
+            raise  # exit 1: systemd restarts it at the next slot
         if args.once or code == 2:
             return code
         now = datetime.now(UTC)

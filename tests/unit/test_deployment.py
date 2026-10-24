@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from aqt.core import deployment
 from aqt.core.deployment import DeploymentError, approve, approved_code
 from aqt.monitoring.telegram import ChannelError, read_file_credential
 from tests.integration.test_paper_loop import _config, _run, _series
@@ -85,6 +86,40 @@ def test_a_modified_checkout_refuses(
     root, record, _ = server
     change(root)  # type: ignore[operator]
     with pytest.raises(DeploymentError, match=reason):
+        approved_code(record, root)
+
+
+@pytest.mark.parametrize("failing", ["-v", "--others"])
+def test_a_failed_git_listing_refuses(
+    server: tuple[Path, Path, str], monkeypatch: pytest.MonkeyPatch, failing: str
+) -> None:
+    """PA-2: a git call that fails is a refusal, never an empty listing."""
+    root, record, _ = server
+    real = deployment._git
+
+    def broken(where: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+        if arguments[:2] == ("ls-files", failing):
+            return subprocess.CompletedProcess(arguments, 128, "", "fatal")
+        return real(where, *arguments)
+
+    monkeypatch.setattr(deployment, "_git", broken)
+    with pytest.raises(DeploymentError, match="git could not check"):
+        approved_code(record, root)
+
+
+def test_git_that_cannot_run_refuses(
+    server: tuple[Path, Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA2-R3: no git binary is a refusal (exit 2), not a crash."""
+    root, record, _ = server
+    bundle = deployment.git_source_bundle(root)  # before git disappears
+
+    def no_git(*_: object, **__: object) -> object:
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(deployment, "git_source_bundle", lambda _: bundle)
+    monkeypatch.setattr(deployment.subprocess, "run", no_git)
+    with pytest.raises(DeploymentError, match="git could not run"):
         approved_code(record, root)
 
 
