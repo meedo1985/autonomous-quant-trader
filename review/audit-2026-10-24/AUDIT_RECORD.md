@@ -24,3 +24,9 @@ Not a finding (noted): every ledger append rescans the whole file (O(n) per appe
 - `ruff check .` clean; `ruff format` applied; `mypy src` clean; `lint-imports` 7 kept, 0 broken; `git diff --check` clean.
 
 Both repairs touch the forward-paper live path and the deployment check, so they need a different-model review and the owner's §16 PR review before merge.
+
+## Final gate (head 4837a7a, after Sol ACCEPT)
+
+- `pytest -q -p no:cacheprovider --ignore-glob='tests/unit/test_calibration_*' --ignore=tests/unit/test_d19_deploy.py`: 1845 passed, 9 skipped.
+- `ruff check .`, `ruff format --check .`, `mypy src` (56 files), `lint-imports` (7 kept, 0 broken), `git diff --check`: all clean.
+- Review rounds: `SOL6_REVIEW_9879265.md` (FIX CA-R1), `SOL6_REREVIEW_11FEF64.md` (FIX CA2-R1..R4, R2 rejected), `SOL6_REREVIEW2_DE3C9FF.md` (FIX CA3-R1..R2), `SOL6_REREVIEW3_88FB55F.md` (FIX CA4-R1), `SOL6_REREVIEW4_8831535.md` (ACCEPT).
