@@ -14,9 +14,9 @@
 | # | Precondition | Source | State |
 |---|---|---|---|
 | FP1 | FULL_RUN.md steps E and F done: `Exited (0)`, all 104 ids at `24 dev/`, and `choices.json` received with `qualifies` true and `margin_ok` true (`d19.sh choose` exit 0). Exit 3 (`margin_failed`) goes to you to decide (I1-6) | FULL_RUN.md E, F; `calibration/qobj.py` `build` | open (run going) |
-| FP2 | A merged build change, with Sol's review and **your §16 PR review**: (a) `d19.sh freeze`, which runs `qobj.build` inside the pinned image with the run's checkout `/opt/aqt-d19/app` (`eeaa728`) as `run_root` and a second, read-only checkout of the merged build commit as `root`; (b) `d19.sh heldout <n> <round> <randomness>` and `d19.sh certify <n>`, which run `scripts/d19_heldout.py run` and `certify` the same way, plus a `heldout-status` that shows chunk counts only (P18-6); (c) `review/d19-engine/FREEZE_REVIEWS.json`, listing `mapping.py`, `screen.py` and `heldout.py` with their SHA-256 and a committed review record each. Without (c), `build` refuses (BO-4, QO-5) | `calibration/qobj.py` (`LATER`, `REVIEWED`, `FREEZE_REVIEWS`); `d19.sh` has none of these commands at `eeaa728` | **open** |
-| FP3 | **The drand chain is fixed, by chain hash and public key, before the post (step H).** Prereg §8 takes the round from "the C2 drand chain (DRAFT §2.0)", and DRAFT §2.0 leaves that chain as `<<SIGNING: chain hash, public key>>` in the unsigned C2 draft. Until a formal step binds it, the held-out anchor has no defined input. It must be bound before the post: a chain chosen after the round times are known would let its choice pick the beacon outcome | prereg §8; `review/governance-statistics-amendment/s4-amendment-draft/DRAFT_WORDING.md` lines 161, 340 | **open, governance** (Constitution amendment process or C2 signing; AI cannot author, merge or activate it) |
-| FP4 | A verifier Bitcoin Core node, version 30.0 or later, `-blockfilterindex=1`, keeping every block from height 972,269 (`F_Q1`) to the freeze read. A pruned node is enough if its prune target keeps that range (block filters with pruning: upstream PR #15946; confirm in the 30.x docs before use). It needs an initial sync of the whole chain, about 1-3 days of download. Where it runs is your decision (Q-F1) | O-6a SPEC §4 | **open, your decision** |
+| FP2 | A merged build change, with Sol's review and **your §16 PR review**: (a) `d19.sh freeze`, which runs `qobj.build` inside the pinned image with the run's checkout `/opt/aqt-d19/app` (`eeaa728`) as `run_root` and a second, read-only checkout of the merged build commit as `root`; (b) `d19.sh heldout <n> <round> <randomness>` and `d19.sh certify <n>`, which run `scripts/d19_heldout.py run` and `certify` the same way, plus a `heldout-status` that shows chunk counts only (P18-6); (c) `review/d19-engine/FREEZE_REVIEWS.json`, listing `mapping.py`, `screen.py` and `heldout.py` with their SHA-256 and a committed review record each. Without (c), `build` refuses (BO-4, QO-5). (d) **Installed**: the new launcher lives in that second checkout, `/opt/aqt-d19/build` at `<<BUILD_COMMIT>>`, verified as the full commit there, while `/opt/aqt-d19/app` stays at `eeaa728`; the build change says how, and FP2 holds only once that check passes on the server (FH-5) | `calibration/qobj.py` (`LATER`, `REVIEWED`, `FREEZE_REVIEWS`); `d19.sh` has none of these commands at `eeaa728` | **open** |
+| FP3 | **The drand chain is fixed, by chain hash and public key, before step G.** Prereg §8 takes the round from "the C2 drand chain (DRAFT §2.0)", and DRAFT §2.0 leaves that chain as `<<SIGNING: chain hash, public key>>` in the unsigned C2 draft; a draft placeholder binds nothing. Until a formal step binds it, the held-out anchor has no defined input. It must be bound before the post at the latest: a chain chosen once beacon outputs are known would let its choice pick the outcome. The same step settles whether DRAFT §2.0's failure rule (no verifying output within 7 days of the round's scheduled time) applies to D-19 (step K) | prereg §8; `review/governance-statistics-amendment/s4-amendment-draft/DRAFT_WORDING.md` lines 161, 165, 340 | **open, governance** (Constitution amendment process or C2 signing; AI cannot author, merge or activate it) |
+| FP4 | A verifier Bitcoin Core node, version 30.0 or later, `-blockfilterindex=1`, keeping every block from height 972,269 (`F_Q1`) to the freeze read. A pruned node is enough if its prune target keeps that range (block filters with pruning: upstream PR #15946; confirm in the 30.x docs before use). It needs an initial sync of the whole chain, about 1-3 days of download. It also gives the fee estimate for the post (step H). Where it runs is your decision (Q-F1) | O-6a SPEC §4, §7 | **open, your decision** |
 | FP5 | The Electrum 4.8.2 wallet holding `A_Q1`'s key is on your laptop, and both explorers show `A_Q1` never spent from and holding only `F_Q1` (OF1-3), checked on the day of the post | KEY_RECORD_DRAFT.md; ACCEPTANCE_RECORD.md §2 | checked on the day |
 | FP6 | The post can be included by `D_Q1` = 1,000,000. `F_Q1` (5,500 sat) covers a fee rate up to about 30 sat/vB with change above dust, so the post waits for fees below that | ACCEPTANCE_RECORD.md | checked on the day |
 
@@ -27,11 +27,17 @@ Until FP1-FP4 hold, nothing below runs. That is the intended guard.
 ## G. Build and commit the qualification object (hours)
 
 ```sh
-cd /opt/aqt-d19/app/deploy/calibration
-sudo sh d19.sh freeze <<BUILD_COMMIT>>
+cd /opt/aqt-d19/build/deploy/calibration
+sudo sh d19.sh freeze
 ```
 
-It prints `qualification_object_sha256` and writes the object directory under `/var/lib/aqt-d19/qobj-1`, or refuses with nothing written. **Send me** the hash and copy the directory to your laptop (Notepad file then). I recompute the hash from the files with `qobj.read`, commit the object in a PR, and check that the committed bytes give the same hash. You merge it after your review. **The post (step H) waits for that merge** (§4 step 5: hash and commit, then post).
+It prints `qualification_object_sha256` and writes the object directory `/var/lib/aqt-d19/qobj-1`, or refuses with nothing written. **Send me** the hash. Then copy the directory to your laptop, in a Windows terminal (FH-7; the same `scp` as the dashboard's copy, with your server's address):
+
+```bat
+scp -r root@<<SERVER>>:/var/lib/aqt-d19/qobj-1 "%USERPROFILE%\Desktop\qobj-1"
+```
+
+I check the copy before anything else: the file list is exactly the object's, every file matches `manifest.json`, and the manifest gives the hash you sent (`qobj.read`). Then I commit the object in a PR and check that the committed bytes give the same hash. You merge it after your review. **The post (step H) waits for that merge** (§4 step 5: hash and commit, then post).
 
 ## H. The `AQTQ1` post (you, on your laptop; about 1 hour)
 
@@ -43,7 +49,7 @@ It prints `qualification_object_sha256` and writes the object directory under `/
    ```
 
    Electrum turns it into the 39-byte script `6a 25 41 51 54 51 31` followed by the 32 bytes of the hash (its `script(...)` output syntax, `electrum/payment_identifier.py` at 4.8.2). The whole coin minus the fee goes to a change address of the same wallet, never `A_Q1` itself.
-3. Fee: at least the fee estimate for 6 blocks, and no more than the coin allows (FP6). Keep "Replace-by-fee" on.
+3. Fee: at least the verifier node's `estimatesmartfee 6` (FP4; I give you the command and record its output), and no more than the coin allows (FP6). Electrum's or an explorer's estimate does not count (O-6a §7, FH-6). Keep "Replace-by-fee" on. If the node's estimate is above what the coin allows, wait.
 4. **Do not broadcast yet.** Use Preview, then Export, copy the transaction hex and send it to me. It is public data: it holds no key. I decode it and check: it spends `F_Q1` only; exactly one OP_RETURN output, value 0, script exactly as above; the change is not `A_Q1`; the fee rate. Only on my "OK" do you sign and broadcast.
 5. Send me the txid. A fee bump may replace it only with the identical OP_RETURN script (O-6a §7).
 
@@ -61,23 +67,35 @@ At 6 confirmations the post is accepted. Inclusion height `h` = <<h>>; acceptanc
 
 ## J. Freeze read (7 days after the node first saw the post accepted)
 
-On <<FREEZE_READ_TIME>> (I compute it from step I), I give you the exact CDX queries for both URLs (exact URL match, no collapsing, every page). **Send me** the raw responses. I record them (O-6a §4) and fix:
-- `T_Q1` = the 14-digit UTC timestamp of the earliest capture whose CDX row matches the URL exactly with status 200 and whose `id_` body equals the acceptance-tip hash, bound to that row;
-- the round = the first round of the FP3 chain whose scheduled time is at or after `T_Q1 + 24h` (prereg §8).
+On <<FREEZE_READ_TIME>> (I compute it from step I). The read is made **once**. Nothing here needs you: the Internet Archive's index is public, so I make the read from your laptop with `curl`, which keeps the exact bytes (FH-1). For each of the two URLs, I save and commit:
+- the exact CDX query URI (exact URL match, no collapsing), and every page of the reply, until the index reports no further page;
+- for every page: the complete raw response bytes, the response headers and status, the retrieval time (UTC) and the SHA-256 of the bytes;
+- for the capture that gives `T_Q1`, its `id_` fetch of that exact row's original URL and timestamp: the raw body, headers and status (including `x-archive-src` and `x-archive-orig-date`) and the body's SHA-256. Its URL, timestamp and digest must equal that CDX row's (O-6a §5, OS3-1), and its body must equal the frozen acceptance-tip block hash.
+
+Then, in the same committed record:
+- `T_Q1` = the 14-digit UTC timestamp of the earliest such capture of the two URLs;
+- the round = the first round of the FP3 chain whose scheduled time is at or after `T_Q1 + 24h` (prereg §8), and that scheduled time.
 
 No qualifying capture: the attempt is void (§4 failure boundary); go to attempt 2.
 
-## K. Before the held-out run: two committed records (DF5-2)
+## K. Before the held-out run: the two committed records (DF5-2)
 
-1. The round's randomness, fetched from drand, with its signature checked against the FP3 public key (not checked by the engine, HO-4).
-2. A check of **every** O-6a invalidation condition for attempt 1, each with its evidence: the first post is well-formed and spends `F_Q1`; its hash is the committed object's; no later spend from `A_Q1`; the inclusion block, the order of posts and the acceptance tip are unchanged on the main chain; inclusion at height ≤ `D_Q1`; a qualifying capture exists and none earlier changes the round. An invalidation not listed here counts as found at or after the start (DF5-2).
-3. The record of the time the run starts.
+**Record 1, the invalidation check.** A check of **every** O-6a invalidation condition for attempt 1, each with its evidence, made from the node and both explorers on the day:
+- the first post is well-formed, spends `F_Q1`, and carries the committed object's hash;
+- no later spend from `A_Q1`;
+- the inclusion block, the order of posts and the acceptance tip are unchanged on the main chain;
+- inclusion at height ≤ `D_Q1`;
+- a qualifying capture was listed at the freeze read, and no earlier one giving a different round has been shown;
+- the round's output: I fetch it from drand with `curl` and record the round, its scheduled time, the randomness, the signature, the retrieval time, and that the signature verifies against the FP3 public key (not checked by the engine, HO-4). If no verifying output exists within 7 days of the scheduled time, **stop before L**: what follows for D-19 is the FP3 decision (FH-3).
 
-Both records are committed before you start step L.
+An invalidation not listed in this record counts as found at or after the start (DF5-2).
+
+**Record 2, the start time (FH-4).** Committed after record 1, it says: the run starts at the first `heldout 1` launch after this commit, and that launch's time is the one docker records as the container's start. You then launch (step L) and send me `heldout-status`; I append the container's recorded start time to the record in a second commit. A start time before record 2's commit, or a second launch before that append, stops the attempt for your decision.
 
 ## L. Held-out run (weeks)
 
 ```sh
+cd /opt/aqt-d19/build/deploy/calibration
 sudo sh d19.sh heldout 1 <<ROUND>> <<RANDOMNESS>>
 ```
 
@@ -88,10 +106,15 @@ sudo sh d19.sh heldout 1 <<ROUND>> <<RANDOMNESS>>
 ## M. Certify, then your decision
 
 ```sh
+cd /opt/aqt-d19/build/deploy/calibration
 sudo sh d19.sh certify 1
 ```
 
-Exit 0: every test is within its target (§6). Exit 2: not. Either way, **send me** the report; I commit it. Then you accept or reject the certification result (§12 item 4). A failure leaves promotion blocked; attempt 2 needs a recorded change. After step M, unhold Docker: `sudo apt-mark unhold docker.io containerd runc`.
+Exit 0: every test is within its target (§6). Exit 2: not. Either way, **send me** the report; I commit it.
+
+**Before your decision, the invalidation check again (FH-2).** I repeat record 1's chain and capture checks (not the CDX freeze read itself, which is never repeated) and commit them. Anything found now, or reported at any time from the run's start until your decision, was found at or after the start: the attempt has **failed**, whatever `certify` said (§4 failure boundary).
+
+Then you accept or reject the certification result (§12 item 4). A failure leaves promotion blocked; attempt 2 needs a recorded change. After step M, unhold Docker: `sudo apt-mark unhold docker.io containerd runc`.
 
 ## What this sheet does not do
 
