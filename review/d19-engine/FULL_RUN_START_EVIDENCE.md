@@ -1,0 +1,9 @@
+# D-19 full run: start evidence (FULL_RUN.md steps S, A, B, C, D)
+
+Server output pasted by the owner, 2026-10-20; checked by Claude Opus 5.5 (`claude-opus-5-5`).
+
+- **S:** both status commands `Exited (0)`; `ok: no D-19 process is running`; `definition.json`, `cells.json`, `store`, `choices.json` moved to `*.repilot-e39b23d`; `raw`, `manifests` kept.
+- **A:** old engine moved to `app-4fed8f5`. First clone went to a mistyped path (`/tmp/aqt-d19-sr`); removed and redone. Checkout `eeaa728` ok; `install` printed `Installed engine eeaa7282e3b7c87790c162d679016c290d5f4ea5` (it also upgraded the host's git package 2.53.0-1ubuntu1 -> 1ubuntu1.1); installed `rev-parse HEAD` = `eeaa7282e3b7c87790c162d679016c290d5f4ea5`. `build`: image `sha256:54bfcf5394cbd7a40fd3351d2fda6ed61fd7564435fe2f14bcb182f996f9790c` (all layers cached; same id as the re-pilot). `probe`: `This CPU runs the pinned runtime.`
+- **B:** `Unattended-Upgrade::Automatic-Reboot "false";`.
+- **C:** `manifests`: BTCUSDT 38166 bars, 31 gaps, manifest `5f92ec50…0b65b`, `ok: manifest unchanged`. Cell list hashes equal: `da43191862b0e289b946a32dfaea8278f271c933fbbdb5034c63503e77d9106c` (server copy, installed copy; equal to `eeaa728:deploy/calibration/qualification-cells.json`). `record`: `0f47b9e59204bdcb61357adc190b7856534e81829844339362159f17bf46a7a9`, committed as `deploy/calibration/runs/qualification-definition.json` at `461ebacb4751e1bb5294471a460bdb8549f395b6` before the run; raw GitHub URL and server file both hash to it.
+- **D:** `run threshold` 2026-10-20T11:00:15Z, container `73fc3464…84e4`. `memwatch`: 2 workers in 60 of 60 samples, run memory peak 443,969,536 bytes. After 27 minutes `Up`: 600 `gaussian.independent.k1`, 600 `.k2`, 243 `.k5`, 118 `.k20` threshold chunks (all expected ids). Forward paper `active (running)` since 2026-10-18 17:22:21 UTC.
