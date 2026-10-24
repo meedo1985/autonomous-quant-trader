@@ -68,8 +68,27 @@ def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
     assert '-e AQT_IMAGE_DIGEST="$id"' in run
     assert re.search(r'"\$id" nice -n 19 python', run)
     assert launcher.count("AQT_IMAGE_DIGEST=") == 1
+    # BUILD-1: no network, except freeze, which reads the live remote (QO-2)
+    assert re.findall(r"^\s*NET=(\S+)", launcher, re.M) == ["none", "bridge"]
+    freeze = launcher[launcher.index("freeze)") : launcher.index("heldout)")]
+    assert re.search(r"^\s*NET=bridge  #", freeze, re.M)
+    assert "--no-hardlinks" in freeze  # its chown must not reach $BUILD
+    # FP2-R1: each existence check runs under the lock; FP2-R2: freeze
+    # names the build commit and refuses a modified or writable checkout
+    certify = launcher[launcher.index("certify)") : launcher.index("\n*)")]
+    for block, made in ((freeze, "qobj-1"), (certify, "$out")):
+        head = block[: block.index(f'[ ! -e "$WORK/{made}" ]')]
+        assert re.search(r"^\s*lock\b", head, re.M)
+    # --no-optional-locks: the check must not rewrite the index it inspects
+    checks = (
+        'HEAD)" = "$commit"',
+        "--no-optional-locks status --porcelain",
+        "-perm /022",
+    )
+    for check in checks:
+        assert check in freeze, check
     flags = [
-        "--network none",
+        '--network "$NET"',
         "--user 990:990",
         "--read-only",
         "--init",
@@ -103,6 +122,9 @@ def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
     probe = launcher[launcher.index("probe)") : launcher.index("copy-raw)")]
     assert re.search(r"^\s*lock\b", probe, re.M)
     assert "flock -n 9" in launcher
+    # P18-6: heldout-status shows state and counts, never logs or content
+    held = launcher[launcher.index("heldout-status)") : launcher.index("certify)")]
+    assert "docker logs" not in held and "cat " not in held
     # S8R2-R3: stop attempts every container before failing
     stop = launcher[launcher.index("stop)") : launcher.index("screen-pilot)")]
     loop = stop[stop.index("for id") : stop.index("done")]
@@ -112,6 +134,43 @@ def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
 @pytest.mark.skipif(shutil.which("sh") is None, reason="no POSIX sh")
 def test_the_launcher_is_valid_sh() -> None:
     subprocess.run(["sh", "-n", str(DEPLOY / "d19.sh")], check=True)
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="no POSIX sh")
+@pytest.mark.parametrize(
+    ("status", "find", "refusal"),
+    [
+        ("fail", "ok", "cannot inspect"),  # FP2R-R1: no output, failed
+        ("ok", "fail", "cannot inspect the permissions"),
+        ("dirty", "ok", "differs from its commit"),
+        ("ok", "unsafe", "writable by others"),
+        ("ok", "ok", None),
+    ],
+)
+def test_freeze_refuses_a_build_checkout_it_cannot_verify(
+    status: str, find: str, refusal: str | None
+) -> None:
+    """FP2-R2, FP2R-R1: the freeze block's checkout checks, run under sh
+    with shell functions standing in for git and find."""
+    launcher = (DEPLOY / "d19.sh").read_text(encoding="utf-8")
+    start = launcher.index("    commit=${2:-}")
+    checks = launcher[start : launcher.index('    echo "build checkout', start)]
+    sha = "a" * 40
+    stubs = (
+        f'git() {{ case "$*" in *rev-parse*) echo {sha} ;;\n'
+        f"  *status*) case {status} in fail) return 128 ;;\n"
+        '    dirty) echo " M x" ;; esac ;;\n'
+        "  esac; }\n"
+        f"find() {{ case {find} in fail) return 1 ;; unsafe) echo /b/x ;; esac; }}\n"
+    )
+    script = f"set -eu\n{stubs}BUILD=/b\n{checks}echo PASSED\n"
+    done = subprocess.run(["sh", "-c", script, "d19.sh", "freeze", sha],
+                          capture_output=True, text=True, check=False)  # fmt: skip
+    if refusal is None:
+        assert done.returncode == 0 and done.stdout.strip() == "PASSED", done.stderr
+    else:
+        assert done.returncode == 1 and refusal in done.stderr, done.stderr
+        assert "PASSED" not in done.stdout
 
 
 def test_the_re_pilot_manifest_is_a_valid_pilot_covering_every_group() -> None:

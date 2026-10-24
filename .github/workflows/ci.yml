@@ -224,6 +224,22 @@ jobs:
           test "$(sudo docker wait aqt-d19)" = 0 || { sudo docker logs aqt-d19; exit 1; }
           sudo sh d19.sh choose
           sudo test -s /var/lib/aqt-d19/choices.json
+          # FP2: freeze starts (build clone, network, its script, the run's
+          # code) and refuses this pilot run, leaving no object
+          sudo git clone --quiet /tmp/app.bundle /opt/aqt-d19/build
+          sudo git -C /opt/aqt-d19/build checkout --quiet "$COMMIT"
+          sudo chmod -R go-w /opt/aqt-d19/build  # as FREEZE_HELDOUT.md step G0
+          # (`! cmd` would not fail this step under bash -e)
+          if sudo sh d19.sh freeze "$(printf '%040d' 0)"; then exit 1; fi  # FP2-R2: not the build's commit
+          out=$(sudo sh d19.sh freeze "$COMMIT" 2>&1) && exit 1
+          echo "$out" | tee /tmp/freeze
+          grep -q "^refused: ValueError: not a qualification run" /tmp/freeze
+          sudo test ! -e /var/lib/aqt-d19/qobj-1
+          # a failed find fails the step (bash -e), never reads as "none"
+          bad=$(sudo find /opt/aqt-d19/build -not -user 0 -print -quit)
+          test -z "$bad"
+          sudo sh d19.sh heldout-status
+          if sudo sh d19.sh certify 1 "$(printf '%064d' 0)"; then exit 1; fi  # no object: refused
           sudo sh d19.sh nonfinite | tee /tmp/nonfinite
           grep -q "^all cells: 0 non-finite of" /tmp/nonfinite
           sudo sh d19.sh clean-check | tee /tmp/clean

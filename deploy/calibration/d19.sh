@@ -22,11 +22,16 @@
 #   sudo sh d19.sh screen-pilot
 #   sudo sh d19.sh screen-status
 #   sudo sh d19.sh screen-summary
+#   sudo sh d19.sh freeze <build commit>
+#   sudo sh d19.sh heldout <attempt> <posted hash> <round> <randomness>
+#   sudo sh d19.sh heldout-status
+#   sudo sh d19.sh certify <attempt> <posted hash>
 #
-# Every engine process runs in the pinned image, as uid 990, without network,
-# at `nice 19`, inside aqt-d19.slice (systemd MemoryMax 2560M, checked before
-# every start), with the engine's own read-only checkout at /app (never the
-# forward-paper one). The image is started by the id that `docker image
+# Every engine process runs in the pinned image, as uid 990, without network
+# (except `freeze`, which reads the live remote, QO-2), at `nice 19`, inside
+# aqt-d19.slice (systemd MemoryMax 2560M, checked before every start),
+# with the engine's own read-only checkout at /app (never the forward-paper
+# one). The image is started by the id that `docker image
 # inspect` reports here, and the same id is AQT_IMAGE_DIGEST: never typed
 # (FE-4, FE4-1). The driver runs exactly 2 workers (scripts/d19_run.py,
 # WORKERS).
@@ -37,6 +42,14 @@ WORK=/var/lib/aqt-d19
 NAME=aqt-d19
 SLICE=aqt-d19.slice
 MEMORY_MAX=2684354560  # 2560M in bytes, as systemd reports it
+NET=none  # only `freeze` changes it (BUILD-1)
+# FP2: the build checkout holding this launcher and the later files; the
+# engine checkout $APP stays at the run's commit
+BUILD=/opt/aqt-d19/build
+# the threshold run's definition commit (FULL_RUN.md step C) and docker's
+# recorded start (THRESHOLD_RUN_FINISHED_EVIDENCE.md)
+DEFINITION_COMMIT=461ebacb4751e1bb5294471a460bdb8549f395b6
+THRESHOLD_STARTED=2026-10-20T11:00:15.164071663Z
 
 tag() { echo "aqt-d19:$(git -C "$APP" rev-parse --verify HEAD)"; }
 
@@ -105,13 +118,14 @@ engine() {  # engine [docker run options...] -- <script> [arguments...]
     shift
     script=$1
     shift
+    case $script in /*) ;; *) script=/app/scripts/$script ;; esac
     # --init: python is not PID 1, so `stop` (SIGTERM) ends it at once.
     # shellcheck disable=SC2086  # $opts is a list of plain flags
-    docker run $opts --label "$LABEL" --init --user 990:990 --network none --read-only \
+    docker run $opts --label "$LABEL" --init --user 990:990 --network "$NET" --read-only \
         --tmpfs /tmp --cgroup-parent "$SLICE" --memory 2560m \
         -e AQT_IMAGE_DIGEST="$id" -e HOME=/tmp \
         -v "$APP:/app:ro" -v "$WORK:/work" -w /work \
-        "$id" nice -n 19 python "/app/scripts/$script" "$@"
+        "$id" nice -n 19 python "$script" "$@"
 }
 
 case "${1:-}" in
@@ -306,8 +320,74 @@ failcheck)  # FR2-2, FE7-7: kill one worker; the run must stop, none survive
     echo "PASS: the run stopped (exit $code) and no worker outlived it"
     docker logs --tail 3 "$NAME" 2>&1
     ;;
+freeze)  # FP2, §4 freeze-order step 5: the qualification object qobj-1. The
+    # run's checkout is run_root; root is a fresh clone of the build checkout,
+    # owned by uid 990 because build fetches the live remote into it (QO-2)
+    lock  # QO-6: no run going, so the store is quiescent; FP2-R1: checks after it
+    [ ! -e "$WORK/qobj-1" ] || { echo "refused: $WORK/qobj-1 exists" >&2; exit 1; }
+    # FP2-R2: the build checkout is exactly the reviewed, merged commit the
+    # owner names, unmodified, and writable by root only
+    commit=${2:-}
+    printf '%s' "$commit" | grep -qxE '[0-9a-f]{40}' ||
+        { echo "usage: d19.sh freeze <full build commit>" >&2; exit 1; }
+    [ "$(git -C "$BUILD" rev-parse --verify HEAD)" = "$commit" ] ||
+        { echo "refused: $BUILD is not at $commit" >&2; exit 1; }
+    # FP2R-R1: a failed inspection refuses; its empty output is no "clean"
+    # --no-optional-locks: a plain status may rewrite .git/index, and under
+    # a default ACL the new index came out world-writable (CI, 9575aa2)
+    changed=$(git -C "$BUILD" --no-optional-locks status --porcelain --untracked-files=all) ||
+        { echo "refused: cannot inspect $BUILD" >&2; exit 1; }
+    [ -z "$changed" ] || { echo "refused: $BUILD differs from its commit" >&2; exit 1; }
+    unsafe=$(find "$BUILD" \( ! -user 0 -o -perm /022 \) -print -quit) ||
+        { echo "refused: cannot inspect the permissions of $BUILD" >&2; exit 1; }
+    [ -z "$unsafe" ] ||
+        { echo "refused: $BUILD is writable by others than root: $(ls -ld "$unsafe")" >&2; exit 1; }
+    echo "build checkout $commit, unmodified"
+    rm -rf "$WORK/freeze-root"
+    # --no-hardlinks: the chown below must not reach the build checkout's objects
+    git clone --quiet --no-hardlinks --no-checkout "$BUILD" "$WORK/freeze-root"
+    git -C "$WORK/freeze-root" checkout --quiet "$commit"
+    git -C "$WORK/freeze-root" remote set-url origin "$(git -C "$BUILD" remote get-url origin)"
+    chown -R 990:990 "$WORK/freeze-root"
+    NET=bridge  # BUILD-1: the one engine command with network
+    engine --rm -- /work/freeze-root/scripts/d19_freeze.py --run-root /app \
+        --root freeze-root --definition definition.json \
+        --definition-repo-path deploy/calibration/runs/qualification-definition.json \
+        --definition-commit "$DEFINITION_COMMIT" --threshold-started "$THRESHOLD_STARTED" \
+        --store store --choices choices.json \
+        --exploration-manifest manifests/exploration-BTCUSDT-1h.json --out qobj-1
+    ;;
+heldout)  # FP2, §4 step 6: attempt <n>'s held-out run; it prints chain heads
+    # only (P18-6), and a restart resumes
+    case "$#:${2:-}" in 5:1 | 5:2) ;; *) echo "usage: d19.sh heldout <1|2> <posted hash> <round> <randomness>" >&2; exit 1 ;; esac
+    lock
+    docker rm "$NAME-heldout" >/dev/null 2>&1 || true
+    engine -d --name "$NAME-heldout" -- d19_heldout.py run --object qobj-1 \
+        --posted "$3" --attempt "$2" --round "$4" --randomness "$5" \
+        --store heldout --raw-root raw
+    echo "Started. Progress: sudo sh d19.sh heldout-status"
+    ;;
+heldout-status)  # P18-6: state, times and chunks per chain; nothing else
+    docker ps -a --filter "name=^$NAME-heldout\$" --format '{{.Status}}'
+    docker inspect -f 'started {{.State.StartedAt}} finished {{.State.FinishedAt}} exit {{.State.ExitCode}}' \
+        "$NAME-heldout" 2>/dev/null || true
+    find "$WORK/heldout" -name 'chunk-*.json' 2>/dev/null |
+        awk -F/ '{ n[$(NF-2) "/" $(NF-1)]++ } END { for (c in n) print n[c], c }' |
+        sort -k2
+    ;;
+certify)  # FP2, §6: attempt <n>'s final reduction, once; exit 0 accepted, 2 not
+    case "$#:${2:-}" in 3:1 | 3:2) ;; *) echo "usage: d19.sh certify <1|2> <posted hash>" >&2; exit 1 ;; esac
+    out=certify-v$2.json
+    lock  # FP2-R1: the check and the write under one lock
+    [ ! -e "$WORK/$out" ] || { echo "refused: $WORK/$out exists" >&2; exit 1; }
+    rc=0
+    engine --rm -- d19_heldout.py certify --object qobj-1 --posted "$3" \
+        --attempt "$2" --store heldout --out "$out" || rc=$?
+    [ ! -e "$WORK/$out" ] || cat "$WORK/$out"
+    exit "$rc"
+    ;;
 *)
-    sed -n '2,21p' "$0"
+    sed -n '2,28p' "$0"
     exit 1
     ;;
 esac
