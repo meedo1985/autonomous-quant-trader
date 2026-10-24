@@ -68,8 +68,13 @@ def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
     assert '-e AQT_IMAGE_DIGEST="$id"' in run
     assert re.search(r'"\$id" nice -n 19 python', run)
     assert launcher.count("AQT_IMAGE_DIGEST=") == 1
+    # BUILD-1: no network, except freeze, which reads the live remote (QO-2)
+    assert re.findall(r"^\s*NET=(\S+)", launcher, re.M) == ["none", "bridge"]
+    freeze = launcher[launcher.index("freeze)") : launcher.index("heldout)")]
+    assert re.search(r"^\s*NET=bridge  #", freeze, re.M)
+    assert "--no-hardlinks" in freeze  # its chown must not reach $BUILD
     flags = [
-        "--network none",
+        '--network "$NET"',
         "--user 990:990",
         "--read-only",
         "--init",
@@ -103,6 +108,9 @@ def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
     probe = launcher[launcher.index("probe)") : launcher.index("copy-raw)")]
     assert re.search(r"^\s*lock\b", probe, re.M)
     assert "flock -n 9" in launcher
+    # P18-6: heldout-status shows state and counts, never logs or content
+    held = launcher[launcher.index("heldout-status)") : launcher.index("certify)")]
+    assert "docker logs" not in held and "cat " not in held
     # S8R2-R3: stop attempts every container before failing
     stop = launcher[launcher.index("stop)") : launcher.index("screen-pilot)")]
     loop = stop[stop.index("for id") : stop.index("done")]

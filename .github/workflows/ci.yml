@@ -224,6 +224,17 @@ jobs:
           test "$(sudo docker wait aqt-d19)" = 0 || { sudo docker logs aqt-d19; exit 1; }
           sudo sh d19.sh choose
           sudo test -s /var/lib/aqt-d19/choices.json
+          # FP2: freeze starts (build clone, network, its script, the run's
+          # code) and refuses this pilot run, leaving no object
+          sudo git clone --quiet /tmp/app.bundle /opt/aqt-d19/build
+          sudo git -C /opt/aqt-d19/build checkout --quiet "$COMMIT"
+          out=$(sudo sh d19.sh freeze 2>&1) && exit 1
+          echo "$out" | tee /tmp/freeze
+          grep -q "^refused: ValueError: not a qualification run" /tmp/freeze
+          sudo test ! -e /var/lib/aqt-d19/qobj-1
+          test -z "$(sudo find /opt/aqt-d19/build -not -user 0 -print -quit)"
+          sudo sh d19.sh heldout-status
+          ! sudo sh d19.sh certify 1 "$(printf '%064d' 0)"  # no object: refused
           sudo sh d19.sh nonfinite | tee /tmp/nonfinite
           grep -q "^all cells: 0 non-finite of" /tmp/nonfinite
           sudo sh d19.sh clean-check | tee /tmp/clean
