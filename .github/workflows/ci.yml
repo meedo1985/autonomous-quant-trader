@@ -235,7 +235,9 @@ jobs:
           echo "$out" | tee /tmp/freeze
           grep -q "^refused: ValueError: not a qualification run" /tmp/freeze
           sudo test ! -e /var/lib/aqt-d19/qobj-1
-          test -z "$(sudo find /opt/aqt-d19/build -not -user 0 -print -quit)"
+          # a failed find fails the step (bash -e), never reads as "none"
+          bad=$(sudo find /opt/aqt-d19/build -not -user 0 -print -quit)
+          test -z "$bad"
           sudo sh d19.sh heldout-status
           if sudo sh d19.sh certify 1 "$(printf '%064d' 0)"; then exit 1; fi  # no object: refused
           sudo sh d19.sh nonfinite | tee /tmp/nonfinite

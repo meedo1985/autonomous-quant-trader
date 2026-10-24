@@ -29,8 +29,9 @@
 #
 # Every engine process runs in the pinned image, as uid 990, without network
 # (except `freeze`, which reads the live remote, QO-2), at `nice 19`, inside
-# aqt-d19.slice (systemd MemoryMax 2560M, checked before every start), with the engine's own read-only checkout at /app (never the
-# forward-paper one). The image is started by the id that `docker image
+# aqt-d19.slice (systemd MemoryMax 2560M, checked before every start),
+# with the engine's own read-only checkout at /app (never the forward-paper
+# one). The image is started by the id that `docker image
 # inspect` reports here, and the same id is AQT_IMAGE_DIGEST: never typed
 # (FE-4, FE4-1). The driver runs exactly 2 workers (scripts/d19_run.py,
 # WORKERS).
@@ -358,8 +359,7 @@ freeze)  # FP2, §4 freeze-order step 5: the qualification object qobj-1. The
     ;;
 heldout)  # FP2, §4 step 6: attempt <n>'s held-out run; it prints chain heads
     # only (P18-6), and a restart resumes
-    case "${2:-}" in 1 | 2) ;; *) echo "usage: d19.sh heldout <1|2> <posted hash> <round> <randomness>" >&2; exit 1 ;; esac
-    [ $# = 5 ] || { echo "usage: d19.sh heldout <1|2> <posted hash> <round> <randomness>" >&2; exit 1; }
+    case "$#:${2:-}" in 5:1 | 5:2) ;; *) echo "usage: d19.sh heldout <1|2> <posted hash> <round> <randomness>" >&2; exit 1 ;; esac
     lock
     docker rm "$NAME-heldout" >/dev/null 2>&1 || true
     engine -d --name "$NAME-heldout" -- d19_heldout.py run --object qobj-1 \
@@ -376,8 +376,7 @@ heldout-status)  # P18-6: state, times and chunks per chain; nothing else
         sort -k2
     ;;
 certify)  # FP2, §6: attempt <n>'s final reduction, once; exit 0 accepted, 2 not
-    case "${2:-}" in 1 | 2) ;; *) echo "usage: d19.sh certify <1|2> <posted hash>" >&2; exit 1 ;; esac
-    [ $# = 3 ] || { echo "usage: d19.sh certify <1|2> <posted hash>" >&2; exit 1; }
+    case "$#:${2:-}" in 3:1 | 3:2) ;; *) echo "usage: d19.sh certify <1|2> <posted hash>" >&2; exit 1 ;; esac
     out=certify-v$2.json
     lock  # FP2-R1: the check and the write under one lock
     [ ! -e "$WORK/$out" ] || { echo "refused: $WORK/$out exists" >&2; exit 1; }
