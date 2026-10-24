@@ -493,5 +493,27 @@ def test_the_script_checks_the_deployment_before_anything_else(
     assert not (tmp_path / "a").exists() and not (tmp_path / "s").exists()
 
 
+def test_a_crash_is_alerted_then_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PA-1: an error no step handles is a CRITICAL alert, then exit 1."""
+    script = _script()
+
+    def full_disk(*_: object) -> int:
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(script, "step", full_disk)
+    monkeypatch.setattr(script.time, "sleep", lambda _: None)
+    with pytest.raises(OSError, match="No space"):
+        script.main(_args(tmp_path))
+    logged = read_entries(AccountDir(tmp_path / "account").operations_path)
+    assert [e.payload["kind"] for e in logged] == ["SHUTDOWN"]
+    assert logged[0].payload["severity"] == "CRITICAL"
+    assert logged[0].payload["fields"] == {
+        "crashed": "OSError",
+        "reason": "No space left on device",
+    }
+
+
 def _local_orders(state: AccountState) -> list[object]:
     return [*state.record.orders.values(), *state.sent.values()]

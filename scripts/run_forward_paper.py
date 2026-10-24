@@ -142,6 +142,19 @@ def refuse(sinks: list[Sink], reason: str) -> int:
     return 2
 
 
+def crashed(sinks: list[Sink], error: Exception) -> None:
+    """Alert a CRITICAL `SHUTDOWN` for an error no step handles, so a crash
+    and its restart are never silent (audit finding PA-1). The caller
+    re-raises the original error even when this alert cannot be sent."""
+    crash = {"crashed": type(error).__name__, "reason": str(error)}
+    try:
+        AlertRouter(sinks).emit(
+            Event(EventKind.SHUTDOWN, Severity.CRITICAL, datetime.now(UTC), crash)
+        )
+    except Exception as failure:  # noqa: BLE001 - the crash itself is raised
+        print(f"Crash not alerted ({type(failure).__name__})", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Forward paper trading (Task 29)")
     parser.add_argument("--config", type=Path, required=True)
@@ -184,7 +197,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"waiting until {wake:%Y-%m-%d %H:%M} UTC for the first step", flush=True)
         time.sleep(max(0.0, (wake - datetime.now(UTC)).total_seconds()))
     while True:
-        code = step(config, store, account, sinks, channel, args.deployment_record)
+        try:
+            code = step(config, store, account, sinks, channel, args.deployment_record)
+        except Exception as error:
+            crashed(sinks, error)
+            raise  # exit 1: systemd restarts it at the next slot
         if args.once or code == 2:
             return code
         now = datetime.now(UTC)
