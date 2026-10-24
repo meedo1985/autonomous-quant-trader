@@ -107,6 +107,22 @@ def test_a_failed_git_listing_refuses(
         approved_code(record, root)
 
 
+def test_git_that_cannot_run_refuses(
+    server: tuple[Path, Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA2-R3: no git binary is a refusal (exit 2), not a crash."""
+    root, record, _ = server
+    bundle = deployment.git_source_bundle(root)  # before git disappears
+
+    def no_git(*_: object, **__: object) -> object:
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(deployment, "git_source_bundle", lambda _: bundle)
+    monkeypatch.setattr(deployment.subprocess, "run", no_git)
+    with pytest.raises(DeploymentError, match="git could not run"):
+        approved_code(record, root)
+
+
 def test_only_the_newest_approval_counts(server: tuple[Path, Path, str]) -> None:
     root, record, head = server
     newer = _commit(root, "scripts/run.py", "RUN = 4\n")

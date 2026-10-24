@@ -77,12 +77,15 @@ def _shared(record: Path) -> bool:
 
 
 def _git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603 - fixed argv, no shell
-        ("git", "-C", str(root), *arguments),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        return subprocess.run(  # noqa: S603 - fixed argv, no shell
+            ("git", "-C", str(root), *arguments),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as error:  # CA2-R3: e.g. no git; a refusal, not a crash
+        raise DeploymentError(f"git could not run: {type(error).__name__}") from None
 
 
 def approved_code(record: Path, root: Path) -> SourceBundle:

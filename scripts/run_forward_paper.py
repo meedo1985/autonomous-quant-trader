@@ -22,7 +22,9 @@ A failed fetch (network, Binance, clock skew) is alerted and retried at the
 next hour; its hours stay pending. A refused step stops the program with exit
 code 2, which is never retried (`deploy/aqt-paper.service`): the refusal is
 already logged and alerted, and the owner resolves it. With `--once`, exit code
-0 is a step that ran or had nothing to do, 1 a failed fetch, 2 a refusal.
+0 is a step that ran or had nothing to do, 1 a failed fetch, 2 a refusal. Any
+other error is a crash: alerted (best effort) as a CRITICAL `SHUTDOWN` naming
+only its type, then raised, so it exits 1 and the service restarts it.
 """
 
 from __future__ import annotations
@@ -143,11 +145,14 @@ def refuse(sinks: list[Sink], reason: str) -> int:
 
 
 def crashed(sinks: list[Sink], error: Exception) -> None:
-    """Alert a CRITICAL `SHUTDOWN` for an error no step handles, so a crash
-    and its restart are never silent (audit finding PA-1). The caller
-    re-raises the original error even when this alert cannot be sent."""
+    """Alert a CRITICAL `SHUTDOWN` for an error no step handles (audit finding
+    PA-1). Best effort: when even this fails, stderr is tried, and the caller
+    re-raises the original error in every case (CA-R1, CA2-R4)."""
     try:  # CA-R1: even the error's text may fail; nothing here replaces it
-        crash = {"crashed": type(error).__name__, "reason": str(error)}
+        # CA2-R1: never the error's own text, which may carry anything; only
+        # the operating system's fixed reason (e.g. "No space left on device")
+        reason = error.strerror if isinstance(error, OSError) else None
+        crash = {"crashed": type(error).__name__, "reason": reason}
         AlertRouter(sinks).emit(
             Event(EventKind.SHUTDOWN, Severity.CRITICAL, datetime.now(UTC), crash)
         )

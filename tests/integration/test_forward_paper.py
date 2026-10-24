@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import importlib.util
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -500,7 +501,7 @@ def test_a_crash_is_alerted_then_raised(
     script = _script()
 
     def full_disk(*_: object) -> int:
-        raise OSError("No space left on device")
+        raise OSError(errno.ENOSPC, "No space left on device", "/var/lib/aqt/x")
 
     monkeypatch.setattr(script, "step", full_disk)
     monkeypatch.setattr(script.time, "sleep", lambda _: None)
@@ -513,6 +514,25 @@ def test_a_crash_is_alerted_then_raised(
         "crashed": "OSError",
         "reason": "No space left on device",
     }
+
+
+def test_a_crash_alert_never_carries_the_error_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA2-R1: only the type; an error's own text may hold a secret."""
+    script = _script()
+
+    def leaky(*_: object) -> int:
+        raise RuntimeError("password=hunter2")
+
+    monkeypatch.setattr(script, "step", leaky)
+    monkeypatch.setattr(script.time, "sleep", lambda _: None)
+    with pytest.raises(RuntimeError):
+        script.main(_args(tmp_path))
+    path = AccountDir(tmp_path / "account").operations_path
+    assert "hunter2" not in path.read_text("utf-8")
+    fields = read_entries(path)[0].payload["fields"]
+    assert fields == {"crashed": "RuntimeError", "reason": None}
 
 
 class _Unprintable(OSError):
