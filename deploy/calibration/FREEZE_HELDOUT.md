@@ -70,10 +70,10 @@ At 6 confirmations the post is accepted. Inclusion height `h` = <<h>>; acceptanc
 On <<FREEZE_READ_TIME>> (I compute it from step I). The read is made **once**. Nothing here needs you: the Internet Archive's index is public, so I make the read from your laptop with `curl`, which keeps the exact bytes (FH-1). For each of the two URLs, I save and commit:
 - the exact CDX query URI (exact URL match, no collapsing), and every page of the reply, until the index reports no further page;
 - for every page: the complete raw response bytes, the response headers and status, the retrieval time (UTC) and the SHA-256 of the bytes;
-- for the capture that gives `T_Q1`, its `id_` fetch of that exact row's original URL and timestamp: the raw body, headers and status (including `x-archive-src` and `x-archive-orig-date`) and the body's SHA-256. Its URL, timestamp and digest must equal that CDX row's (O-6a §5, OS3-1), and its body must equal the frozen acceptance-tip block hash.
+- the candidates: every CDX row of either URL with an exact URL match and archived status 200, in timestamp order across both URLs (FH2-1). From the earliest, each gets its `id_` fetch of that exact row's original URL and timestamp: the raw body, headers and status (including `x-archive-src` and `x-archive-orig-date`) and the body's SHA-256. A candidate qualifies when that fetch's URL, timestamp and digest equal its CDX row's (O-6a §5, OS3-1) and its body equals the frozen acceptance-tip block hash. Every candidate before the first that qualifies keeps its fetch evidence and the reason it does not qualify.
 
 Then, in the same committed record:
-- `T_Q1` = the 14-digit UTC timestamp of the earliest such capture of the two URLs;
+- `T_Q1` = the 14-digit UTC timestamp of the first qualifying candidate in that order;
 - the round = the first round of the FP3 chain whose scheduled time is at or after `T_Q1 + 24h` (prereg §8), and that scheduled time.
 
 No qualifying capture: the attempt is void (§4 failure boundary); go to attempt 2.
@@ -86,18 +86,20 @@ No qualifying capture: the attempt is void (§4 failure boundary); go to attempt
 - the inclusion block, the order of posts and the acceptance tip are unchanged on the main chain;
 - inclusion at height ≤ `D_Q1`;
 - a qualifying capture was listed at the freeze read, and no earlier one giving a different round has been shown;
-- the round's output: I fetch it from drand with `curl` and record the round, its scheduled time, the randomness, the signature, the retrieval time, and that the signature verifies against the FP3 public key (not checked by the engine, HO-4). If no verifying output exists within 7 days of the scheduled time, **stop before L**: what follows for D-19 is the FP3 decision (FH-3).
+- the round's output: I fetch it from drand with `curl` and record the round, its scheduled time, the raw response, the randomness, the signature, the retrieval time, and that the signature verifies against the FP3 public key (not checked by the engine, HO-4). The round's scheduled time is about `T_Q1 + 24h`, and the freeze read comes about 7 days after `T_Q1`, so the fetch is made **the same day as the freeze read**: its recorded retrieval time is the evidence that a verifying output existed within 7 days of the scheduled time (FH2-3). How a missing output is treated is fixed by FP3's formal outcome, before step G: where DRAFT §2.0's rule binds, no verifying output retrieved within the 7 days invalidates the attempt before evaluation, so it is void (§4 failure boundary); otherwise the rule FP3 settles applies.
 
 An invalidation not listed in this record counts as found at or after the start (DF5-2).
 
-**Record 2, the start time (FH-4).** Committed after record 1, it says: the run starts at the first `heldout 1` launch after this commit, and that launch's time is the one docker records as the container's start. You then launch (step L) and send me `heldout-status`; I append the container's recorded start time to the record in a second commit. A start time before record 2's commit, or a second launch before that append, stops the attempt for your decision.
+**Record 2, the start time (FH-4, FH2-2).** Committed after record 1, it states one concrete start time `S` = <<START_UTC>> (a UTC minute, at least an hour after its commit). Step L's launch line waits until `S` and then starts the run, so the run starts at the recorded time. After the launch you send me `heldout-status`; I add docker's recorded container start time to the evidence in a second commit. It must be at or after `S` and within 10 minutes of it. A start outside that, or a second launch before that commit, stops the attempt for your decision.
 
 ## L. Held-out run (weeks)
 
 ```sh
 cd /opt/aqt-d19/build/deploy/calibration
-sudo sh d19.sh heldout 1 <<ROUND>> <<RANDOMNESS>>
+until [ "$(date -u +%s)" -ge <<START_EPOCH>> ]; do sleep 5; done; sudo sh d19.sh heldout 1 <<ROUND>> <<RANDOMNESS>>
 ```
+
+The first part waits until record 2's time `S` (`<<START_EPOCH>>` is `S` in seconds; I fill both). Run it in good time before `S` and leave the window open until it prints that the run started.
 
 `docker.io`, `containerd` and `runc` stay on hold until step M (DEV_RUN_START_EVIDENCE.md). Weekly check: `heldout-status` (chunk counts only) and forward paper status. **Nothing shows held-out event content before `certify`** (§13 item 6, P18-6); do not run any other command on the held-out store. On `Exited` with a code other than 0, collect and stop, as in FULL_RUN.md D: a resume continues from the last finished chunk.
 
