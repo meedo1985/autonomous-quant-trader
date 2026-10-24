@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import errno
 import importlib.util
+import os
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -523,16 +524,16 @@ def test_a_crash_alert_never_carries_the_error_text(
     script = _script()
 
     def leaky(*_: object) -> int:
-        raise RuntimeError("password=hunter2")
+        raise OSError(errno.EIO, "password=hunter2")  # CA3-R1
 
     monkeypatch.setattr(script, "step", leaky)
     monkeypatch.setattr(script.time, "sleep", lambda _: None)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(OSError, match="hunter2"):
         script.main(_args(tmp_path))
     path = AccountDir(tmp_path / "account").operations_path
     assert "hunter2" not in path.read_text("utf-8")
     fields = read_entries(path)[0].payload["fields"]
-    assert fields == {"crashed": "RuntimeError", "reason": None}
+    assert fields == {"crashed": "OSError", "reason": os.strerror(errno.EIO)}
 
 
 class _Unprintable(OSError):
