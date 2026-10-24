@@ -22,7 +22,7 @@
 #   sudo sh d19.sh screen-pilot
 #   sudo sh d19.sh screen-status
 #   sudo sh d19.sh screen-summary
-#   sudo sh d19.sh freeze
+#   sudo sh d19.sh freeze <build commit>
 #   sudo sh d19.sh heldout <attempt> <posted hash> <round> <randomness>
 #   sudo sh d19.sh heldout-status
 #   sudo sh d19.sh certify <attempt> <posted hash>
@@ -322,9 +322,20 @@ failcheck)  # FR2-2, FE7-7: kill one worker; the run must stop, none survive
 freeze)  # FP2, §4 freeze-order step 5: the qualification object qobj-1. The
     # run's checkout is run_root; root is a fresh clone of the build checkout,
     # owned by uid 990 because build fetches the live remote into it (QO-2)
+    lock  # QO-6: no run going, so the store is quiescent; FP2-R1: checks after it
     [ ! -e "$WORK/qobj-1" ] || { echo "refused: $WORK/qobj-1 exists" >&2; exit 1; }
-    lock  # QO-6: no run going, so the store is quiescent
-    commit=$(git -C "$BUILD" rev-parse --verify HEAD)
+    # FP2-R2: the build checkout is exactly the reviewed, merged commit the
+    # owner names, unmodified, and writable by root only
+    commit=${2:-}
+    printf '%s' "$commit" | grep -qxE '[0-9a-f]{40}' ||
+        { echo "usage: d19.sh freeze <full build commit>" >&2; exit 1; }
+    [ "$(git -C "$BUILD" rev-parse --verify HEAD)" = "$commit" ] ||
+        { echo "refused: $BUILD is not at $commit" >&2; exit 1; }
+    [ -z "$(git -C "$BUILD" status --porcelain --untracked-files=all)" ] ||
+        { echo "refused: $BUILD differs from its commit" >&2; exit 1; }
+    [ -z "$(find "$BUILD" \( ! -user 0 -o -perm /022 \) -print -quit)" ] ||
+        { echo "refused: $BUILD is writable by others than root" >&2; exit 1; }
+    echo "build checkout $commit, unmodified"
     rm -rf "$WORK/freeze-root"
     # --no-hardlinks: the chown below must not reach the build checkout's objects
     git clone --quiet --no-hardlinks --no-checkout "$BUILD" "$WORK/freeze-root"
@@ -362,6 +373,7 @@ certify)  # FP2, §6: attempt <n>'s final reduction, once; exit 0 accepted, 2 no
     case "${2:-}" in 1 | 2) ;; *) echo "usage: d19.sh certify <1|2> <posted hash>" >&2; exit 1 ;; esac
     [ $# = 3 ] || { echo "usage: d19.sh certify <1|2> <posted hash>" >&2; exit 1; }
     out=certify-v$2.json
+    lock  # FP2-R1: the check and the write under one lock
     [ ! -e "$WORK/$out" ] || { echo "refused: $WORK/$out exists" >&2; exit 1; }
     rc=0
     engine --rm -- d19_heldout.py certify --object qobj-1 --posted "$3" \

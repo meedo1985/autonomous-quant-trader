@@ -73,6 +73,15 @@ def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
     freeze = launcher[launcher.index("freeze)") : launcher.index("heldout)")]
     assert re.search(r"^\s*NET=bridge  #", freeze, re.M)
     assert "--no-hardlinks" in freeze  # its chown must not reach $BUILD
+    # FP2-R1: each existence check runs under the lock; FP2-R2: freeze
+    # names the build commit and refuses a modified or writable checkout
+    certify = launcher[launcher.index("certify)") : launcher.index("\n*)")]
+    for block, made in ((freeze, "qobj-1"), (certify, "$out")):
+        head = block[: block.index(f'[ ! -e "$WORK/{made}" ]')]
+        assert re.search(r"^\s*lock\b", head, re.M)
+    checks = ('HEAD)" = "$commit"', "status --porcelain", "-perm /022")
+    for check in checks:
+        assert check in freeze, check
     flags = [
         '--network "$NET"',
         "--user 990:990",
