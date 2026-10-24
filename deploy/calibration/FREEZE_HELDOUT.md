@@ -35,7 +35,7 @@ sudo chmod -R go-w /opt/aqt-d19/build
 sudo git -C /opt/aqt-d19/build rev-parse HEAD
 sudo git -C /opt/aqt-d19/app rev-parse HEAD
 sudo git -C /opt/aqt-d19/build remote get-url origin
-sudo git -C /opt/aqt-d19/build status --porcelain --untracked-files=all
+sudo git -C /opt/aqt-d19/build --no-optional-locks status --porcelain --untracked-files=all
 sudo find /opt/aqt-d19/build \( ! -user 0 -o -perm /022 \) -print -quit
 ```
 
