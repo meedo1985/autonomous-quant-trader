@@ -331,10 +331,13 @@ freeze)  # FP2, §4 freeze-order step 5: the qualification object qobj-1. The
         { echo "usage: d19.sh freeze <full build commit>" >&2; exit 1; }
     [ "$(git -C "$BUILD" rev-parse --verify HEAD)" = "$commit" ] ||
         { echo "refused: $BUILD is not at $commit" >&2; exit 1; }
-    [ -z "$(git -C "$BUILD" status --porcelain --untracked-files=all)" ] ||
-        { echo "refused: $BUILD differs from its commit" >&2; exit 1; }
-    [ -z "$(find "$BUILD" \( ! -user 0 -o -perm /022 \) -print -quit)" ] ||
-        { echo "refused: $BUILD is writable by others than root" >&2; exit 1; }
+    # FP2R-R1: a failed inspection refuses; its empty output is no "clean"
+    changed=$(git -C "$BUILD" status --porcelain --untracked-files=all) ||
+        { echo "refused: cannot inspect $BUILD" >&2; exit 1; }
+    [ -z "$changed" ] || { echo "refused: $BUILD differs from its commit" >&2; exit 1; }
+    unsafe=$(find "$BUILD" \( ! -user 0 -o -perm /022 \) -print -quit) ||
+        { echo "refused: cannot inspect the permissions of $BUILD" >&2; exit 1; }
+    [ -z "$unsafe" ] || { echo "refused: $BUILD is writable by others than root" >&2; exit 1; }
     echo "build checkout $commit, unmodified"
     rm -rf "$WORK/freeze-root"
     # --no-hardlinks: the chown below must not reach the build checkout's objects

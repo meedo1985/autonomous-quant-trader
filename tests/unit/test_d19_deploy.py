@@ -131,6 +131,43 @@ def test_the_launcher_is_valid_sh() -> None:
     subprocess.run(["sh", "-n", str(DEPLOY / "d19.sh")], check=True)
 
 
+@pytest.mark.skipif(shutil.which("sh") is None, reason="no POSIX sh")
+@pytest.mark.parametrize(
+    ("status", "find", "refusal"),
+    [
+        ("fail", "ok", "cannot inspect"),  # FP2R-R1: no output, failed
+        ("ok", "fail", "cannot inspect the permissions"),
+        ("dirty", "ok", "differs from its commit"),
+        ("ok", "unsafe", "writable by others"),
+        ("ok", "ok", None),
+    ],
+)
+def test_freeze_refuses_a_build_checkout_it_cannot_verify(
+    status: str, find: str, refusal: str | None
+) -> None:
+    """FP2-R2, FP2R-R1: the freeze block's checkout checks, run under sh
+    with shell functions standing in for git and find."""
+    launcher = (DEPLOY / "d19.sh").read_text(encoding="utf-8")
+    start = launcher.index("    commit=${2:-}")
+    checks = launcher[start : launcher.index('    echo "build checkout', start)]
+    sha = "a" * 40
+    stubs = (
+        f'git() {{ case "$3" in rev-parse) echo {sha} ;;\n'
+        f"  status) case {status} in fail) return 128 ;;\n"
+        '    dirty) echo " M x" ;; esac ;;\n'
+        "  esac; }\n"
+        f"find() {{ case {find} in fail) return 1 ;; unsafe) echo /b/x ;; esac; }}\n"
+    )
+    script = f"set -eu\n{stubs}BUILD=/b\n{checks}echo PASSED\n"
+    done = subprocess.run(["sh", "-c", script, "d19.sh", "freeze", sha],
+                          capture_output=True, text=True, check=False)  # fmt: skip
+    if refusal is None:
+        assert done.returncode == 0 and done.stdout.strip() == "PASSED", done.stderr
+    else:
+        assert done.returncode == 1 and refusal in done.stderr, done.stderr
+        assert "PASSED" not in done.stdout
+
+
 def test_the_re_pilot_manifest_is_a_valid_pilot_covering_every_group() -> None:
     """FE-7: one cell of each group Q1-Q5 and QJ, and every cell of the thin
     categories (Q1 clusters, Q2m, QJ); a pilot by its ids and counts (FA-1)."""
