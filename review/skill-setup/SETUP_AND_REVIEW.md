@@ -213,3 +213,20 @@ Reproduce on another computer (replaces the ponytail line above):
 ```bash
 python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py --repo DietrichGebert/ponytail --ref 09c434ab73ca43761c5d8b0c5d341926c2fba710 --path skills/ponytail skills/ponytail-review
 ```
+
+## Install 2026-10-24: graphify and Obsidian skills (owner request)
+
+Owner asked: "install graphify and obsidian skill". Inspected before installation and reported to the owner, who chose the options below (AskUserQuestion, 2026-10-24). Inspected and installed by Claude Opus 5.5 (`claude-opus-5-5`).
+
+**graphify**: source `github.com/Graphify-Labs/graphify` (Apache-2.0, not a fork, about 134k stars); PyPI `graphifyy` 0.9.95, whose project URLs point to that repository; release v0.9.95 published 2026-10-23. I recommended pinning v0.9.83 (2026-10-09) because 0.9.95 was one day old; the owner chose "Yes, latest 0.9.95".
+- Commands: `uv tool install graphifyy==0.9.95`, then `graphify install` from the home directory (global, Claude Code platform).
+- Effects, checked against `graphify/install.py` and on disk: the skill at `~/.claude/skills/graphify/` (`SKILL.md` sha256 `8736200e6b7d131d937d8ed4b8d84bf74ef7760aa58de80c9df9f2ba8a67e106`, plus `references/`), and a 4-line `# graphify` registration block appended to `~/.claude/CLAUDE.md` (backed up first). No hooks: `settings.json` has no graphify entry. `graphify claude install`, which adds PreToolUse hooks and writes a project `CLAUDE.md`, was **not** run.
+- Data: code is parsed locally (tree-sitter); docs, PDFs and media get a semantic pass by the assistant's own model. Running it writes `graphify-out/` into the target folder. It is not run on this repository; if it ever is, `graphify-out/` must stay untracked and out of the server checkout (the deployment check refuses untracked files).
+- Remove: `graphify uninstall`, then `uv tool uninstall graphifyy`.
+
+**Obsidian skills**: source `github.com/kepano/obsidian-skills` (Steph Ango, Obsidian; MIT; about 50k stars), plugin `obsidian@obsidian-skills` 1.0.1, user scope.
+- Commands: `claude plugin marketplace add kepano/obsidian-skills`, `claude plugin install obsidian@obsidian-skills`.
+- Contents: instruction files only (obsidian-markdown, obsidian-bases, obsidian-cli, json-canvas, defuddle, knap). `defuddle` and `knap` tell the agent to `npm install -g` their CLIs when used; nothing was installed with npm now.
+- Remove: `claude plugin uninstall obsidian@obsidian-skills`.
+
+Neither install authorizes trading, promotion, or a change to the frozen governance. AGENTS.md rules take precedence over both.
