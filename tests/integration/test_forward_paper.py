@@ -515,5 +515,27 @@ def test_a_crash_is_alerted_then_raised(
     }
 
 
+class _Unprintable(OSError):
+    def __str__(self) -> str:
+        raise SystemExit(2)  # CA-R1: would look like a refusal to systemd
+
+
+def test_a_crash_whose_text_or_alert_fails_is_still_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA-R1: neither a failing error text nor a failing stderr replaces the
+    crash, so the exit stays 1 (restarted), never 2."""
+    script = _script()
+
+    def unprintable(*_: object) -> int:
+        raise _Unprintable
+
+    monkeypatch.setattr(script, "step", unprintable)
+    monkeypatch.setattr(script.time, "sleep", lambda _: None)
+    monkeypatch.setattr(script.sys, "stderr", None)  # print() to it fails
+    with pytest.raises(_Unprintable):
+        script.main(_args(tmp_path))
+
+
 def _local_orders(state: AccountState) -> list[object]:
     return [*state.record.orders.values(), *state.sent.values()]

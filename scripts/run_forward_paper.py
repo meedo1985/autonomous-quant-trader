@@ -146,13 +146,16 @@ def crashed(sinks: list[Sink], error: Exception) -> None:
     """Alert a CRITICAL `SHUTDOWN` for an error no step handles, so a crash
     and its restart are never silent (audit finding PA-1). The caller
     re-raises the original error even when this alert cannot be sent."""
-    crash = {"crashed": type(error).__name__, "reason": str(error)}
-    try:
+    try:  # CA-R1: even the error's text may fail; nothing here replaces it
+        crash = {"crashed": type(error).__name__, "reason": str(error)}
         AlertRouter(sinks).emit(
             Event(EventKind.SHUTDOWN, Severity.CRITICAL, datetime.now(UTC), crash)
         )
-    except Exception as failure:  # noqa: BLE001 - the crash itself is raised
-        print(f"Crash not alerted ({type(failure).__name__})", file=sys.stderr)
+    except BaseException as failure:  # noqa: BLE001 - the crash itself is raised
+        try:
+            print(f"Crash not alerted ({type(failure).__name__})", file=sys.stderr)
+        except BaseException:  # noqa: BLE001, S110 - nowhere left to say it
+            pass
 
 
 def main(argv: list[str] | None = None) -> int:
