@@ -536,6 +536,24 @@ def test_a_crash_alert_never_carries_the_error_text(
     assert fields == {"crashed": "OSError", "reason": os.strerror(errno.EIO)}
 
 
+def test_a_crash_with_an_unknown_error_number_is_still_alerted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA4-R1: os.strerror would overflow; the alert goes out without it."""
+    script = _script()
+
+    def odd(*_: object) -> int:
+        raise OSError(1 << 100, "failure")
+
+    monkeypatch.setattr(script, "step", odd)
+    monkeypatch.setattr(script.time, "sleep", lambda _: None)
+    with pytest.raises(OSError):
+        script.main(_args(tmp_path))
+    path = AccountDir(tmp_path / "account").operations_path
+    fields = read_entries(path)[0].payload["fields"]
+    assert fields == {"crashed": "OSError", "reason": None}
+
+
 class _Unprintable(OSError):
     def __str__(self) -> str:
         raise SystemExit(2)  # CA-R1: would look like a refusal to systemd

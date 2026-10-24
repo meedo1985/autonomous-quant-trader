@@ -31,6 +31,7 @@ restarts it.
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -153,7 +154,7 @@ def crashed(sinks: list[Sink], error: Exception) -> None:
         # CA2-R1, CA3-R1: never text the raiser chose; only the operating
         # system's own words for the error number ("No space left on device")
         number = error.errno if isinstance(error, OSError) else None
-        reason = os.strerror(number) if isinstance(number, int) else None
+        reason = os.strerror(number) if number in errno.errorcode else None  # CA4-R1
         crash = {"crashed": type(error).__name__, "reason": reason}
         AlertRouter(sinks).emit(
             Event(EventKind.SHUTDOWN, Severity.CRITICAL, datetime.now(UTC), crash)
