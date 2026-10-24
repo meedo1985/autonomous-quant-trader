@@ -1,8 +1,8 @@
 # Freeze, `AQTQ1` post and held-out certification (D-19 attempt 1)
 
-**Status: DRAFT, 2026-10-24. Not usable yet.** Three preconditions are open (FP2, FP3, FP4, §0), and FP3 needs a formal governance step that the AI cannot author or activate. Every `<<...>>` blank is filled only when its input exists. Prepared while the development run (FULL_RUN.md step E) goes; nothing here touches the server until you start step G.
+**Status: DRAFT, 2026-10-24. Not usable yet.** Three preconditions are open (FP2, FP3, FP4, §0), and FP3 needs a formal governance step that the AI cannot author or activate. Every `<<...>>` blank is filled only when its input exists. Prepared while the development run (FULL_RUN.md step E) goes; nothing here touches the server until you start step G, except step G0 (installing the build checkout), which may run as soon as PR #77 is merged (FS2-R1).
 
-**What it is.** Freeze-order steps 5, 6 and 7 of the preregistration (§4): build and commit the qualification object, post its hash on Bitcoin (`AQTQ1`, O-6a SPEC rev 5 `84fca9c` §3-§7 by substitution), read the freeze point, fix the drand round, run the held-out certification (§6, §13 rev 7g items 3 and 6) and certify. It starts only after FULL_RUN.md step F. Forward paper keeps running, and nothing here touches it.
+**What it is.** Freeze-order steps 5, 6 and 7 of the preregistration (§4): build and commit the qualification object, post its hash on Bitcoin (`AQTQ1`, O-6a SPEC rev 5 `84fca9c` §3-§7 by substitution), read the freeze point, fix the drand round, run the held-out certification (§6, §13 rev 7g items 3 and 6) and certify. Step G and everything after it start only after FULL_RUN.md step F. Forward paper keeps running, and nothing here touches it.
 
 **What can end it early, and how (§4).**
 - `choices.json` says the method does not qualify (§5 step 6): there is no freeze and no post. The result is recorded; it is a valid result.
