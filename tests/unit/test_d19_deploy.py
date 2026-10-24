@@ -79,7 +79,12 @@ def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
     for block, made in ((freeze, "qobj-1"), (certify, "$out")):
         head = block[: block.index(f'[ ! -e "$WORK/{made}" ]')]
         assert re.search(r"^\s*lock\b", head, re.M)
-    checks = ('HEAD)" = "$commit"', "status --porcelain", "-perm /022")
+    # --no-optional-locks: the check must not rewrite the index it inspects
+    checks = (
+        'HEAD)" = "$commit"',
+        "--no-optional-locks status --porcelain",
+        "-perm /022",
+    )
     for check in checks:
         assert check in freeze, check
     flags = [
@@ -152,8 +157,8 @@ def test_freeze_refuses_a_build_checkout_it_cannot_verify(
     checks = launcher[start : launcher.index('    echo "build checkout', start)]
     sha = "a" * 40
     stubs = (
-        f'git() {{ case "$3" in rev-parse) echo {sha} ;;\n'
-        f"  status) case {status} in fail) return 128 ;;\n"
+        f'git() {{ case "$*" in *rev-parse*) echo {sha} ;;\n'
+        f"  *status*) case {status} in fail) return 128 ;;\n"
         '    dirty) echo " M x" ;; esac ;;\n'
         "  esac; }\n"
         f"find() {{ case {find} in fail) return 1 ;; unsafe) echo /b/x ;; esac; }}\n"

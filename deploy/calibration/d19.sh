@@ -332,7 +332,9 @@ freeze)  # FP2, §4 freeze-order step 5: the qualification object qobj-1. The
     [ "$(git -C "$BUILD" rev-parse --verify HEAD)" = "$commit" ] ||
         { echo "refused: $BUILD is not at $commit" >&2; exit 1; }
     # FP2R-R1: a failed inspection refuses; its empty output is no "clean"
-    changed=$(git -C "$BUILD" status --porcelain --untracked-files=all) ||
+    # --no-optional-locks: a plain status may rewrite .git/index, and under
+    # a default ACL the new index came out world-writable (CI, 9575aa2)
+    changed=$(git -C "$BUILD" --no-optional-locks status --porcelain --untracked-files=all) ||
         { echo "refused: cannot inspect $BUILD" >&2; exit 1; }
     [ -z "$changed" ] || { echo "refused: $BUILD differs from its commit" >&2; exit 1; }
     unsafe=$(find "$BUILD" \( ! -user 0 -o -perm /022 \) -print -quit) ||
