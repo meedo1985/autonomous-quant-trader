@@ -337,7 +337,8 @@ freeze)  # FP2, §4 freeze-order step 5: the qualification object qobj-1. The
     [ -z "$changed" ] || { echo "refused: $BUILD differs from its commit" >&2; exit 1; }
     unsafe=$(find "$BUILD" \( ! -user 0 -o -perm /022 \) -print -quit) ||
         { echo "refused: cannot inspect the permissions of $BUILD" >&2; exit 1; }
-    [ -z "$unsafe" ] || { echo "refused: $BUILD is writable by others than root" >&2; exit 1; }
+    [ -z "$unsafe" ] ||
+        { echo "refused: $BUILD is writable by others than root: $(ls -ld "$unsafe")" >&2; exit 1; }
     echo "build checkout $commit, unmodified"
     rm -rf "$WORK/freeze-root"
     # --no-hardlinks: the chown below must not reach the build checkout's objects
