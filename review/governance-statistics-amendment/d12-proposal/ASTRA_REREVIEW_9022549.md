@@ -4,7 +4,7 @@ Prompt: `REREVIEW_PROMPT.md`. Reviewer metadata from the Codex CLI header (2026-
 
 Verdict: **FIX**. Findings D12R2-A-1 .. A-4.
 
-**ID note:** as in `ASTRA_REVIEW_55554C6.md`, the report below calls itself the "Sol review lineage" and labels its findings `D12R2-S-1` .. `D12R2-S-4`; its table's "earlier Sol finding" rows `D12R-S-1..6` are Astra's own first-round findings as labelled in its verbatim report (that record maps them to `D12R-A-n`; its findings 7-8 are not re-checked here). The text is kept verbatim; in this record and every later reference, this report's `D12R2-S-n` is **`D12R2-A-n`** (same n). Sol's re-check is `SOL_REREVIEW_9022549.md`.
+**ID note:** the report below calls itself the "Sol review lineage" and labels its findings `D12R2-S-1` .. `D12R2-S-4`; in this record and every later reference they are **`D12R2-A-1` .. `D12R2-A-4`** (same n). Its table of "earlier Sol findings" `D12R-S-1..6` re-checks **Sol's** first-round findings (titles match `SOL_REVIEW_55554C6.md`: schema vs issuance, disclosure channels, descendants, reproduction/read budget, failure paths, field validation), not Astra's own `D12R-A-1..8`. Cause: the prompt asked each reviewer to re-check "YOUR findings", and Astra's first report had used the Sol prefix. So Astra's own first-round findings were not individually re-checked by Astra; Sol's were re-checked by both reviewers. Astra's new findings still cover the overlapping topics (A-1 to A-6 overlap S-1 to S-6 per rev 2 §1). Sol's re-check is `SOL_REREVIEW_9022549.md`.
 
 ## Report (verbatim)
 
