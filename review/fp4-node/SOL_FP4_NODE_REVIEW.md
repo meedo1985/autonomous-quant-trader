@@ -11,6 +11,7 @@ Verdict: **FIX**. Findings FP4N-R1 .. FP4N-R7; dispositions in
 ## Report (verbatim)
 
 ## Verdict: **FIX**
+## Verdict: **FIX**
 
 As written, these steps do **not** establish FP4 for the whole period from block 972,269 to the freeze read. Bitcoin Core 31.1 supports the required pruned node and RPCs, but `prune=25000` does not reserve that block range. The laptop’s intermittent uptime also needs an explicit plan for recording when the node first sees acceptance and for making the freeze read seven days later.
 
@@ -58,8 +59,3 @@ The listed **PowerShell 5.1 forms appear correct**: `Set-Content -Encoding ascii
 The default `C:\Program Files\Bitcoin\daemon\` path is documented in the [Bitcoin full-node guide](https://github.com/bitcoin-dot-org/Bitcoin.org/blob/master/en/full-node.md), but I did **not** inspect the 31.1 installer or run it on this laptop. Add `Test-Path` checks for both executables and a version check before telling the owner to start the node. `Start-Process` returns immediately, so a successful line 6 alone does not prove that `bitcoind` stayed running.
 
 **Not verified:** the owner’s actual installer files, signature or digest; Windows 11 execution on this laptop; actual disk use, sync duration, fee-estimator readiness, and a live `scanblocks` → `getdescriptoractivity` run. This was a read-only review of a clean working tree; no tests or node commands were run. Under the repository’s review-record rule, these findings still need to be written and committed by the author before this independent check counts as a completed project review.
-tokens used
-139,647
-## Verdict: **FIX**
-
-As written, these steps do **not** establish FP4 for the whole period from block 972,269 to the freeze read. Bitcoin Core 31.1 supports the required pruned node and RPCs, but `prune=25000` does not reserve that block range. The laptop’s intermittent uptime also needs an explicit plan for recording when the node first sees acceptance and for making the freeze read seven days later.
