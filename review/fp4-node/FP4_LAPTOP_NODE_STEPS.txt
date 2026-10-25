@@ -1,0 +1,65 @@
+FP4 - Bitcoin verifier node on your LAPTOP (Bitcoin Core 31.1, pruned, block filters)
+Run each line in PowerShell on the laptop, ONE LINE AT A TIME. No keys or wallet go on this node.
+(Revision 2, after Codex review FP4N-R1..R7; see ADJUDICATION_FP4_NODE.md.)
+
+=== ONCE: install ===
+
+1) Download the installer (about 39 MB):
+Invoke-WebRequest https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-win64-setup.exe -OutFile $HOME\Downloads\bitcoin-31.1-win64-setup.exe
+
+2) Check it. This must print True. (This hash is the one signed by 11 Bitcoin Core builders; checked 2026-10-25.)
+(Get-FileHash $HOME\Downloads\bitcoin-31.1-win64-setup.exe).Hash -eq "D0C6D0F3CD08689472A6F53C4CE33A5F059C092758C32C42541B47DB4E193458"
+
+   If it prints False: STOP, delete the file, tell me.
+
+3) Install it (normal Next/Next/Finish; keep the default folder C:\Program Files\Bitcoin). Untick "Run Bitcoin Core" at the end.
+Start-Process $HOME\Downloads\bitcoin-31.1-win64-setup.exe
+
+4) Check the two programs are where these steps expect. Both lines must print True:
+Test-Path "C:\Program Files\Bitcoin\daemon\bitcoind.exe"
+Test-Path "C:\Program Files\Bitcoin\daemon\bitcoin-cli.exe"
+
+   If either prints False: STOP, send me a photo of the folder C:\Program Files\Bitcoin.
+
+5) Check the version. It must say v31.1.0:
+& "C:\Program Files\Bitcoin\daemon\bitcoind.exe" -version
+
+6) Make the node's folder on D:
+New-Item -ItemType Directory -Force D:\Bitcoin
+
+7) Write its settings (block filters on, low memory, no wallet, no incoming connections):
+Set-Content -Encoding ascii D:\Bitcoin\bitcoin.conf "prune=25000","blockfilterindex=1","dbcache=300","maxmempool=100","disablewallet=1","listen=0"
+
+=== EVERY TIME the laptop is on: start it ===
+
+8) Start the node (a black window opens and stays open; leave it open while you work):
+Start-Process "C:\Program Files\Bitcoin\daemon\bitcoind.exe" "-datadir=D:\Bitcoin"
+
+   If Windows Firewall asks: click Cancel (the node only needs outgoing connections).
+   If the black window closes by itself within a minute: the node stopped. Send me a photo of: Get-Content D:\Bitcoin\debug.log -Tail 20
+
+=== BEFORE you shut down the laptop: stop it properly ===
+
+9) Stop the node (wait until its window closes by itself, then shut down):
+& "C:\Program Files\Bitcoin\daemon\bitcoin-cli.exe" -datadir=D:\Bitcoin stop
+
+   Sleep / closing the lid is fine. Only a full shutdown needs line 9 first.
+
+=== ONCE A WEEK (and whenever I ask): checks - send me a photo of each output ===
+
+10) Sync state (I read: chain, blocks, headers, initialblockdownload, pruneheight, size_on_disk):
+& "C:\Program Files\Bitcoin\daemon\bitcoin-cli.exe" -datadir=D:\Bitcoin getblockchaininfo
+
+11) Block-filter index state (I read: synced, best_block_height):
+& "C:\Program Files\Bitcoin\daemon\bitcoin-cli.exe" -datadir=D:\Bitcoin getindexinfo
+
+12) Disk space left on D: (GB):
+[math]::Round((Get-PSDrive D).Free/1GB)
+
+Notes:
+- The node keeps only about the last 13,000 blocks (about 3 months). Block 972,269 (F_Q1) must still be kept at the freeze read.
+  From your weekly photos I compute the real date by which the freeze read must happen, and warn you weeks ahead.
+  Never change bitcoin.conf yourself.
+- Disk: expected about 50 GB on D: when synced (you have 62 GB free). Do not fill D: with other big files.
+- The first sync downloads the whole chain (~770 GB, kept only partly). It continues where it stopped each time you run line 8.
+- The post day (step H) and the freeze read (step I) need the laptop ON at set times; I give you those times in advance.
