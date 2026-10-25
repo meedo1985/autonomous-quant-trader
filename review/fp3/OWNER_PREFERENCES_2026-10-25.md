@@ -18,3 +18,7 @@ Recorded by Claude Opus 5.5 from the owner's chosen option labels. **These are p
 ## After the re-reviews of draft revision 3 (records 4c713bf)
 
 7. Asked: "For a missing drand number: switch to 'no time limit' (wait until the number exists, never void for this reason), or keep the 7-day void and continue patching it?" Answer, verbatim: **"No time limit (Recommended)"**. This **supersedes items 3, 5 and 6**: there is no void for a missing drand output, so no attempt-2 path after such a void and no evidence deadline. If quicknet stops for good, the attempt waits until the owner makes a new formal decision.
+
+## After re-reviews 3 (both ACCEPT, f44c5ab)
+
+8. Asked: "Rule 6 (only matters if quicknet stops forever): keep it as both reviewers accepted it, or add now that such a release counts the attempt as 'failed'?" Answer, verbatim: **"Keep as accepted (Recommended)"** — revision 4's text stands; FP3S4-G1/R1 remain a disclosed residual for any future release decision.
