@@ -1,6 +1,6 @@
 FP4 - Bitcoin verifier node on your LAPTOP (Bitcoin Core 31.1, pruned, block filters)
 Run each line in PowerShell on the laptop, ONE LINE AT A TIME. No keys or wallet go on this node.
-(Revision 5, after Codex reviews FP4N-R1..R7, FP4N2-R1..R3, FP4N3-R1..R2 and FP4N4-R1..R2; see ADJUDICATION_FP4_NODE*.md.)
+(Revision 6, after Codex reviews FP4N-R1..R7, FP4N2-R1..R3, FP4N3-R1..R2, FP4N4-R1..R2 and FP4N5-R1; see ADJUDICATION_FP4_NODE*.md.)
 
 === ONCE: install ===
 
@@ -74,8 +74,9 @@ S2) Keeping block 972,269. A caught-up node keeps about the last W blocks (W = "
                                        972,269 + W - 3,000; I only ever move it EARLIER)
        On that date, the same as a STOP in (a).
     c) SAFE START. Once I fill the date, and ALSO any time your last photo of line 10 is more than 7 days old,
-       never use line 8 directly. Instead start the node WITHOUT network (it cannot download or prune anything):
-       Start-Process "C:\Program Files\Bitcoin\daemon\bitcoind.exe" "-datadir=D:\Bitcoin","-connect=0"
+       never use line 8 directly. Instead start the node WITHOUT network and WITHOUT automatic pruning
+       (it cannot download or delete any block):
+       Start-Process "C:\Program Files\Bitcoin\daemon\bitcoind.exe" "-datadir=D:\Bitcoin","-connect=0","-prune=1"
        wait one minute, run line 10, send me the photo, then run line 9. Use line 8 only after I reply GO.
     - If pruneheight ever goes ABOVE 972,269: the node no longer meets FP4. Step H stays blocked; only a fresh sync
       whose window can hold block 972,269 through the freeze read can fix it.
