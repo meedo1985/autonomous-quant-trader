@@ -4,10 +4,13 @@ chains only."""
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -148,6 +151,7 @@ def fakes(monkeypatch: pytest.MonkeyPatch) -> None:
     """Small prescribed counts, so the synthetic chains stay small, and a
     stand-in for the fresh choose (it must equal choices.json), which runs
     the start gate of a real pinned checkout."""
+    monkeypatch.setattr(sys, "path", list(sys.path))  # d19_freeze prepends run_root
     monkeypatch.setattr(rundef, "PRESCRIBED", {"threshold": 3, "dev": 2})
     monkeypatch.setattr(
         qobj, "_choose", lambda r, d, s: (d.parent / "choices.json").read_bytes()
@@ -438,3 +442,57 @@ def test_a_host_change_during_staging_is_refused(
     with pytest.raises(ValueError, match="host provenance changed"):
         qobj.build(**kwargs)
     assert not kwargs["out"].exists()
+
+
+ROOT = Path(__file__).resolve().parents[2]
+_spec = importlib.util.spec_from_file_location(
+    "d19_freeze_under_test", ROOT / "scripts" / "d19_freeze.py"
+)
+assert _spec is not None and _spec.loader is not None
+freeze_cli = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(freeze_cli)
+
+
+def _cli_args(kwargs: dict[str, Any], started: str) -> list[str]:
+    names = {"choices_json": "--choices", "threshold_started": "--threshold-started"}
+    return [
+        a
+        for k, v in kwargs.items()
+        for a in (names.get(k, "--" + k.replace("_", "-")),
+                  started if k == "threshold_started" else str(v))
+    ]  # fmt: skip
+
+
+def test_the_freeze_command_prints_the_object_hash(  # FP2
+    tmp_path: Path, fakes: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    kwargs = _setup(tmp_path)
+    # docker's nanosecond form, as the launcher passes it
+    started = kwargs["threshold_started"].strftime("%Y-%m-%dT%H:%M:%S.%f123Z")
+    assert freeze_cli.main(_cli_args(kwargs, started)) == 0
+    manifest = json.loads((kwargs["out"] / "manifest.json").read_bytes())
+    assert capsys.readouterr().out == (
+        f"qualification_object_sha256 {qobj.manifest_sha256(manifest)}\n"
+    )
+    freeze = json.loads((kwargs["out"] / "freeze.json").read_bytes())
+    assert freeze["threshold_started"] == started[:26] + "+00:00"
+
+
+def test_the_freeze_command_refuses_without_publishing(  # FP2
+    tmp_path: Path, fakes: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    kwargs = _setup(tmp_path)
+    kwargs["definition_commit"] = "0" * 40
+    assert (
+        freeze_cli.main(_cli_args(kwargs, kwargs["threshold_started"].isoformat())) == 1
+    )
+    assert capsys.readouterr().err.startswith("refused: ValueError: S16-2")
+    assert not kwargs["out"].exists()
+
+
+def test_the_committed_freeze_review_record_covers_the_later_files() -> None:
+    """BO-4, QO-5: the record build reads names each later file as committed
+    here, with a committed review record; a later edit needs a new review."""
+    files = {n: qobj._committed(ROOT, p) for n, p in qobj.LATER.items()}
+    assert None not in files.values()
+    qobj._reviewed(ROOT, files)  # type: ignore[arg-type]
