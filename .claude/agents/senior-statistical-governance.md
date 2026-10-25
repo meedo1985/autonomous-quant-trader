@@ -134,7 +134,7 @@ and say explicitly which you ran.
     describing it as unsatisfied by a Markdown-only change misread it.
 
 14. **Your report is the only record; write it so it can be committed verbatim.**
-    You cannot commit, so anything you do not put in the report (or the named
+    You cannot commit, so anything you do not put in the report (or the
     caller-named report file) is lost when the session ends. State every finding, including every one
     you decline to pursue or leave unrepaired, each with its stable ID and its
     reason. Number findings consecutively with no gaps: a gap tells a later reader
