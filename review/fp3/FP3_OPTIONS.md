@@ -1,59 +1,57 @@
 # FP3: binding the drand chain — options for the owner
 
-**Status: AI OPTIONS PAPER — NOT A DECISION — NOT AN AMENDMENT.** Prepared by Claude Opus 5.5 (`claude-opus-5-5`), 2026-10-25, for the owner. The owner decides; the AI records. Facts below were fetched on 2026-10-25 and are cited.
+**Status: AI OPTIONS PAPER — NOT A DECISION — NOT AN AMENDMENT.** Prepared by Claude Opus 5.5 (`claude-opus-5-5`), 2026-10-25, for the owner. Revision 2, after the Codex review `SOL_FP3_OPTIONS_REVIEW.md` (FP3-R1..R7, all accepted). The owner decides. Facts were fetched on 2026-10-25; the raw responses are in `drand-info-2026-10-25/`.
 
 ## 1. What FP3 is, in plain words
 
-The held-out test's random seed is built from a public random number that nobody can know in advance: one round of a **drand** beacon, published by the League of Entropy. The preregistration (§8, `review/governance-statistics-amendment/d19-preregistration/PREREGISTRATION.md` line 397) says the round is "the first round of the C2 drand chain (DRAFT §2.0) whose scheduled time is at or after `T_Qn + 24h`". But the C2 draft leaves that chain blank: `<<SIGNING: chain hash, public key>>` (`s4-amendment-draft/DRAFT_WORDING.md` §2.0). A blank binds nothing, so today the seed has no defined source.
+The held-out test's random seed is built from a public random number that nobody can know in advance: one round of a **drand** beacon (League of Entropy). The preregistration (§8, `review/governance-statistics-amendment/d19-preregistration/PREREGISTRATION.md` line 397) says the round is "the first round of the C2 drand chain (DRAFT §2.0) whose scheduled time is at or after `T_Qn + 24h`". The C2 draft leaves that chain blank, `<<SIGNING: chain hash, public key>>`, and says it is fixed "in this protocol at signing" (`s4-amendment-draft/DRAFT_WORDING.md` §2.0). A blank binds nothing, so today the seed has no defined source. It must be bound **before step G**: a chain picked once beacon outputs are known could steer the result (`FREEZE_HELDOUT.md` FP3).
 
-It must be fixed **before step G** (the freeze): if the chain could be picked after beacon outputs are known, the pick could steer the result (`FREEZE_HELDOUT.md` FP3; Sol FH review: "A draft placeholder does not bind the chain").
+FP3 has three parts: **which chain**, **what happens if the round's output never appears**, and **which formal act makes both binding before G**. The third is the hard one (section 4).
 
-FP3 is three decisions:
+## 2. Which chain
 
-1. **Which chain** (its chain hash and public key).
-2. **The missing-output rule**: what happens if no verifying output for the round can be found within 7 days of its scheduled time (DRAFT §2.0's rule; FH-3 left "whether it binds D-19" to FP3).
-3. **The route**: which formal owner act makes 1 and 2 binding before G.
-
-## 2. Decision 1 — which chain
-
-drand mainnet currently lists three chains. Each was read on 2026-10-25 from `api.drand.sh`, and the hash and public key of the first two matched on `drand.cloudflare.com`, `api2.drand.sh` and `api3.drand.sh`.
+drand mainnet lists three chains (`chains.json`; drand's [developer page](https://docs.drand.love/developer/)). `default` and `quicknet` values were identical on `api.drand.sh`, `drand.cloudflare.com`, `api2.drand.sh` and `api3.drand.sh`. `evmnet` was read from `api.drand.sh` only.
 
 | | `quicknet` | `default` | `evmnet` |
 |---|---|---|---|
 | Chain hash | `52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971` | `8990e7a9aaed2ffed73dbd7092123d6f289930540d7651336225dc172e51b2ce` | `04f1e9062b8a81f848fded9c12306733282b2727ecced50032187751166ec8c3` |
-| Public key | `83cf0f2896adee7eb8b5f01fcad3912212c437e0073e911fb90022d3e760183c8c4b450b6a0a6c3ac6a5776a2d1064510d1fec758c921cc22b0e17e63aaf4bcb5ed66304de9cf809bd274ca73bab4af5a6e9c76a4bc09e76eae8991ef5ece45a` | `868f005eb8e6e4ca0a47c8a77ceaa5309a47978a7c71bc5cce96366b5d7a569937c529eeda66c7293784a9402801af31` | `07e1d1d335df83fa98462005690372c643340060d205306a9aa8106b6bd0b3820557ec32c2ad488e4d4f6008f89a346f18492092ccc0d594610de2732c8b808f0095685ae3a85ba243747b1b2f426049010f6b73a0cf1d389351d5aaaa1047f6297d3a4f9749b33eb2d904c9d9ebf17224150ddd7abd7567a9bec6c74480ee0b` (not cross-checked on other relays) |
+| Public key | `83cf0f2896adee7eb8b5f01fcad3912212c437e0073e911fb90022d3e760183c8c4b450b6a0a6c3ac6a5776a2d1064510d1fec758c921cc22b0e17e63aaf4bcb5ed66304de9cf809bd274ca73bab4af5a6e9c76a4bc09e76eae8991ef5ece45a` | `868f005eb8e6e4ca0a47c8a77ceaa5309a47978a7c71bc5cce96366b5d7a569937c529eeda66c7293784a9402801af31` | see `drand-info-2026-10-25/04f1e906….info.json` |
 | Round every | 3 s | 30 s | 3 s |
-| Running since (genesis) | 2023-08-23 (1692803367) | 2020-07-22 (1595431050) | 2024-09-28 (1727521075) |
+| Genesis | 2023-08-23 (1692803367) | 2020-07-22 (1595431050) | 2024-09-28 (1727521075) |
 | Scheme | `bls-unchained-g1-rfc9380` | `pedersen-bls-chained` | `bls-bn254-unchained-on-g1` |
-| One round verifiable alone | yes (unchained) | needs the previous round's signature too | yes |
-| drand's own guidance | recommended for new applications ([quicknet is live](https://docs.drand.love/blog/2023/10/16/quicknet-is-live)) | the original chain | built for Ethereum contracts |
+| One round verifiable alone | yes | needs the previous round's signature too | yes |
 
-Notes:
-- drand has retired a chain before (`fastnet`, 2023, replaced by `quicknet`). No retirement notice for `default` or `quicknet` was found in drand's blog posts for 2024-2026 (searched 2026-10-25). The one 2025 postmortem (v2.0, March 2025) was a fixed software vulnerability, not an outage.
-- The C2 draft asks for "one drand League of Entropy mainnet chain". Whatever is chosen here must also be the C2 chain later, because the preregistration names "the C2 drand chain". FP3 therefore pre-binds the C2 beacon line.
-- The engine does not check the signature (HO-4). The sheet's step K checks it on the laptop; the tool for that is chosen in the step H/I/M rewrite (both schemes are supported by drand's own clients).
+History: drand retired `fastnet` (announced 2023; network shut down [2024-11-06](https://docs.drand.love/blog/fastnet-to-be-sunset/)). drand has in the past discussed a possible `default` deprecation; in 2025 it said it had no plan then to wind down `evmnet` ([2025 post](https://docs.drand.love/blog/2025/08/26/verifying-bls12-on-ethereum/)). No retirement notice for `quicknet` or `default` was found in 2024-2026 posts.
 
-**AI recommendation (yours to accept or not): `quicknet`.** It is drand's recommended chain for new uses, each round verifies on its own with only the public key (simpler, fewer ways to get it wrong), and it is newer than the chain drand retired. `default` is a sound alternative if you prefer the longest record (since 2020). `evmnet` has no advantage here.
+**This paper's recommendation (a reasoned choice, not drand's ruling): `quicknet`.** Each round verifies on its own with only the public key, which is simpler and leaves fewer ways to err. `default` (longest record, since 2020) is a sound alternative.
 
-## 3. Decision 2 — the missing-output rule
+Whatever is chosen also pre-binds the C2 beacon line, because the preregistration names "the C2 drand chain".
 
-| Option | Meaning |
-|---|---|
-| **(a) Apply DRAFT §2.0's rule (AI recommendation)** | If no output for the round whose signature verifies against the fixed public key is retrieved within 7 days of its scheduled time, attempt 1 is **void** before any held-out evaluation: it is found before the run starts, so the namespace is not burned, and the same object may be posted again with key `A_Q2` (sheet "What can end it early"; §4 failure boundary). There is never a fallback chain or source. |
-| (b) No time limit | Wait for the output however long it takes. Leaves the attempt open indefinitely; no other source is allowed either way. |
+## 3. If the round's output never appears
 
-Why (a): it matches what the C2 draft already says for C2, gives a clear end, and voids rather than fails because nothing held-out has been seen.
+The C2 draft's rule is: "If no verifying output for the round **exists** within 7 days of its scheduled time, the cycle is INVALIDATED". For D-19 this is **not settled**: D-19's VOID boundary (prereg line 270) covers O-6a invalidations, not a missing drand output, and "C2 cycle INVALIDATED" cannot simply be copied to D-19. So this is a **new owner choice**, to be bound with the chain:
 
-## 4. Decision 3 — the route that makes it binding before G
+- **Criterion (existence, not retrieval):** the output counts as existing if a verifying output for the round is shown to have been published within 7 days of its scheduled time, by evidence fixed in advance. A failure of your laptop or of one relay is not a missing output.
+- **Disposition, proposed:** if none exists within 7 days, attempt 1 is **void** before any held-out evaluation; the key is used up; there is never a fallback chain or source. The alternative is no time limit (the attempt stays open).
+- **Retirement or halt** of the chosen chain never authorises a switch: the bound rule above applies. Any other chain would need a new, prospective formal binding, with prior exposure and attempt accounting preserved.
+
+## 4. Which formal act makes it binding before G
 
 | Route | Assessment |
 |---|---|
-| **R1. Constitution §4 amendment** | Certainly formal, but §4 requires a version bump, cycle termination and pre-new-cycle activation (`docs/RESEARCH_CONSTITUTION.md` §4). Heavy and slow for one value; it would also have to be authored and signed by you. |
-| **R2. The C2 signing** | Too late: the C2 amendment waits for D-19's own results (`<<D19>>` markers), and D-19 needs the chain before G. (Negotiation record d2ea15a, CY-2.) |
-| **R3. An owner binding decision on the accepted preregistration (AI recommendation, subject to review)** | You decide which chain "the C2 drand chain" in prereg §8 is, plus the missing-output rule, in a signed and dated owner decision committed before step G, which also states that the C2 signing must carry the same chain hash and public key. Precedent: the preregistration's `<<ACCEPTANCE>>` values were filled by your acceptance record (`review/d19-engine/ACCEPTANCE_RECORD.md`), and readings of the accepted text were fixed by your decisions (e.g. `OWNER_DECISION_GAP1_CUTOFF_READING.md`). It changes no frozen file and no preregistration text or hash. **Open question:** whether this counts as "the formal process" FP3 requires. The sheet names "Constitution amendment process or C2 signing". An independent review must answer this before you rely on R3. If the review rejects R3, R1 is what remains. |
+| **R1. Constitution §4 amendment** | **The only presently established route among R1-R3.** §4 requires a version bump, written rationale, an owner-of-record signed and dated commit, cycle termination and pre-new-cycle activation (`docs/RESEARCH_CONSTITUTION.md` §4). Heavy, and you author it. |
+| R2. The C2 signing | Too late: C2 is signed after D-19's results (`<<D19>>` markers, draft order). |
+| R3. An owner decision on the accepted preregistration | **Not established.** The precedents differ: your acceptance record filled values the text reserved for acceptance and pinned the hash; the reading decisions interpreted rules already present. Neither shows authority to *add* a chain and a failure rule to an accepted preregistration (FP3-R1). Not recommended. |
+| R4. A new, separately accepted D-19 preregistration | Conceivable, conditional: a replacement experiment with an explicit beacon rule and a new hash. It needs its own governance and scientific review, a decision on which development and qualification work must be repeated, and an update of the engine pin. Likely costly in time. |
 
-## 5. What happens next
+**Signing, whichever route:** you author the text and make the dated, signed commit **yourself**. An AI-made commit under your account is not evidence that you authored or signed it (FP3-R4). The AI may explain and may propose wording, labelled as an AI proposal; it cannot author, merge or activate.
 
-1. Independent review of this paper (facts and route validity), record committed.
-2. You answer three questions (chain, rule, route), in your own words or by choosing options. If R3 stands, the AI records your answers in an owner decision file. How that decision must be signed and dated to count (an AI-made commit under your account, or a commit you make yourself) is part of the review question; the AI does not decide it.
-3. The sheet's FP3 row is updated to point to that decision; steps K and L use its chain hash and public key.
+## 5. Also needed before G (AI work)
+
+A pinned, tested signature-verification procedure, run on a known round, recording the chain hash, public key, scheme, genesis, period, round and signature, and the randomness, which drand's v2 relays omit and clients derive as SHA-256 of the signature ([drand-client](https://github.com/drand/drand-client/blob/master/README.md)). A successful fetch is not a verification. This goes into the H/I/M rewrite (FP3-R5).
+
+## 6. What you decide
+
+1. Route: R1 (amendment) or R4 (new preregistration); or ask for an independent governance opinion on R3 first.
+2. Chain: `quicknet` or `default`.
+3. Missing output: void within 7 days by existence, or no time limit.
