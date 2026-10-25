@@ -10,3 +10,7 @@ Recorded by Claude Opus 5.5 from the owner's chosen option labels. **These are p
 
 4. Asked: "FP3 route: which way do you want to make quicknet + the 7-day rule binding before the freeze?" Answer, verbatim: **"R3-strong (Recommended)"** — a supplementary owner acceptance, drafted by the AI as a labelled proposal, reviewed by two different models, then adopted and committed with a signature by the owner personally.
 5. Asked: "If attempt 1 is voided because the drand number never appeared within 7 days, what may attempt 2 do?" Answer, verbatim: **"Re-post, no change (Recommended)"** — the same object is posted again with key `A_Q2` under `d19-heldout-v2`, with the same chain and no recorded change; if quicknet stops for good, both attempts are lost.
+
+## After the re-reviews of draft revision 2
+
+6. Asked: "Rare case: attempt 1 was voided because the drand chain seemed to have stopped, and attempt 2 was then posted. Later, someone shows the chain had actually reached our round before the cutoff. What happens?" Answer, verbatim: **"Deadline at attempt-2 post (Recommended)"** — evidence shown before attempt 2's `AQTQ1` post cancels the void and attempt 1 continues; after that post, the void stands (FP3S2-G1 option (b)).
