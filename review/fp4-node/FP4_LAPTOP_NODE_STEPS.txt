@@ -1,6 +1,6 @@
 FP4 - Bitcoin verifier node on your LAPTOP (Bitcoin Core 31.1, pruned, block filters)
 Run each line in PowerShell on the laptop, ONE LINE AT A TIME. No keys or wallet go on this node.
-(Revision 2, after Codex review FP4N-R1..R7; see ADJUDICATION_FP4_NODE.md.)
+(Revision 3, after Codex reviews FP4N-R1..R7 and FP4N2-R1..R3; see ADJUDICATION_FP4_NODE*.md.)
 
 === ONCE: install ===
 
@@ -56,10 +56,24 @@ Start-Process "C:\Program Files\Bitcoin\daemon\bitcoind.exe" "-datadir=D:\Bitcoi
 12) Disk space left on D: (GB):
 [math]::Round((Get-PSDrive D).Free/1GB)
 
+13) Whole node folder size (GB; takes a few seconds):
+[math]::Round((Get-ChildItem D:\Bitcoin -Recurse -File | Measure-Object Length -Sum).Sum/1GB)
+
+   During the FIRST sync (until I say it is synced): send lines 10, 12 and 13 every day the laptop is on, not weekly.
+
+=== STOP RULES (they win over everything above) ===
+
+S1) Disk: if line 12 shows LESS THAN 8 GB free, run line 9 (stop) and do not start the node again until I say.
+S2) Keeping block 972,269: from your photos I compute the margin = 972,269 minus "pruneheight" (in blocks).
+    - margin below 3,000 (about 3 weeks of blocks): I tell you "MARGIN LOW". From then on, do not start the node (line 8)
+      until I say; we decide together: raise the setting (only if disk allows), or the post must happen first.
+    - If the laptop was off for more than 7 days after "MARGIN LOW": ask me before starting it (catching up can prune).
+    - If pruneheight ever goes ABOVE 972,269: the node no longer meets FP4. Step H stays blocked; only a fresh sync can fix it.
+S3) Never change bitcoin.conf yourself.
+
 Notes:
-- The node keeps only about the last 13,000 blocks (about 3 months). Block 972,269 (F_Q1) must still be kept at the freeze read.
-  From your weekly photos I compute the real date by which the freeze read must happen, and warn you weeks ahead.
-  Never change bitcoin.conf yourself.
-- Disk: expected about 50 GB on D: when synced (you have 62 GB free). Do not fill D: with other big files.
+- The node keeps only a moving window of recent blocks. By projection only (not a promise), about 13,000 blocks, so block
+  972,269 would leave the window around mid-January 2027. The real date comes from your photos.
+- Disk: projected about 50 GB on D: when synced (you have 62 GB free). Do not fill D: with other big files.
 - The first sync downloads the whole chain (~770 GB, kept only partly). It continues where it stopped each time you run line 8.
 - The post day (step H) and the freeze read (step I) need the laptop ON at set times; I give you those times in advance.
