@@ -53,3 +53,19 @@ Read `.agents/skills/quant-model-handoff/SKILL.md` and follow it for this task. 
 Questions for Claude: (1) Does the handoff keep the required independent review genuinely independent while reducing redundant calls? (2) Does any instruction conflict with `AGENTS.md` or the existing `claude-adversarial-review` gate? (3) Is there a concrete scenario where the pointer skill fails to load the shared instructions? Return each finding with a stable ID, severity, file/function, evidence, impact, and minimal correction. Say explicitly when evidence is missing. No strategy logic or governance amendment.
 
 Claude status: NOT SENT. No Claude model reviewed these files. If sent later, record observed model metadata, all returned finding IDs, dispositions, and any unrepaired findings in a committed review record before claiming the review complete.
+
+## Claude adversarial review (sent directly, not by relay)
+
+Reviewer: Claude Code, model ID `claude-opus-5-5` (Opus 5.5, from the session's model metadata), 2026-10-25, at the request of the owner in the session ("is it ok with my code ?? if its ok install it"). Reviewed the two files at 27438ab against base `ff1af4c` content (identical to the packet above). Note: this is not the Opus 5.1 named in the owner's user-level routing preference; that exact model was not the one running.
+
+Answers: (1) Independence holds except as H2 below. (2) One conflict with `AGENTS.md`, H1. (3) No failure of the pointer found: Claude Code listed and could load `quant-model-handoff` from `.claude/skills/` in this session, and the pointer's relative path resolves from the repository root, where both tools start.
+
+| ID | Severity | Place | Finding | Disposition |
+|---|---|---|---|---|
+| H1 | Minor | shared SKILL.md, intro and step 3 | "Follow its model preference" / "Use the model choice in `AGENTS.md`": `AGENTS.md` names no model; the owner's choice is in user-level instructions and memory. A follower would find nothing, or invent one. | Repaired: points to the owner's standing choice; says `AGENTS.md` names none. |
+| H2 | Medium | shared SKILL.md, step 2 | The sender fixes "one to three specific questions". An implementer can, without intent, keep the reviewer away from the defect it did not foresee; that weakens the independence of the review. | Repaired: the contract adds an open request for any other defect. |
+| H3 | Low | shared SKILL.md, step 6 | `ai-negotiation` is a user-level skill, not in the repository; another machine or a fresh clone lacks it. | Repaired: "if it is installed; otherwise state the deadlock". |
+
+No finding left unrepaired. Validation: Markdown only; frozen paths untouched (`git diff --stat origin/main` lists only the three files in this directory and the two skill paths). Tests, Ruff, mypy, import-linter: N/A (no code). Scientific, quant and Binance reviews: N/A.
+
+Placement: moved off `fp2-freeze-launcher` (PR #77, a §16 review) to its own branch `skill-handoff` from `origin/main`, so the FP2 review is not mixed with an unrelated change.
