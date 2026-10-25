@@ -111,7 +111,7 @@ If any of these fails, the post waits.
      - the fee (`F_Q1`'s value minus the outputs) divided by its `vsize` is at least the fresh `estimatesmartfee 6` rate, run right then;
      - `testmempoolaccept` accepts it.
 
-     I record a report: txid, inputs and outputs, fee, `vsize`, the fresh estimate and the `testmempoolaccept` result. Only on my "OK (b)" do **you** press **Broadcast** in Electrum. After the broadcast, the file is deleted; the transaction is then public on the network.
+     I record a report: txid, inputs and outputs, fee, `vsize`, the fresh estimate and the `testmempoolaccept` result. Only on my "OK (b)" do **you** press **Broadcast** in Electrum. After the broadcast, the file is deleted; the transaction is then public on the network. **If this signed attempt ends without a broadcast** (a check fails, the fee must change, or the post is put off), the file is deleted at once, before any retry, and the retry is signed fresh (HK4-R1). Electrum is not asked to save the signed transaction in the wallet.
 5. Send me the txid. A fee bump may replace it only with the identical OP_RETURN script (O-6a §7), and the replacement goes through 4 (a) and 4 (b) again.
 
 ## I. Acceptance and the post record (about 1 hour after inclusion, then same day)
