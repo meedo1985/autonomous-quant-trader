@@ -3,12 +3,12 @@
 **Authorship.** Revision 6 was written by Claude Fable 5.1 (`claude-fable-5-1`) acting as the senior-statistical-governance reviewer. Revision 7 is revision 6 with targeted edits only, made by Claude Opus 5.5 (`claude-opus-5-5`, observed session model) at the owner's instruction to finish D-12 economically; it answers the re-check 5 records and changes nothing else. Neither author is an authority; both propose and check bindings only and cannot accept, activate or amend governance. §0 below is revision 6's verification run and was not repeated for revision 7; its arithmetic is unchanged except where §7a says so.
 
 **Status: INACTIVE PROPOSAL.** It needs the owner's decisions on Q1-Q6 and then the owner's signed C2 amendment before it binds anything. **Nothing frozen changed.**
-**Review status:** revision 6 was re-checked by Codex Sol and Astra (`SOL_REREVIEW5_884B75B.md`, `ASTRA_REREVIEW5_884B75B.md`; both FIX). Revision 7 answers them (§1a) and needs a focused confirmation by both before the owner decides.
+**Review status:** revision 6 was re-checked by Codex Sol and Astra (`SOL_REREVIEW5_884B75B.md`, `ASTRA_REREVIEW5_884B75B.md`; both FIX). Revision 7 answers them (§1a). Both focused confirmations returned ACCEPT WITH NOTES, 0 BLOCKER (`SOL_CONFIRM_1E88935.md`, `ASTRA_CONFIRM_1E88935.md`); their four wording notes are applied in §7b.
 **VERDICT: `AMENDMENT_REQUIRED`** (unchanged).
 
 **How to read it:** this file is self-contained. It replaces `PROPOSAL.md` and `PROPOSAL_REV2.md`..`PROPOSAL_REV6.md` for the owner; those stay as history. It answers the re-check 4 records `SOL_REREVIEW4_6A880C2.md` (gpt-6-sol, FIX, D12R5-S-1..4; the report's verbatim labels are `D12R5-U-n`, mapped by its header to S-n) and `ASTRA_REREVIEW4_6A880C2.md` (gpt-6-astra, FIX, D12R5-A-1..5). I read both in full.
 
-**Owner direction for this revision:** simplify rather than patch. Revisions 3-5 built hourly slots, a staging barrier, batch markers and up to 1,632 pre-signed certificates per read, and each round found new holes in that machinery. The goal is narrow: **when a result is published must not reveal whether a FAIL was a technical breakdown or a performance failure**, and the certificate's `cooling_off_start` must be the moment the result really became visible (Constitution §13 l.124). §3 below is the simplest design I found that does both.
+**Owner direction for this revision:** simplify rather than patch. Revisions 3-5 built hourly slots, a staging barrier, batch markers and up to 1,632 pre-signed certificates per read, and each round found new holes in that machinery. The goal is narrow: **when a result is published must not reveal whether a FAIL was a technical breakdown or a performance failure**, and the certificate must bind a `cooling_off_start` (Constitution §13 l.124) that gives the owner at least 72 hours of actual access: the scheduled release time `R_j`, with the 72 hours counted in hours of reader-path availability (P-5). §3 below is the simplest design I found that does both.
 
 **Checkout and mode:** `D:\PMP-programs-for-sharawi\aqt-freeze-sheet`, branch freeze-sheet, HEAD `bcaf37d`. The agent wrote only this one new file, at the caller's instruction (this worktree's agent definition still lists `Write` as disallowed; the caller's scope was followed, as in revisions 3-5). Nothing was staged or committed. No frozen file, hash or sidecar was touched. No simulation; no confirmation, lockbox, network or credential access.
 
@@ -16,7 +16,7 @@
 
 - **Citations re-read:** Constitution §3 l.41, l.45; §4 l.48, l.50, l.52; §5 l.63; §7 l.73-85 (l.79 "Research receives PASS/FAIL only"); §13 l.122-126; §26 l.191; §27 l.194. Protocol l.67-95 (l.74, l.75, l.76, l.77-79, l.89), l.294-300 (l.296, l.300). `THREAT_MODEL_v1.md` l.9, l.13. C2 draft `DRAFT_WORDING.md` l.1, l.43-44, l.55-59, l.75-92, l.221-245, l.406. `OWNER_DECISION_O1_O7.md` l.43-46. `OWNER_DECISION_D11.md` l.26.
 - **Topic search, both directions (item 1).** Searching the C2 draft for "Constitution" found the controlling fact for D12R5-S-1 that no revision cited: the C2 draft **is itself a Constitution §4 amendment that produces Constitution v1.1** (title l.1; l.43-44; clause table l.75-92; version bump l.406). Its row at **l.82 already rewrites Constitution §5 l.63** to define `NO_RESULT` as including "its lockbox read failed technically". Earlier revisions called this "draft l.82" without noticing it is a Constitution-level row (D12-30).
-- **Exact arithmetic (`fractions.Fraction`, run this session).** Trend read starts on day 180 + g, volatility 30 days later; release `R_0` = read start + 7 days; cooling-off 3 days; cap day 255. With j missed releases: visible by the cap iff **g + j ≤ 38**; cooling-off also ended iff **g + j ≤ 35**; slack for the owner's answer = 35 − g − j days. Worked example: g = 34.5, j = 0 leaves half a day; j = 1 expires the pick. Discriminating: rev 5's hourly design gives 911/24 and 839/24 (37 + 23/24 and 34 + 23/24), so the one-hour visibility delay is gone. Rev 5's pre-signed certificate counts reproduce: **1,632** (trend read) and **912** (volatility read), confirming S-3 and A-3.
+- **Exact arithmetic (`fractions.Fraction`, run this session).** Trend read starts on day 180 + g, volatility 30 days later; release `R_0` = read start + 7 days; cooling-off 3 days; cap day 255. With j missed releases: visible by the cap iff **g + j ≤ 38**; cooling-off also ended iff **g + j ≤ 35**; slack for the owner's answer = 35 − g − j days. These figures assume no reader-path downtime after `R_j`; each hour of downtime cuts the slack by one hour (P-5, R3). Worked example: g = 34.5, j = 0 leaves half a day; j = 1 expires the pick. Discriminating: rev 5's hourly design gives 911/24 and 839/24 (37 + 23/24 and 34 + 23/24), so the one-hour visibility delay is gone. Rev 5's pre-signed certificate counts reproduce: **1,632** (trend read) and **912** (volatility read), confirming S-3 and A-3.
 
 ## 1. Disposition of re-check 4 findings
 
@@ -102,7 +102,7 @@ Records: `SOL_REREVIEW5_884B75B.md` (gpt-6-sol, FIX, D12R6-S-1..3) and `ASTRA_RE
 **P-8 Validation.** The publisher publishes only (a) PASS or FAIL from the finished record and (b) on PASS, the attestation, after checking its signature, that its identity fields equal the step-2 pre-read values (evaluation ID, family, nominee ID, prediction-artifact hash, eligibility and lockbox IDs), that `cooling_off_start = R_j`, and that the three fields read (`positive`, `true`, `true`). The publisher cannot read sealed values; scientific values are checked by the signer against the sealed record (P-2). Any mismatch is a missed release under P-7, never a published FAIL. D-20 picks a deterministic signature scheme with no embedded time.
 
 **Records.**
-- *Pre-read entry* (step 2): evaluation ID, family, nominee ID, prediction-artifact hash, `R_0`, EXPOSED, and the audit ID under R-b.
+- *Pre-read entry* (step 2): evaluation ID, family, nominee ID, prediction-artifact hash, eligibility ID, lockbox ID, `R_0`, EXPOSED, and the audit ID under R-b.
 - *Release entry:* evaluation ID, `result ∈ {PASS, FAIL}`, `visible_from`, commitment, `attestation_ref` (PASS only). Every kind of FAIL has the same shape.
 - *Sealed bundle* (`lockbox_eval` only): `T_L`, q, both MDDs, ETH E-IMPROV and drawdown, each condition, availability reasons, cause class, actual times, upside record, capture hashes.
 
@@ -121,7 +121,7 @@ Working rule: whatever the owner sees counts as research-visible, because he wor
 2. The cycle-label fact, if Q2a allows it (needs the §7 row, §2).
 3. The three FAIL items, if Q1's alternative is chosen (needs the §7 row and l.76).
 4. The pre-read rejection and, per Q2b, its reason. These are fixed before any lockbox byte is read.
-5. The release time and day index j. They depend only on outages.
+5. The release time and day index j. They depend only on outages and, for a PASS only, on the signing or validation faults of R1.
 
 **Residual channels (faults and trusted parts), disclosed, not claimed away:**
 - **R1 signing fault.** A signer refusal, outage or fault after the common reachability check, or a P-8 mismatch, affects only a PASS. Each one delays that PASS by one day; repeated faults can delay it for several days and, near day 255, make it expire `U_ops`. An incident, a delay or such an expiry of a finished read hints that it was a PASS, before or instead of its release. It can never produce a FAIL, so it cannot separate technical from performance FAIL. This is the disclosed timing residual.
@@ -199,6 +199,15 @@ Choosing "keep blocked" on Q1-Q4 or Q6 means C2 cannot be signed yet. Q5 can be 
 3. **Signing faults never publish FAIL** (A-2): they are missed releases; repeated ones end in `U_ops`. Every published FAIL is fixed at `D_w`.
 4. **P-8 scope** (S-2), **R1 bound** (S-3, A-4), **test preconditions** and new T-7, T-8 (A-3).
 
+## 7b. Confirmation notes applied (wording only, Claude Opus 5.5)
+
+- **D12R7-S-1 / D12R7-A-1** (introduction promised `cooling_off_start` = actual first visibility): replaced by P-5's rule (scheduled `R_j` plus 72 available hours).
+- **D12R7-S-1** (§0 arithmetic unconditional): the downtime assumption is stated after the slack formula.
+- **D12R7-S-1 / D12R7-A-2** (§4 item 5, "depend only on outages"): now also names R1's signing and validation faults, which affect only a PASS.
+- **D12R7-S-2** (P-8 checks eligibility and lockbox IDs absent from the pre-read entry): both IDs added to the pre-read entry.
+
+No rule, test or owner question changed. None of the four notes was left unrepaired.
+
 ## 7. What changed in revision 6 since rev 5, and why
 
 1. **Publication rebuilt, not patched** (owner direction; S-2, A-1, S-3, A-3). Hourly slots, staging, batch markers and per-slot pre-signing are gone. Now there is one release time per day, one atomic insert committed before it, a store that refuses late inserts, and one certificate signed for the attempted time. The two blockers cannot arise.
@@ -222,5 +231,5 @@ Choosing "keep blocked" on Q1-Q4 or Q6 means C2 cannot be signed yet. Q5 can be 
 
 Earlier findings D12-1..D12-27 stand as resolved or as owner questions, now carried in §3-§6. Those superseded by this rebuild are D12-12, D12-13, D12-21, D12-23 and D12-25 (release envelope, publication fencing, visibility barrier, slots, pre-signing). Their goals are kept by P-7.
 
-**Remaining:** the R19-2 confirmation of revision 7; owner Q1-Q6; then the owner-authored, signed C2 with the D-12 rows (Constitution §5/§7 rows per Q1/Q2a, protocol P-1..P-8, THREAT_MODEL l.9 per Q6 i); D-20; §16 review.
+**Remaining:** owner Q1-Q6; then the owner-authored, signed C2 with the D-12 rows (Constitution §5/§7 rows per Q1/Q2a, protocol P-1..P-8, THREAT_MODEL l.9 per Q6 i); D-20; §16 review.
 **Still unauthorized:** frozen edits, activation, code, simulation, confirmation or lockbox access, promotion and trading.
