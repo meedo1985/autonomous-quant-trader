@@ -880,6 +880,34 @@ class RunUnavailable(Exception):
         self.reason = reason
 
 
+def estimator_seed(seed_l266: str) -> int:
+    """D-20 A1b `L266_MOD_2_31`: the nominee's model seed from its l.266
+    trial seed. 0 is a legitimate value (D20L-44)."""
+    _sha256_hex(seed_l266, "seed_l266")
+    return int(seed_l266, 16) % 2**31
+
+
+def confirmation_path(rows: np.ndarray) -> np.ndarray:
+    """D-20 A6 / Q2(ii): real joint rows `(n, symbols, OHLCV)` over
+    `[w0 - warmup, w1)` plus one derived terminal row per symbol whose
+    open = high = low = close = that symbol's last close and volume 0, so
+    the last hour's exit (`bars[j + 1].open`) is the last bar's close
+    (C-6 (1), close(t) = open(t + 1)) and no bar at `w1` is read. The hour
+    span is the caller's check; `screen_gates` checks the length."""
+    a = np.asarray(rows, dtype=float)
+    if a.ndim != 3 or a.shape[0] < 1 or a.shape[1:] != (len(SYMBOLS), 5):
+        raise TrialError(f"rows must have shape (n >= 1, {len(SYMBOLS)}, 5)")
+    prices, volume = a[:, :, :VOLUME], a[:, :, VOLUME]
+    o, h, low, c = (a[:, :, k] for k in (OPEN, HIGH, LOW, CLOSE))
+    if not (np.isfinite(a).all() and (prices > 0).all() and (volume >= 0).all()):
+        raise TrialError("prices must be finite and > 0, volumes finite and >= 0")
+    if not ((low <= np.minimum(o, c)).all() and (np.maximum(o, c) <= h).all()):
+        raise TrialError("every row needs low <= open, close <= high")
+    terminal = np.repeat(a[-1:, :, CLOSE : CLOSE + 1], 5, axis=2)
+    terminal[:, :, VOLUME] = 0.0
+    return np.concatenate([a, terminal])
+
+
 def path_series(path: np.ndarray, s: int, start: datetime) -> BarSeries:
     """RN-1: symbol `s` of a screen path as an hourly series from `start`."""
     rows = path[:, s]
@@ -1037,11 +1065,15 @@ def screen_gates(
     trial_seed: str | None = None,
     window_id: str | None = None,
     g_days: int | None = None,
+    model_seed: int = 0,
 ) -> dict[str, str | None]:
     """RN-6, PL-4, G14-n: each gate's result on one path. G-14 (a model
     trial) needs the null-stream `trial_seed` and the C2 `window_id`
-    (G14-1)."""
+    (G14-1). `model_seed` seeds the nominee's own fits (D-20 A1b; the
+    screen's MR-2 value is the default 0)."""
     check_trial(trial)
+    if type(model_seed) is not int or not 0 <= model_seed < 2**31:
+        raise TrialError("model_seed must be an int in [0, 2**31)")
     warmup = trial["warmup_hours"]
     if window_hours < 48 or window_hours % 24 or len(path) != warmup + window_hours + 1:
         raise TrialError("path length must be warmup + whole window days + 1 hour")
@@ -1089,7 +1121,14 @@ def screen_gates(
             key = (s, lag, json.dumps(model_params(at), sort_keys=True))
             if key not in emissions:
                 emissions[key] = model_column(
-                    at, series, first, columns, warmup, window_hours, lag
+                    at,
+                    series,
+                    first,
+                    columns,
+                    warmup,
+                    window_hours,
+                    lag,
+                    model_seed=model_seed,
                 )
             columns = {**columns, f"model:{at['model']['id']}": tuple(emissions[key])}
         return series, first, columns
@@ -1174,7 +1213,15 @@ def screen_gates(
         ys: list[float] = []
         for draw in pipelines:
             window, preds = walk_forward(
-                trial, series, first, columns, warmup, window_hours, 0, draw
+                trial,
+                series,
+                first,
+                columns,
+                warmup,
+                window_hours,
+                0,
+                draw,
+                model_seed,
             )
             keep = [
                 i
@@ -1505,11 +1552,13 @@ def walk_forward(
     n: int,
     lag: int,
     draw: tuple[str, str, int] | None = None,
+    model_seed: int = 0,
 ) -> tuple[list[int], list[float]]:
     """MR-1..MR-3, G14-3: the model's prediction at every 00:00 window
     decision instant (S6B-R1: inference covers the whole window; training
     uses the rows whose label is realised by the refit). `draw` is
-    `(trial_seed_hex, window_id, d)` for a G-14 null pipeline."""
+    `(trial_seed_hex, window_id, d)` for a G-14 null pipeline, which uses
+    its own seed; otherwise every fit uses `model_seed` (D-20 A1b)."""
     model = trial["model"]
     cls, hours = model["class"], trial["horizon_hours"]
     bars = series.bars
@@ -1544,7 +1593,7 @@ def walk_forward(
         rows = training_rows(times, ys, r, hours)
         if len(rows) < 2:
             raise RunUnavailable("TRAINING_ROWS")
-        fit_y, seed = target[rows], 0
+        fit_y, seed = target[rows], model_seed
         if draw is not None:  # G14-3: circular shift within the window
             offset, seed = g14_draw(
                 draw[0], draw[1], draw[2], k, len(rows), hours // 24
@@ -1572,11 +1621,14 @@ def model_column(
     j0: int,
     n: int,
     lag: int,
+    model_seed: int = 0,
 ) -> list[float]:
     """MR-3: the hourly `model:<id>` input, indexed like a feature column
     read at lag `lag` (position `j - 1 - lag - first` for instant `j`); each
     emission held to the next 00:00; NaN outside the window."""
-    window, preds = walk_forward(trial, series, first, columns, j0, n, lag)
+    window, preds = walk_forward(
+        trial, series, first, columns, j0, n, lag, model_seed=model_seed
+    )
     out = [math.nan] * len(columns[trial["model"]["features"][0]])
     for j, y in zip(window, preds, strict=True):
         for jj in range(j, min(j + 24, j0 + n)):

@@ -1233,9 +1233,9 @@ def test_a_model_trial_runs_every_s4_gate(
     calls: list[tuple[int, int]] = []
     real = screen.model_column
 
-    def counting(*args: object) -> list[float]:
+    def counting(*args: object, **kw: object) -> list[float]:
         calls.append((len(args[1].bars), int(args[-1])))  # type: ignore[attr-defined,call-overload]
-        return real(*args)  # type: ignore[arg-type]
+        return real(*args, **kw)  # type: ignore[arg-type]
 
     monkeypatch.setattr(screen, "model_column", counting)
     trial = _model_trial(tmp_path, monkeypatch)
@@ -2064,3 +2064,174 @@ def test_the_pilot_summary_reports_seconds_and_gates() -> None:
     assert lines[4] == "availability: SOME_UNAVAILABLE"
     assert lines[5] == "job runtimes (S16SR-1): ['null']"  # an older record
     assert '"paths": "a"' in lines[6]
+
+
+# --- D-20 Q5 / Q2(ii): estimator seed and final-hour end price --------------
+
+
+def test_estimator_seed_maps_the_l266_seed_mod_2_31() -> None:
+    # T2, D-20 A1b L266_MOD_2_31; 0 is a legitimate seed (D20L-44)
+    assert screen.estimator_seed("0" * 64) == 0
+    assert screen.estimator_seed("f" * 64) == 2**31 - 1
+    mid = "0123456789abcdef" * 4
+    assert screen.estimator_seed(mid) == int(mid, 16) % 2**31 == 0x09ABCDEF
+    for bad in ("0" * 63, "F" * 64, "g" * 64, 5, None):
+        with pytest.raises(screen.TrialError):
+            screen.estimator_seed(bad)  # type: ignore[arg-type]
+
+
+def test_model_seed_reaches_the_nominee_fits_but_not_the_null_draws(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # T3: emissions and G-14's un-shifted pipeline use model_seed; each null
+    # draw keeps its own g14_draw seed (C-12 (5))
+    seeds: list[int] = []
+    real = screen.build_model
+
+    def spy(cls: str, params: object, seed: int) -> object:
+        seeds.append(seed)
+        return real(cls, params, seed)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(screen, "build_model", spy)
+    monkeypatch.setattr(screen, "G14_DRAWS", 2)
+    monkeypatch.setattr(screen, "g14_draw", lambda *a: (8, 424242))
+    trial = _model_trial(tmp_path, monkeypatch)
+    got = screen.screen_gates(
+        trial, _long_path(), W0, WINDOW_H, *NULL_STREAM, model_seed=777
+    )
+    assert got["G-14"] is None
+    assert set(seeds) == {777, 424242}
+    with pytest.raises(screen.TrialError, match="model_seed"):
+        screen.screen_gates(
+            trial, _long_path(), W0, WINDOW_H, *NULL_STREAM, model_seed=2**31
+        )
+    with pytest.raises(screen.TrialError, match="model_seed"):
+        screen.screen_gates(
+            trial, _long_path(), W0, WINDOW_H, *NULL_STREAM, model_seed=True
+        )
+
+
+def test_a_fixed_model_seed_gives_bit_identical_emissions() -> None:
+    # T3 (A1b test): same estimator seed, same predictions, per allowed class
+    series = screen.path_series(_long_path(), 0, W0 - timedelta(hours=MODEL_WARMUP))
+    first, columns = feature_columns(series)
+    for model in (
+        MODEL,
+        {
+            **MODEL,
+            "class": "lightgbm",
+            "params": {"n_estimators": 20, "max_depth": 3, "num_leaves": 8},
+        },
+    ):
+        trial = {**_trial(model=model, s_inputs=["model:m"]), "horizon_hours": 24}
+        runs = [
+            screen.walk_forward(
+                trial,
+                series,
+                first,
+                columns,
+                MODEL_WARMUP,
+                WINDOW_H,
+                0,
+                model_seed=12345,
+            )
+            for _ in range(2)
+        ]
+        assert runs[0] == runs[1], model["class"]
+        default = screen.walk_forward(
+            trial, series, first, columns, MODEL_WARMUP, WINDOW_H, 0
+        )
+        explicit = screen.walk_forward(
+            trial, series, first, columns, MODEL_WARMUP, WINDOW_H, 0, model_seed=0
+        )
+        assert default == explicit, model["class"]  # T1: the default is MR-2's seed 0
+
+
+def _true_and_derived() -> tuple[np.ndarray, np.ndarray]:
+    true = _long_path().copy()
+    o, h, c = screen.OPEN, screen.HIGH, screen.CLOSE
+    true[-1, :, o] = true[-2, :, c] * 1.01  # the real bar at w1 opens elsewhere
+    true[-1, :, h] = np.maximum(true[-1, :, h], true[-1, :, o])
+    return true, screen.confirmation_path(true[:-1])
+
+
+def test_confirmation_path_appends_a_terminal_row_at_the_last_close() -> None:
+    true, derived = _true_and_derived()
+    assert derived.shape == true.shape
+    assert np.array_equal(derived[:-1], true[:-1])
+    for s in range(len(screen.SYMBOLS)):
+        assert (
+            derived[-1, s, : screen.VOLUME].tolist() == [true[-2, s, screen.CLOSE]] * 4
+        )
+        assert derived[-1, s, screen.VOLUME] == 0.0
+
+
+def test_the_derived_terminal_row_changes_only_the_last_hours_return() -> None:
+    # T4 (PFS2-S-2): consumed values only, on a pair where both runs succeed
+    true, derived = _true_and_derived()
+    start = W0 - timedelta(hours=MODEL_WARMUP)
+    trial = {**_trial(model=MODEL, s_inputs=["model:m"]), "horizon_hours": 24}
+    out = []
+    for path in (true, derived):
+        series = screen.path_series(path, 0, start)
+        first, columns = feature_columns(series)
+        sigma = screen.ewma_hourly_volatility_bps_series(
+            screen.hourly_log_returns_bps(series)
+        )
+        targets = screen.benchmark_targets(columns, first, MODEL_WARMUP, WINDOW_H)
+        emissions = screen.model_column(
+            trial, series, first, columns, MODEL_WARMUP, WINDOW_H, 0
+        )
+        result = screen.run_event_contract(
+            series, targets, MODEL_WARMUP, sigma_bps=sigma
+        )
+        out.append((first, columns, sigma, targets, emissions, result))
+    (f_t, c_t, s_t, tg_t, em_t, r_t), (f_d, c_d, s_d, tg_d, em_d, r_d) = out
+    assert f_t == f_d and tg_t == tg_d and r_t.fills == r_d.fills
+    assert r_t.exposure == r_d.exposure
+    assert r_t.equity[:-1] == r_d.equity[:-1] and r_t.equity[-1] != r_d.equity[-1]
+    assert np.array_equal(np.asarray(em_t), np.asarray(em_d), equal_nan=True)
+    # computed but never used inside the window: the terminal values
+    assert all(c_t[k][:-1] == c_d[k][:-1] for k in c_t)
+    assert s_t[:-1] == s_d[:-1]
+    # the last hour's exit is priced at the last close
+    last = MODEL_WARMUP + WINDOW_H - 1
+    bars = screen.path_series(derived, 0, start).bars
+    assert bars[last + 1].open == bars[last].close
+
+
+def test_confirmation_path_validates_rows() -> None:
+    # T5 (PFS-S-3): zero volume is accepted; bad prices and shapes are refused
+    good = _long_path()[:5].copy()
+    good[:, :, screen.VOLUME] = 0.0
+    assert screen.confirmation_path(good).shape == (6, len(screen.SYMBOLS), 5)
+    bad_cases = []
+    for k, v in (
+        (screen.CLOSE, 0.0),
+        (screen.OPEN, -1.0),
+        (screen.VOLUME, -1.0),
+        (screen.HIGH, math.nan),
+        (screen.LOW, math.inf),
+    ):
+        b = good.copy()
+        b[2, 0, k] = v
+        bad_cases.append(b)
+    b = good.copy()
+    b[2, 0, screen.HIGH] = b[2, 0, screen.LOW] * 0.5  # high below low
+    bad_cases += [b, good[:, :1], good[0], good[:0], good[:, :, :4]]
+    for b in bad_cases:
+        with pytest.raises(screen.TrialError):
+            screen.confirmation_path(b)
+
+
+@pytest.mark.skipif(
+    not os.environ.get("AQT_IMAGE_DIGEST"),
+    reason="S8's float path is bit-exact only on the pinned image (d19.sh sets "
+    "AQT_IMAGE_DIGEST there); never loosened to a tolerance",
+)
+def test_the_paths_reference_vector_is_bit_exact_on_the_pinned_image() -> None:
+    # T1b (PFS2-S-1): computed, not just the stored constant
+    assert (
+        screen.screen_reference_vectors()["paths"]
+        == (screen.FROZEN_REFERENCE_VECTORS["paths"])
+    )
