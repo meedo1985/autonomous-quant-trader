@@ -146,7 +146,7 @@ QC1 **replaces** D-12's P-5 "cooling-off from `R_j`, counted in hours of reader-
 - **Q2a.** The cycle outcome may show that a family had no result because its lockbox read failed technically (§D-2.9, row (a)).
 - **Q2b.** A pre-read rejection shows its reason code.
 - **P-4 (sealed only).** The sealed prediction artifact also stores the 2,000 sorted replicates. The pre-read check confirms 2,000 finite ascending values, and that D-11's type-7 function returns the sealed `q` at `p = 1/20`. The sealed bundle holds `upside = {status: COMPUTED | NOT_COMPUTED, k, exceeds_p95, reason}`. It is not a gate and is never shown to research. (D-20 rev 2 B2)
-  - It is computed only for a finite `T_L`. `k` is the number of replicates strictly below `T_L`, so ties are not counted. `exceeds_p95 = T_L > type_seven_quantile(values, 0.95)`.
+  - It is computed only for a finite `T_L`. `k` is the number of replicates strictly below `T_L`, so ties are not counted. `exceeds_p95 = T_L > type_seven_quantile(values, 0.95)`. The object is then `{status: COMPUTED, k: int, exceeds_p95: bool, reason: null}` (rev 3 l.272).
   - Otherwise it is `{status: NOT_COMPUTED, k: null, exceeds_p95: null, reason: "T_L_UNAVAILABLE"}`.
   - The sign field uses the same float64 `T_L`. A null `T_L` is a technical FAIL.
   - P-3 lineage is fixed at sealing, through the transitive `parent_id` chain of the hypothesis records.
@@ -478,6 +478,7 @@ QC2 adopted these detail rules. Items marked `[DETAIL]` or `[NEW DEFAULT]` in th
   A sealed file is created by writing a temporary file, fsyncing it, linking it without replacing, and fsyncing the directory. All sealed files are in one directory.
 - **The sealed bundle `aqt.lockbox.sealed_bundle.v1`** (rev 3 B4.2 with rev 4 B4.2):
   - fields `schema, evaluation_id, kind (RESULT | DEFAULT), result, cause_class, values {t_l, q, mdd_btc_cand, mdd_btc_bench, eth_e_improv, mdd_eth_cand, mdd_eth_bench}, conditions {L1..L4}, reasons, upside, capture {engine_commit, image_digest, input_manifest_sha256, lockbox_module_sha256, prediction_artifact_sha256}, operational {read_start, sealed_at, startup_check_id}`;
+  - **`operational`** fields are all filled in by the store, never by the worker. `read_start` is the store second at which the first lockbox byte was served (null in a DEFAULT). `sealed_at` is the store second of the bundle write (`t_s` for a DEFAULT). (rev 3 l.274)
   - each atomic comparison is null iff one of its own inputs is null; `L4 = AND3(c4a, c4b)`;
   - **precedence:** DEFAULT gives FAIL/DEADLINE; else any false gives FAIL/PERFORMANCE; else any null gives FAIL/TECHNICAL; else PASS with `cause_class` null;
   - **`reasons`:** a sorted, unique list of `<scope>:<code>` strings, `[]` if none. Scope is one of `BTC_EDIFF`, `BTC_MDD`, `ETH_EIMPROV`, `ETH_MDD`, `RUN` or `DEADLINE`. Code is one of `INSUFFICIENT_OBSERVATIONS`, `ZERO_VARIANCE`, `NONFINITE_RESULT`, `NONPOSITIVE_LONG_RUN_VARIANCE`, `DAYS_INCOMPLETE`, `NONFINITE_EQUITY`, `RUN_FAILED` or `NOT_FINISHED_BY_D_W`. (rev 2 B4.2)
@@ -552,7 +553,14 @@ QC2 adopted these detail rules. Items marked `[DETAIL]` or `[NEW DEFAULT]` in th
 
 - **Crash rows:** rev 8 rows 1-9, 11 and 12, plus option C rows C1-C15. Under a machine crash, un-fsynced data may survive whole, be lost, or (an index tail) be partly written. A partial index tail is a §26 stop.
 - **Tests, the complete effective list** (each against a synthetic store with an injectable clock; synthetic data only):
-  - **D-12 T-1..T-8** (D-12 rev 7 l.140-147), as option C reads them.
+  - **D-12 T-1..T-8** (D-12 rev 7 l.140-147), as option C's crosswalk (`OPTION_C_PROPOSAL_REV2.md` l.336-343) reads them:
+    - T-1 is replaced by TC-1, TC-6 and the reader row;
+    - T-2 by TC-2;
+    - T-3 by the single release and RESULT-delivery path (TC-4);
+    - T-5 by TC-2, TC-3 and C2-C11;
+    - T-6 is kept as TC-7 with C9-C10;
+    - T-8 is replaced by TC-4;
+    - **T-4 and T-7 are deleted.**
   - **A1a artifacts:** a flipped byte is refused for each kind; a valid Python source file is never parsed as JSON.
   - **A1b seeds:**
     - same-seed reproduction, for each allowed class;
@@ -570,6 +578,7 @@ QC2 adopted these detail rules. Items marked `[DETAIL]` or `[NEW DEFAULT]` in th
   - **B1 signing:**
     - RFC 8032 §7.1 vectors, cited from the RFC at build time;
     - signing twice gives identical bytes;
+    - each guard refusal (rev 2 l.255);
     - an attestation signed by a different key is refused.
   - **B1 roles:**
     - a caller from an unmapped account is refused;
@@ -577,7 +586,7 @@ QC2 adopted these detail rules. Items marked `[DETAIL]` or `[NEW DEFAULT]` in th
     - the signer refuses when the publisher's request lacks a store `sign_permit` or disagrees with it (C3 §1.10a);
     - the compromise reconciliation cases: approved and consistent, approved and inconsistent, unapproved.
   - **B4.2 bundles:** byte-exact bundles for each kind, including the PASS fixture and rev 4's two ETH rows.
-  - **B4.4 replay:** identical science with different `operational` fields gives MATCH; one flipped bit in `values` gives MISMATCH; a tampered stored bundle gives MISMATCH plus an incident.
+  - **B4.4 replay:** identical science with different `operational` fields gives MATCH; one flipped bit in `values` gives MISMATCH; a tampered stored bundle gives MISMATCH plus an incident; an input manifest whose bars cannot be loaded gives MISMATCH.
   - **`begin_read`,** from rev 3 l.253-257, rev 4 l.147-155, rev 6's cooldown boundary at `r0′ − 604,800 + 2,592,000`, and rev 5's cap-order test:
     - two concurrent calls make one entry;
     - a crash after the DEFAULT leaves an orphan, and the next call uses `attempt + 1`;
@@ -586,7 +595,7 @@ QC2 adopted these detail rules. Items marked `[DETAIL]` or `[NEW DEFAULT]` in th
     - a damaged index stops the process;
     - two families concurrently and in sequence inside the cooldown;
     - the cooldown boundary;
-    - order deferral and its release;
+    - order deferral, and its release by a trend entry and by a trend rejection (rev 4 l.150);
     - `t_s` at `C − 1` and at C;
     - a read-gate check racing the append;
     - a call with no check record;

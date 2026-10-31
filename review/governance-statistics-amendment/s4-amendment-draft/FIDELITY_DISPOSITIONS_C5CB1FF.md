@@ -32,3 +32,20 @@
 | A-13 (synchronisation) | Accepted. Covered: "visible" now follows the reader projection (§D-2.7); R1 (above); the metric API line (§D-1.2); R-14a inlined now, not "at signing"; `added_purposes` includes `lockbox_prediction`; the §6 checklist is updated. | Annex §D-1.2, §D-2.7; DRAFT §2.4, §6 |
 
 **Re-check:** a focused two-family re-check of rev 2 follows (R19-2).
+
+## Re-check of rev 2 (22252ce)
+
+**Records:**
+- `SOL_FIDELITY_RECHECK_22252CE.md` (gpt-6-sol): FIX. S4F2-S-1..5 and S-9..11 are ACCEPT; S-6 is ACCEPT WITH NOTES; S-7 and S-8 are FIX.
+- `ASTRA_FIDELITY_RECHECK_22252CE.md` (gpt-6-astra): FIX. Twelve findings are ACCEPT; S4F2-A-5 is FIX.
+
+Both reviewers found no repair that contradicts the owner's four choices or adds a rule. The residual repairs below carry source rows into Annex D without changing them. No finding is left unrepaired.
+
+| Finding | Disposition | Where |
+|---|---|---|
+| S4F2-S-7 ~ A-5 part 1 (`COMPUTED` upside has no `reason: null`) | Accepted. The full `COMPUTED` object from rev 3 l.272 is stated. | Annex §D-2.2 P-4 |
+| S4F2-A-5 part 2 (no owner or definition for the `operational` fields) | Accepted. Rev 3 l.274 is carried in: the store fills every field, `read_start` is the second the first lockbox byte was served (null in a DEFAULT), and `sealed_at` is the second of the bundle write (`t_s` in a DEFAULT). | Annex §D-3.7 sealed bundle |
+| S4F2-S-8 (T-1..T-8 crosswalk; missing tests) | Accepted. Option C's crosswalk is spelled out, including that T-4 and T-7 are deleted. The signing test "each guard refusal" (rev 2 l.255) is added. The deferral release is named for both a trend entry and a trend rejection (rev 4 l.150). | Annex §D-3.8 |
+| S4F2-S-6 note (no explicit test for a manifest that cannot be loaded) | Accepted as an optional clarity item. The replay test now covers it. This is a test the replay rule already implies, not a new mechanism. | Annex §D-3.8 B4.4 |
+
+**Re-check of these residuals:** these repairs copy rows from the cited sources word for word. Two families have already re-checked the rest of rev 2. A third full round is therefore not run. A one-pass confirmation is left to the owner's choice.
