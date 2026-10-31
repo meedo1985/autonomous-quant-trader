@@ -2,15 +2,14 @@
 
 **Prepared by:** Claude Opus 5.5 (`claude-opus-5-5`), 2026-10-30. AI drafting, not advice that binds anything.
 
-**Status: DRAFT. Not to be answered yet.**
-- Codex Sol re-checked option C revision C4: ACCEPT WITH NOTES (`SOL_OPTION_C4_REVIEW_5599056.md`).
-- Codex Astra's re-check is still pending: its first attempt hit the usage limit (`ASTRA_OPTION_C4_REVIEW_ATTEMPT_1.md`).
-- R19-2 needs both reviews before you decide. If Astra finds something, this sheet changes.
+**Status: ready for your answers (updated 2026-10-31).**
+- Both Codex re-checks of option C revision C4 returned ACCEPT WITH NOTES: Sol (`SOL_OPTION_C4_REVIEW_5599056.md`) and Astra (`ASTRA_OPTION_C4_REVIEW_5599056.md`). Neither found a blocker.
+- Their three wording notes (D20C4-S-1, D20C4-A-1..2) are fixed in the text-only erratum `OPTION_C_PROPOSAL_REV5.md`. None of them changes a question below.
 - No human statistician has reviewed any of it.
 
 **What these answers do:** they record your choices. Nothing binds until you sign the C2 amendment, after a person reviews it. Every question has **"Keep blocked"**, which is always a valid answer.
 
-**Sources:** option C is `OPTION_C_PROPOSAL_REV2.md` + `_REV3.md` + `_REV4.md` (on top of `PROPOSAL_REV8.md`'s reading side). Q2-Q5 are from `PROPOSAL_REV4.md` §3, as amended by `PROPOSAL_REV5.md` §3.
+**Sources:** option C is `OPTION_C_PROPOSAL_REV2.md` + `_REV3.md` + `_REV4.md` + `_REV5.md` (on top of `PROPOSAL_REV8.md`'s reading side). Q2-Q5 are from `PROPOSAL_REV4.md` §3, as amended by `PROPOSAL_REV5.md` §3.
 
 ---
 
