@@ -2,7 +2,7 @@
 
 **Drafted by:** Claude Opus 5.5 (`claude-opus-5-5`), 2026-10-31. This is AI drafting and not an authority.
 
-**Status: DRAFT, UNREVIEWED.** §D-1 to §D-3 are written. The DRAFT_WORDING rows that point here follow, and then a two-family fidelity review. Nothing here binds until the owner signs the C2 §4 amendment after the required human review. This annex invents no rule. Each row restates a decided rule, cites its source, and marks any wording the AI chose as `[AI wording]`. Where the sources disagree, the later owner decision governs and the difference is noted.
+**Status: DRAFT rev 2, UNREVIEWED.** Rev 1 (`c5cb1ff`) was reviewed in `SOL_FIDELITY_REVIEW_C5CB1FF.md` and `ASTRA_FIDELITY_REVIEW_C5CB1FF.md` (both FIX). Rev 2 repairs every finding and applies the owner choices in `OWNER_DECISION_S4_FOLDIN.md`; the dispositions are in `FIDELITY_DISPOSITIONS_C5CB1FF.md`. Nothing here binds until the owner signs the C2 §4 amendment after the required human review. This annex invents no rule. Each row restates a decided rule, cites its source, and marks any wording the AI chose as `[AI wording]`. Where the sources disagree, the later owner decision governs and the difference is noted.
 
 **Sources and precedence.** A later item governs an earlier one where they differ:
 
@@ -26,7 +26,7 @@
 ### D-1.2 The source and the statistic
 
 - **Source.** The nominee's BTC baseline 1x run over `[w0, w1)`:
-  - both legs go through `daily_net_returns` and are aligned by `paired_daily_returns`;
+  - both legs' daily returns come from `screen.daily_returns` through the adapter of §D-3.3. D-20 A6 replaced D-11 rev 2's `daily_net_returns`/`paired_daily_returns` wording (D-20 rev 2 l.363-364);
   - `d_t = c_t − b_t`;
   - `n = (w1 − w0) / 1 day`.
 
@@ -95,7 +95,7 @@ A gate that is UNAVAILABLE fails. How that failure is labelled is §D-2 (D-12 P-
 
 ### D-1.8 Access and execution (needs the DRAFT §1 rows for Constitution §7a and the threat model)
 
-`lockbox_eval` may read BTC and ETH 1h bars over `[S_pre, L1)`, with `S_pre = 2022-11-13T00:00Z`. It reads them read-only, under the cycle's data-manifest hash, and runs the registered strategy itself. (D-11 Q2; rev 3 §4 item 4)
+`lockbox_eval` may read BTC and ETH 1h bars over `[S_pre, L1)`, with `S_pre = 2022-11-13T00:00Z`. The history part runs up to L0, so 31 May 2025 is included (owner choice 2, `OWNER_DECISION_S4_FOLDIN.md`). It reads them read-only, under the cycle's data-manifest hash, and runs the registered strategy itself. (D-11 Q2; rev 3 §4 item 4)
 
 1. **Inputs handed over: identifiers only.** These are the cycle-record hash, the declaration hash, `trial_id`, the hypothesis hash, the configuration hash, and the sealed prediction artifact. No confirmation per-bar output and no fitted model crosses identities. (rev 3 §4 item 1) The artifact's fields are §D-3 (D-20 A7).
 2. **Immutable lookup and verification before any lockbox byte is read.** This covers the hypothesis record, the trial code and configuration, the nominee's model seed, the engine and backtester code at the bound commit, and the data-manifest hash. Every hash must match.
@@ -109,11 +109,12 @@ A gate that is UNAVAILABLE fails. How that failure is labelled is §D-2 (D-12 P-
 
    No confirmation-fitted model is used, and rule-based nominees skip fitting. (rev 3 §4 item 5)
 5. **Start state: both legs flat at L0, for BTC and ETH.** Exposure 0, no pending order, an unset clock, a fresh overlay, equity 1.0, and MDD measured from L0. **Each leg pays its entry cost at its first permitted entry.** (D-11 Q2; D-20 Q2(i), D20L-42) This corrects rev 3 §4 item 6's "both legs pay their entry cost at L0", which D20L-42 found inherited and wrong.
-6. **Outputs.** Research receives PASS/FAIL only (§7 l.79). The attestation and the human approver are covered in §D-2. Every other output stays under the `lockbox_eval` identity. (rev 3 §4 item 7, as decided by D-12)
+6. **Computation.** The worker reads and computes twice. Matching twice checks determinism only (D-12 rev 7 l.82), and it is separate from the later R-a replay (§D-2.10). It captures all input hashes, the code commit, the image, seeds and streams.
+7. **Outputs.** Research receives PASS/FAIL only (§7 l.79). The attestation and the human approver are covered in §D-2. Every other output stays under the `lockbox_eval` identity. (rev 3 §4 item 7, as decided by D-12)
 
 ### D-1.9 Not decided here
 
-D11-15 (whether day 255 or the 75-day window governs) is carried by D-11 to the S4 draft, and §D-2 records how D-12 and D-20 read it. The §16 review of `lockbox_eval` is still required.
+D11-15 is decided by owner choice 1 (`OWNER_DECISION_S4_FOLDIN.md`): processing ends at the earlier of day 255 and 75 days after the look (§D-2.7). The §16 review of `lockbox_eval` is still required.
 
 ---
 
@@ -144,7 +145,11 @@ QC1 **replaces** D-12's P-5 "cooling-off from `R_j`, counted in hours of reader-
 - **Lineage order (option C).** `begin_read` refuses a descendant while any ancestor's read has no release entry, with reason `ANCESTOR_UNRELEASED`. This is fixed before any lockbox byte is read, and the bytes are identical whatever the ancestor's hidden result. A released FAIL ancestor bars the descendant, recorded at that time, and the rejection entry is visible from its own insert. (C2 §1.6, §1.10; C3 §1.6) This can block a descendant indefinitely if release is blocked.
 - **Q2a.** The cycle outcome may show that a family had no result because its lockbox read failed technically (§D-2.9, row (a)).
 - **Q2b.** A pre-read rejection shows its reason code.
-- **P-4 (sealed only).** The sealed prediction artifact also stores the 2,000 sorted replicates. The pre-read check confirms 2,000 finite ascending values, and that D-11's type-7 function returns the sealed `q` at `p = 1/20`. The sealed bundle holds `upside = {status: COMPUTED | NOT_COMPUTED, k, exceeds_p95, reason}`, computed only for a finite `T_L` at `p = 19/20`. It is not a gate and is never shown to research.
+- **P-4 (sealed only).** The sealed prediction artifact also stores the 2,000 sorted replicates. The pre-read check confirms 2,000 finite ascending values, and that D-11's type-7 function returns the sealed `q` at `p = 1/20`. The sealed bundle holds `upside = {status: COMPUTED | NOT_COMPUTED, k, exceeds_p95, reason}`. It is not a gate and is never shown to research. (D-20 rev 2 B2)
+  - It is computed only for a finite `T_L`. `k` is the number of replicates strictly below `T_L`, so ties are not counted. `exceeds_p95 = T_L > type_seven_quantile(values, 0.95)`.
+  - Otherwise it is `{status: NOT_COMPUTED, k: null, exceeds_p95: null, reason: "T_L_UNAVAILABLE"}`.
+  - The sign field uses the same float64 `T_L`. A null `T_L` is a technical FAIL.
+  - P-3 lineage is fixed at sealing, through the transitive `parent_id` chain of the hypothesis records.
 
 ### D-2.3 Identities (D-12 Q6(i); option C C2 §1.1, C3 §1.1, C4 item 2)
 
@@ -163,7 +168,7 @@ Publisher and store run on one host and read one system clock (an S4 binding; C2
 
 **Times.** For a read admitted at store time `t_s`:
 - `R_0 = t_s + 604,800` s (7 days), the earliest release time;
-- the worker deadline is `D* = min(R_0 − 43,200, C)`, where C is the day-255 cap.
+- the worker deadline is `D* = min(R_0 − 43,200, C)`, where C is the cap of §D-2.7.
 
 The read side (§D-3) enforces `D*`. (D-20 rev 5; D-12 step 2)
 
@@ -233,8 +238,12 @@ The owner keeps his copy, and its backups are his responsibility.
 
 ### D-2.7 The cap, revisions and the promotion guard (D-12 P-6; Q6(ii); C2 §1.5)
 
+- **The cap C** (D-20 rev 3 B3a l.208-209, kept by C2 l.312; D11-15 decided by owner choice 1):
+  - the anchor is `A = T`, the archive timestamp of the declaration post;
+  - `C = min(A + 255 × 86,400 s, look + 75 × 86,400 s)`, computed once and held in the store's configuration. The signer and the store use that one value, compared in integer store-clock seconds;
+  - **"day 255" in P-6 below means C.**
 - **D-12 P-6 l.244, as decided:** "At day 255 processing ends. A nominee whose lockbox result is not yet visible, or whose visible PASS attestation still awaits an owner decision, expires unpromoted, recorded with cause U_ops (Annex A P18-7). An outcome completed earlier is kept: a visible FAIL stays a FAIL, a pre-read rejection stays a rejection, a barred descendant stays barred. A nominee is promoted only if it is attested and the owner's decision is recorded after its full cooling-off and by day 255."
-  - Under option C, "attested" means an effective certificate (§D-2.6), and "visible" means released (§D-2.4) `[AI wording]`.
+  - Under option C, "attested" means an effective certificate (§D-2.6). A result is "visible" as the release row of §D-2.8 makes it visible: after its RESULT delivery, or from its cycle's termination. `[AI wording]`
 - **D-12 P-6 l.245, as decided:** "A revision or invalidation fixes every nominee's status at the moment it happens. It ends processing of every nominee not attested at that moment. An attested nominee is unaffected: 'open promotion' in Constitution §4 l.48 means attested in this sense. An entry already committed but not yet visible then still shows its result, but its attestation is void. No signature that is not effective at that moment can become effective later."
 - **Promotion guard.** An owner decision at `t_dec` is accepted only if:
   - the attestation is effective;
@@ -291,7 +300,7 @@ Withheld from the reader: the commitment, record and file hashes, nonces, and ev
   - **R5c**, timing (C2 §1.7; C3 §1.7). Any response's latency, before or after `R_0`, and a `STOPPED` answer can reveal that sealed work is running or finishing, for this read or another. Whether PASS and performance FAIL take different time is not known.
 
   Delays of any length can hold up release, delivery or certification, and near day 255 can make a PASS expire `U_ops`. Before release, a delay can make a finish miss `D*`, which is a technical FAIL, or an admission miss C (`CAP_REACHED`). Nothing can change a result **after it is released**, or a counted try.
-- D-12's R1 (daily missed-release delays) no longer exists under option C `[AI wording]`. Signing faults now leave the code at `PASS_CERTIFICATE_PENDING` (§D-2.6).
+- **R1, changed (C2 l.332).** The daily missed-release mechanism is gone. A signer refusal, outage or fault, or a P-8 mismatch, still affects only a PASS: it leaves the code at `PASS_CERTIFICATE_PENDING` (§D-2.6). Near the cap that can make the PASS expire `U_ops`. So a pending certificate, a delay or such an expiry can hint that the read was a PASS. It can never produce a FAIL.
 
 ---
 
@@ -308,11 +317,30 @@ QC2 adopted these detail rules. Items marked `[DETAIL]` or `[NEW DEFAULT]` in th
 
 - **R-14a** (`r14-exception/PROPOSAL_REV2.md` §1, with `PROPOSAL_REV3.md` items 1-2) is a row of DRAFT §2.0.
 - The C2 lockbox code lives in one reviewed **lockbox module**, and the confirmation-side code in one reviewed **confirmation module**. Their SHA-256 rows are in the signed C2 protocol bytes.
-- The model fit and the final-hour rule live in the frozen `screen.py` (`walk_forward` with `model_seed`; `confirmation_path`), merged before step G (branch `pre-freeze-screen-q2-q5`, PR #81).
+- The model fit and the final-hour rule live in the frozen `screen.py` (`walk_forward` with `model_seed`; `estimator_seed`; `confirmation_path`). The three pre-freeze conditions of the D-20 decision (`OWNER_DECISION_D20_LOCKBOX.md` l.25) apply:
+  1. the Q2(ii) and Q5 pieces are in the same reviewed change: PR #81, merged as `f715dfe`, review records in `review/pre-freeze-screen/`;
+  2. the freeze is built from a commit that contains it;
+  3. if the freeze came first, C2 would stay blocked until a formal amendment.
 - **Contract allocation** (R-14a rev 3 item 2):
   - the confirmation module performs A7's confirmation-side work on the experiment-engine path: the source re-run, the forecast (A4) and the sealing of the artifact;
   - the lockbox module performs only the `lockbox_eval` side.
-- **`code` in the A7 artifact** `[AI default, for review]` is `{lockbox_module_sha256, confirmation_module_sha256, engine_commit, screen_object_sha256}`. Each module hash is that module's signed SHA-256. R-14a rev 3 left this choice to the S4 text.
+- **`code` in the A7 artifact** is `{lockbox_module_sha256, confirmation_module_sha256, engine_commit, screen_object_sha256}` (owner choice 4, `OWNER_DECISION_S4_FOLDIN.md`). Each module hash is that module's signed SHA-256, and each module's contract names the A7 fields it produces.
+- **R-14a's accepted residuals** (`r14-exception/PROPOSAL_REV2.md` §2; `PROPOSAL_REV3.md` item 3), disclosed with the row:
+  - the two modules are written after the `AQTQ1` post, whose earlier public anchor does not cover them. Their later anchor is the accepted C2 declaration post's chain, verified before every evaluation;
+  - some statistical implementation is not frozen at `AQTQ1` (for example A4's bootstrap), and reusing qualified primitives does not qualify the way they are put together;
+  - code written after the post can reflect public prices, and it can change until C2 is signed;
+  - an error in alignment, error mapping or aggregation can change a decision while every frozen function is called correctly. §16 review and the contract tests are controls, not guarantees;
+  - the later anchor fixes the modules' bytes. It does not prove that no protected-data access happened earlier; the read gates and access records remain the controls for that.
+
+### D-3.1a Shared encodings (D-20 rev 2 §1)
+
+- `cj` is `calibration/seeds.py` l.11-19, matching `HASH_CANONICALIZATION_v1.md` l.4-9.
+- Times are `YYYY-MM-DDTHH:MM:SSZ` strings in whole UTC seconds. Every comparison is on integer seconds.
+- `hexf(x)` is `struct.pack(">d", x).hex()`, 16 lowercase hex digits; `unhexf` reverses it.
+- Unavailable values are JSON `null`, with a reason. NaN is never written, because `cj` refuses it.
+- Order between floats is always numeric, on decoded values, never lexicographic on the hex strings.
+- `evaluation_id = "<cycle_id>/<family>/1"`.
+- The commitment nonce has 256 bits and never leaves the store (D-12 rev 7 l.81).
 
 ### D-3.2 Seeds (A1b; D-20 Q3, Q5; R-13)
 
@@ -373,7 +401,7 @@ QC2 adopted these detail rules. Items marked `[DETAIL]` or `[NEW DEFAULT]` in th
   - the hash of the replicates;
   - `q` in hexf.
 
-  Floats are hashed as big-endian `>d`, and indices as `>I`. Every real computation reproduces the vectors bit for bit in-process before use.
+  Floats are hashed as big-endian `>d`, and indices as `>I`. The vectors are reproduced once per process start (the startup records below). That replaced rev 2's "checked every run" (D-20 rev 3 A5).
 - **Startup records (rev 3 A5).** At each start on the qualified image, the lockbox process recomputes the vectors and the store appends `aqt.lockbox.startup.v1 = {startup_check_id, lockbox_module_sha256, image_digest, vectors_sha256, result}`. A process without a `PASS` record for its own module hash and image is refused at the pre-read check (`REFERENCE_VECTOR_MISMATCH`).
 
 ### D-3.5 The prediction artifact and sealing (A7; R-14a rev 3 item 2)
@@ -382,7 +410,7 @@ QC2 adopted these detail rules. Items marked `[DETAIL]` or `[NEW DEFAULT]` in th
   - `cycle_id`, `family`;
   - `nominee {trial_id, configuration_hash, hypothesis_hash, protocol_hash, trial_index, seed_l266, estimator_seed_policy, estimator_seed}`;
   - `source {window_id, n, d_sha256, evaluation_record_sha256}`;
-  - `block {psi_sha256, value, raw, clipping}`;
+  - `block {psi_sha256, value: hexf, raw: hexf | null, clipping: "LOWER" | "UPPER" | null}`;
   - `stream {seed_hex, seed_source: "R13_TRIAL_SEED", purpose, asset, cost, m: 457, attempts: 2000}`;
   - `replicates_sorted` (2,000 hexf strings, sorted by decoded value);
   - `q` (hexf);
@@ -412,6 +440,19 @@ QC2 adopted these detail rules. Items marked `[DETAIL]` or `[NEW DEFAULT]` in th
 - Ed25519 (PureEdDSA, RFC 8032) through the maintained `cryptography` library, hash-pinned in one small signer-and-publisher environment. The key is generated before C2, and the raw public key goes in the signed C2.
 - **Message:** the 12 fields `attestation.schema.json` requires, plus `family`, `nominee_trial_id`, `prediction_artifact_sha256` and the three fields (§D-2.1). `lockbox_evaluation_id` is the evaluation ID. The signed bytes are `cj` of the object without `signature`.
 - Ed25519 verifiers differ (ZIP215 against strict RFC 8032), so the verifier is fixed with the code. (rev 2 B1, D20L-17)
+- **Key lifecycle** (rev 2 B1):
+  1. Before the owner signs C2, the signer host generates the key pair with the library, from the OS random source.
+  2. The raw 32-byte public key, as 64 hex characters, is written into the signed C2's signing values (a `<<SIGNING>>` marker in DRAFT §4), so the protocol hash binds it.
+  3. The private key file is readable only by the signer's service account. It is never copied, backed up, logged or put in the repository (Constitution l.198-199).
+- **Verification** (rev 2 B1). The publisher reads the public-key bytes from the signed C2 protocol file, never from the signer. It verifies every attestation with the same pinned library and version as the signer, then applies P-8.
+- **Loss or compromise** (rev 3 B1, with option C's replacement of the second test, C2 §1.10):
+  - there is no key replacement during C2;
+  - *lost key:* certificates already effective stay valid. A PASS not yet certified expires `U_ops` (P-6);
+  - *suspected compromise:* this is a §26 incident, and no further signing with the key is allowed. A certificate stands only if it has a recorded owner approval **and** incident reconciliation on the store's records shows both of these:
+    - its signed message equals the message §D-2.6's rules produce from those records;
+    - an ATTESTATION delivery entry for the evaluation exists before any revision or invalidation entry, and the attestation's `cooling_off_start` equals the RESULT `delivered_at`.
+
+    Every other certificate is void. If the store's own records are in doubt, every certificate without a completed promotion is void.
 - **Store identities:** one store service holds the sealed store, the index and the clock. Callers reach it over a local channel that tells it the caller's OS account. The accounts mapped are `publisher`, `lockbox_eval` (worker and signer), `replay`, `reader` and the owner's command account (§D-2.3). Any other caller is refused and logged. (rev 3 B1)
 
 ### D-3.7 The store (rev 8 §1.2, as changed by option C)
@@ -419,7 +460,7 @@ QC2 adopted these detail rules. Items marked `[DETAIL]` or `[NEW DEFAULT]` in th
 **Records.** Only these are authoritative.
 - **The index**, an append-only ledger, holding:
   - pre-read entries `aqt.lockbox.pre_read.v1 = {evaluation_id, attempt, family, nominee_trial_id, prediction_artifact_sha256, eligibility_result_id, lockbox_evaluation_id, pre_read_check_id, budget_before: 1, budget_after: 0, segment_status: "EXPOSED", r0}`;
-  - rejection entries `aqt.lockbox.no_read.v1 = {family, nominee_trial_id, kind ∈ {PRE_READ_REJECTION, BARRED_DESCENDANT}, reason, ancestor_evaluation_id | null}`;
+  - rejection entries `aqt.lockbox.no_read.v1 = {family, nominee_trial_id, kind ∈ {PRE_READ_REJECTION, BARRED_DESCENDANT}, reason, ancestor_evaluation_id | null, visible_from}`. `visible_from` is the store-internal insert time `t1` for both kinds (rev 8 l.99; C2 §1.10: a barred descendant is visible from its own insert). The reader projection withholds it (§D-2.8; C5). Neither kind consumes budget or creates an evaluation ID;
   - release entries `{evaluation_id, result, commitment, released_at}`;
   - delivery entries `{evaluation_id, kind, file_hash, delivered_at}`;
   - VOID entries `{evaluation_id, kind: VOID, reason}`;
@@ -430,7 +471,7 @@ QC2 adopted these detail rules. Items marked `[DETAIL]` or `[NEW DEFAULT]` in th
   - the DEFAULT bundle with its nonce and commitment, under `(evaluation_id, attempt)`;
   - RESULT bundles;
   - at most one finished record per evaluation, `aqt.lockbox.finished.v1 = {evaluation_id, result, commitment, finished_at}`;
-  - the pre-read check record `aqt.lockbox.pre_read_check.v1` (rev 4 B4.1);
+  - the pre-read check record `aqt.lockbox.pre_read_check.v1 = {check_id, evaluation_id, family, nominee_trial_id, prediction_artifact_sha256, eligibility_result_id, lockbox_evaluation_id, sealing_id, startup_check_id, lockbox_module_sha256, image_digest, result: "PASS" | <reason code>, checked_at}`. There is at most one per `evaluation_id`, because there is no retry in C2. It is not on the index. (rev 4 B4.1);
   - startup records;
   - attestation files.
 
@@ -438,7 +479,10 @@ QC2 adopted these detail rules. Items marked `[DETAIL]` or `[NEW DEFAULT]` in th
 - **The sealed bundle `aqt.lockbox.sealed_bundle.v1`** (rev 3 B4.2 with rev 4 B4.2):
   - fields `schema, evaluation_id, kind (RESULT | DEFAULT), result, cause_class, values {t_l, q, mdd_btc_cand, mdd_btc_bench, eth_e_improv, mdd_eth_cand, mdd_eth_bench}, conditions {L1..L4}, reasons, upside, capture {engine_commit, image_digest, input_manifest_sha256, lockbox_module_sha256, prediction_artifact_sha256}, operational {read_start, sealed_at, startup_check_id}`;
   - each atomic comparison is null iff one of its own inputs is null; `L4 = AND3(c4a, c4b)`;
-  - **precedence:** DEFAULT gives FAIL/DEADLINE; else any false gives FAIL/PERFORMANCE; else any null gives FAIL/TECHNICAL; else PASS;
+  - **precedence:** DEFAULT gives FAIL/DEADLINE; else any false gives FAIL/PERFORMANCE; else any null gives FAIL/TECHNICAL; else PASS with `cause_class` null;
+  - **`reasons`:** a sorted, unique list of `<scope>:<code>` strings, `[]` if none. Scope is one of `BTC_EDIFF`, `BTC_MDD`, `ETH_EIMPROV`, `ETH_MDD`, `RUN` or `DEADLINE`. Code is one of `INSUFFICIENT_OBSERVATIONS`, `ZERO_VARIANCE`, `NONFINITE_RESULT`, `NONPOSITIVE_LONG_RUN_VARIANCE`, `DAYS_INCOMPLETE`, `NONFINITE_EQUITY`, `RUN_FAILED` or `NOT_FINISHED_BY_D_W`. (rev 2 B4.2)
+  - **DEFAULT bundle:** `kind DEFAULT`, FAIL/DEADLINE, every value null except `q`, conditions all null, `reasons ["DEADLINE:NOT_FINISHED_BY_D_W"]` (read as "not finished by `D*`", rev 5), upside `NOT_COMPUTED` with reason `T_L_UNAVAILABLE`, `operational.read_start` null, and `sealed_at = t_s`. The capture values are known before the read, so a DEFAULT carries the same values;
+  - `values` are hexf or null;
   - "failed technically" (Q2a) means `cause_class ∈ {TECHNICAL, DEADLINE}`;
   - `commitment = SHA256(nonce ‖ cj(bundle))`.
 
@@ -483,8 +527,8 @@ QC2 adopted these detail rules. Items marked `[DETAIL]` or `[NEW DEFAULT]` in th
    - its `startup_check_id` names a `PASS` startup record for the same module hash and image.
 
    With no check record or differing identities, refuse, write nothing and log an incident. A check result that is a reason code appends a rejection entry.
-5. **Budget:** an existing pre-read entry for the family this cycle appends a `BUDGET_EXHAUSTED` rejection.
-6. **Lineage:** an ancestor without a release entry appends an `ANCESTOR_UNRELEASED` rejection. A released FAIL ancestor appends `BARRED_DESCENDANT`. Neither consumes budget. `[AI wording: C2 §1.6 says begin_read refuses; placing it at this step is the AI's choice]`
+5. **Lineage, before budget** (owner choice 3, `OWNER_DECISION_S4_FOLDIN.md`): an ancestor without a release entry appends an `ANCESTOR_UNRELEASED` rejection; a released FAIL ancestor appends `BARRED_DESCENDANT`. Neither consumes budget. (C2 §1.6; D-12 P-3)
+6. **Budget:** an existing pre-read entry for the family this cycle appends a `BUDGET_EXHAUSTED` rejection.
 7. **Order and cooldown:** return `DEFERRED` and write nothing while `t_s < r0′ − 604,800 + 2,592,000`, or while the trend family is status (a) with neither an entry nor a rejection.
 8. `r0 = t_s + 604,800`. Pick `attempt`, and create the nonce and DEFAULT bundle with `sealed_at = t_s`.
 9. Append the pre-read entry under the time rule with deadline C. A miss leaves the DEFAULT a void orphan, spends no budget, and answers `CAP_REACHED`.
@@ -500,16 +544,58 @@ QC2 adopted these detail rules. Items marked `[DETAIL]` or `[NEW DEFAULT]` in th
 
 **Replay under R-a, `verify_replay(evaluation_id, projection_bytes)`.** It is for the `replay` role only, on a PASS, after the segment has rolled into confirmation.
 - It checks the bundle against the release entry's commitment, then compares `cj(bundle without "operational")` with `projection_bytes`.
-- It returns only `MATCH` or `MISMATCH`, and a MISMATCH voids the promotion. (rev 3 B4.4)
+- It returns only `MATCH` or `MISMATCH`, and a MISMATCH voids the promotion (§27, Constitution l.194). It never returns a nonce or a diagnostic.
+- If the bundle-against-commitment check fails, it returns `MISMATCH` **and logs a §26 incident**.
+- The replay job builds its projection by re-running under the recorded `capture`. If it cannot load the bars under `input_manifest_sha256`, the result is `MISMATCH`. (rev 3 B4.4)
 
 ### D-3.8 Crash points and tests (rev 8 §1.2; option C C2 §1.9, C3 §1.9, C5)
 
 - **Crash rows:** rev 8 rows 1-9, 11 and 12, plus option C rows C1-C15. Under a machine crash, un-fsynced data may survive whole, be lost, or (an index tail) be partly written. A partial index tail is a §26 stop.
-- **Tests:**
-  - rev 3's list (l.253-257), rev 4's list (l.147-155), rev 6's cooldown boundary and rev 5's cap-order test;
-  - T-S2 and T-S4 for the kept rows, and option C's TC-1..TC-7;
-  - with these replacements:
-    - **T-S1:** every concurrent reader-row, `release`, `sign_permit` and `begin_read` call waits until the append is durable, then answers from the durable state by its own return contract (C5 item 2);
+- **Tests, the complete effective list** (each against a synthetic store with an injectable clock; synthetic data only):
+  - **D-12 T-1..T-8** (D-12 rev 7 l.140-147), as option C reads them.
+  - **A1a artifacts:** a flipped byte is refused for each kind; a valid Python source file is never parsed as JSON.
+  - **A1b seeds:**
+    - same-seed reproduction, for each allowed class;
+    - one re-derivation vector per policy, including an `L266_MOD_2_31` seed that maps to 0, which is accepted;
+    - a fit recorded under the other policy is refused;
+    - the stored seeds re-derive from the trial record.
+  - **A5:** the reference vectors and the startup check (`REFERENCE_VECTOR_MISMATCH`).
+  - **A6:**
+    - the kernel and `max_drawdown` give equal values on one synthetic path, bit for bit;
+    - BTC E-DIFF stays available when ETH E-IMPROV is unavailable, and the reverse;
+    - the hourly instants are `start + i h` for `i = 0..24·m − 1`;
+    - a two-hour series is refused by the interval check;
+    - the derived terminal bar changes nothing except the last hour's return (PR #81 tests T4).
+  - **A7:** one `seed_hex` test vector per `seed_source` branch, and a differing `seed_source` gives `IDENTITY_MISMATCH`.
+  - **B1 signing:**
+    - RFC 8032 §7.1 vectors, cited from the RFC at build time;
+    - signing twice gives identical bytes;
+    - an attestation signed by a different key is refused.
+  - **B1 roles:**
+    - a caller from an unmapped account is refused;
+    - each role is refused each operation outside its row;
+    - the signer refuses when the publisher's request lacks a store `sign_permit` or disagrees with it (C3 §1.10a);
+    - the compromise reconciliation cases: approved and consistent, approved and inconsistent, unapproved.
+  - **B4.2 bundles:** byte-exact bundles for each kind, including the PASS fixture and rev 4's two ETH rows.
+  - **B4.4 replay:** identical science with different `operational` fields gives MATCH; one flipped bit in `values` gives MISMATCH; a tampered stored bundle gives MISMATCH plus an incident.
+  - **`begin_read`,** from rev 3 l.253-257, rev 4 l.147-155, rev 6's cooldown boundary at `r0′ − 604,800 + 2,592,000`, and rev 5's cap-order test:
+    - two concurrent calls make one entry;
+    - a crash after the DEFAULT leaves an orphan, and the next call uses `attempt + 1`;
+    - a crash after the append returns the existing entry;
+    - the budget refusal, with owner choice 3's lineage-before-budget order;
+    - a damaged index stops the process;
+    - two families concurrently and in sequence inside the cooldown;
+    - the cooldown boundary;
+    - order deferral and its release;
+    - `t_s` at `C − 1` and at C;
+    - a read-gate check racing the append;
+    - a call with no check record;
+    - a failed check called twice gives exactly one rejection;
+    - an existing entry with a damaged DEFAULT is an incident.
+  - **Store:** T-S2 and T-S4 for the kept crash rows, and option C's TC-1..TC-7, with these replacements:
+    - **T-S1:**
+      - `begin_read` at `t1 = C − 1` is accepted, and at `t1 = C` refused with nothing written. With an accepted `t1`, the clock is advanced past C at each point inside `append_entry`, and the entry counts. An injected write, flush or fsync error gives a §26 stop and serves nothing (rev 8, its `begin_read` half);
+      - every concurrent reader-row, `release`, `sign_permit` and `begin_read` call waits until the append is durable, then answers from the durable state by its own return contract (C5 item 2);
     - **T-S2:** a concurrent `release` whose clock reading under `L_store` is before `R_0` is refused; one at or after `R_0` waits for the finish's hold and shows its result (C5 item 2);
     - **T-S6:** each of the release entry and the RESULT delivery file has one fixed shape for every FAIL cause, no record's bytes depend on the cause, and their shared fields agree (C5 item 1);
     - **TC-6:** an ID with no pre-read entry gives `STOPPED`; a terminated-cycle ID is served.
@@ -520,5 +606,4 @@ QC2 adopted these detail rules. Items marked `[DETAIL]` or `[NEW DEFAULT]` in th
 ### D-3.9 Not decided here (S4 or later)
 
 - the channel for the owner's forced command, the clock source, the reconciler and his view (§D-2.3), and the governance action that appends revision entries;
-- D11-15;
 - each build, under §16 review: the store, publisher, signer, both modules and the access tooling.
