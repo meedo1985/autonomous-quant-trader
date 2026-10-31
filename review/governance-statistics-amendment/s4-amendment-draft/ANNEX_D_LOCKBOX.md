@@ -2,7 +2,7 @@
 
 **Drafted by:** Claude Opus 5.5 (`claude-opus-5-5`), 2026-10-31. This is AI drafting and not an authority.
 
-**Status: DRAFT, IN PROGRESS, UNREVIEWED.** Part 1 (§D-1) is written. Parts 2-3 (§D-2, §D-3) are to follow. Nothing here binds until the owner signs the C2 §4 amendment after the required human review. This annex invents no rule. Each row restates a decided rule, cites its source, and marks any wording the AI chose as `[AI wording]`. Where the sources disagree, the later owner decision governs and the difference is noted.
+**Status: DRAFT, IN PROGRESS, UNREVIEWED.** Parts 1-2 (§D-1, §D-2) are written. Part 3 (§D-3) is to follow. Nothing here binds until the owner signs the C2 §4 amendment after the required human review. This annex invents no rule. Each row restates a decided rule, cites its source, and marks any wording the AI chose as `[AI wording]`. Where the sources disagree, the later owner decision governs and the difference is noted.
 
 **Sources and precedence.** A later item governs an earlier one where they differ:
 
@@ -114,3 +114,181 @@ A gate that is UNAVAILABLE fails. How that failure is labelled is §D-2 (D-12 P-
 ### D-1.9 Not decided here
 
 D11-15 (whether day 255 or the 75-day window governs) is carried by D-11 to the S4 draft, and §D-2 records how D-12 and D-20 read it. The §16 review of `lockbox_eval` is still required.
+
+---
+
+## §D-2 Results, release, certification and promotion (D-12 as changed by D-20 option C)
+
+**Sources:**
+- D-12 P-1..P-8 (`d12-proposal/PROPOSAL_REV7.md` §3) and owner answers Q1-Q6;
+- D-20 QC1 (release on request), QC2 (the detail rules), QC3 (the §7 exception) and Q7 (when a save counts);
+- the option C text: `OPTION_C_PROPOSAL_REV2.md` §1 as amended by `_REV3.md`, `_REV4.md` and `_REV5.md`.
+
+QC1 **replaces** D-12's P-5 "cooling-off from `R_j`, counted in hours of reader-path availability" and P-7's daily release times `R_j`. It **keeps** the separate publisher, PASS/FAIL only, every technical FAIL counting, and the day-255 rule. (D-20 decision item 1)
+
+### D-2.1 Fields and the PASS-only attestation (D-12 P-1, P-2; Q1, Q5)
+
+- `T_L` is the float64 L-2 statistic (§D-1.5). The attestation's fields:
+  - `paired_delta_sharpe_sign` is `positive` iff `T_L > 0.0`, `zero` iff `T_L == 0.0` (including −0.0), and `negative` iff `T_L < 0.0`;
+  - `prediction_decay_test_passed` is L-1;
+  - `drawdown_constraint_held` is L-3.
+
+  L-4 has no field. On a PASS the three fields always read (`positive`, `true`, `true`). (D-12 rev 7 §3 "Fields")
+- **P-1.** An attestation exists only for a PASS. No attestation or field record is made for any other outcome.
+- **P-2.** The fields come only from a finite, available `T_L` and L-1..L-3. Before marking a read PASS, the worker checks all of L-1..L-4 and the field values. A mismatch the worker finds before its deadline `D*` is a technical FAIL. The signer checks them again against the sealed record. A mismatch there is a signing fault (§D-2.6), never a FAIL.
+- **Q5.** No sealed detail is shown. Research receives PASS/FAIL only, subject to the Constitution §7 row (§D-2.9).
+
+### D-2.2 Technical FAIL, lineage and the upside record (D-12 P-3, P-4; Q2a, Q2b, Q3)
+
+- **P-3.** Every outcome released as FAIL is a `LOCKBOX_FAIL` for Constitution §7 l.85 and protocol l.296, including a technical FAIL. A pre-read rejection is not a read and is not a `LOCKBOX_FAIL`. Lineage is fixed at sealing. A barred nominee gets `BARRED_DESCENDANT` and no read. (D-12 Q3)
+- **Lineage order (option C).** `begin_read` refuses a descendant while any ancestor's read has no release entry, with reason `ANCESTOR_UNRELEASED`. This is fixed before any lockbox byte is read, and the bytes are identical whatever the ancestor's hidden result. A released FAIL ancestor bars the descendant, recorded at that time, and the rejection entry is visible from its own insert. (C2 §1.6, §1.10; C3 §1.6) This can block a descendant indefinitely if release is blocked.
+- **Q2a.** The cycle outcome may show that a family had no result because its lockbox read failed technically (§D-2.9, row (a)).
+- **Q2b.** A pre-read rejection shows its reason code.
+- **P-4 (sealed only).** The sealed prediction artifact also stores the 2,000 sorted replicates. The pre-read check confirms 2,000 finite ascending values, and that D-11's type-7 function returns the sealed `q` at `p = 1/20`. The sealed bundle holds `upside = {status: COMPUTED | NOT_COMPUTED, k, exceeds_p95, reason}`, computed only for a finite `T_L` at `p = 19/20`. It is not a gate and is never shown to research.
+
+### D-2.3 Identities (D-12 Q6(i); option C C2 §1.1, C3 §1.1, C4 item 2)
+
+| Identity | May do | Never |
+|---|---|---|
+| **owner** | Run the one fixed command `request_release <evaluation_id>` as a forced command over the channel S4 fixes, not a login shell. Read his own record directory on a machine other than the lockbox machine. | An interactive login, shell or debugger on the lockbox machine while any read is open; the sealed directory; logs or stderr of any lockbox process; reconciliation views |
+| **publisher** (a separate OS identity; THREAT_MODEL l.9 changed, §D-2.9) | `begin_read`; `release`; `record_delivery`; `sign_permit` requests for the signer; the backstop; its own lock `L_pub` and `R_0` file. It receives `R_0` and the pre-read identity fields (for P-8), release and delivery entries, and the attestation. | Commitment preimages, nonces, sealed bundles, cause classes, finished-record presence or time before release, lockbox bars |
+| **signer** (`lockbox_eval`'s key) | Sign one attestation per evaluation, only on a store `sign_permit`, never on the publisher's word | any other index row |
+| **worker** (`lockbox_eval`) | the read side (§D-3) | index writes |
+| **reader** | the projection in §D-2.8 | everything else |
+| **reconciler** | §26 reconciliation, through a view S4 fixes | **S4 gate:** S4 names this person and a view that cannot show the owner a sealed result or an undelivered release. If no such person or view exists, that is a Constitution question for the owner before the access design is adopted. |
+
+Publisher and store run on one host and read one system clock (an S4 binding; C2 §1.2).
+
+### D-2.4 Release on request (QC1; C2 §1.2-§1.3; C3 §1.6)
+
+**Times.** For a read admitted at store time `t_s`:
+- `R_0 = t_s + 604,800` s (7 days), the earliest release time;
+- the worker deadline is `D* = min(R_0 − 43,200, C)`, where C is the day-255 cap.
+
+The read side (§D-3) enforces `D*`. (D-20 rev 5; D-12 step 2)
+
+**The request**, run by the publisher one at a time per evaluation under `L_pub(evaluation_id)`:
+1. **`NOT_YET`** if the host clock is before `R_0`.
+   - `R_0` comes from the publisher's own durably written `R_0` file. If that file is lost, `R_0` is recovered through `begin_read`'s idempotent lookup, which takes `L_store`.
+   - Claimed: an ordinary `NOT_YET` takes no `L_store`. Not claimed: that its latency is independent of sealed work.
+2. **`release(evaluation_id)`**, under `L_store`, after the lookups and fsyncs (§D-3):
+   - before `R_0` it refuses (logged; answered `STOPPED`);
+   - if a release entry exists, it returns it;
+   - otherwise the result is the finished record's `{result, commitment}` if one exists and its RESULT bundle verifies. A bundle that does not verify is a §26 stop (`STOPPED`), never a silent FAIL. With no finished record, the result is the DEFAULT's FAIL;
+   - it appends `{evaluation_id, result, commitment, released_at}` and fsyncs it before unlocking. `released_at` is the clock reading under the lock.
+3. **RESULT delivery** (§D-2.5).
+4. **On a PASS:** signing and ATTESTATION delivery (§D-2.6), unless the attestation is already effective or VOID.
+5. **Return one response code** (§D-2.8).
+
+**The first durable release fixes the result.** A finish after a release entry exists is refused (`mark_finished` step 2a, §D-3). Every shown result equals the first durable release entry's. No clock assumption is needed for this. It relies on durable-before-use, fail-closed recovery, and platform assumptions that stay `UNVERIFIED_EXTERNAL_ASSUMPTION`. (C2 §1.3 proof)
+
+**Backstop.** The publisher attempts `release` for every counted read without a release entry, and outbox creation for every released read without a RESULT delivery entry. It runs at `R_0 + 604,800` for each read, and at every revision, invalidation and calendar termination for all reads.
+- A read whose `R_0` is still ahead waits for its `R_0`.
+- Failed attempts are retried daily until no read is pending.
+- An outage, a stalled `L_store` holder or an unresolved §26 stop can block release indefinitely. **No completion date is guaranteed.** (C3 §1.6)
+
+**Pending list.** At each backstop run and at termination, the owner receives the evaluation IDs without a release, and those released without a RESULT delivery, as public accounting only.
+
+**Cycle report.**
+- It is visible from the cycle's termination, whatever its cause, and shows every counted read's released result as it arrives.
+- It is marked incomplete, listing `PENDING_RELEASE`, while any counted read has no release entry. A report that never completes is a §26 incident.
+- Incompleteness never postpones termination, invalidation or cap effects. (C3 §1.6)
+
+### D-2.5 Delivery to the owner's own record (C2 §1.4; C3 §1.5c; C4 item 2)
+
+There are two delivery kinds per evaluation, each with a deterministic file name `<evaluation_id>.<kind>.json` and deterministic bytes:
+- **RESULT** `{evaluation_id, result, released_at}`;
+- **ATTESTATION**, the attestation bytes.
+
+Under `L_pub(evaluation_id)`:
+1. **Outbox.** The publisher creates the outbox file (write temp, fsync, link without replacing, fsync the directory), or verifies an existing one byte for byte. A mismatch is a §26 stop. Only the owner's command account can read it.
+2. **Owner's side.** Running as the owner's account, the forced command copies the file durably into the owner's record directory, reads the copy back, and returns its SHA-256.
+3. **`record_delivery(evaluation_id, kind, hash)`**, under `L_store`:
+   - if an entry of this kind exists, it returns it;
+   - a wrong hash is refused (`STOPPED`, logged);
+   - otherwise it appends `{evaluation_id, kind, file_hash, delivered_at}`, with `delivered_at` read under the lock after the owner's read-back.
+
+   For ATTESTATION, the first step is §D-2.6's "already final" test, and the append is the effectiveness check.
+
+**Order, not elapsed time.** `delivered_at` is never earlier, in operation order, than the owner's durable copy. That the timestamp and the 72 hours are accurate in real time rests on R3: an accurate host clock, with no backward step and no forward jump.
+
+The owner keeps his copy, and its backups are his responsibility.
+
+### D-2.6 Cooling-off, signing and effectiveness (C2 §1.5; C3 §1.5a-b; C4 item 1)
+
+- **Cooling-off start** is the PASS's RESULT delivery `delivered_at`. The attestation binds it as `cooling_off_start` (Constitution §13 l.124; `schemas/attestation.schema.json`).
+- **`sign_permit(evaluation_id)`**, under `L_store`, in this order:
+  1. If an ATTESTATION delivery entry or a VOID entry exists, return the existing state and write nothing.
+  2. Otherwise, if the release is PASS and the RESULT delivery exists, but the clock is at or after C or a revision or invalidation entry follows the pre-read entry, append `{evaluation_id, kind: VOID, reason: CAP | REVISION}` and refuse.
+  3. Otherwise, PERMIT only if the release says PASS, a RESULT delivery exists, no revision or invalidation entry follows the pre-read entry, and the clock is before C. The permit carries the message fields and the sealed record reference.
+- **The signer** verifies the sealed record against the release entry's commitment, checks P-2, and signs deterministically. The signature scheme has no embedded time. The signer creates the sealed attestation file without replacing it; an existing file must equal the new bytes.
+- **The publisher validates the attestation (P-8):** its signature; identity fields equal to the pre-read entry; the three fields; and `cooling_off_start` equal to the RESULT `delivered_at`. It then delivers it as ATTESTATION.
+- **Effectiveness: the one authoritative transition.** In `record_delivery(ATTESTATION)`:
+  - after the "already final" test, if the clock reading `t_e` under `L_store` is before C and no revision or invalidation entry precedes it in the index, the ATTESTATION entry is appended and the certificate is effective;
+  - otherwise a VOID is appended and the certificate is never effective. The store refuses a second VOID.
+- **When a certificate counts (Q7, the draft rule the owner accepted).** It counts at `t_e` if `t_e < C`, even if its entry becomes durable after C. `PASS_CERTIFIED` is returned only after the fsync. If a crash loses the entry, there is no certificate, and the retry, now after C, writes VOID (CAP). P-6's "attested by day 255" means an ATTESTATION entry with `t_e < C`.
+- **Index order decides against a revision.** An ATTESTATION entry before a revision entry stays effective. An effective certificate and a VOID are both final.
+- **The signing cutoff is advisory.** A refusal, timeout or P-8 mismatch writes nothing. The code stays `PASS_CERTIFICATE_PENDING` and the next request retries, reusing an existing attestation file. A PASS never becomes a FAIL.
+- **Revisions and invalidations** are index entries `{kind: REVISION | INVALIDATION, at}`, appended under `L_store` by the governance action S4 names.
+
+### D-2.7 The cap, revisions and the promotion guard (D-12 P-6; Q6(ii); C2 §1.5)
+
+- **D-12 P-6 l.244, as decided:** "At day 255 processing ends. A nominee whose lockbox result is not yet visible, or whose visible PASS attestation still awaits an owner decision, expires unpromoted, recorded with cause U_ops (Annex A P18-7). An outcome completed earlier is kept: a visible FAIL stays a FAIL, a pre-read rejection stays a rejection, a barred descendant stays barred. A nominee is promoted only if it is attested and the owner's decision is recorded after its full cooling-off and by day 255."
+  - Under option C, "attested" means an effective certificate (§D-2.6), and "visible" means released (§D-2.4) `[AI wording]`.
+- **D-12 P-6 l.245, as decided:** "A revision or invalidation fixes every nominee's status at the moment it happens. It ends processing of every nominee not attested at that moment. An attested nominee is unaffected: 'open promotion' in Constitution §4 l.48 means attested in this sense. An entry already committed but not yet visible then still shows its result, but its attestation is void. No signature that is not effective at that moment can become effective later."
+- **Promotion guard.** An owner decision at `t_dec` is accepted only if:
+  - the attestation is effective;
+  - `cooling_off_start + 259,200 ≤ t_dec`;
+  - `t_dec ≤ C`.
+
+  Otherwise a PASS that cannot meet these by C is `U_ops`. A PASS released or delivered after C shows PASS, has a VOID or no attestation, and is `U_ops`. A FAIL is never `U_ops`.
+- **Admission at the cap.** A read whose admission check is at or after C gets `CAP_REACHED`, and nothing is written. A read cut off by `D* = C` is a technical FAIL (DEADLINE) and expires `U_ops`. (rev 5 D20L-52) Letting authorised work continue after C would need its own §4 exception, and none is made.
+
+### D-2.8 What the owner and research see (C3 §1.1; C4 item 2; QC3)
+
+**Response codes**, each with fixed bytes. `STOPPED` comes first; the others follow in table order.
+
+| Code | When |
+|---|---|
+| `STOPPED` | An undifferentiated refusal whose cause is withheld: an active §26 stop, a request that failed for any reason, or an ID with no pre-read entry. Causes go to logs the owner cannot read. |
+| `NOT_YET` | The host clock is before `R_0`. |
+| `FAIL` | Released FAIL, RESULT delivered. The bytes are identical for every kind of FAIL. |
+| `PASS_CERTIFICATE_PENDING` | Released PASS, RESULT delivered, attestation neither effective nor VOID. |
+| `PASS_CERTIFIED` | An ATTESTATION delivery entry exists. |
+| `PASS_NOT_CERTIFIABLE` | A VOID entry exists (CAP or REVISION). |
+
+An ID of a terminated cycle is served normally.
+
+**Reader projection.** The reader sees only these fields:
+
+| Record | Fields | Visible |
+|---|---|---|
+| pre-read entry | evaluation ID, family, nominee ID, prediction-artifact hash, eligibility ID, lockbox ID, `R_0`, EXPOSED | always |
+| rejection entry (`PRE_READ_REJECTION`, `BARRED_DESCENDANT`) | family, nominee ID, kind, reason code (Q2b, including `ANCESTOR_UNRELEASED`), ancestor evaluation ID | always |
+| release entry | evaluation ID, result, `released_at` | after its RESULT delivery entry, or from its cycle's termination, whatever the cause |
+| delivery entry | evaluation ID, kind, `delivered_at` | always |
+| VOID entry | evaluation ID, reason (CAP or REVISION) | always |
+| revision or invalidation entry | kind, `at` | always |
+| cycle report | per counted read, the result if visible, else `PENDING_RELEASE`; complete or incomplete | from the cycle's termination |
+| pending list | the evaluation IDs it lists | always |
+
+Withheld from the reader: the commitment, record and file hashes, nonces, and every other field of any record.
+
+### D-2.9 Rows this section needs in DRAFT §1 (Constitution and threat model)
+
+- **Constitution §7 l.79** (D-12 Q2a with D-20 QC3, accepted). The proposed text is `d20-lockbox-proposal/OPTION_C_PROPOSAL_REV4.md` item 4; its field list for (c) is §D-2.8's projection.
+- **THREAT_MODEL l.9** (D-12 Q6(i)): the publisher identity is added, and `lockbox_eval` keeps "lockbox read + attestation signing only".
+- **Constitution §7a and the threat-model permission** for `lockbox_eval`'s history read (D-11 Q2; §D-1.8).
+- **Constitution §0**, the reading of "future data" (D-11 Q3; §D-1.1).
+
+### D-2.10 Reproduction and disclosed residuals (D-12 Q4, R2-R4; option C R5c)
+
+- **Q4, route R-a.** Everything is captured. The read is re-run after the segment rolls into confirmation (§7 l.81), and a mismatch voids the promotion (§27 l.194). There is no second counted read.
+- **Accepted as disclosed, not removed:**
+  - R2, a faulty signer;
+  - R3, the trusted store and host clock;
+  - R4, the owner's judgment across families;
+  - **R5c**, timing (C2 §1.7; C3 §1.7). Any response's latency, before or after `R_0`, and a `STOPPED` answer can reveal that sealed work is running or finishing, for this read or another. Whether PASS and performance FAIL take different time is not known.
+
+  Delays of any length can hold up release, delivery or certification, and near day 255 can make a PASS expire `U_ops`. Before release, a delay can make a finish miss `D*`, which is a technical FAIL, or an admission miss C (`CAP_REACHED`). Nothing can change a result **after it is released**, or a counted try.
+- D-12's R1 (daily missed-release delays) no longer exists under option C `[AI wording]`. Signing faults now leave the code at `PASS_CERTIFICATE_PENDING` (§D-2.6).
