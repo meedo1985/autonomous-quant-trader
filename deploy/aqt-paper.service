@@ -13,6 +13,8 @@ User=aqt
 StateDirectory=aqt
 WorkingDirectory=/var/lib/aqt
 Environment=PYTHONDONTWRITEBYTECODE=1
+# Report lines then reach the journal when printed, without waiting for a later stdout flush.
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/aqt/app/.venv/bin/python /opt/aqt/app/scripts/run_forward_paper.py --config /opt/aqt/app/configs/forward_paper.example.toml --store data/live/BTCUSDT-1h.jsonl --account data/forward/account-1 --deployment-record /etc/aqt/deployments.jsonl --telegram
 Restart=on-failure
 RestartPreventExitStatus=2
