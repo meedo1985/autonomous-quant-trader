@@ -2342,6 +2342,25 @@ def test_the_baseline_is_the_reviewed_pre_change_screen() -> None:
     )
 
 
+def _bits(values: Any) -> tuple[tuple[int, ...], bytes]:
+    """PFSC2-S-1: shape and IEEE-754 bytes, so -0.0 != 0.0 and NaN payloads
+    count."""
+    a = np.asarray(values, dtype="<f8")
+    return a.shape, a.tobytes()
+
+
+def _wf_bits(out: tuple[list[int], list[float]]) -> tuple[Any, ...]:
+    window, preds = out
+    return tuple(window), _bits(preds)
+
+
+def test_bits_tell_signed_zeros_and_nan_payloads_apart() -> None:
+    nan2 = np.frombuffer((0x7FF8000000000001).to_bytes(8, "little"), "<f8")[0]
+    assert _bits([0.0]) != _bits([-0.0])
+    assert _bits([math.nan]) != _bits([nan2])
+    assert _bits([1.0, 2.0]) != _bits([[1.0, 2.0]])
+
+
 def test_defaults_match_the_pre_change_screen_exactly(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2358,13 +2377,17 @@ def test_defaults_match_the_pre_change_screen_exactly(
             assert mod.path_series(_long_path(), 0, start) == series
         for lag in (0, 1):
             args = (trial, series, first, columns, MODEL_WARMUP, WINDOW_H, lag)
-            assert screen.walk_forward(*args) == old.walk_forward(*args), model
-            assert np.array_equal(
-                screen.model_column(*args), old.model_column(*args), equal_nan=True
+            assert _wf_bits(screen.walk_forward(*args)) == _wf_bits(
+                old.walk_forward(*args)
+            ), model
+            assert _bits(screen.model_column(*args)) == _bits(
+                old.model_column(*args)
             ), model
         draw = ("ab" * 32, WINDOW, 3)
         args = (trial, series, first, columns, MODEL_WARMUP, WINDOW_H, 0, draw)
-        assert screen.walk_forward(*args) == old.walk_forward(*args), model
+        assert _wf_bits(screen.walk_forward(*args)) == _wf_bits(
+            old.walk_forward(*args)
+        ), model
     for model in (MODEL, ALL_CLASS_MODELS[4]):
         trial = _model_trial(tmp_path, monkeypatch, model=model)
         gates = (trial, _long_path(), W0, WINDOW_H, *NULL_STREAM)
