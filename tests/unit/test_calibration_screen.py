@@ -2083,24 +2083,50 @@ def test_estimator_seed_maps_the_l266_seed_mod_2_31() -> None:
 def test_model_seed_reaches_the_nominee_fits_but_not_the_null_draws(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # T3: emissions and G-14's un-shifted pipeline use model_seed; each null
-    # draw keeps its own g14_draw seed (C-12 (5))
-    seeds: list[int] = []
-    real = screen.build_model
+    # T3 (PFSC-S-2): every fit's seed, by route. Emissions and G-14's
+    # un-shifted pipeline use model_seed; each null draw keeps its own
+    # g14_draw seed (C-12 (5))
+    route: list[str] = []
+    seeds: dict[str, list[int]] = {}
+    real_fit, real_wf, real_mc = (
+        screen.build_model,
+        screen.walk_forward,
+        screen.model_column,
+    )
 
     def spy(cls: str, params: object, seed: int) -> object:
-        seeds.append(seed)
-        return real(cls, params, seed)  # type: ignore[arg-type]
+        seeds.setdefault(route[-1], []).append(seed)
+        return real_fit(cls, params, seed)  # type: ignore[arg-type]
+
+    def wf(*args: Any, **kw: Any) -> Any:
+        draw = args[7] if len(args) > 7 else kw.get("draw")
+        inner = route[-1] if route and route[-1] == "emission" else None
+        route.append(inner or ("g14_unshifted" if draw is None else f"null{draw[2]}"))
+        try:
+            return real_wf(*args, **kw)
+        finally:
+            route.pop()
+
+    def mc(*args: Any, **kw: Any) -> Any:
+        route.append("emission")
+        try:
+            return real_mc(*args, **kw)
+        finally:
+            route.pop()
 
     monkeypatch.setattr(screen, "build_model", spy)
+    monkeypatch.setattr(screen, "walk_forward", wf)
+    monkeypatch.setattr(screen, "model_column", mc)
     monkeypatch.setattr(screen, "G14_DRAWS", 2)
-    monkeypatch.setattr(screen, "g14_draw", lambda *a: (8, 424242))
+    monkeypatch.setattr(screen, "g14_draw", lambda s, w, d, *a: (8, 424242 + d))
     trial = _model_trial(tmp_path, monkeypatch)
     got = screen.screen_gates(
         trial, _long_path(), W0, WINDOW_H, *NULL_STREAM, model_seed=777
     )
     assert got["G-14"] is None
-    assert set(seeds) == {777, 424242}
+    assert set(seeds) == {"emission", "g14_unshifted", "null0", "null1"}
+    assert set(seeds["emission"]) == {777} and set(seeds["g14_unshifted"]) == {777}
+    assert set(seeds["null0"]) == {424242} and set(seeds["null1"]) == {424243}
     with pytest.raises(screen.TrialError, match="model_seed"):
         screen.screen_gates(
             trial, _long_path(), W0, WINDOW_H, *NULL_STREAM, model_seed=2**31
@@ -2111,18 +2137,29 @@ def test_model_seed_reaches_the_nominee_fits_but_not_the_null_draws(
         )
 
 
+ALL_CLASS_MODELS = [
+    {**MODEL, "class": cls, "params": params, "target": target}
+    for cls, params, target in (
+        ("linear", {"fit_intercept": True}, "vol_scaled_target"),
+        ("ridge", {"alpha": "1.0"}, "vol_scaled_target"),
+        ("lasso", {"alpha": "0.01"}, "vol_scaled_target"),
+        ("elastic_net", {"alpha": "0.01", "l1_ratio": "0.5"}, "vol_scaled_target"),
+        ("logistic", {"C": "1.0"}, "sign_of_vol_scaled_target"),
+        (
+            "lightgbm",
+            {"n_estimators": 20, "max_depth": 3, "num_leaves": 8},
+            "vol_scaled_target",
+        ),
+    )
+]
+
+
 def test_a_fixed_model_seed_gives_bit_identical_emissions() -> None:
-    # T3 (A1b test): same estimator seed, same predictions, per allowed class
+    # T3 (A1b test; PFSC-S-2): same estimator seed, same predictions, for
+    # every allowed class
     series = screen.path_series(_long_path(), 0, W0 - timedelta(hours=MODEL_WARMUP))
     first, columns = feature_columns(series)
-    for model in (
-        MODEL,
-        {
-            **MODEL,
-            "class": "lightgbm",
-            "params": {"n_estimators": 20, "max_depth": 3, "num_leaves": 8},
-        },
-    ):
+    for model in ALL_CLASS_MODELS:
         trial = {**_trial(model=model, s_inputs=["model:m"]), "horizon_hours": 24}
         runs = [
             screen.walk_forward(
@@ -2167,37 +2204,78 @@ def test_confirmation_path_appends_a_terminal_row_at_the_last_close() -> None:
 
 
 def test_the_derived_terminal_row_changes_only_the_last_hours_return() -> None:
-    # T4 (PFS2-S-2): consumed values only, on a pair where both runs succeed
+    # T4 (PFS2-S-2, PFSC-S-3): consumed values only, on a pair where both
+    # runs succeed, for both symbols and both legs (model candidate, BTC
+    # benchmark): fit inputs, emissions, targets, decisions, fills and their
+    # costs, exposure and equity agree except the last hour's return, which
+    # the derived path prices at the last close
     true, derived = _true_and_derived()
     start = W0 - timedelta(hours=MODEL_WARMUP)
     trial = {**_trial(model=MODEL, s_inputs=["model:m"]), "horizon_hours": 24}
-    out = []
-    for path in (true, derived):
-        series = screen.path_series(path, 0, start)
-        first, columns = feature_columns(series)
-        sigma = screen.ewma_hourly_volatility_bps_series(
-            screen.hourly_log_returns_bps(series)
-        )
-        targets = screen.benchmark_targets(columns, first, MODEL_WARMUP, WINDOW_H)
-        emissions = screen.model_column(
-            trial, series, first, columns, MODEL_WARMUP, WINDOW_H, 0
-        )
-        result = screen.run_event_contract(
-            series, targets, MODEL_WARMUP, sigma_bps=sigma
-        )
-        out.append((first, columns, sigma, targets, emissions, result))
-    (f_t, c_t, s_t, tg_t, em_t, r_t), (f_d, c_d, s_d, tg_d, em_d, r_d) = out
-    assert f_t == f_d and tg_t == tg_d and r_t.fills == r_d.fills
-    assert r_t.exposure == r_d.exposure
-    assert r_t.equity[:-1] == r_d.equity[:-1] and r_t.equity[-1] != r_d.equity[-1]
-    assert np.array_equal(np.asarray(em_t), np.asarray(em_d), equal_nan=True)
-    # computed but never used inside the window: the terminal values
-    assert all(c_t[k][:-1] == c_d[k][:-1] for k in c_t)
-    assert s_t[:-1] == s_d[:-1]
-    # the last hour's exit is priced at the last close
+    fits: list[tuple[bytes, bytes]] = []
+    real = screen.build_model
+
+    def spy(cls: str, params: object, seed: int) -> object:
+        model = real(cls, params, seed)  # type: ignore[arg-type]
+        fit = model.fit
+
+        def recording(x: np.ndarray, y: np.ndarray) -> object:
+            fits.append((np.asarray(x).tobytes(), np.asarray(y).tobytes()))
+            return fit(x, y)
+
+        model.fit = recording
+        return model
+
+    def signal(row: dict[str, float], params: object, state: object) -> float:
+        return max(0.0, 0.3 + row["model:m"])
+
     last = MODEL_WARMUP + WINDOW_H - 1
-    bars = screen.path_series(derived, 0, start).bars
-    assert bars[last + 1].open == bars[last].close
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(screen, "build_model", spy)
+        for s in range(len(screen.SYMBOLS)):
+            runs = []
+            for path in (true, derived):
+                del fits[:]
+                series = screen.path_series(path, s, start)
+                first, columns = feature_columns(series)
+                sigma = screen.ewma_hourly_volatility_bps_series(
+                    screen.hourly_log_returns_bps(series)
+                )
+                emissions = screen.model_column(
+                    trial, series, first, columns, MODEL_WARMUP, WINDOW_H, 0
+                )
+                cols = {**columns, "model:m": tuple(emissions)}
+                closes = [b.close for b in series.bars]
+                candidate, signals = screen.leg_targets(
+                    trial, signal, None, cols, first, closes, MODEL_WARMUP, WINDOW_H, 0
+                )
+                bench = screen.benchmark_targets(columns, first, MODEL_WARMUP, WINDOW_H)
+                legs = [
+                    screen.run_event_contract(series, t, MODEL_WARMUP, sigma_bps=sigma)
+                    for t in (candidate, bench)
+                ]
+                runs.append(
+                    (list(fits), emissions, candidate, signals, bench, legs, series)
+                )
+            (f_t, e_t, c_t, sg_t, b_t, l_t, _), (f_d, e_d, c_d, sg_d, b_d, l_d, ser) = (
+                runs
+            )
+            assert f_t == f_d and len(f_t) > 0, s
+            assert np.array_equal(np.asarray(e_t), np.asarray(e_d), equal_nan=True), s
+            assert c_t == c_d and sg_t == sg_d and b_t == b_d, s
+            for leg_t, leg_d in zip(l_t, l_d, strict=True):
+                assert leg_t.fills == leg_d.fills, s  # decisions, fills, costs
+                assert leg_t.exposure == leg_d.exposure, s
+                assert leg_t.equity[:-1] == leg_d.equity[:-1], s
+                bars = ser.bars
+                assert bars[last + 1].open == bars[last].close, s
+                gross = (bars[last].close - bars[last].open) / bars[last].open
+                assert leg_d.equity[-1] == leg_d.equity[-2] * (
+                    1.0 + leg_d.exposure[-1] * gross
+                ), s
+            assert any(
+                lt.equity[-1] != ld.equity[-1] for lt, ld in zip(l_t, l_d, strict=True)
+            ), s
 
 
 def test_confirmation_path_validates_rows() -> None:
@@ -2235,3 +2313,77 @@ def test_the_paths_reference_vector_is_bit_exact_on_the_pinned_image() -> None:
         screen.screen_reference_vectors()["paths"]
         == (screen.FROZEN_REFERENCE_VECTORS["paths"])
     )
+
+
+BASELINE = Path(__file__).parent / "baselines" / "screen_ed8aa76.py.txt"
+
+
+@functools.cache
+def _baseline_screen() -> Any:
+    """`calibration/screen.py` at ed8aa76 (the reviewed pre-change file,
+    FREEZE_REVIEWS sha 8b89432b...), loaded beside the current module so
+    the T1 comparison is exact in one process on any platform."""
+    import importlib.machinery  # noqa: PLC0415
+    import importlib.util  # noqa: PLC0415
+
+    loader = importlib.machinery.SourceFileLoader("screen_ed8aa76", str(BASELINE))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[loader.name] = module  # its dataclasses resolve their module
+    loader.exec_module(module)
+    return module
+
+
+def test_the_baseline_is_the_reviewed_pre_change_screen() -> None:
+    data = BASELINE.read_bytes().replace(b"\r\n", b"\n")
+    assert hashlib.sha256(data).hexdigest() == (
+        "8b89432b5486f26cc95c94d8e7fd6c407d9dd3fd00e7b4bd02d1680d205b6cc7"
+    )
+
+
+def test_defaults_match_the_pre_change_screen_exactly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # T1 (PFS-S-2, PFSC-S-1): with default arguments, every scientific value
+    # walk_forward, model_column, screen_gates and screen_job return equals
+    # ed8aa76's; only screen_job's timing and runtime fields are excluded
+    old = _baseline_screen()
+    start = W0 - timedelta(hours=MODEL_WARMUP)
+    series = screen.path_series(_long_path(), 0, start)
+    first, columns = feature_columns(series)
+    for model in ALL_CLASS_MODELS:
+        trial = {**_trial(model=model, s_inputs=["model:m"]), "horizon_hours": 24}
+        for mod in (screen, old):
+            assert mod.path_series(_long_path(), 0, start) == series
+        for lag in (0, 1):
+            args = (trial, series, first, columns, MODEL_WARMUP, WINDOW_H, lag)
+            assert screen.walk_forward(*args) == old.walk_forward(*args), model
+            assert np.array_equal(
+                screen.model_column(*args), old.model_column(*args), equal_nan=True
+            ), model
+        draw = ("ab" * 32, WINDOW, 3)
+        args = (trial, series, first, columns, MODEL_WARMUP, WINDOW_H, 0, draw)
+        assert screen.walk_forward(*args) == old.walk_forward(*args), model
+    for model in (MODEL, ALL_CLASS_MODELS[4]):
+        trial = _model_trial(tmp_path, monkeypatch, model=model)
+        gates = (trial, _long_path(), W0, WINDOW_H, *NULL_STREAM)
+        assert screen.screen_gates(*gates) == old.screen_gates(*gates), model
+    # each trial is built just before use: both write the same signal module
+    for make in (_screen_trial, _model_trial):
+        trial = make(tmp_path, monkeypatch)
+        job = (
+            _source(),
+            screen.screen_seed("22" * 32),
+            trial,
+            0,
+            int(trial["warmup_hours"]) + WINDOW_H + 1,  # type: ignore[call-overload]
+            W0,
+            WINDOW_H,
+            WINDOW,
+            30,
+        )
+        new_job, old_job = screen.screen_job(*job), old.screen_job(*job)
+        for record in (new_job, old_job):
+            del record["seconds"], record["runtime"]
+        assert new_job == old_job
