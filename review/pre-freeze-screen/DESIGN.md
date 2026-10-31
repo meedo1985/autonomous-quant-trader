@@ -1,6 +1,6 @@
 # Pre-freeze `screen.py` change for D-20 Q2(ii) and Q5: design (rev 2)
 
-**Author:** Claude Opus 5.5 (`claude-opus-5-5`), 2026-10-31. This is AI drafting and not an authority. **Status: DESIGN rev 2, UNREVIEWED. No code is written yet.** Rev 1 is at `ceb12c3`, and its review is `SOL_DESIGN_REVIEW_CEB12C3.md` (gpt-6-sol: FIX, PFS-S-1..5).
+**Author:** Claude Opus 5.5 (`claude-opus-5-5`), 2026-10-31. This is AI drafting and not an authority. **Status: DESIGN rev 3. No code is written yet.** Rev 1 is at `ceb12c3`, and its review is `SOL_DESIGN_REVIEW_CEB12C3.md` (gpt-6-sol: FIX, PFS-S-1..5). Rev 2 is at `73e22e6`, and its re-check is `SOL_DESIGN_RECHECK_73E22E6.md` (gpt-6-sol: FIX, PFS2-S-1..2, both on tests). Rev 3 changes only T1 (adding T1b) and T4, and both are accepted as Sol worded them. The code review of the implementation will check them. R-14a is now at rev 2 (freeze-sheet `r14-exception/PROPOSAL_REV2.md`).
 
 **Authority:** the owner's D-20 decision (`OWNER_DECISION_D20_LOCKBOX.md`, freeze-sheet `f04aa6c`), items 6 and 9, which are time-sensitive. The binding text is `PROPOSAL_REV3.md` A1b and A6 "The final hour", as amended by `PROPOSAL_REV4.md` A1b (D20L-44, D20L-47, D20L-48) and `PROPOSAL_REV5.md` (D20L-55). None of this binds until C2 is signed.
 
@@ -45,9 +45,10 @@ Sol's answers to rev 1's questions are adopted. Q-a: G-14's un-shifted pipeline 
 ## 2. Tests (synthetic data only)
 
 - **T1 guard.** For the existing fixtures with defaults, the scientific values of `screen_job`, `screen_gates`, `walk_forward` and `model_column` equal `main`'s, which are captured as fixtures before the edit. `seconds` and `screen_sha256` are excluded and named in the test. All reference-vector tests pass unchanged.
+- **T1b exact paths vector (PFS2-S-1).** The existing test checks only the stored constant for the S8 paths vector. A new test compares `screen_reference_vectors()["paths"]` exactly, bit for bit, with the value computed at the pre-edit baseline commit `ed8aa76` (= `main`). It runs on the pinned image, as S8's float path requires. Off the pinned image it is skipped with a stated reason, never loosened to a tolerance.
 - **T2 seed map.** Known vectors: an all-zero hex gives 0 (accepted), `"f"*64` gives `2**31 − 1`, plus one fixed mid value. Malformed input is refused: wrong length, uppercase, non-hex.
 - **T3 seed reaches the fit.** A spy `build_model` records the seed. The nominee's emission fits and G-14's un-shifted pipeline get `model_seed`, and each G-14 null draw gets its `g14_draw` seed. With a fixed `model_seed`, two runs are bit-identical for each allowed class (A1b test).
-- **T4 terminal row, at consumer boundaries.** On a synthetic path whose true bar at `w1` has an open different from the last close, compare runs on `confirmation_path(path[:-1])` and on the true path:
+- **T4 terminal row, at consumer boundaries (PFS2-S-2: consumed values only, on a pair of synthetic paths where both runs succeed; no claim of whole-run equivalence for every valid true bar, since an extreme true terminal bar can make the true-path run fail on values that are computed but never used).** On a synthetic path whose true bar at `w1` has a moderate open different from the last close, compare runs on `confirmation_path(path[:-1])` and on the true path:
   - **used values are identical** except the last hour: every target, decision, fill, fill cost, emission and fit input inside the window, and every equity value before the last hour;
   - the last hour's exit is priced at the last close;
   - **computed terminal values may differ** (the terminal feature row, the terminal close-to-close return and its EWMA value), and the test shows that none of them is used inside the window.
