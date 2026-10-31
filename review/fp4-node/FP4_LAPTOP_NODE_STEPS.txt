@@ -1,0 +1,90 @@
+FP4 - Bitcoin verifier node on your LAPTOP (Bitcoin Core 31.1, pruned, block filters)
+Run each line in PowerShell on the laptop, ONE LINE AT A TIME. No keys or wallet go on this node.
+(Revision 6, after Codex reviews FP4N-R1..R7, FP4N2-R1..R3, FP4N3-R1..R2, FP4N4-R1..R2 and FP4N5-R1; see ADJUDICATION_FP4_NODE*.md.)
+
+=== ONCE: install ===
+
+1) Download the installer (about 39 MB):
+Invoke-WebRequest https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-win64-setup.exe -OutFile $HOME\Downloads\bitcoin-31.1-win64-setup.exe
+
+2) Check it. This must print True. (This hash is the one signed by 11 Bitcoin Core builders; checked 2026-10-25.)
+(Get-FileHash $HOME\Downloads\bitcoin-31.1-win64-setup.exe).Hash -eq "D0C6D0F3CD08689472A6F53C4CE33A5F059C092758C32C42541B47DB4E193458"
+
+   If it prints False: STOP, delete the file, tell me.
+
+3) Install it (normal Next/Next/Finish; keep the default folder C:\Program Files\Bitcoin). Untick "Run Bitcoin Core" at the end.
+Start-Process $HOME\Downloads\bitcoin-31.1-win64-setup.exe
+
+4) Check the two programs are where these steps expect. Both lines must print True:
+Test-Path "C:\Program Files\Bitcoin\daemon\bitcoind.exe"
+Test-Path "C:\Program Files\Bitcoin\daemon\bitcoin-cli.exe"
+
+   If either prints False: STOP, send me a photo of the folder C:\Program Files\Bitcoin.
+
+5) Check the version. It must say v31.1.0:
+& "C:\Program Files\Bitcoin\daemon\bitcoind.exe" -version
+
+6) Make the node's folder on D:
+New-Item -ItemType Directory -Force D:\Bitcoin
+
+7) Write its settings (block filters on, low memory, no wallet, no incoming connections):
+Set-Content -Encoding ascii D:\Bitcoin\bitcoin.conf "prune=25000","blockfilterindex=1","dbcache=300","maxmempool=100","disablewallet=1","listen=0"
+
+=== EVERY TIME the laptop is on: start it ===
+
+8) Start the node (a black window opens and stays open; leave it open while you work):
+Start-Process "C:\Program Files\Bitcoin\daemon\bitcoind.exe" "-datadir=D:\Bitcoin"
+
+   If Windows Firewall asks: click Cancel (the node only needs outgoing connections).
+   If the black window closes by itself within a minute: the node stopped. Send me a photo of: Get-Content D:\Bitcoin\debug.log -Tail 20
+
+=== BEFORE you shut down the laptop: stop it properly ===
+
+9) Stop the node (wait until its window closes by itself, then shut down):
+& "C:\Program Files\Bitcoin\daemon\bitcoin-cli.exe" -datadir=D:\Bitcoin stop
+
+   Sleep / closing the lid is fine. Only a full shutdown needs line 9 first.
+
+=== ONCE A WEEK (and whenever I ask): checks - send me a photo of each output ===
+
+10) Sync state (I read: chain, blocks, headers, initialblockdownload, pruneheight, size_on_disk):
+& "C:\Program Files\Bitcoin\daemon\bitcoin-cli.exe" -datadir=D:\Bitcoin getblockchaininfo
+
+11) Block-filter index state (I read: synced, best_block_height):
+& "C:\Program Files\Bitcoin\daemon\bitcoin-cli.exe" -datadir=D:\Bitcoin getindexinfo
+
+12) Disk space low? Prints True if D: has LESS than 8 GB free (then S1 applies), False if enough:
+(Get-PSDrive D).Free -lt 8GB
+
+13) Whole node folder size (GB; takes a few seconds):
+[math]::Round((Get-ChildItem D:\Bitcoin -Recurse -File | Measure-Object Length -Sum).Sum/1GB)
+
+   During the FIRST sync (until I say it is synced): send lines 10, 12 and 13 every day the laptop is on, not weekly.
+
+=== STOP RULES (they win over everything above) ===
+
+S1) Disk: if line 12 prints True, run line 9 (stop) and do not start the node again until I say.
+S2) Keeping block 972,269. A caught-up node keeps about the last W blocks (W = "blocks" minus "pruneheight").
+    W is not fixed (the node keeps a size in bytes, so bigger blocks mean a smaller W). Three rules:
+    a) Every photo of line 10: I compute margin = 972,269 minus "pruneheight". If it is below 3,000 blocks,
+       I tell you STOP: run line 9 now, and do not start again until we decide together (raise the setting
+       only if disk allows, or the post must happen first).
+    b) A forecast only, never a permission:
+         MARGIN LOW DATE: ____________ (filled after the first sync; forecast date of public height
+                                       972,269 + W - 3,000; I only ever move it EARLIER)
+       On that date, the same as a STOP in (a).
+    c) SAFE START. Once I fill the date, and ALSO any time your last photo of line 10 is more than 7 days old,
+       never use line 8 directly. Instead start the node WITHOUT network and WITHOUT automatic pruning
+       (it cannot download or delete any block):
+       Start-Process "C:\Program Files\Bitcoin\daemon\bitcoind.exe" "-datadir=D:\Bitcoin","-connect=0","-prune=1"
+       wait one minute, run line 10, send me the photo, then run line 9. Use line 8 only after I reply GO.
+    - If pruneheight ever goes ABOVE 972,269: the node no longer meets FP4. Step H stays blocked; only a fresh sync
+      whose window can hold block 972,269 through the freeze read can fix it.
+S3) Never change bitcoin.conf yourself.
+
+Notes:
+- The node keeps only a moving window of recent blocks. By projection only (not a promise), about 13,000 blocks, so block
+  972,269 would leave the window around mid-January 2027. The real date comes from your photos.
+- Disk: projected about 50 GB on D: when synced (you have 62 GB free). Do not fill D: with other big files.
+- The first sync downloads the whole chain (~770 GB, kept only partly). It continues where it stopped each time you run line 8.
+- The post day (step H) and the freeze read (step I) need the laptop ON at set times; I give you those times in advance.

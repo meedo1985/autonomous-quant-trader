@@ -1,0 +1,9 @@
+{
+  "name": "aqt-drand-verify",
+  "private": true,
+  "type": "module",
+  "description": "Verifies one quicknet round against the FP3-bound chain (review/fp3/FP3_SUPPLEMENTARY_ACCEPTANCE.md)",
+  "dependencies": {
+    "drand-client": "1.4.2"
+  }
+}
