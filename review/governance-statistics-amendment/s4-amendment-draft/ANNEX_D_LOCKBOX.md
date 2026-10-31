@@ -2,7 +2,7 @@
 
 **Drafted by:** Claude Opus 5.5 (`claude-opus-5-5`), 2026-10-31. This is AI drafting and not an authority.
 
-**Status: DRAFT, IN PROGRESS, UNREVIEWED.** Parts 1-2 (§D-1, §D-2) are written. Part 3 (§D-3) is to follow. Nothing here binds until the owner signs the C2 §4 amendment after the required human review. This annex invents no rule. Each row restates a decided rule, cites its source, and marks any wording the AI chose as `[AI wording]`. Where the sources disagree, the later owner decision governs and the difference is noted.
+**Status: DRAFT, UNREVIEWED.** §D-1 to §D-3 are written. The DRAFT_WORDING rows that point here follow, and then a two-family fidelity review. Nothing here binds until the owner signs the C2 §4 amendment after the required human review. This annex invents no rule. Each row restates a decided rule, cites its source, and marks any wording the AI chose as `[AI wording]`. Where the sources disagree, the later owner decision governs and the difference is noted.
 
 **Sources and precedence.** A later item governs an earlier one where they differ:
 
@@ -292,3 +292,233 @@ Withheld from the reader: the commitment, record and file hashes, nonces, and ev
 
   Delays of any length can hold up release, delivery or certification, and near day 255 can make a PASS expire `U_ops`. Before release, a delay can make a finish miss `D*`, which is a technical FAIL, or an admission miss C (`CAP_REACHED`). Nothing can change a result **after it is released**, or a counted try.
 - D-12's R1 (daily missed-release delays) no longer exists under option C `[AI wording]`. Signing faults now leave the code at `PASS_CERTIFICATE_PENDING` (§D-2.6).
+
+---
+
+## §D-3 Bindings: seeds, the prediction artifact, the store and the read (D-20)
+
+**Sources:**
+- `d20-lockbox-proposal/PROPOSAL_REV2.md` §1.1 (A1a-A7), B1 and §1.3, as changed by `PROPOSAL_REV3.md` (A1b, A5, A6, A7, B1, B4.2-B4.4), `PROPOSAL_REV4.md` (A1b, A6, B4.1, B4.2) and `PROPOSAL_REV5.md` (the worker deadline);
+- the store of `PROPOSAL_REV8.md` §1.2, as changed by option C (`OPTION_C_PROPOSAL_REV2.md` §1.3, §1.9, §1.10; `_REV3.md` §1.9, §1.10a; `_REV4.md` item 6; `_REV5.md`);
+- the owner's D-20 answers Q2(i), Q2(ii), Q3, Q4, Q5 and QC2, and R-14a.
+
+QC2 adopted these detail rules. Items marked `[DETAIL]` or `[NEW DEFAULT]` in the sources are decided by QC2.
+
+### D-3.1 Where the code lives (R-14a; D-20 Q4)
+
+- **R-14a** (`r14-exception/PROPOSAL_REV2.md` §1, with `PROPOSAL_REV3.md` items 1-2) is a row of DRAFT §2.0.
+- The C2 lockbox code lives in one reviewed **lockbox module**, and the confirmation-side code in one reviewed **confirmation module**. Their SHA-256 rows are in the signed C2 protocol bytes.
+- The model fit and the final-hour rule live in the frozen `screen.py` (`walk_forward` with `model_seed`; `confirmation_path`), merged before step G (branch `pre-freeze-screen-q2-q5`, PR #81).
+- **Contract allocation** (R-14a rev 3 item 2):
+  - the confirmation module performs A7's confirmation-side work on the experiment-engine path: the source re-run, the forecast (A4) and the sealing of the artifact;
+  - the lockbox module performs only the `lockbox_eval` side.
+- **`code` in the A7 artifact** `[AI default, for review]` is `{lockbox_module_sha256, confirmation_module_sha256, engine_commit, screen_object_sha256}`. Each module hash is that module's signed SHA-256. R-14a rev 3 left this choice to the S4 text.
+
+### D-3.2 Seeds (A1b; D-20 Q3, Q5; R-13)
+
+- **The nominee's own fit (Q5, policy `L266_MOD_2_31`):**
+  - `seed_l266 = preregistration.trial_seed(protocol_hash, hypothesis_hash, trial_index)`, the l.266 seed that R-13 keeps for the nominee's own fit. `protocol_hash` is the C2 protocol hash, and `trial_index` is the one in the nominee's C2 trial record;
+  - `estimator_seed = int(seed_l266, 16) % 2**31`, which is `screen.estimator_seed`. A value of 0 is legitimate.
+
+  It is passed as `random_state` where a constructor accepts it, as `seed` to LightGBM, and to no other estimator (Annex C C-12 (5)). The confirmation fit, the A7 sealing re-run and the lockbox refit all use it. The signed C2 records `estimator_seed_policy = L266_MOD_2_31`. A fit counts as C2 evidence only if its record names that policy and the seed derived under it; the check is on the policy and the derivation, never on the value 0. (rev 2 A1b; rev 4 A1b, D20L-44)
+- **Annex C C-12 (5) wording:** "The nominee's own fit uses the estimator seed of the signed estimator-seed policy (D-20 A1b). Null-draw seeds come from their own stream and are never derived from it; an equal value arising by chance is not reuse." (rev 4)
+- **The lockbox prediction stream (Q3, `R13_TRIAL_SEED`):**
+  - `seed_hex = SHA256(cj({"family_seed": family_seed_f, "trial_id": <nominee trial_id>}))`, the R-13 trial seed;
+  - `purpose = "lockbox_prediction"`, `asset = "BTCUSDT"`, `cost = "1.0"`;
+  - `evaluation_window_id` is the canonical `["<w0>","<w1>"]`;
+  - `m = 457`, `r = 0..1999`.
+
+  It needs a row adding this stream to R-13, and `lockbox_prediction` to `added_purposes`. (rev 2 A3, §1.3)
+- **What Q3's seed does and does not do** (rev 2 §1.3):
+  - it prevents choosing the realised bootstrap seed through cosmetic edits before the declaration post;
+  - it does not stop a search over the strategy or the model seed;
+  - it does not stop outcome-dependent invalidation and re-declaration;
+  - it does not hide `q` after the post;
+  - no bound shows that bootstrap noise near the boundary is negligible.
+
+### D-3.3 The source run (A2, A6; D-20 Q2(i), Q2(ii))
+
+- **Start state (Q2(i)).** Both legs are flat at `w0` for the confirmation source, and at L0 for the lockbox: exposure 0, no pending order, an unset clock, a fresh overlay, equity 1.0. Each leg pays its entry cost at its first permitted entry, and MDD is measured from the start. (rev 2 A2; D20L-42)
+- **Final hour (Q2(ii)).** The price at a window's end instant is the close of the window's last bar: `screen.confirmation_path` appends one derived terminal row whose open equals that close. This governs every C2 confirmation run and the lockbox run alike, so no run reads the bar at its window's end. (rev 3 A6; D20L-34, D20L-48) The DRAFT C-0/C-6 wording is a row of DRAFT §2.0.
+- **Adapter** (rev 3 A6; rev 4 A6). It takes `(series, result)` pairs and, for each leg, checks:
+  - the asset;
+  - the same series and `start` for both legs;
+  - `series.bars[result.start].open_time` equal to L0 or `w0`;
+  - `series.interval == 1 h`;
+  - `len(result.equity) == 24 · m_days`;
+  - every equity value finite and > 0.
+
+  A failure gives `DAYS_INCOMPLETE` or `NONFINITE_EQUITY`. An equity `EventContractError` becomes `RUN:NONFINITE_EQUITY`; any other runner error becomes `RUN:RUN_FAILED`. A failed BTC run makes L-1..L-3 null, and a failed ETH run makes L-4 null.
+- **Metrics** (rev 2 A6):
+  - daily returns are `screen.daily_returns`;
+  - MDD is `descriptive._max_drawdown((1.0, *equity))`;
+  - `screen.leg_stats` is not used;
+  - BTC L-1/L-2 availability is `difference_series_sharpe.reason is None`;
+  - ETH L-4 availability is `paired_sharpe_improvement is not None` and the aggregate reason None.
+- **R-8 extension** (rev 2 A6; R-14a item 8). R-8's binding extends, for L-1..L-4, to:
+  - in `statistics.py`: `sharpe`, `paired_sharpe_statistics`, `_influence`, `block_length`, `_uniform_index`, `SEED_DOMAIN`, `CONVENTION_DOCUMENT_SHA256` and `type_seven_quantile`;
+  - `_max_drawdown` in `descriptive.py`;
+  - `daily_returns`, `estimator_seed` and `confirmation_path` in the object copy of `screen.py`;
+  - the two module hashes of R-14a.
+
+  The run uses the qualified image.
+
+### D-3.4 The forecast (A4, A5)
+
+- **Generator (A4).** The seed material is the production layout of IMPLEMENTATION_CONVENTIONS l.84-94, with purpose `lockbox_prediction` and `output_length` 457. The draws follow the `bootstrap_indices` draw order, run `m` times over `[0, n)`. `T*_r = sharpe(d[idx_r]).scaled`, and `q = type_seven_quantile(T*, 0.05)`. `ReplicateStream` is not touched.
+- **ψ and b (A5).** `ψ = statistics._influence(d, sharpe(d))` and `b = block_length(ψ).value`.
+- **Reference vectors (A5),** frozen with the code review for one published synthetic `d`:
+  - ψ's hash and every `BlockLength` field (hexf);
+  - the first 10 indices of `r = 0` and `r = 1999`, and the hash of all sequences;
+  - the hash of the replicates;
+  - `q` in hexf.
+
+  Floats are hashed as big-endian `>d`, and indices as `>I`. Every real computation reproduces the vectors bit for bit in-process before use.
+- **Startup records (rev 3 A5).** At each start on the qualified image, the lockbox process recomputes the vectors and the store appends `aqt.lockbox.startup.v1 = {startup_check_id, lockbox_module_sha256, image_digest, vectors_sha256, result}`. A process without a `PASS` record for its own module hash and image is refused at the pre-read check (`REFERENCE_VECTOR_MISMATCH`).
+
+### D-3.5 The prediction artifact and sealing (A7; R-14a rev 3 item 2)
+
+- **Schema `aqt.lockbox.prediction.v1`:**
+  - `cycle_id`, `family`;
+  - `nominee {trial_id, configuration_hash, hypothesis_hash, protocol_hash, trial_index, seed_l266, estimator_seed_policy, estimator_seed}`;
+  - `source {window_id, n, d_sha256, evaluation_record_sha256}`;
+  - `block {psi_sha256, value, raw, clipping}`;
+  - `stream {seed_hex, seed_source: "R13_TRIAL_SEED", purpose, asset, cost, m: 457, attempts: 2000}`;
+  - `replicates_sorted` (2,000 hexf strings, sorted by decoded value);
+  - `q` (hexf);
+  - `code` (§D-3.1).
+
+  `artifact_sha256 = SHA256(cj(artifact))`. (rev 2-4 A7; A1b)
+- **Pre-look record.** The C2 evaluation record of every trial stores `d_sha256` when the trial is evaluated, before the look.
+- **Sealing,** on the experiment-engine path, by the confirmation module (R-14a):
+  1. re-run the nominee's BTC baseline pair from the confirmation bars with the registered code, `estimator_seed` and the final-hour rule;
+  2. require `d`'s hash to equal the pre-look `d_sha256`;
+  3. compute ψ, b, the replicates and `q`;
+  4. store the artifact and write `artifact_sha256` into `aqt.lockbox.sealing.v1`, which holds each family's status (a)-(d) (§D-1.7) and is written before any lockbox read.
+
+  Any failure gives status (d).
+- **Artifacts of the nominee (A1a).** These are the trial object (`TRIAL_FIELDS`; `configuration_hash = trial_sha256(trial)`) and its signal and overlay source files, by raw SHA-256. They are stored as hash-named files under the cycle's §26 store, fixed by one ledger entry `aqt.c2.artifacts.v1 = {items: [{kind, sha256, size}]}` before the declaration post. Retrieval follows `screen.load`'s hash-before-execute order, and a mismatch is a pre-read rejection.
+- **Pre-read checks** (`lockbox_eval`; rev 2-3 A7):
+  - the artifact hash matches the sealing entry;
+  - `seed_l266` and `estimator_seed` re-derive from the nominee record under the signed policy;
+  - `seed_hex` re-derives from `family_seed_f` and `trial_id`;
+  - `seed_source`, `purpose`, `m` and the module hashes match the signed values;
+  - P-4 (§D-2.2).
+
+  A difference gives `IDENTITY_MISMATCH`.
+
+### D-3.6 Signing (B1)
+
+- Ed25519 (PureEdDSA, RFC 8032) through the maintained `cryptography` library, hash-pinned in one small signer-and-publisher environment. The key is generated before C2, and the raw public key goes in the signed C2.
+- **Message:** the 12 fields `attestation.schema.json` requires, plus `family`, `nominee_trial_id`, `prediction_artifact_sha256` and the three fields (§D-2.1). `lockbox_evaluation_id` is the evaluation ID. The signed bytes are `cj` of the object without `signature`.
+- Ed25519 verifiers differ (ZIP215 against strict RFC 8032), so the verifier is fixed with the code. (rev 2 B1, D20L-17)
+- **Store identities:** one store service holds the sealed store, the index and the clock. Callers reach it over a local channel that tells it the caller's OS account. The accounts mapped are `publisher`, `lockbox_eval` (worker and signer), `replay`, `reader` and the owner's command account (§D-2.3). Any other caller is refused and logged. (rev 3 B1)
+
+### D-3.7 The store (rev 8 §1.2, as changed by option C)
+
+**Records.** Only these are authoritative.
+- **The index**, an append-only ledger, holding:
+  - pre-read entries `aqt.lockbox.pre_read.v1 = {evaluation_id, attempt, family, nominee_trial_id, prediction_artifact_sha256, eligibility_result_id, lockbox_evaluation_id, pre_read_check_id, budget_before: 1, budget_after: 0, segment_status: "EXPOSED", r0}`;
+  - rejection entries `aqt.lockbox.no_read.v1 = {family, nominee_trial_id, kind ∈ {PRE_READ_REJECTION, BARRED_DESCENDANT}, reason, ancestor_evaluation_id | null}`;
+  - release entries `{evaluation_id, result, commitment, released_at}`;
+  - delivery entries `{evaluation_id, kind, file_hash, delivered_at}`;
+  - VOID entries `{evaluation_id, kind: VOID, reason}`;
+  - revision and invalidation entries `{kind, at}`.
+
+  (rev 4 B4.1; rev 3 B4.3; C2 §1.3-§1.5, §1.10)
+- **Sealed files**, each written once and never replaced:
+  - the DEFAULT bundle with its nonce and commitment, under `(evaluation_id, attempt)`;
+  - RESULT bundles;
+  - at most one finished record per evaluation, `aqt.lockbox.finished.v1 = {evaluation_id, result, commitment, finished_at}`;
+  - the pre-read check record `aqt.lockbox.pre_read_check.v1` (rev 4 B4.1);
+  - startup records;
+  - attestation files.
+
+  A sealed file is created by writing a temporary file, fsyncing it, linking it without replacing, and fsyncing the directory. All sealed files are in one directory.
+- **The sealed bundle `aqt.lockbox.sealed_bundle.v1`** (rev 3 B4.2 with rev 4 B4.2):
+  - fields `schema, evaluation_id, kind (RESULT | DEFAULT), result, cause_class, values {t_l, q, mdd_btc_cand, mdd_btc_bench, eth_e_improv, mdd_eth_cand, mdd_eth_bench}, conditions {L1..L4}, reasons, upside, capture {engine_commit, image_digest, input_manifest_sha256, lockbox_module_sha256, prediction_artifact_sha256}, operational {read_start, sealed_at, startup_check_id}`;
+  - each atomic comparison is null iff one of its own inputs is null; `L4 = AND3(c4a, c4b)`;
+  - **precedence:** DEFAULT gives FAIL/DEADLINE; else any false gives FAIL/PERFORMANCE; else any null gives FAIL/TECHNICAL; else PASS;
+  - "failed technically" (Q2a) means `cause_class ∈ {TECHNICAL, DEADLINE}`;
+  - `commitment = SHA256(nonce ‖ cj(bundle))`.
+
+  The PASS fixture is rev 4 B4.2's (1,053 bytes, SHA-256 `d64d228b…ba520`).
+- **Pre-read reason codes (Q2b):** `ARTIFACT_NOT_FOUND`, `ARTIFACT_HASH_MISMATCH`, `IDENTITY_MISMATCH`, `PREDICTION_ARTIFACT_INVALID`, `REFERENCE_VECTOR_MISMATCH`, `IMAGE_MISMATCH`, `BUDGET_EXHAUSTED` and `ANCESTOR_UNRELEASED`. (rev 2 list without `COOLDOWN_NOT_ELAPSED`, per rev 4; `ANCESTOR_UNRELEASED` per C2 §1.6)
+
+**One lock.** `L_store` is the store's own lock file. The store takes it for:
+- `begin_read` (including the `R_0` recovery lookup);
+- rejection appends;
+- `release`, `record_delivery` and `sign_permit`;
+- revision and invalidation appends;
+- reader rows;
+- `verify_replay`, reconciliation and startup;
+- the read gate's entitlement check;
+- steps 2-4 of `mark_finished` (with step 2a).
+
+`NOT_YET` takes no lock. The worker and the signer never hold `L_store`. `write_bundle` and every other sealed create take no lock. Every index reader goes through these operations; this is an obligation on the store code, checked by tests and §16 review. (rev 8 l.75 as replaced by C5 item 3)
+
+**Durable before use.** Holding `L_store`, an operation first does its lookups. It then fsyncs the index file, the index's directory and the sealed directory. Only then does it answer, append, create, serve a bar or authorise a signature. An fsync error is a §26 stop.
+- *Platform assumptions:* an fsync makes durable whatever is already written to that file or directory, and the OS releases `L_store` when its holder exits. Both stay `UNVERIFIED_EXTERNAL_ASSUMPTION`.
+
+**Time rule (Q7, accepted).** A save with a deadline counts as made at the clock reading `t1` taken while holding `L_store`, immediately before it starts, if `t1` is before the deadline. A save lost in a crash before it is durable never happened. No rule can both keep every on-time save and refuse every late one.
+- **Index appends:** `begin_read`'s append has deadline C. A `LedgerError` before writing means nothing was written: a timeout is refused, and damage is a §26 stop. Any error after the write starts is a §26 stop.
+- **`mark_finished(evaluation_id)`,** deadline `D*`:
+  1. Without the lock, verify the RESULT bundle against its commitment, then fsync the bundle and the sealed directory.
+  2. Take `L_store`, look up the pre-read entry and any finished record, do the fsyncs, then read `t_f`.
+  - 2a. If a release entry exists, refuse; the bundle is late output and void.
+  3. If `t_f ≥ D*` or a finished record exists, refuse.
+  4. Otherwise create the finished record with `finished_at = t_f`, including its directory fsync, and only then release `L_store`.
+
+  A finish whose check was before `D*` may still be saving after `D*`. It survives or is lost in a crash, and "after `D*` no new finish counts" means no new check qualifies.
+- **Start checks:** `record_pre_read_check` (deadline C) and each bar (deadline `D*`) read the clock before starting and refuse at or after the deadline.
+- **Cap scope:** from C on, no operation limited by C or `D*` starts: no pre-read check, read authorisation, rejection append, bar or counted finish. Release, delivery, `write_bundle`, reads, reconciliation and replay continue.
+
+**`begin_read(evaluation_id)`,** called by the publisher, under `L_store`. The lookups come first (index verification, reconciliation, entitlement, budget, order and cooldown), then the fsyncs, then any answer, append or sealed create.
+1. Index damage is a §26 stop.
+2. **Reconciliation:** return an existing pre-read entry, after checking that its DEFAULT verifies (otherwise a §26 stop), or an existing rejection entry.
+3. **Cap:** sample `t_s`, the store clock floored to the second. If `t_s ≥ C`, answer `CAP_REACHED` and write nothing.
+4. **Entitlement:**
+   - sealing records exist for every declared family, and this family is status (a) for this nominee and artifact;
+   - a check record's identity fields equal the sealing record and the request;
+   - its `startup_check_id` names a `PASS` startup record for the same module hash and image.
+
+   With no check record or differing identities, refuse, write nothing and log an incident. A check result that is a reason code appends a rejection entry.
+5. **Budget:** an existing pre-read entry for the family this cycle appends a `BUDGET_EXHAUSTED` rejection.
+6. **Lineage:** an ancestor without a release entry appends an `ANCESTOR_UNRELEASED` rejection. A released FAIL ancestor appends `BARRED_DESCENDANT`.
+7. **Order and cooldown:** return `DEFERRED` and write nothing while `t_s < r0′ − 604,800 + 2,592,000`, or while the trend family is status (a) with neither an entry nor a rejection.
+8. `r0 = t_s + 604,800`. Pick `attempt`, and create the nonce and DEFAULT bundle with `sealed_at = t_s`.
+9. Append the pre-read entry under the time rule with deadline C. A miss leaves the DEFAULT a void orphan, spends no budget, and answers `CAP_REACHED`.
+
+(rev 4 B4.1; rev 6 step 6; rev 7 l.140-152; rev 8 l.99; C2 §1.6)
+
+**The read gate.** Under `L_store`, the store looks up the pre-read entry, its DEFAULT and a `PASS` startup record for the check record's module hash and image, then does the fsyncs, verifies the DEFAULT, and opens a session for `lockbox_eval`. Bars over `[S_pre, L1)` under the manifest are served without the lock, each under the start check against `D*`. After C the gate serves nothing.
+
+**Startup and reconciliation.** Before serving anything, under `L_store`: index verification and reconciliation, then the fsyncs. Nothing is rebuilt or replayed.
+- A sealed DEFAULT whose attempt has no pre-read entry is a void orphan.
+- A pre-read entry whose DEFAULT is missing or does not verify is a §26 incident.
+- Temporary files and void bundles are logged.
+
+**Replay under R-a, `verify_replay(evaluation_id, projection_bytes)`.** It is for the `replay` role only, on a PASS, after the segment has rolled into confirmation.
+- It checks the bundle against the release entry's commitment, then compares `cj(bundle without "operational")` with `projection_bytes`.
+- It returns only `MATCH` or `MISMATCH`, and a MISMATCH voids the promotion. (rev 3 B4.4)
+
+### D-3.8 Crash points and tests (rev 8 §1.2; option C C2 §1.9, C3 §1.9, C5)
+
+- **Crash rows:** rev 8 rows 1-9, 11 and 12, plus option C rows C1-C15. Under a machine crash, un-fsynced data may survive whole, be lost, or (an index tail) be partly written. A partial index tail is a §26 stop.
+- **Tests:**
+  - rev 3's list (l.253-257), rev 4's list (l.147-155), rev 6's cooldown boundary and rev 5's cap-order test;
+  - T-S2 and T-S4 for the kept rows, and option C's TC-1..TC-7;
+  - with these replacements:
+    - **T-S1:** every concurrent reader-row, `release`, `sign_permit` and `begin_read` call waits until the append is durable, then answers from the durable state by its own return contract (C5 item 2);
+    - **T-S2:** a concurrent `release` whose clock reading under `L_store` is before `R_0` is refused; one at or after `R_0` waits for the finish's hold and shows its result (C5 item 2);
+    - **T-S6:** each of the release entry and the RESULT delivery file has one fixed shape for every FAIL cause, no record's bytes depend on the cause, and their shared fields agree (C5 item 1);
+    - **TC-6:** an ID with no pre-read entry gives `STOPPED`; a terminated-cycle ID is served.
+  - The machine-crash rows need a test file layer that applies each permitted outcome. If the build cannot provide it, those rows are not available and block completion.
+  - No test measures timing, and no timing property is claimed.
+- **R-14a contracts (item 5).** Each module's input-to-record contract is part of the signed C2, with consumer-boundary tests for missing, duplicate and misaligned observations.
+
+### D-3.9 Not decided here (S4 or later)
+
+- the channel for the owner's forced command, the clock source, the reconciler and his view (§D-2.3), and the governance action that appends revision entries;
+- D11-15;
+- each build, under §16 review: the store, publisher, signer, both modules and the access tooling.
