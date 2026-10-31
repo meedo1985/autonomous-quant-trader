@@ -484,7 +484,7 @@ QC2 adopted these detail rules. Items marked `[DETAIL]` or `[NEW DEFAULT]` in th
 
    With no check record or differing identities, refuse, write nothing and log an incident. A check result that is a reason code appends a rejection entry.
 5. **Budget:** an existing pre-read entry for the family this cycle appends a `BUDGET_EXHAUSTED` rejection.
-6. **Lineage:** an ancestor without a release entry appends an `ANCESTOR_UNRELEASED` rejection. A released FAIL ancestor appends `BARRED_DESCENDANT`.
+6. **Lineage:** an ancestor without a release entry appends an `ANCESTOR_UNRELEASED` rejection. A released FAIL ancestor appends `BARRED_DESCENDANT`. Neither consumes budget. `[AI wording: C2 §1.6 says begin_read refuses; placing it at this step is the AI's choice]`
 7. **Order and cooldown:** return `DEFERRED` and write nothing while `t_s < r0′ − 604,800 + 2,592,000`, or while the trend family is status (a) with neither an entry nor a rejection.
 8. `r0 = t_s + 604,800`. Pick `attempt`, and create the nonce and DEFAULT bundle with `sealed_at = t_s`.
 9. Append the pre-read entry under the time rule with deadline C. A miss leaves the DEFAULT a void orphan, spends no budget, and answers `CAP_REACHED`.
