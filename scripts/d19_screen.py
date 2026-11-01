@@ -13,6 +13,10 @@
   summary --record RECORD.json
       a measurement record's seconds per trial (total and slowest path), its
       gate results per trial, and the screen's reference vectors (S8).
+  vectors
+      T1b: the screen's reference vectors, computed here, equal the frozen
+      ones (`screen.FROZEN_REFERENCE_VECTORS`). Exit 0 if they do, 1 if not.
+      `d19.sh freeze` runs it in the pinned image on the build commit first.
 
 `--trials` is a JSON list of trial declarations; `--trial-code` the
 directory of their signal and overlay modules (searched last, DR-8). A record
@@ -96,6 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     show = sub.add_parser("summary")
     show.add_argument("--record", type=Path, required=True)
+    sub.add_parser("vectors")
     for name in ("pilot", "declare"):
         p = sub.add_parser(name)
         p.add_argument("--trials", type=Path, required=True)
@@ -109,6 +114,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "summary":
         print("\n".join(summary(json.loads(args.record.read_bytes()))))
+        return 0
+    if args.command == "vectors":  # T1b: computed, not just the stored constant
+        if screen.screen_reference_vectors() != screen.FROZEN_REFERENCE_VECTORS:
+            print(
+                "refused: the screen's reference vectors differ from the frozen"
+                " ones (T1b)",
+                file=sys.stderr,
+            )
+            return 1
+        print("screen reference vectors: equal to the frozen ones (T1b)")
         return 0
     trials = json.loads(args.trials.read_bytes())
     if args.command == "pilot" and len(trials) != screen.MAX_TRIALS:

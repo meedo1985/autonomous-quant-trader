@@ -3,6 +3,7 @@ The CI job `calibration-launcher` runs the real launcher end to end."""
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -73,6 +74,29 @@ def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
     freeze = launcher[launcher.index("freeze)") : launcher.index("heldout)")]
     assert re.search(r"^\s*NET=bridge  #", freeze, re.M)
     assert "--no-hardlinks" in freeze  # its chown must not reach $BUILD
+    # T1b: the build commit's screen vectors, in the image, without network,
+    # before the build; then /app is the run's checkout again
+    t1b = (
+        "    CODE=$WORK/freeze-root\n"
+        "    engine --rm -- d19_screen.py vectors\n"
+        '    CODE=""\n'
+    )
+    order = (t1b, "NET=bridge", "d19_freeze.py")
+    assert [freeze.index(s) for s in order] == sorted(freeze.index(s) for s in order)
+    # T1BF-S-1: cleared at top level before any command, so an inherited
+    # CODE never reaches engine()
+    assert re.findall(r"^\s*CODE=\S*", launcher, re.M) == [
+        'CODE=""',
+        "    CODE=$WORK/freeze-root",
+        '    CODE=""',
+    ]
+    preamble = launcher[: launcher.index('case "${1:-}" in')]
+    assert preamble.index('\nCODE=""') > 0
+    # T1BFR-S-1: run it, with CODE inherited from the caller's environment
+    mount = subprocess.run(["sh", "-c", preamble + 'echo "${CODE:-$APP}"'],
+                           env={**os.environ, "CODE": "/wrong"},
+                           capture_output=True, text=True, check=True)  # fmt: skip
+    assert mount.stdout.strip() == "/opt/aqt-d19/app"
     # FP2-R1: each existence check runs under the lock; FP2-R2: freeze
     # names the build commit and refuses a modified or writable checkout
     certify = launcher[launcher.index("certify)") : launcher.index("\n*)")]
@@ -94,7 +118,7 @@ def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
         "--init",
         '--cgroup-parent "$SLICE"',
         "--memory 2560m",
-        '"$APP:/app:ro"',
+        '"${CODE:-$APP}:/app:ro"',
     ]
     for flag in flags:
         assert flag in run, flag

@@ -233,6 +233,7 @@ jobs:
           if sudo sh d19.sh freeze "$(printf '%040d' 0)"; then exit 1; fi  # FP2-R2: not the build's commit
           out=$(sudo sh d19.sh freeze "$COMMIT" 2>&1) && exit 1
           echo "$out" | tee /tmp/freeze
+          grep -qx "screen reference vectors: equal to the frozen ones (T1b)" /tmp/freeze
           grep -q "^refused: ValueError: not a qualification run" /tmp/freeze
           sudo test ! -e /var/lib/aqt-d19/qobj-1
           # a failed find fails the step (bash -e), never reads as "none"

@@ -43,6 +43,7 @@ NAME=aqt-d19
 SLICE=aqt-d19.slice
 MEMORY_MAX=2684354560  # 2560M in bytes, as systemd reports it
 NET=none  # only `freeze` changes it (BUILD-1)
+CODE=""  # T1BF-S-1: never inherited; only freeze's T1b step sets it
 # FP2: the build checkout holding this launcher and the later files; the
 # engine checkout $APP stays at the run's commit
 BUILD=/opt/aqt-d19/build
@@ -124,7 +125,7 @@ engine() {  # engine [docker run options...] -- <script> [arguments...]
     docker run $opts --label "$LABEL" --init --user 990:990 --network "$NET" --read-only \
         --tmpfs /tmp --cgroup-parent "$SLICE" --memory 2560m \
         -e AQT_IMAGE_DIGEST="$id" -e HOME=/tmp \
-        -v "$APP:/app:ro" -v "$WORK:/work" -w /work \
+        -v "${CODE:-$APP}:/app:ro" -v "$WORK:/work" -w /work \
         "$id" nice -n 19 python "$script" "$@"
 }
 
@@ -349,6 +350,13 @@ freeze)  # FP2, §4 freeze-order step 5: the qualification object qobj-1. The
     git -C "$WORK/freeze-root" checkout --quiet "$commit"
     git -C "$WORK/freeze-root" remote set-url origin "$(git -C "$BUILD" remote get-url origin)"
     chown -R 990:990 "$WORK/freeze-root"
+    # T1b (PFS2-S-1): the build commit's screen reproduces its frozen reference
+    # vectors in this image, before anything is built; a refusal stops here
+    # (CODE is set and cleared on its own lines: sh may keep a prefix
+    # assignment to a function call, and the freeze below needs $APP at /app)
+    CODE=$WORK/freeze-root
+    engine --rm -- d19_screen.py vectors
+    CODE=""
     NET=bridge  # BUILD-1: the one engine command with network
     engine --rm -- /work/freeze-root/scripts/d19_freeze.py --run-root /app \
         --root freeze-root --definition definition.json \
