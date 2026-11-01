@@ -3,6 +3,7 @@ The CI job `calibration-launcher` runs the real launcher end to end."""
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -89,7 +90,13 @@ def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
         "    CODE=$WORK/freeze-root",
         '    CODE=""',
     ]
-    assert launcher.index('\nCODE=""') < launcher.index('case "${1:-}" in')
+    preamble = launcher[: launcher.index('case "${1:-}" in')]
+    assert preamble.index('\nCODE=""') > 0
+    # T1BFR-S-1: run it, with CODE inherited from the caller's environment
+    mount = subprocess.run(["sh", "-c", preamble + 'echo "${CODE:-$APP}"'],
+                           env={**os.environ, "CODE": "/wrong"},
+                           capture_output=True, text=True, check=True)  # fmt: skip
+    assert mount.stdout.strip() == "/opt/aqt-d19/app"
     # FP2-R1: each existence check runs under the lock; FP2-R2: freeze
     # names the build commit and refuses a modified or writable checkout
     certify = launcher[launcher.index("certify)") : launcher.index("\n*)")]
