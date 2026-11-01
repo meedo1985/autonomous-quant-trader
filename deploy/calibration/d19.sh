@@ -43,6 +43,7 @@ NAME=aqt-d19
 SLICE=aqt-d19.slice
 MEMORY_MAX=2684354560  # 2560M in bytes, as systemd reports it
 NET=none  # only `freeze` changes it (BUILD-1)
+CODE=""  # T1BF-S-1: never inherited; only freeze's T1b step sets it
 # FP2: the build checkout holding this launcher and the later files; the
 # engine checkout $APP stays at the run's commit
 BUILD=/opt/aqt-d19/build

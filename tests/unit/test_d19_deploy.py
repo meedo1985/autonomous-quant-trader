@@ -82,10 +82,14 @@ def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
     )
     order = (t1b, "NET=bridge", "d19_freeze.py")
     assert [freeze.index(s) for s in order] == sorted(freeze.index(s) for s in order)
-    assert re.findall(r"^\s*CODE=.*$", launcher, re.M) == [
+    # T1BF-S-1: cleared at top level before any command, so an inherited
+    # CODE never reaches engine()
+    assert re.findall(r"^\s*CODE=\S*", launcher, re.M) == [
+        'CODE=""',
         "    CODE=$WORK/freeze-root",
         '    CODE=""',
     ]
+    assert launcher.index('\nCODE=""') < launcher.index('case "${1:-}" in')
     # FP2-R1: each existence check runs under the lock; FP2-R2: freeze
     # names the build commit and refuses a modified or writable checkout
     certify = launcher[launcher.index("certify)") : launcher.index("\n*)")]
