@@ -1,226 +1,301 @@
-# R-14a modules: design rev 1 (lockbox module, confirmation module)
+# R-14a modules: design rev 2 (lockbox module, confirmation module)
 
 **Author:** Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-01. AI drafting, not an authority.
-**Status: DESIGN DRAFT rev 1, UNREVIEWED.** No code yet. Nothing here changes a decided
-rule. Every rule is cited to the signed-C2 draft text; where this design must choose
-something the text leaves open, it is marked **[DESIGN]**, and a choice that could change a
-result is raised as an owner question instead.
+**Status: DESIGN DRAFT rev 2, UNREVIEWED.** Replaces rev 1 (`3f141fb`) whole. No code yet.
+Nothing here changes a decided rule. Every rule is cited to the signed-C2 draft; a choice
+the text leaves open is marked **[DESIGN]**; a choice that could change a result is an
+owner question.
 
-**Authority, in order:** R-14a (`OWNER_DECISION_R14A.md`; text inlined in
-`s4-amendment-draft/DRAFT_WORDING.md` l.159), R-14b..R-14d (l.160-162), Annex D rev 2.1
-(`s4-amendment-draft/ANNEX_D_LOCKBOX.md`, freeze-sheet `3abcafb`), Annex A-C, D-11, D-12,
-D-20. All on branch `freeze-sheet`. The C2 text is still a draft; the modules bind only
-through the owner's signed C2 (R-14a item 1).
+**Reviews of rev 1:** `SOL_DESIGN_REVIEW_3F141FB.md` (FIX, R14D-S-1..7) and
+`ASTRA_DESIGN_REVIEW_3F141FB.md` (FIX, R14D-A-1..5). Dispositions in §0.
 
-**Conditions to meet before the owner signs C2** (R-14a decision, "Conditions carried forward"):
-each module built with its input-to-record contract, consumer-boundary tests, an
-independent different-model review and the owner's §16 PR review; both SHA-256 values in
-the signed protocol bytes; the R-8 extension (R-14b) written.
+**Authority:** R-14a (`OWNER_DECISION_R14A.md`; text in `s4-amendment-draft/DRAFT_WORDING.md`
+l.159), R-10, R-13, R-14, R-14b..d (l.154-162), Annexes A, B, C, D (Annex D rev 2.1,
+freeze-sheet `3abcafb`). Frozen code: engine commit `eeaa728`; later object files at main
+`eba1c21`. The modules bind only through the owner's signed C2 (R-14a item 1).
 
----
-
-## 1. Finding that needs an owner decision first (Q-P1)
-
-R-14a item 4 says a module calls a frozen function wherever one implements a rule, and
-implements a rule itself only where none does. An inventory of the frozen code
-(engine commit `eeaa728`, `src/aqt` at that commit, and the later object files at
-`eba1c21`) against the C2 gates gives:
-
-| C2 rule (Annex) | Frozen implementation | What is missing |
-|---|---|---|
-| DSR, rules 1-6, nominee (B) | `calibration/dsr.py evaluate` (engine) | glue only |
-| G-1 paired CI (C-1) | `statistics.paired_sharpe_improvement_interval` (aqt) | the pass comparison |
-| G-3, G-5, G-6, G-7, G-8, G-11, G-14 (C-3, C-5, C-7, C-8, C-10, C-12) | `screen.screen_gates` (later object) | glue only |
-| G-2 drawdown (C-2) | `descriptive._max_drawdown` (aqt); `gates.g2` = availability only | the comparison |
-| G-4 fold win rate (C-4) | `gates.g4` = availability only | **the statistic and its pass rule** |
-| G-10 PBO (C-9) | `gates.g10` = availability only | **PBO itself (12,870 splits) and its pass rule** |
-| G-12 effective decisions (C-11) | `statistics.effective_sample_size` (aqt) | the threshold comparison per horizon |
-| C-14 CPCV report (diagnostic) | none found | **the report** |
-| Selection rule (A) | not yet inventoried | to be checked in rev 2 |
-| Lockbox L-1..L-4 (D-1) | `sharpe`, `_influence`, `block_length`, `_uniform_index`, `type_seven_quantile`, `_max_drawdown`, `screen.daily_returns`, `confirmation_path`, `estimator_seed` | **the m≠n bootstrap (A4)**, the adapter (A6), the bundle (B4.2) |
-
-So under R-14a as decided, the confirmation module would itself implement **G-4, PBO,
-the CPCV report and several comparisons**: promotion statistics written after the
-`AQTQ1` post. R-14a accepted this kind of residual in general terms ("some statistical
-implementation is not frozen at AQTQ1"), and its §2 kept the owner an alternative: move
-such code into a frozen file before step G.
-
-Step G cannot start before the development run ends (~25-26 Nov), so that alternative
-is still open now. It is no longer open after step G.
-
-**Q-P1. Where should the missing C2 gate statistics (G-4, PBO, CPCV report, the pass
-comparisons) live?**
-
-- **(a) Before the freeze, in `screen.py` [recommended].** Pure functions with frozen
-  reference vectors, added to `screen.py` in one reviewed change (as PR #81 was), so
-  `AQTQ1` binds them. The confirmation module then only loads, verifies, calls and
-  records. Cost: a new `screen.py` review and `FREEZE_REVIEWS.json` update, a G0 redo,
-  and risk of delaying step G if the review runs long.
-- **(b) After the freeze, in the confirmation module, as R-14a allows.** No change to the
-  freeze schedule. The residual grows: promotion statistics are bound only by the
-  later C2-post anchor, and could reflect knowledge gained after `AQTQ1`.
-
-The lockbox module's own statistics (the A4 bootstrap, the adapter) are already
-decided to live in the lockbox module (D-20 Q4, R-14a item 4); Q-P1 does not
-reopen that.
-
-Sections 2-6 hold under either answer; under (a) the confirmation module's §4.3 shrinks
-to calls.
+**Before the owner signs C2** (R-14a decision): both modules built, each with its complete
+input-to-record contract in the signed text, consumer-boundary tests, an independent
+different-model review and the owner's §16 PR review; both SHA-256 values in the signed
+protocol bytes; R-14b's bindings carried into those bytes (R-14b itself is written,
+DRAFT l.160).
 
 ---
 
-## 2. Files and boundaries (R-14a items 1, 3, 6)
+## 0. Dispositions of the rev 1 reviews
 
-| | Lockbox module | Confirmation module |
+| ID | Disposition | Where |
 |---|---|---|
-| File **[DESIGN]** | `calibration/c2_lockbox.py` | `calibration/c2_confirmation.py` |
-| Runs as | `lockbox_eval` (worker) | the registered experiment-engine identity |
-| Reads | BTC, ETH 1h bars over `[S_pre, L1)` through the store's read gate only (D-1.8) | the confirmation partition the signed C2 allows |
-| Returns | the sealed bundle to the store (B4.2); research sees PASS/FAIL only | the C2 evaluation record; the prediction artifact and sealing record |
-| Imports | engine-commit modules, later object files, stdlib, pinned image libraries; **not** the other module | same |
+| R14D-S-1 ~ R14D-A-1 (BLOCKER: `screen_gates`, `g11_check`, `g14_check` return availability only; seven gates mis-listed as "glue") | **Accepted.** Verified at `eba1c21`: `screen_gates` returns `None` for an available run and discards the statistics (l.1238-1261); `g11_check` and `g14_check` likewise. Inventory rebuilt gate by gate, primitive vs pass decision. `None` is never read as PASS. | §1 |
+| R14D-S-2 ~ R14D-A-3 (BLOCKER: Annex A and G-13 unallocated; `dsr.evaluate`'s nominee is a column index; its classifier is optional) | **Accepted.** Every P18 rule and G-13 now has an owner. The classifier is passed always. | §2 |
+| R14D-S-3 ~ R14D-A-2 (BLOCKER: `check_object` rejects the new modules; `__file__` hash is not proof of executed bytes) | **Accepted.** Astra reproduced the refusal. New loader contract uses the existing lower-level checks, extended by exactly the two signed files. | §4 |
+| R14D-S-4 (BLOCKER: lockbox pre-read list incomplete; read must depend on `begin_read`) | **Accepted.** | §6.3, §6.4 |
+| R14D-S-5 ~ R14D-A-5 (BLOCKER / NON-BLOCKING: contracts are an outline) | **Accepted in part.** The lockbox contract is written in full (§7.1). The confirmation contract is written per gate (§7.2); the exact function names in it depend on Q-P1, and its text must be complete before the owner signs C2, which stays a hard prerequisite. | §7 |
+| R14D-S-6 ~ R14D-A-4 (NON-BLOCKING: Q-P1 framing) | **Accepted, Astra's framing.** (b) is the decided baseline; (a) is an optional earlier binding, with the true scope and schedule cost. (a) needs no new exception; the object and the `AQTQ1` post would then carry the new bytes. | §3 |
+| R14D-S-7 (NON-BLOCKING: keep the A4 location out of Q-P1) | **Accepted.** Q-D1 is separate. | §5.5 |
 
-Each is one file. Neither reads a path, environment variable or argument that selects
-code. The entry points refuse to start unless the R-14a item 2 chain verifies (§3).
+---
 
-**Out of scope here** (separate builds, D-3.9): the store service (index, sealed files,
-`L_store`, `begin_read`, read gate, release, delivery, replay), the publisher, the signer,
-the access tooling, and the drand fetch. The modules call the store through a narrow
-interface (§5.4) so they can be tested against a synthetic store.
+## 1. Inventory: frozen primitive vs pass decision, per rule
 
-## 3. Shared start check: the R-14a item 2 chain
+"Primitive" = a frozen function that computes the gate's statistic or part of it.
+"Decision" = the code that turns it into PASS / FAIL / N/A / UNAVAILABLE per Annex C.
+All rows verified against `eeaa728` / `eba1c21`.
 
-Before any protected-data read, each entry point verifies and logs, refusing on any
-mismatch or unverifiable step:
+| Rule (source) | Frozen primitive | Frozen decision? | Missing work |
+|---|---|---|---|
+| C-0 Sharpe, E-IMPROV, E-DIFF | `statistics.sharpe` l.203, `paired_sharpe_statistics` l.218 | n/a | window/identity/integrity checks in the caller |
+| C-6 event contract | `backtest/event_contract.run_event_contract` l.119; `screen.leg_targets`, `benchmark_targets` | n/a | none (used by every run) |
+| G-1 paired CI (C-1) | `paired_sharpe_improvement_interval` l.591 | no | `lower > 0` comparison; R-13 stream seed |
+| G-2 drawdown (C-2) | `descriptive._max_drawdown` l.232 | no (`gates.g2` = availability) | `DD(BTC)` comparison |
+| G-3 ETH sanity (C-3) | ETH run in `screen_gates` (statistics discarded) | no | E-IMPROV `> 0` AND `DD(ETH)` |
+| G-4 fold win rate (C-4) | none (`gates.g4` = calibration length check only) | no | **calendar 3-month blocks, integrity, per-block E-IMPROV, win rule, rate ≥ 0.60** |
+| G-5 2x cost (C-5) | 2x run in `screen_gates` (statistics discarded) | no | four-condition rule |
+| G-6, G-7 delays (C-7) | delayed runs in `screen_gates` (discarded) | no | survival rule C-7 item 4 |
+| G-8 plateau (C-8) | neighbours computed in `screen_gates` l.1259 (discarded) | no | **median `m ≥ 0.5·v` and boundary rule** |
+| G-9 DSR (A P18-6, Annex B) | `dsr.evaluate` l.120 (rules 1-6, S0, z, column nominee) | no (`choices._passes` l.372 is the calibration-record form) | `z* ≥ z_crit` on the declared nominee; A-V1 Task-12 comparison and disclosure |
+| G-10 PBO (C-9) | `gates.SPLITS` l.18 (12,870 splits), `gates.g10` availability | no | **PBO score per split, mean `phi`, `phi ≤ 0.30`; N/A when K < 20** |
+| G-11 random null (C-10) | `g11_check` l.1173 draws and statistics (discarded) | no | **≥ 476 of 500 strictly below** |
+| G-12 ESS (C-11) | `statistics.effective_sample_size` l.261 | no (`gates.g12` checks all three horizons, calibration form) | `ESS ≥ 120` at the nominee's **declared** horizon |
+| G-13 benchmark hash (R-10; DRAFT l.317) | none found | no | hash equality with the v1.1 canonical benchmark hash |
+| G-14 shuffled labels (C-12) | `g14_check` l.1205 ICs (discarded) | no | **≥ 476 of 500 null ICs strictly below** |
+| C-14 CPCV report (diagnostic) | `type_seven_quantile`, model helpers | no | **8 groups, 28 splits, 7 paths, report**; read by nothing |
+| L-1..L-4 (Annex D D-1) | `sharpe`, `paired_sharpe_statistics`, `_influence`, `block_length`, `_uniform_index`, `type_seven_quantile`, `_max_drawdown`, `screen.daily_returns`, `confirmation_path`, `estimator_seed`, `walk_forward` | no | **A4 bootstrap (m ≠ n)**, A6 adapter, L-condition evaluation, bundle (B4.2) |
 
+**Summary.** No C2 pass decision exists in frozen code. The heavy new statistics are G-4,
+G-8, G-10 (PBO), G-11, G-14 and the C-14 report; the rest are comparisons on frozen
+primitives. Estimated size **[DESIGN, rough]**: 700-1,000 lines plus tests and reference
+vectors, of which ~400-600 are the statistics above.
+
+## 2. Annex A allocation (R14D-S-2, R14D-A-3)
+
+| Rule | Executed by | How |
+|---|---|---|
+| P18-0 (i)-(iii) eligibility, A-B7 (v) | governance record before declaration; the confirmation module **checks** the recorded fields | the module refuses unless the declaration records the window id, manifest, non-overlap list and `T ≥ T_min`; the job-log verification that the v1 partition was never mounted is a human/governance step, recorded before declaration **[DESIGN]** |
+| P18-1 declared set | confirmation module, before the first evaluation | `1 ≤ |J_f| ≤ 80`, unique ids, complete hashes, both families when eligible; invalid → cycle does not start |
+| P18-1 automatic re-run | confirmation module, using `core/attempts.py` accounting | one re-run per family, first crash only, same hash and seed; `attempts.py` l.81-90 disclaims enforcement, so the module enforces it |
+| P18-2 one shared look | confirmation module | one call evaluates both families, trend then volatility; refuses a second look (look record keyed by cycle) |
+| P18-3 availability `A_f` | confirmation module | every declared trial has exactly one completed evaluation with matching hash; finite `S`, valid `T`, finite positive `D`, finite pre-Φ `z`; an unfinished trial makes `A_f` fail, never an omitted column |
+| P18-4 nomination | `dsr.evaluate` + confirmation module | matrix columns in **declared-id order**, so `dsr.evaluate`'s lowest-column tie rule is the lowest-declared-id rule; the module maps the column back to the trial id and checks the mapping is a bijection |
+| supported-law classifier (D-18 O18-2; prereg §3.5) | `dsr.evaluate(..., classifier=...)` | always passed (`classifier.diagnostics`, `within`); calling without it is refused by the module |
+| P18-5 no fallback | confirmation module | only `J_f*` proceeds; no code path nominates another trial |
+| P18-6 G-9 | per Q-P1 | `z* ≥ z_crit`, `z_crit` parsed from its decimal string to the nearest binary64 |
+| P18-7 every gate regardless; cause codes | confirmation module | every pre-lockbox mandatory gate is computed for every nominee whatever earlier results are; a gate not computed is `UNAVAILABLE`; cause code by fixed precedence: infrastructure/governance (`U_ops`) first, else procedure (`U_proc`) |
+| A-V1 | confirmation module | reproduce the frozen reference vectors on the frozen runtime; compute V and Task-12 numerics; V governs; differences disclosed |
+
+## 3. Q-P1, reframed (owner question)
+
+**Where should the missing C2 pass decisions and statistics of §1 live?**
+
+- **(b) Baseline, already decided (R-14a).** In the confirmation module, written after the
+  `AQTQ1` post. Bound by the C2 declaration post's chain, reviewed under §16, tested
+  against its contract. Accepted residual: promotion statistics are frozen later than
+  the qualification object and could reflect knowledge gained after it. No effect on the
+  freeze date.
+- **(a) Optional earlier binding.** Put the §1 statistics and decisions (not the I/O,
+  loading, records or Annex A orchestration) into `screen.py` before step G, as pure
+  functions with frozen reference vectors, in one reviewed change. Needs no new
+  exception: `screen.py` is in `qobj.LATER` and `REVIEWED`; the route is independent
+  review, owner §16 PR review, a new `FREEZE_REVIEWS.json` entry, a new build commit, a
+  G0 redo, and step G and `AQTQ1` built from those bytes. **Cost:** ~700-1,000 reviewed
+  lines to be merged before the development run ends (~25-26 Nov) or step G waits for
+  them; a large `screen.py` change late in the freeze sequence carries its own review
+  risk. Even under (a), the confirmation module's alignment and aggregation stay post-freeze
+  code (R14D-S-6).
+
+**[AI recommendation]** (b), unless the owner wants the promotion statistics frozen with
+the qualification object badly enough to accept a possible delay of step G. Rev 1
+recommended (a) on an estimate that was several times too small.
+
+## 4. Loading and the start check (R14D-S-3, R14D-A-2)
+
+**Entry script** (one per module, in the module file's own `__main__` guard, or a
+two-line launcher in the engine/build checkout **[DESIGN]**): before importing any
+`calibration` or `aqt` module it sets `sys.dont_write_bytecode = True` and points
+`sys.pycache_prefix` at a new empty directory (as `scripts/d19_screen.py` l.29-36 do),
+so `rundef.bytecode_problem()` can pass.
+
+**Chain (R-14a item 2), before any protected-data read:**
 1. the accepted C2 post (O-6a §3);
 2. declaration bytes whose SHA-256 is the post's `declaration_sha256`;
 3. the declaration's `protocol_hash`;
 4. the complete signed C2 protocol bytes hashing to it, containing both module rows;
-5. the SHA-256 of the module file actually loaded (`Path(__file__).read_bytes()` at import,
-   compared with its row) **[DESIGN]**.
+5. for each of the two module files on disk: raw SHA-256 equals its signed row.
 
-Plus R-14's two checks (engine-commit files, later object files against the posted
-manifest), which the existing `qobj`/`screen.check_object` code performs; the module
-calls it.
+**Code check:** the module repeats `screen.check_object`'s steps (manifest against the
+posted hash, `qobj.read`, `mapping.check_runtime`) and calls `screen.check_screen_code`
+with `reviewed` = the object's `mapping.py` and `screen.py` **plus exactly the two
+module files' bytes verified in step 5**, under their repository paths. That function
+then (a) checks the engine inventory against the run's `generator_sha256`, (b) calls
+`bytecode_problem()`, which refuses any engine module not executed from its `.py`
+source, and (c) refuses every loaded `calibration`/`aqt` module whose bytes are neither
+the engine commit's nor one of these four. Nothing else is added; R-14's two checks are
+unchanged, and any third extra module is still refused.
 
-Each module carries its own copy of this check (no shared import, item 3). The two
-copies are kept identical by a test that compares their source text **[DESIGN]**.
+Each module carries its own copy of this sequence (no cross-import, item 3). A test
+checks that the two copies are identical in source **[DESIGN]**.
 
-## 4. Confirmation module
+**Tests:** a valid start passes (both modules loaded, verified bytes); each broken chain
+link refuses before any read; a substituted module file, a stale `.pyc`, a non-empty
+cache directory and an extra loaded module each refuse.
 
-### 4.1 Seeds verified before any gate (R-14a item 7; R-13; D-3.2)
+## 5. Confirmation module (`calibration/c2_confirmation.py` [DESIGN])
 
-From the governing records, never from the caller: the accepted post; the drand round
-of the bound quicknet chain (FP3) and its signature and randomness (the existing
-`deploy/calibration/drand-verify` result is an input, verified again here **[DESIGN:
-how, in rev 2]**); `family_seed_f` (R-7); every `trial_seed_j` (R-13); each nominee's
-`seed_l266` and `estimator_seed = screen.estimator_seed(seed_l266)` under
-`L266_MOD_2_31`; the C-0 window and id; `g`. Any failure: evaluation invalid, no gate
-runs (`seed_disclosure`). Every value and its source go into the record (§27).
+Runs as the registered experiment-engine identity, on the confirmation partition the
+signed C2 allows; returns only the C2 evaluation record, the prediction artifacts and
+the sealing record.
 
-### 4.2 Paths
+### 5.1 Seeds (R-14a item 7; R-13; D-3.2)
 
-Confirmation bars → `screen.confirmation_path` (final hour, R-14d) → `screen.path_series`.
-Contract items in §6.
+Verified against the governing records, never taken from the caller: the accepted post;
+the selected round of the bound quicknet chain (FP3), its BLS signature and randomness,
+verified **inside the module** with the pinned verifier library of
+`deploy/calibration/drand-verify` against the chain public key in the signed C2
+**[DESIGN; open: the library must be importable in the pinned image or the check runs
+as a verified subprocess, to settle in review]**; `family_seed_f` (R-7); every
+`trial_seed_j` (R-13); each trial's `seed_l266` and `estimator_seed` under
+`L266_MOD_2_31`; the C-0 window and id; `g`. Failure: evaluation invalid, no gate runs.
+Every value and its source is recorded (§27).
 
-### 4.3 Gates
+### 5.2 Steps, in order
 
-Calls `screen.screen_gates` (with `trial_seed`, `window_id`, `g_days`,
-`model_seed = estimator_seed`), `dsr.evaluate`, `paired_sharpe_improvement_interval`,
-`effective_sample_size`, `_max_drawdown`; under Q-P1 (b) also its own G-4, PBO and
-CPCV code. Writes the C2 evaluation record, including each trial's pre-look `d_sha256`
-(D-3.5).
+1. Start check (§4). 2. Declaration validity (P18-0 fields, P18-1). 3. Seeds (§5.1).
+4. Per trial: build the path (§7.2 C-T), run the trial and benchmark legs, record
+`S`, `T`, `D`, `d_sha256` (pre-look, D-3.5). Crashes go to P18-1 re-run accounting.
+5. At the look (P18-2): availability `A_f` (P18-3), `dsr.evaluate` with the classifier,
+nominee mapping (P18-4). 6. For each nominee: every gate G-1..G-14 (§1), every one
+computed whatever the others give (P18-7). 7. Sealing (§5.3). 8. The C2 evaluation record.
 
-### 4.4 Sealing (A7, R-14a rev 3 item 2; D-3.5)
+### 5.3 Sealing (A7; R-14a rev 3 item 2; D-3.5), before any lockbox read
 
-For each declared family, before any lockbox read:
-1. re-run the nominee's BTC baseline pair from the confirmation bars (registered code,
-   `estimator_seed`, final-hour rule, both legs flat at `w0`, R-14d);
-2. require `SHA256` of `d` to equal the record's `d_sha256`;
-3. `ψ = statistics._influence(d, sharpe(d))`, `b = block_length(ψ).value`;
-4. the A4 forecast: 2,000 replicates of `m = 457` draws over `[0, n)` (§5.2's generator,
-   which the confirmation module must also run, see Q-D1);
-5. build `aqt.lockbox.prediction.v1`, `artifact_sha256 = SHA256(cj(artifact))`;
-6. write the sealing record with every family's status (a)-(d) (D-1.7). Any failure: (d).
+For every declared family, status (a)-(d) (D-1.7; (d) over (c)); for status (a):
+re-run the nominee's BTC baseline pair from the confirmation bars (registered code,
+`estimator_seed`, `confirmation_path`, both legs flat at `w0`, R-14d); require
+`SHA256(d)` = the recorded `d_sha256`; `ψ = _influence(d, sharpe(d))`;
+`b = block_length(ψ).value`; the A4 forecast (§5.5); build `aqt.lockbox.prediction.v1`
+with `code = {lockbox_module_sha256, confirmation_module_sha256, engine_commit,
+screen_object_sha256}` (both module hashes from the signed rows); write the artifact and
+`aqt.lockbox.sealing.v1`. Any failure → status (d).
 
-**Q-D1 [DESIGN, raised for review].** A4's generator is needed on both sides: the
-confirmation module computes `q` when sealing; the lockbox module recomputes the startup
-reference vectors (D-3.4) and never recomputes `q`. Since neither module may import the
-other, the generator code exists twice. Proposal: identical function text in both files,
-with a test that the two copies' source and reference vectors are identical. The
-alternative, putting it in `screen.py` before the freeze, is part of Q-P1 (a).
+### 5.4 C-14 report
 
-## 5. Lockbox module
+Computed only if C-11 effective decisions ≥ 250; otherwise "CPCV not enabled". Written
+to the record as `diagnostic_only`; no code path reads it (test).
 
-### 5.1 Startup (D-3.4)
+### 5.5 Q-D1: the A4 generator in both modules (separate from Q-P1)
 
-On each process start on the qualified image: recompute the A5 reference vectors for the
-published synthetic `d` and ask the store to append `aqt.lockbox.startup.v1 =
-{startup_check_id, lockbox_module_sha256, image_digest, vectors_sha256, result}`.
+The confirmation module needs it to compute `q`; the lockbox module needs it for the
+startup reference vectors (D-3.4). R-14a item 3 forbids cross-import, and R-14a item 4
+places a rule with no frozen function in the module. Proposal: identical function text in
+both files, with tests that the two copies' source and A5 reference vectors are
+identical **[DESIGN]**. Moving it into a frozen file would be a separate proposed change
+to the signed allocation, not part of Q-P1.
 
-### 5.2 The A4 generator (implemented here; R-14a item 4)
+## 6. Lockbox module (`calibration/c2_lockbox.py` [DESIGN])
 
-Seed material: the production layout of IMPLEMENTATION_CONVENTIONS l.84-94, purpose
-`lockbox_prediction`, asset `BTCUSDT`, cost `1.0`, window id `["<w0>","<w1>"]`,
-`output_length = 457`, replicate index `r`. Draws follow `bootstrap_indices`' order
-(`_uniform_index` start, then per step `generator.random() < 1/b` restart or step
-`+1 mod n`), **457 times over `[0, n)`**. `T*_r = sharpe(d[idx_r]).scaled`;
-`q = type_seven_quantile(T*, 0.05)`. `ReplicateStream` unchanged.
+Runs only as `lockbox_eval`; reads BTC/ETH 1h over `[S_pre, L1)` only through the store's
+read gate; returns the sealed bundle to the store; research sees PASS/FAIL only.
 
-### 5.3 Pre-read checks and the run (D-1.8, D-3.5)
+### 6.1 Startup (D-3.4)
 
-Pre-read: artifact hash = sealing entry; seeds re-derive; `seed_source`, `purpose`, `m`,
-module hashes match signed values; P-4. Any difference: the reason code (Q2b list).
-Then through the read gate: warm-up from `S_pre`; refits at `r_k = L0 + 30k`
-(`k = 0..15`) on `[r_k − 24 months, r_k)`, labels purged at `r_k`, with
-`estimator_seed`; both legs flat at L0 (R-14d); `confirmation_path`; the A6 adapter;
-L-1..L-4 (D-1.5) with availability (D-1.6); computed twice, must match (D-1.8 item 6).
+On each process start on the qualified image, after §4: recompute the A5 reference vectors
+for the published synthetic `d`; ask the store to append `aqt.lockbox.startup.v1`.
 
-### 5.4 Output and the store interface
+### 6.2 The A4 generator (R-14a item 4)
 
-Builds `aqt.lockbox.sealed_bundle.v1` (B4.2) without `operational` (filled by the store),
-precedence DEFAULT > PERFORMANCE > TECHNICAL > PASS, sorted reasons. Store calls used
-**[DESIGN]**: `append_startup`, `record_pre_read_check`, `open_read(evaluation_id)` → bar
-iterator, `write_bundle`, `mark_finished`. Tests run against a synthetic store with an
-injectable clock.
+Seed material: IMPLEMENTATION_CONVENTIONS l.84-94 layout; purpose `lockbox_prediction`,
+asset `BTCUSDT`, cost `1.0`, window id `["<w0>","<w1>"]`, `output_length = 457`,
+replicate `r = 0..1999`; `seed_hex` the R-13 trial seed. Draw order as
+`bootstrap_indices`: `_uniform_index(gen, n)` first, then for each of the next 456 steps
+`gen.random() < 1/b` → `_uniform_index(gen, n)`, else `(prev + 1) mod n`. Over `[0, n)`,
+457 draws. `T*_r = sharpe(d[idx_r]).scaled`; `q = type_seven_quantile(T*, 0.05)`.
+`ReplicateStream` unchanged.
 
-## 6. Input-to-record contracts (R-14a item 5) — outline, filled in rev 2
+### 6.3 Pre-read checks (D-1.8 item 2; D-3.5; D-3.4), all before any lockbox byte
 
-For each module, a table taken from C-0, C-6, A4, A6, A7:
-- timestamps read, in order (hourly `start + i h`, `i = 0..24·m − 1`; window ends by
-  `confirmation_path`, never the bar at the end instant);
-- day pairing of candidate and benchmark legs (`w0 + k` / `L0 + k` days, both legs);
-- complete-window rule (exactly 457 lockbox days, 10,968 hourly segments; source
-  `n ≥ 16`);
-- each transformation (daily returns, `d_t = c_t − b_t`, ψ, b, replicates, `q`);
-- error mapping (`DAYS_INCOMPLETE`, `NONFINITE_EQUITY`, `RUN:RUN_FAILED`, the Q2b codes,
-  status (d), `seed_disclosure` invalid);
-- output fields, with the A7 field → producing function map.
+Immutable lookup and hash match of: the hypothesis record; trial code (A1a artifacts,
+hash-before-execute as `screen.load`) and configuration; the nominee's model seed; the
+engine and backtester code at the bound commit; the data-manifest hash. Then: artifact
+hash = sealing entry; `seed_l266`, `estimator_seed` re-derive under the signed policy;
+`seed_hex` re-derives from `family_seed_f` and `trial_id`; `seed_source`, `purpose`, `m`
+and both module hashes equal the signed values; P-4; a `PASS` startup record exists for
+this module hash and image. Any difference → the Q2b reason code, recorded by
+`record_pre_read_check`; nothing read, segment not EXPOSED.
 
-Missing, duplicate or misaligned observations refuse; nothing is dropped, filled or
-re-paired.
+### 6.4 Read and run
 
-## 7. Tests (Annex D D-3.8, the parts these modules own)
+The worker does not authorise its own read. `open_read(evaluation_id)` succeeds only
+after the publisher's `begin_read` has made the pre-read entry durable with its DEFAULT,
+budget and EXPOSED status, and the store's read gate has verified the DEFAULT and the
+startup record (D-3.7); each bar is served under the store's `D*` start check. Then:
+warm-up from `S_pre`; refits at `r_k = L0 + 30k` (`k = 0..15`) on `[r_k − 24 months, r_k)`,
+labels purged at `r_k`, `estimator_seed` (`screen.walk_forward`); both legs flat at L0
+(R-14d); `confirmation_path`; the A6 adapter; L-1..L-4 with D-1.6 availability. The whole
+read-and-compute runs twice; results must be identical.
 
-Synthetic data only. A1a artifacts; A1b seeds (including a seed mapping to 0); A5
-vectors and startup refusal; A6 (kernel vs `max_drawdown` bit-equal, BTC/ETH availability
-independent, hourly instants, two-hour series refused, terminal bar changes only the
-last return); A7 `seed_hex` vector and `seed_source` mismatch; B4.2 byte-exact bundles
-incl. the PASS fixture (1,053 bytes, `d64d228b…ba520`); the R-14a chain (each link
-broken refuses before any read); consumer-boundary contract tests (missing, duplicate,
-misaligned day/hour each refuse; the series reaching each statistic equals the
-contract's); the two duplicated-code identity tests (§3, Q-D1). Store, signer, publisher
-tests belong to their own builds.
+### 6.5 Output
 
-## 8. Build order **[DESIGN]**
+`aqt.lockbox.sealed_bundle.v1` without `operational`; precedence DEFAULT > PERFORMANCE >
+TECHNICAL > PASS; `reasons` sorted unique `<scope>:<code>`; `values` hexf or null; then
+`write_bundle`, `mark_finished`. Store calls **[DESIGN]**: `append_startup`,
+`record_pre_read_check`, `open_read`, `write_bundle`, `mark_finished`; tested against a
+synthetic store with an injectable clock. The store, publisher and signer are separate
+builds (D-3.9).
 
-1. Owner answers Q-P1. Under (a): the `screen.py` gate change first (design, review,
-   §16 PR, `FREEZE_REVIEWS`, G0 redo) before step G.
-2. Lockbox module (smaller, its rules fully stated in Annex D).
+## 7. Input-to-record contracts (R-14a item 5)
+
+### 7.1 Lockbox module (complete)
+
+| Item | Contract |
+|---|---|
+| Timestamps read | BTC and ETH 1h bars, `open_time` in `[S_pre, L1)` ascending, each exactly once, served by the read gate under the cycle manifest; the bar at `L1` is never read (`confirmation_path` supplies the final close) |
+| Warm-up | EMA, EWMA and benchmark-volatility state from `S_pre`, the feature factory's convention |
+| Run window | `[L0, L1)`: hourly instants `L0 + i h`, `i = 0..10,967`; both legs start flat at L0 |
+| Day pairing | day `k` = `[L0 + k d, L0 + (k+1) d)`, `k = 0..456`; candidate and benchmark legs paired on the same `k`; `d_k = c_k − b_k` |
+| Complete-window rule | exactly 457 days and 10,968 hourly segments per leg; anything else → `DAYS_INCOMPLETE` |
+| Transformations | daily returns `screen.daily_returns`; `T_L = sharpe(d).scaled`; MDD `_max_drawdown((1.0, *equity))`; E-IMPROV via `paired_sharpe_statistics`; `q` from the sealed artifact, never recomputed |
+| Availability → result | D-1.6 items 5-7; A6 failures `DAYS_INCOMPLETE`, `NONFINITE_EQUITY`; equity `EventContractError` → `RUN:NONFINITE_EQUITY`; other runner error → `RUN:RUN_FAILED`; BTC failure nulls L-1..L-3, ETH failure nulls L-4; each atomic comparison null iff an input is null |
+| Refusals | missing, duplicate, out-of-order or off-grid bar; series interval ≠ 1 h; start ≠ L0; non-finite or non-positive equity: refuse, never fill or drop |
+| Output fields | B4.2 bundle fields exactly (`values`, `conditions`, `reasons`, `upside`, `capture`); `operational` left to the store |
+| A7 fields produced here | none (reads the artifact; checks `code.lockbox_module_sha256` and `code.confirmation_module_sha256` against the signed rows) |
+
+### 7.2 Confirmation module (structure complete; function names depend on Q-P1)
+
+| Item | Contract |
+|---|---|
+| C-T timestamps | confirmation 1h bars of BTC and ETH, `open_time` in `[w0 − warm-up, w1)` ascending, each exactly once; validated **before** `screen.path_series` rebuilds times from row positions (`screen.py` l.911); the bar at `w1` is never read (`confirmation_path`) |
+| Day pairing | day `k` = `[w0 + k d, w0 + (k+1) d)`, `k = 0..n−1`, candidate and benchmark on the same `k` and the same symbol, cost multiplier, day index (C-0) |
+| Complete-window rule | exactly `n = (w1 − w0)/1 d` days per leg; source `n ≥ 16` for sealing; `T ≥ T_min` (A-B7) checked before computation |
+| Per-gate inputs and rules | G-1..G-14 exactly as Annex C C-1..C-12, R-10 (G-9, G-13); G-4 blocks per C-4 items 1-6; G-12 at the declared horizon; every gate computed (P18-7) |
+| Transformations | Sharpe, E-IMPROV, E-DIFF (C-0); DSR quantities by `dsr.evaluate`, method V (A-V1); the A4 forecast for sealing |
+| Availability → result | Annex C outcomes; "not computed" and "technically invalid" → `UNAVAILABLE` with a P18-7 cause code; seed failure → evaluation invalid, no gate runs; sealing failure → status (d) |
+| Refusals | missing, duplicate, misaligned or non-finite observation inside the window: the affected gate or trial is `UNAVAILABLE` with cause, never repaired (C-0 "Outcomes") |
+| Output fields | C2 evaluation record: per trial `S`, `T`, `D`, `d_sha256`, attempt ids; per family `A_f`, nominee id, z, every gate result and cause code; every seed and its provenance; the C-14 report; the prediction artifact and sealing record |
+| A7 fields produced here | all of `aqt.lockbox.prediction.v1` |
+
+## 8. Tests (the parts these modules own; Annex D D-3.8)
+
+Synthetic data only. Loader (§4). A1a artifacts; A1b seeds (incl. one mapping to 0); A5
+vectors and startup refusal; A6 (kernel vs `_max_drawdown` bit-equal; BTC/ETH availability
+independent; hourly instants; two-hour series refused; terminal bar changes only the last
+return); A7 `seed_hex` vector and `seed_source` mismatch; B4.2 byte-exact bundles incl. the
+PASS fixture (1,053 bytes, `d64d228b…ba520`); per gate: a PASS, a FAIL and an UNAVAILABLE
+case, incl. Astra's examples (negative finite ETH improvement fails G-3; 500 tied null
+statistics fail G-11 and G-14); P18-3 an unfinished trial makes `A_f` fail; P18-4 tie by
+declared id and the column↔id bijection; classifier omitted → refused; P18-7 a failed gate
+does not stop the others; contract tests for each refusal in §7 and that the series
+reaching each statistic is exactly the contract's; the duplicated-code identity tests (§4,
+§5.5); C-14 read by nothing.
+
+## 9. Build order [DESIGN]
+
+1. Owner answers Q-P1. Under (a), the `screen.py` statistics change first, before step G.
+2. Lockbox module (rules complete in Annex D).
 3. Confirmation module.
-4. Contracts (§6) written into the S4 text; R-14b; module hashes into `<<BUILD>>`.
+4. Contracts (§7) into the S4 text; module hashes into `<<BUILD>>`.
 
-## 9. Open for rev 2
+## 10. Still open (to settle in review or build)
 
-Annex A selection-rule inventory; drand re-verification inside the module; the exact
-confirmation-partition access path; C-14 CPCV's inputs; the full §6 contract tables.
+The drand verification library inside the pinned image (§5.1); the exact confirmation
+partition access path and identity mechanism; whether the entry script is inside each
+module or a launcher (§4); the store interface names (§6.5).
