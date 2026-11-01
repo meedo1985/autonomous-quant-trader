@@ -73,6 +73,19 @@ def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
     freeze = launcher[launcher.index("freeze)") : launcher.index("heldout)")]
     assert re.search(r"^\s*NET=bridge  #", freeze, re.M)
     assert "--no-hardlinks" in freeze  # its chown must not reach $BUILD
+    # T1b: the build commit's screen vectors, in the image, without network,
+    # before the build; then /app is the run's checkout again
+    t1b = (
+        "    CODE=$WORK/freeze-root\n"
+        "    engine --rm -- d19_screen.py vectors\n"
+        '    CODE=""\n'
+    )
+    order = (t1b, "NET=bridge", "d19_freeze.py")
+    assert [freeze.index(s) for s in order] == sorted(freeze.index(s) for s in order)
+    assert re.findall(r"^\s*CODE=.*$", launcher, re.M) == [
+        "    CODE=$WORK/freeze-root",
+        '    CODE=""',
+    ]
     # FP2-R1: each existence check runs under the lock; FP2-R2: freeze
     # names the build commit and refuses a modified or writable checkout
     certify = launcher[launcher.index("certify)") : launcher.index("\n*)")]
@@ -94,7 +107,7 @@ def test_the_launcher_gates_by_the_inspected_image_and_caps_the_run() -> None:
         "--init",
         '--cgroup-parent "$SLICE"',
         "--memory 2560m",
-        '"$APP:/app:ro"',
+        '"${CODE:-$APP}:/app:ro"',
     ]
     for flag in flags:
         assert flag in run, flag

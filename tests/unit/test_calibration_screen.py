@@ -2315,6 +2315,29 @@ def test_the_paths_reference_vector_is_bit_exact_on_the_pinned_image() -> None:
     )
 
 
+def test_the_cli_vectors_command_refuses_unless_the_vectors_equal_the_frozen_ones(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # T1b as `d19.sh freeze` runs it in the image (stubbed vectors here)
+    import importlib.util as iu
+
+    spec = iu.spec_from_file_location(
+        "d19_screen_cli3", Path(__file__).parents[2] / "scripts" / "d19_screen.py"
+    )
+    assert spec is not None and spec.loader is not None
+    cli = iu.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    frozen = dict(screen.FROZEN_REFERENCE_VECTORS)
+    monkeypatch.setattr(cli.screen, "screen_reference_vectors", lambda: dict(frozen))
+    assert cli.main(["vectors"]) == 0
+    assert "equal to the frozen ones" in capsys.readouterr().out
+    for key in frozen:
+        changed = dict(frozen, **{key: "0" * 64})
+        monkeypatch.setattr(cli.screen, "screen_reference_vectors", lambda c=changed: c)
+        assert cli.main(["vectors"]) == 1
+        assert "refused:" in capsys.readouterr().err
+
+
 BASELINE = Path(__file__).parent / "baselines" / "screen_ed8aa76.py.txt"
 
 
