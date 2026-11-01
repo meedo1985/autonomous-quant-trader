@@ -1,7 +1,10 @@
 # R-14a modules: design rev 2 (lockbox module, confirmation module)
 
 **Author:** Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-01. AI drafting, not an authority.
-**Status: DESIGN DRAFT rev 2, UNREVIEWED.** Replaces rev 1 (`3f141fb`) whole. No code yet.
+**Status: DESIGN DRAFT rev 3** (rev 2 `670d56f` plus repairs of
+`SOL_DESIGN_RECHECK_670D56F.md` R14D2-S-1..4, marked inline with their IDs; Astra's
+re-check of rev 2 did not complete, `ASTRA_DESIGN_RECHECK_670D56F_ATTEMPT_1.md`).
+Replaces rev 1 (`3f141fb`) whole. No code yet.
 Nothing here changes a decided rule. Every rule is cited to the signed-C2 draft; a choice
 the text leaves open is marked **[DESIGN]**; a choice that could change a result is an
 owner question.
@@ -45,7 +48,7 @@ All rows verified against `eeaa728` / `eba1c21`.
 | Rule (source) | Frozen primitive | Frozen decision? | Missing work |
 |---|---|---|---|
 | C-0 Sharpe, E-IMPROV, E-DIFF | `statistics.sharpe` l.203, `paired_sharpe_statistics` l.218 | n/a | window/identity/integrity checks in the caller |
-| C-6 event contract | `backtest/event_contract.run_event_contract` l.119; `screen.leg_targets`, `benchmark_targets` | n/a | none (used by every run) |
+| C-6 event contract | `backtest/event_contract.run_event_contract` l.119; `screen.leg_targets`, `benchmark_targets` | n/a | the caller validates original timestamps before `screen.path_series` rebuilds them from row positions (l.911); §7.2 C-T (R14D2-S-4) |
 | G-1 paired CI (C-1) | `paired_sharpe_improvement_interval` l.591 | no | `lower > 0` comparison; R-13 stream seed |
 | G-2 drawdown (C-2) | `descriptive._max_drawdown` l.232 | no (`gates.g2` = availability) | `DD(BTC)` comparison |
 | G-3 ETH sanity (C-3) | ETH run in `screen_gates` (statistics discarded) | no | E-IMPROV `> 0` AND `DD(ETH)` |
@@ -71,10 +74,10 @@ vectors, of which ~400-600 are the statistics above.
 
 | Rule | Executed by | How |
 |---|---|---|
-| P18-0 (i)-(iii) eligibility, A-B7 (v) | governance record before declaration; the confirmation module **checks** the recorded fields | the module refuses unless the declaration records the window id, manifest, non-overlap list and `T ≥ T_min`; the job-log verification that the v1 partition was never mounted is a human/governance step, recorded before declaration **[DESIGN]** |
+| P18-0 (i)-(iv) eligibility, A-B7 (v) | **governance consumer** (the declaration's preparer, before the declaration post) produces the evidence; the confirmation module **checks** it | The declaration must record: the window id and manifest; the non-overlap list against every exposed segment; for (i) the job-log extract showing the window was never mounted in the sandbox and an inventory showing no evaluation output on any part of it existed (verified by a person from the job log and output store, recorded with who verified it); for (iii) the last mounted or evaluated observation instant and the `embargo` value with its source outside the window; for (iv) the declaration timestamp; `T ≥ T_min`. The module refuses unless every field is present, recomputes the (iii) gap `w0 ≥ last + embargo` (C2: the first `embargo` dropped, as Annex A says) and the (v) count from the manifest, and refuses on any failure. It cannot itself prove (i)'s negative; that stays a recorded governance check **[DESIGN]** (R14D2-S-2) |
 | P18-1 declared set | confirmation module, before the first evaluation | `1 ≤ |J_f| ≤ 80`, unique ids, complete hashes, both families when eligible; invalid → cycle does not start |
 | P18-1 automatic re-run | confirmation module, using `core/attempts.py` accounting | one re-run per family, first crash only, same hash and seed; `attempts.py` l.81-90 disclaims enforcement, so the module enforces it |
-| P18-2 one shared look | confirmation module | one call evaluates both families, trend then volatility; refuses a second look (look record keyed by cycle) |
+| P18-2 one shared look | confirmation module | **Trigger:** the look runs only when, from the attempt records, every declared trial has finished (completed, or crashed with its one re-run used or unavailable), or the cycle clock has reached day 180 (from the recorded cycle start); a look requested earlier is refused. **Pre-pick termination:** if a protocol-revision or invalidation record for the cycle exists, the module refuses the look and records "no pick" (no promotion). One call evaluates both families, trend then volatility; a second look is refused (look record keyed by cycle). Trials unfinished at day 180 are `U_ops` (timeout) (R14D2-S-2) |
 | P18-3 availability `A_f` | confirmation module | every declared trial has exactly one completed evaluation with matching hash; finite `S`, valid `T`, finite positive `D`, finite pre-Φ `z`; an unfinished trial makes `A_f` fail, never an omitted column |
 | P18-4 nomination | `dsr.evaluate` + confirmation module | matrix columns in **declared-id order**, so `dsr.evaluate`'s lowest-column tie rule is the lowest-declared-id rule; the module maps the column back to the trial id and checks the mapping is a bijection |
 | supported-law classifier (D-18 O18-2; prereg §3.5) | `dsr.evaluate(..., classifier=...)` | always passed (`classifier.diagnostics`, `within`); calling without it is refused by the module |
@@ -120,7 +123,16 @@ so `rundef.bytecode_problem()` can pass.
 2. declaration bytes whose SHA-256 is the post's `declaration_sha256`;
 3. the declaration's `protocol_hash`;
 4. the complete signed C2 protocol bytes hashing to it, containing both module rows;
-5. for each of the two module files on disk: raw SHA-256 equals its signed row.
+5. for each of the two module files: the SHA-256 of **the exact bytes that are compiled
+   and executed** equals its signed row (R14D2-S-1). The entry script does not `import`
+   the module from the path. It reads the file's bytes once, hashes them, refuses on a
+   mismatch, then `compile`s **those same bytes** and executes them into a fresh module
+   object registered in `sys.modules` under the module's name, with `__file__` set to the
+   repository path. No second read of the file feeds execution, so a file swapped before
+   or after the check cannot be what runs. The signed row is the SHA-256 of the file as
+   committed (LF line endings, the git blob bytes), which is what the Linux server's
+   checkout holds; a Windows checkout with `core.autocrlf` would refuse, correctly.
+   `check_screen_code` then also passes, because it reads the same unchanged file.
 
 **Code check:** the module repeats `screen.check_object`'s steps (manifest against the
 posted hash, `qobj.read`, `mapping.check_runtime`) and calls `screen.check_screen_code`
@@ -137,7 +149,9 @@ checks that the two copies are identical in source **[DESIGN]**.
 
 **Tests:** a valid start passes (both modules loaded, verified bytes); each broken chain
 link refuses before any read; a substituted module file, a stale `.pyc`, a non-empty
-cache directory and an extra loaded module each refuse.
+cache directory and an extra loaded module each refuse; a file swapped after the hash
+check and before execution cannot run (the test swaps it between the read and a
+hypothetical second read and shows the executed code object is the hashed bytes').
 
 ## 5. Confirmation module (`calibration/c2_confirmation.py` [DESIGN])
 
@@ -250,16 +264,22 @@ builds (D-3.9).
 |---|---|
 | Timestamps read | BTC and ETH 1h bars, `open_time` in `[S_pre, L1)` ascending, each exactly once, served by the read gate under the cycle manifest; the bar at `L1` is never read (`confirmation_path` supplies the final close) |
 | Warm-up | EMA, EWMA and benchmark-volatility state from `S_pre`, the feature factory's convention |
-| Run window | `[L0, L1)`: hourly instants `L0 + i h`, `i = 0..10,967`; both legs start flat at L0 |
+| Run window | `[L0, L1)`: hourly instants `L0 + i h`, `i = 0..10,967` |
+| Start state (R-14d; D-3.3; D-1.8 item 5) | both legs, BTC and ETH: exposure 0, no pending order, an unset clock, a fresh overlay, equity 1.0, MDD measured from L0; each leg pays its entry cost at its first permitted entry (not at L0) |
 | Day pairing | day `k` = `[L0 + k d, L0 + (k+1) d)`, `k = 0..456`; candidate and benchmark legs paired on the same `k`; `d_k = c_k − b_k` |
 | Complete-window rule | exactly 457 days and 10,968 hourly segments per leg; anything else → `DAYS_INCOMPLETE` |
 | Transformations | daily returns `screen.daily_returns`; `T_L = sharpe(d).scaled`; MDD `_max_drawdown((1.0, *equity))`; E-IMPROV via `paired_sharpe_statistics`; `q` from the sealed artifact, never recomputed |
 | Availability → result | D-1.6 items 5-7; A6 failures `DAYS_INCOMPLETE`, `NONFINITE_EQUITY`; equity `EventContractError` → `RUN:NONFINITE_EQUITY`; other runner error → `RUN:RUN_FAILED`; BTC failure nulls L-1..L-3, ETH failure nulls L-4; each atomic comparison null iff an input is null |
 | Refusals | missing, duplicate, out-of-order or off-grid bar; series interval ≠ 1 h; start ≠ L0; non-finite or non-positive equity: refuse, never fill or drop |
-| Output fields | B4.2 bundle fields exactly (`values`, `conditions`, `reasons`, `upside`, `capture`); `operational` left to the store |
+| Output fields | B4.2 `aqt.lockbox.sealed_bundle.v1` exactly: `schema`, `evaluation_id`, `kind` (RESULT; the DEFAULT is the store's), `result`, `cause_class`, `values {t_l, q, mdd_btc_cand, mdd_btc_bench, eth_e_improv, mdd_eth_cand, mdd_eth_bench}` (hexf or null), `conditions {L1..L4}`, `reasons`, `upside`, `capture {engine_commit, image_digest, input_manifest_sha256, lockbox_module_sha256, prediction_artifact_sha256}`; `operational {read_start, sealed_at, startup_check_id}` filled by the store only |
 | A7 fields produced here | none (reads the artifact; checks `code.lockbox_module_sha256` and `code.confirmation_module_sha256` against the signed rows) |
 
 ### 7.2 Confirmation module (structure complete; function names depend on Q-P1)
+
+**Status (R14D2-S-3):** this table is the design's contract. Its final signed wording,
+with each function named, cannot be written until Q-P1 fixes where the gate code lives.
+Completing it in the S4 text is a hard condition **before the owner signs C2** and is
+tracked as an open build item, not closed by this design.
 
 | Item | Contract |
 |---|---|
