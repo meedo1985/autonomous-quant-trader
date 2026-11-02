@@ -19,3 +19,14 @@ contract, and the CI globs cover all five lockbox test files on Python 3.14.
 provenance (owner decision); the reference vectors on the qualified image; the S4 format
 bindings; the store build's §D-3.7 obligations; the source of an authenticated
 `family_seed_f`.
+
+## Update: R14L5-S-2 decided (owner decision (a), `OWNER_DECISION_R14L5_S2.md`)
+
+| ID | Disposition | Validation |
+|---|---|---|
+| R14L5-S-2 | Repaired per the owner's decision: `c2_lockbox.trial_seed` (the R14L5-CI-1 re-implementation) is removed; `Request.seed_l266` carries the sealing record's line-266 seed; `_check_identity` refuses (`IDENTITY_MISMATCH`) unless the nominee's `seed_l266` equals it and `estimator_seed` equals `screen.estimator_seed(seed_l266)`, which also refuses a malformed seed. The `Store` contract adds `seed_l266` to what the sealing record supplies after the confirmation module's item-7 verification. The module imports no `aqt.core.preregistration` and no third-party package but numpy. | `test_seed_l266_is_the_requests_never_re_derived`, `test_malformed_request_seed_l266_refused` (4 cases); the coherent wrong-index tests now make the request's seed coherent too, so they still test the index binding; `test_a1b_seed_mapping_to_zero_is_accepted` without the monkeypatch. Mac: lockbox tests 128 passed, 1 needs sklearn (CI); engine-import test passed; ruff, ruff format, mypy src, mypy strict on the changed files, lint-imports (7 kept) clean. |
+
+**Open before signing C2:** the sealing record's `seed_l266` and `family_seed_f`, written
+after the confirmation module's item-7 verification (S4 text and store build); the launch
+route; acceptance provenance (owner decision); the reference vectors on the qualified image;
+the S4 format bindings; the store build's §D-3.7 obligations.

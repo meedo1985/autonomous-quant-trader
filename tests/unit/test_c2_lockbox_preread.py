@@ -146,6 +146,11 @@ def _case(
             configuration_hash=screen.trial_sha256(TRIAL),
             prediction_artifact_sha256=hashlib.sha256(raw).hexdigest(),
             family_seed=FAMILY_SEED,
+            seed_l266=trial_seed(
+                protocol_hash=SIGNED.protocol_hash,
+                hypothesis_hash=HYPOTHESIS,
+                trial_index=TRIAL_INDEX,
+            ),
             manifest_sha256=MANIFEST,
             trial_index=TRIAL_INDEX,
         ),
@@ -268,14 +273,35 @@ def test_manifest_mismatch() -> None:
     assert _check({**_case(), "manifest_sha256": _h("other")}) == "IDENTITY_MISMATCH"
 
 
-def test_a1b_seed_mapping_to_zero_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a1b_seed_mapping_to_zero_is_accepted() -> None:
     zero = "0" * 56 + "80000000"  # int(...) = 2**31, so the estimator seed is 0
     assert screen.estimator_seed(zero) == 0
-    monkeypatch.setattr(lb, "trial_seed", lambda **_: zero)
     a = _artifact()
     a["nominee"]["seed_l266"] = zero
     a["nominee"]["estimator_seed"] = 0
-    assert _check(_case(a)) == "PASS"
+    c = _case(a)
+    c["request"] = replace(c["request"], seed_l266=zero)
+    assert _check(c) == "PASS"
+
+
+@pytest.mark.parametrize("seed", ["A" * 64, "0" * 63, "", 7])
+def test_malformed_request_seed_l266_refused(seed: object) -> None:
+    # R14L5-S-2: the sealing record's seed is checked, never trusted
+    c = _case()
+    c["request"] = replace(c["request"], seed_l266=seed)
+    assert _check(c) == "IDENTITY_MISMATCH"
+
+
+def test_seed_l266_is_the_requests_never_re_derived() -> None:
+    # R14L5-S-2 (owner decision (a)): request and artifact agree on a seed
+    # that is not the preregistration derivation; the module does not derive
+    seed = _h("sealed-seed")
+    a = _artifact()
+    a["nominee"].update(seed_l266=seed, estimator_seed=screen.estimator_seed(seed))
+    c = _case(a)
+    c["request"] = replace(c["request"], seed_l266=seed)
+    assert _check(c) == "PASS"
+    assert not hasattr(lb, "trial_seed")
 
 
 def test_a1b_re_derivation_vector() -> None:
@@ -358,7 +384,7 @@ def test_request_and_artifact_coherently_wrong_index_refused() -> None:
         trial_index=4, seed_l266=seed, estimator_seed=screen.estimator_seed(seed)
     )
     c = _case(a)
-    c["request"] = replace(c["request"], trial_index=4)
+    c["request"] = replace(c["request"], trial_index=4, seed_l266=seed)
     assert _check(c) == "IDENTITY_MISMATCH"
 
 
@@ -397,6 +423,6 @@ def test_declaration_changed_after_start_refused() -> None:
         trial_index=4, seed_l266=seed, estimator_seed=screen.estimator_seed(seed)
     )
     c = _case(a)
-    c["request"] = replace(c["request"], trial_index=4)
+    c["request"] = replace(c["request"], trial_index=4, seed_l266=seed)
     c["declaration"] = cj(declaration)  # declaration_sha256 still the verified one
     assert _check(c) == "IDENTITY_MISMATCH"

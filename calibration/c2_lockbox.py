@@ -83,7 +83,6 @@ CODES = (
     "NOT_FINISHED_BY_D_W",
 )
 _HEX = frozenset("0123456789abcdef")
-TRIAL_SEED_DOMAIN = "aqt.trial_seed.v1"  # preregistration.SEED_DOMAIN
 
 
 class LockboxError(ValueError):
@@ -110,26 +109,6 @@ def unhexf(s: object) -> float:
 
 def _time(t: datetime) -> str:
     return t.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def trial_seed(*, protocol_hash: str, hypothesis_hash: str, trial_index: int) -> str:
-    """`aqt.core.preregistration.trial_seed` (L266), rebuilt byte for byte:
-    that module imports jsonschema, which the numpy-only image lacks
-    (test_d19_deploy); test_c2_lockbox pins the equality."""
-    for h in (protocol_hash, hypothesis_hash):
-        if not isinstance(h, str) or len(h) != 64 or not set(h) <= _HEX:
-            raise LockboxError("INVALID_ARGUMENT", f"not a sha256 hex: {h!r}")
-    if isinstance(trial_index, bool) or not isinstance(trial_index, int):
-        raise LockboxError("INVALID_ARGUMENT", "trial_index must be an integer")
-    if trial_index < 0:
-        raise LockboxError("INVALID_ARGUMENT", "trial_index must be nonnegative")
-    material = json.dumps(
-        [TRIAL_SEED_DOMAIN, protocol_hash, hypothesis_hash, trial_index],
-        ensure_ascii=False,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(material).hexdigest()
 
 
 def window_id(w0: datetime, w1: datetime) -> str:
@@ -565,6 +544,9 @@ class Request:
     configuration_hash: str
     prediction_artifact_sha256: str  # from aqt.lockbox.sealing.v1
     family_seed: str  # R-7, from the governing records
+    # line 266, from the sealing record after the confirmation module's item-7
+    # verification; never derived here (R14L5-S-2, OWNER_DECISION_R14L5_S2.md)
+    seed_l266: str
     manifest_sha256: str  # the cycle's data-manifest hash
     trial_index: int  # from the nominee's immutable C2 trial record (§D-3.2)
 
@@ -657,14 +639,10 @@ def _check_identity(a: dict[str, Any], request: Request, signed: Signed) -> None
         type(n["trial_index"]) is int and n["trial_index"] == request.trial_index,
         "IDENTITY_MISMATCH",
     )
+    seed_l266 = request.seed_l266
     try:
-        seed_l266 = trial_seed(
-            protocol_hash=signed.protocol_hash,
-            hypothesis_hash=request.hypothesis_hash,
-            trial_index=request.trial_index,
-        )
         estimator = screen.estimator_seed(seed_l266)
-    except (LockboxError, screen.TrialError):
+    except screen.TrialError:
         raise _Refused("IDENTITY_MISMATCH") from None
     seed_hex = sha({"family_seed": request.family_seed, "trial_id": n["trial_id"]})
     _need(
@@ -1228,8 +1206,9 @@ class Store(Protocol):
     the sealed and `aqt.c2.artifacts.v1` records. The read gate serves only
     bars under the cycle's data-manifest hash, which the store takes from its
     own governing cycle record, never from the request or this worker (a
-    request hash that differs is refused). `family_seed` comes from the
-    governing record the confirmation module verified (R-14a item 7). The
+    request hash that differs is refused). `family_seed` and `seed_l266`
+    come from the sealing record, written only after the confirmation module
+    verified them (R-14a item 7; owner decision R14L5-S-2). The
     worker re-checks what it can (§6.3) but cannot authenticate these
     records itself."""
 
