@@ -1,9 +1,10 @@
-# R-14a modules: design rev 2 (lockbox module, confirmation module)
+# R-14a modules: design rev 4 (lockbox module, confirmation module)
 
 **Author:** Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-01. AI drafting, not an authority.
-**Status: DESIGN DRAFT rev 3** (rev 2 `670d56f` plus repairs of
-`SOL_DESIGN_RECHECK_670D56F.md` R14D2-S-1..4, marked inline with their IDs; Astra's
-re-check of rev 2 did not complete, `ASTRA_DESIGN_RECHECK_670D56F_ATTEMPT_1.md`).
+**Status: DESIGN DRAFT rev 4** (rev 3 `1d42bb7` plus repairs of
+`SOL_DESIGN_RECHECK_1D42BB7.md` R14D3-S-1..4, adjudicated in §0.1 and marked inline;
+rev 3 = rev 2 `670d56f` plus repairs of `SOL_DESIGN_RECHECK_670D56F.md` R14D2-S-1..4;
+Astra's re-check of rev 2 did not complete, `ASTRA_DESIGN_RECHECK_670D56F_ATTEMPT_1.md`).
 Replaces rev 1 (`3f141fb`) whole. No code yet.
 Nothing here changes a decided rule. Every rule is cited to the signed-C2 draft; a choice
 the text leaves open is marked **[DESIGN]**; a choice that could change a result is an
@@ -36,6 +37,17 @@ DRAFT l.160).
 | R14D-S-5 ~ R14D-A-5 (BLOCKER / NON-BLOCKING: contracts are an outline) | **Accepted in part.** The lockbox contract is written in full (§7.1). The confirmation contract is written per gate (§7.2); the exact function names in it depend on Q-P1, and its text must be complete before the owner signs C2, which stays a hard prerequisite. | §7 |
 | R14D-S-6 ~ R14D-A-4 (NON-BLOCKING: Q-P1 framing) | **Accepted, Astra's framing.** (b) is the decided baseline; (a) is an optional earlier binding, with the true scope and schedule cost. (a) needs no new exception; the object and the `AQTQ1` post would then carry the new bytes. | §3 |
 | R14D-S-7 (NON-BLOCKING: keep the A4 location out of Q-P1) | **Accepted.** Q-D1 is separate. | §5.5 |
+
+### 0.1 Adjudication of the rev 3 re-check (`SOL_DESIGN_RECHECK_1D42BB7.md`)
+
+Adjudicated by Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-02, against the cited sources.
+
+| ID | Disposition | Where |
+|---|---|---|
+| R14D3-S-1 (BLOCKER: the fresh module has no `.py` `__spec__.origin`, so `bytecode_problem()` refuses the valid start) | **Accepted.** Verified: `rundef.py` l.338-342 refuses any `aqt`/`calibration` module whose `__spec__.origin` does not end in `.py`; a module object built without a spec has origin `None`. Repair: build the spec with `importlib.util.spec_from_file_location` and the module with `module_from_spec`, then execute the verified code object into it; the loader's `exec_module` is never called, so the file is not read again. Probe (2026-11-02, repo `.venv`, Python 3.14): a module made this way from in-memory bytes has a `.py` origin and `__cached__` under the prefix, and the frozen `bytecode_problem()` returns `None` before and after loading it. | §4 step 5 |
+| R14D3-S-2 (BLOCKER: the `__main__`-guard route executes the file before its own check) | **Accepted.** Running `python module.py` executes whatever bytes are on disk, so a substituted file need not check itself. Repair: the `__main__` route is removed; only a launcher that authenticates the bytes before executing them may start a module. Where the launcher's own text is bound, so that R-14a's "nothing else is loaded" holds, is an open review question (§10). | §4, §10 |
+| R14D3-S-3 (BLOCKER: the P18-0 (iii) check would reject an eligible C2 window) | **Accepted in part.** The rev 3 wording was ambiguous and is repaired. Sol's reading, that Annex A exempts C2 from the gap, is not adopted: Annex A l.31-32 makes the v1 partition eligible "with its first `embargo` dropped under (iii)", i.e. the window's first `embargo` days are removed so that (iii) holds; the gap is not waived. The check `w0 ≥ last + embargo` is therefore the same for every cycle, and for C2 `w0` is the partition start plus `embargo`. If the owner reads the sentence as a waiver, that is an owner question, not a design choice. | §2 P18-0 |
+| R14D3-S-4 (BLOCKER: A-U1's pre-declaration fail-closed null screen has no owner) | **Accepted.** The screen exists in frozen code: `screen.declare` (`screen.py` l.2012, at `eba1c21`) runs the trial set on the `n_S = 30` simulated null paths and returns `outcome` `SCREEN_AVAILABLE` or `INVALID`. Repair: an allocation row; no new rule. | §2 A-U1 |
 
 ---
 
@@ -74,7 +86,8 @@ vectors, of which ~400-600 are the statistics above.
 
 | Rule | Executed by | How |
 |---|---|---|
-| P18-0 (i)-(iv) eligibility, A-B7 (v) | **governance consumer** (the declaration's preparer, before the declaration post) produces the evidence; the confirmation module **checks** it | The declaration must record: the window id and manifest; the non-overlap list against every exposed segment; for (i) the job-log extract showing the window was never mounted in the sandbox and an inventory showing no evaluation output on any part of it existed (verified by a person from the job log and output store, recorded with who verified it); for (iii) the last mounted or evaluated observation instant and the `embargo` value with its source outside the window; for (iv) the declaration timestamp; `T ≥ T_min`. The module refuses unless every field is present, recomputes the (iii) gap `w0 ≥ last + embargo` (C2: the first `embargo` dropped, as Annex A says) and the (v) count from the manifest, and refuses on any failure. It cannot itself prove (i)'s negative; that stays a recorded governance check **[DESIGN]** (R14D2-S-2) |
+| P18-0 (i)-(iv) eligibility, A-B7 (v) | **governance consumer** (the declaration's preparer, before the declaration post) produces the evidence; the confirmation module **checks** it | The declaration must record: the window id and manifest; the non-overlap list against every exposed segment; for (i) the job-log extract showing the window was never mounted in the sandbox and an inventory showing no evaluation output on any part of it existed (verified by a person from the job log and output store, recorded with who verified it); for (iii) the last mounted or evaluated observation instant and the `embargo` value with its source outside the window; for (iv) the declaration timestamp; `T ≥ T_min`. The module refuses unless every field is present, recomputes the (iii) gap `w0 ≥ last + embargo`, the same check for every cycle (for C2, `w0` is the v1 partition start plus `embargo`, Annex A l.31-32's "first `embargo` dropped"; R14D3-S-3) and the (v) count from the manifest, and refuses on any failure. It cannot itself prove (i)'s negative; that stays a recorded governance check **[DESIGN]** (R14D2-S-2) |
+| A-U1 fail-closed screen before declaration | **governance consumer** runs the frozen `screen.declare` on the actual trial set before the declaration is committed; the confirmation module **checks** the record (R14D3-S-4) | The declaration lists the screen record. A set whose record has `outcome` `INVALID`, or that has no record, cannot be declared and spends no `m`. Before the first evaluation the module refuses unless the listed record's bytes match the hash in the declaration, its `trial_set_sha256` equals the declared set's (`screen.trial_set_sha256`), its `qualification_object_sha256` is the posted object, and its `outcome` is `SCREEN_AVAILABLE`. The module does not re-run the screen; the record is seeded from `trial_set_sha256`, so any reviewer can reproduce it **[DESIGN]** |
 | P18-1 declared set | confirmation module, before the first evaluation | `1 ≤ |J_f| ≤ 80`, unique ids, complete hashes, both families when eligible; invalid → cycle does not start |
 | P18-1 automatic re-run | confirmation module, using `core/attempts.py` accounting | one re-run per family, first crash only, same hash and seed; `attempts.py` l.81-90 disclaims enforcement, so the module enforces it |
 | P18-2 one shared look | confirmation module | **Trigger:** the look runs only when, from the attempt records, every declared trial has finished (completed, or crashed with its one re-run used or unavailable), or the cycle clock has reached day 180 (from the recorded cycle start); a look requested earlier is refused. **Pre-pick termination:** if a protocol-revision or invalidation record for the cycle exists, the module refuses the look and records "no pick" (no promotion). One call evaluates both families, trend then volatility; a second look is refused (look record keyed by cycle). Trials unfinished at day 180 are `U_ops` (timeout) (R14D2-S-2) |
@@ -112,8 +125,10 @@ recommended (a) on an estimate that was several times too small.
 
 ## 4. Loading and the start check (R14D-S-3, R14D-A-2)
 
-**Entry script** (one per module, in the module file's own `__main__` guard, or a
-two-line launcher in the engine/build checkout **[DESIGN]**): before importing any
+**Entry script** (one launcher per module **[DESIGN]**; R14D3-S-2: a module is never
+started as `python module.py` or through a `__main__` guard, because that executes the
+file's bytes before any check; where the launcher's own text is bound is open, §10):
+before importing any
 `calibration` or `aqt` module it sets `sys.dont_write_bytecode = True` and points
 `sys.pycache_prefix` at a new empty directory (as `scripts/d19_screen.py` l.29-36 do),
 so `rundef.bytecode_problem()` can pass.
@@ -126,9 +141,13 @@ so `rundef.bytecode_problem()` can pass.
 5. for each of the two module files: the SHA-256 of **the exact bytes that are compiled
    and executed** equals its signed row (R14D2-S-1). The entry script does not `import`
    the module from the path. It reads the file's bytes once, hashes them, refuses on a
-   mismatch, then `compile`s **those same bytes** and executes them into a fresh module
-   object registered in `sys.modules` under the module's name, with `__file__` set to the
-   repository path. No second read of the file feeds execution, so a file swapped before
+   mismatch, then `compile`s **those same bytes** (filename = the repository path) and
+   executes them into a module object registered in `sys.modules` under the module's
+   name. The module object is made by `importlib.util.module_from_spec(
+   importlib.util.spec_from_file_location(name, path))`, so `__spec__.origin` and
+   `__file__` are the `.py` path and `__cached__` lies under the empty
+   `sys.pycache_prefix`, as `bytecode_problem()` requires (`rundef.py` l.338-342;
+   R14D3-S-1); `spec.loader.exec_module` is never called. No second read of the file feeds execution, so a file swapped before
    or after the check cannot be what runs. The signed row is the SHA-256 of the file as
    committed (LF line endings, the git blob bytes), which is what the Linux server's
    checkout holds; a Windows checkout with `core.autocrlf` would refuse, correctly.
@@ -147,11 +166,13 @@ unchanged, and any third extra module is still refused.
 Each module carries its own copy of this sequence (no cross-import, item 3). A test
 checks that the two copies are identical in source **[DESIGN]**.
 
-**Tests:** a valid start passes (both modules loaded, verified bytes); each broken chain
+**Tests:** a valid start passes, including the frozen `bytecode_problem()` itself with
+both modules loaded by this route (R14D3-S-1); each broken chain
 link refuses before any read; a substituted module file, a stale `.pyc`, a non-empty
 cache directory and an extra loaded module each refuse; a file swapped after the hash
 check and before execution cannot run (the test swaps it between the read and a
-hypothetical second read and shows the executed code object is the hashed bytes').
+hypothetical second read and shows the executed code object is the hashed bytes'); a
+module file run directly is not a supported start (R14D3-S-2).
 
 ## 5. Confirmation module (`calibration/c2_confirmation.py` [DESIGN])
 
@@ -317,5 +338,8 @@ reaching each statistic is exactly the contract's; the duplicated-code identity 
 ## 10. Still open (to settle in review or build)
 
 The drand verification library inside the pinned image (§5.1); the exact confirmation
-partition access path and identity mechanism; whether the entry script is inside each
-module or a launcher (§4); the store interface names (§6.5).
+partition access path and identity mechanism; where the launcher's text is bound
+(§4, R14D3-S-2): a launcher file outside the engine commit, the object and the two signed
+modules would be code R-14/R-14a do not admit, so its exact text must either be stated in
+the signed C2 bytes or reach the evaluation by another route review accepts; the store
+interface names (§6.5).
