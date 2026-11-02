@@ -18,6 +18,7 @@ as Annex D §D-3.4 states it.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import importlib.util
 import json
@@ -1196,6 +1197,17 @@ class ReadSession(Protocol):
 
 
 class Store(Protocol):
+    """The store build's obligations this worker relies on (R14L4-S-3; Annex
+    D §D-3.7), to be tested in that build: `begin_read` step 4 refuses unless
+    the check record's `prediction_artifact_sha256`, nominee and family
+    equal the sealing record (`aqt.lockbox.sealing.v1`) and the request; the
+    artifact bytes and the artifacts ledger it hands over are the sealed and
+    `aqt.c2.artifacts.v1` records; the read gate serves only bars under the
+    cycle manifest whose hash the request carries; `family_seed` comes from
+    the governing record the confirmation module verified (R-14a item 7).
+    The worker re-checks what it can (§6.3) but cannot authenticate these
+    records itself."""
+
     def append_startup(self, record: dict[str, Any]) -> str:
         """Append aqt.lockbox.startup.v1; returns startup_check_id."""
         ...
@@ -1336,13 +1348,27 @@ def run_evaluation(
     artifacts_ledger: Mapping[str, Any],
     files: Mapping[str, bytes],
     manifest_sha256: str,
-    image_digest: str,
     startup: Mapping[str, Any] | None,
     code_dir: Path,
 ) -> str:
     """§6.3-§6.5 in order. Returns what happened: the pre-read reason code,
-    "STOPPED" (a store refusal; nothing written), or the bundle's result."""
+    "STOPPED" (a store refusal; nothing written), or the bundle's result.
+
+    The inputs that are not `started`'s are the store's records (§D-3.7);
+    the bindings only the store can make are its obligations, listed on
+    `Store` (R14L4-S-3)."""
     signed = started.signed
+    image_digest = signed.image_digest  # start() refused any other image
+    # R14L4-S-1: one immutable snapshot, checked and then computed from, so
+    # nothing the check approved can be swapped before the run
+    artifacts_ledger = copy.deepcopy(dict(artifacts_ledger))
+    files = {k: bytes(v) for k, v in files.items()}
+    artifact_bytes = None if artifact_bytes is None else bytes(artifact_bytes)
+    # R14L4-S-2: only this process's own startup record counts
+    if startup is not None and (
+        startup.get("startup_check_id") != started.startup_check_id
+    ):
+        startup = None
     result = pre_read_check(
         request=request,
         signed=signed,

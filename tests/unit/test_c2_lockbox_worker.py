@@ -92,6 +92,7 @@ def _run(store: FakeStore, tmp_path: Path, **over: Any) -> str:
     case = pre._case()
     case["startup"] = {**case["startup"], "startup_check_id": "C2/startup/1"}
     case.update(over)
+    del case["image_digest"]  # run_evaluation takes the image start() verified
     started = lb.Started(
         case.pop("signed"),
         case.pop("declaration"),
@@ -142,9 +143,9 @@ def test_failed_check_is_recorded_and_nothing_is_read(
     stub: dict[str, Any], tmp_path: Path
 ) -> None:
     store = FakeStore()
-    assert _run(store, tmp_path, image_digest="sha256:" + "0" * 64) == "IMAGE_MISMATCH"
+    assert _run(store, tmp_path, artifact_bytes=None) == "ARTIFACT_NOT_FOUND"
     assert store.names() == ["record_pre_read_check"]
-    assert store.calls[0][1]["result"] == "IMAGE_MISMATCH"
+    assert store.calls[0][1]["result"] == "ARTIFACT_NOT_FOUND"
     assert not stub  # never computed
 
 
@@ -330,3 +331,57 @@ def test_started_carries_immutable_verified_values(
     )
     with pytest.raises(TypeError):
         started.chain_log["protocol_hash"] = "0" * 64  # type: ignore[index]
+
+
+def test_ledger_swapped_after_the_check_is_not_what_runs(
+    stub: dict[str, Any], tmp_path: Path
+) -> None:
+    # R14L4-S-1, Sol's probe: the check passes for the declared trial
+    # (tau 0.60); during the store call the caller's ledger and files are
+    # switched to another trial (tau 0.40). The run must use the checked one.
+    case = pre._case()
+    other = {**pre.TRIAL, "tau": "0.40"}
+    other_bytes = cj(other)
+
+    class Swapping(FakeStore):
+        def record_pre_read_check(self, record: dict[str, Any]) -> str:
+            items = case["artifacts_ledger"]["items"]
+            items[0] = {
+                "kind": "trial",
+                "sha256": hashlib.sha256(other_bytes).hexdigest(),
+                "size": len(other_bytes),
+            }
+            case["files"][items[0]["sha256"]] = other_bytes
+            return super().record_pre_read_check(record)
+
+    store = Swapping()
+    case["startup"] = {**case["startup"], "startup_check_id": "C2/startup/1"}
+    del case["image_digest"]
+    started = lb.Started(
+        case.pop("signed"),
+        case.pop("declaration"),
+        case.pop("declaration_sha256"),
+        {},
+        "C2/startup/1",
+    )
+    lb.run_evaluation(
+        store, evaluation=EVALUATION, started=started, code_dir=tmp_path, **case
+    )
+    assert store.calls[0][1]["result"] == "PASS"
+    assert stub["trial"] == pre.TRIAL  # the checked trial, not the swap
+
+
+def test_another_startup_record_does_not_count(
+    stub: dict[str, Any], tmp_path: Path
+) -> None:
+    # R14L4-S-2: a PASS startup record with a different id (an earlier start)
+    case_startup = {
+        "result": "PASS",
+        "lockbox_module_sha256": pre.SIGNED.lockbox_module_sha256,
+        "image_digest": pre.SIGNED.image_digest,
+        "startup_check_id": "C2/startup/0",
+    }
+    store = FakeStore()
+    assert _run(store, tmp_path, startup=case_startup) == "REFERENCE_VECTOR_MISMATCH"
+    assert store.calls[0][1]["startup_check_id"] is None
+    assert not stub
