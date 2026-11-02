@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
@@ -37,6 +38,27 @@ def test_seed_material_is_the_production_layout_with_lockbox_purpose() -> None:
     ours = json.loads(lb.seed_material(SEED, WINDOW, 7))
     assert ours == [*frozen[:3], "lockbox_prediction", *frozen[4:]]
     assert ours[7] == 457
+
+
+def test_trial_seed_is_the_preregistration_one_and_refuses_the_same() -> None:
+    import aqt.core.preregistration as pr
+
+    assert lb.TRIAL_SEED_DOMAIN == pr.SEED_DOMAIN
+    for p, h, i in (("1" * 64, "2" * 64, 0), (SEED, "a" * 64, 266), (SEED, SEED, 7)):
+        assert lb.trial_seed(
+            protocol_hash=p, hypothesis_hash=h, trial_index=i
+        ) == pr.trial_seed(protocol_hash=p, hypothesis_hash=h, trial_index=i)
+    bads: tuple[dict[str, Any], ...] = (
+        {"protocol_hash": "A" * 64}, {"hypothesis_hash": "1" * 63},
+        {"trial_index": -1}, {"trial_index": True}, {"trial_index": 1.0},
+    )  # fmt: skip
+    for bad in bads:
+        kw: dict[str, Any] = {"protocol_hash": "1" * 64, "hypothesis_hash": "2" * 64,
+                              "trial_index": 0, **bad}  # fmt: skip
+        with pytest.raises(pr.PreregistrationError):
+            pr.trial_seed(**kw)
+        with pytest.raises(lb.LockboxError):
+            lb.trial_seed(**kw)
 
 
 def test_draw_order_matches_bootstrap_indices(monkeypatch: pytest.MonkeyPatch) -> None:

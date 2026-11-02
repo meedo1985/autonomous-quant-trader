@@ -45,7 +45,6 @@ from aqt.backtest.event_contract import (
     EventResult,
     run_event_contract,
 )
-from aqt.core.preregistration import PreregistrationError, trial_seed
 from aqt.data.bars import BarSeries
 from aqt.features.columns import feature_columns
 from aqt.metrics.descriptive import _max_drawdown
@@ -84,6 +83,7 @@ CODES = (
     "NOT_FINISHED_BY_D_W",
 )
 _HEX = frozenset("0123456789abcdef")
+TRIAL_SEED_DOMAIN = "aqt.trial_seed.v1"  # preregistration.SEED_DOMAIN
 
 
 class LockboxError(ValueError):
@@ -110,6 +110,26 @@ def unhexf(s: object) -> float:
 
 def _time(t: datetime) -> str:
     return t.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def trial_seed(*, protocol_hash: str, hypothesis_hash: str, trial_index: int) -> str:
+    """`aqt.core.preregistration.trial_seed` (L266), rebuilt byte for byte:
+    that module imports jsonschema, which the numpy-only image lacks
+    (test_d19_deploy); test_c2_lockbox pins the equality."""
+    for h in (protocol_hash, hypothesis_hash):
+        if not isinstance(h, str) or len(h) != 64 or not set(h) <= _HEX:
+            raise LockboxError("INVALID_ARGUMENT", f"not a sha256 hex: {h!r}")
+    if isinstance(trial_index, bool) or not isinstance(trial_index, int):
+        raise LockboxError("INVALID_ARGUMENT", "trial_index must be an integer")
+    if trial_index < 0:
+        raise LockboxError("INVALID_ARGUMENT", "trial_index must be nonnegative")
+    material = json.dumps(
+        [TRIAL_SEED_DOMAIN, protocol_hash, hypothesis_hash, trial_index],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(material).hexdigest()
 
 
 def window_id(w0: datetime, w1: datetime) -> str:
@@ -644,7 +664,7 @@ def _check_identity(a: dict[str, Any], request: Request, signed: Signed) -> None
             trial_index=request.trial_index,
         )
         estimator = screen.estimator_seed(seed_l266)
-    except (PreregistrationError, screen.TrialError):
+    except (LockboxError, screen.TrialError):
         raise _Refused("IDENTITY_MISMATCH") from None
     seed_hex = sha({"family_seed": request.family_seed, "trial_id": n["trial_id"]})
     _need(
