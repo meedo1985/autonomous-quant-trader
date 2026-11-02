@@ -1217,15 +1217,20 @@ class ReadSession(Protocol):
 
 
 class Store(Protocol):
-    """The store build's obligations this worker relies on (R14L4-S-3; Annex
-    D §D-3.7), to be tested in that build: `begin_read` step 4 refuses unless
-    the check record's `prediction_artifact_sha256`, nominee and family
-    equal the sealing record (`aqt.lockbox.sealing.v1`) and the request; the
-    artifact bytes and the artifacts ledger it hands over are the sealed and
-    `aqt.c2.artifacts.v1` records; the read gate serves only bars under the
-    cycle manifest whose hash the request carries; `family_seed` comes from
-    the governing record the confirmation module verified (R-14a item 7).
-    The worker re-checks what it can (§6.3) but cannot authenticate these
+    """The store build's obligations this worker relies on (R14L4-S-3,
+    R14L5-S-1; Annex D §D-3.7), to be tested in that build. `begin_read` step
+    4 refuses unless sealing records exist for every declared family, this
+    family is status (a) for this nominee and artifact, every identity field
+    of the check record (`aqt.lockbox.pre_read_check.v1`) equals the sealing
+    record (`aqt.lockbox.sealing.v1`) and the request, and the check's
+    `startup_check_id` names a `PASS` startup record for the same module hash
+    and image. The artifact bytes and the artifacts ledger it hands over are
+    the sealed and `aqt.c2.artifacts.v1` records. The read gate serves only
+    bars under the cycle's data-manifest hash, which the store takes from its
+    own governing cycle record, never from the request or this worker (a
+    request hash that differs is refused). `family_seed` comes from the
+    governing record the confirmation module verified (R-14a item 7). The
+    worker re-checks what it can (§6.3) but cannot authenticate these
     records itself."""
 
     def append_startup(self, record: dict[str, Any]) -> str:
