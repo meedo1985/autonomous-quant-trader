@@ -87,14 +87,10 @@ def stub(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 def _run(store: FakeStore, tmp_path: Path, **over: Any) -> str:
-    case = {**pre._case(), **over}
-    return lb.run_evaluation(
-        store,
-        evaluation=EVALUATION,
-        startup_check_id="C2/startup/1",
-        code_dir=tmp_path,
-        **case,
-    )
+    case = pre._case()
+    case["startup"] = {**case["startup"], "startup_check_id": "C2/startup/1"}
+    case.update(over)
+    return lb.run_evaluation(store, evaluation=EVALUATION, code_dir=tmp_path, **case)
 
 
 def test_record_startup(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -157,6 +153,14 @@ def test_store_refusal_stops_without_writing(
     assert store.names() == calls
 
 
+def test_check_names_the_startup_record_it_used(
+    stub: dict[str, Any], tmp_path: Path
+) -> None:
+    store = FakeStore()
+    assert _run(store, tmp_path, startup=None) == "REFERENCE_VECTOR_MISMATCH"
+    assert store.calls[0][1]["startup_check_id"] is None
+
+
 def test_late_finish_stops(stub: dict[str, Any], tmp_path: Path) -> None:
     store = FakeStore("mark_finished")
     assert _run(store, tmp_path) == "STOPPED"  # the bundle is late output
@@ -175,3 +179,39 @@ def test_code_dir_must_be_empty(stub: dict[str, Any], tmp_path: Path) -> None:
     (tmp_path / "planted.py").write_bytes(b"x = 1\n")
     with pytest.raises(lb.LockboxError):
         _run(FakeStore(), tmp_path)
+
+
+def test_end_to_end_with_the_real_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No stub: the verified trial code is installed and loaded from the code
+    directory, the bars are read twice through the session, and the bundle
+    is written. The fixture's constant signal equals the benchmark (d = 0),
+    so E-DIFF is ZERO_VARIANCE, reached through the whole path."""
+    from tests.unit.test_c2_lockbox_run import _bars
+
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    market = (_bars("BTCUSDT", 1), _bars("ETHUSDT", 2))
+    reads: list[int] = []
+
+    class Store(FakeStore):
+        def open_read(self, evaluation_id: str) -> lb.ReadSession:
+            self._log("open_read", evaluation_id)
+
+            class Session:
+                def read(self) -> tuple[BarSeries, BarSeries]:
+                    reads.append(1)
+                    return market
+
+            return Session()
+
+    store = Store()
+    assert _run(store, tmp_path) == "FAIL"
+    assert len(reads) == 2
+    bundle = store.calls[2][1]
+    assert bundle["reasons"] == ["BTC_EDIFF:ZERO_VARIANCE"]
+    # ETH E-IMPROV is exactly 0, so L-4 is a definite false, which outranks
+    # the nulls of L-1/L-2 (B4.2 precedence): PERFORMANCE, not TECHNICAL
+    assert bundle["conditions"]["L1"] is None and bundle["conditions"]["L4"] is False
+    assert bundle["cause_class"] == "PERFORMANCE"
+    assert bundle["values"]["mdd_btc_cand"] is not None

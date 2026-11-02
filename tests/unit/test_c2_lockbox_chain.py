@@ -89,6 +89,15 @@ def test_parse_tx(segwit: bool) -> None:
         lb.parse_tx(raw[:-6])
 
 
+def test_txid_excludes_the_witness() -> None:
+    segwit, legacy = _post("ab" * 32), _post("ab" * 32, segwit=False)
+    dsha = hashlib.sha256(hashlib.sha256(legacy).digest()).digest()[::-1].hex()
+    assert lb.txid(segwit) == lb.txid(legacy) == dsha
+    wtxid = hashlib.sha256(hashlib.sha256(segwit).digest()).digest()[::-1].hex()
+    assert lb.txid(segwit) != wtxid
+    assert lb.verify_chain(**_chain())["post_txid"] == lb.txid(_chain()["post_raw_tx"])
+
+
 def test_well_formed_post() -> None:
     assert lb.post_declaration_sha256(_post("ab" * 32), f"{F_TXID}:1") == "ab" * 32
 

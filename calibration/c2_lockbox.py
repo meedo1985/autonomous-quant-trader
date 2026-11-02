@@ -909,6 +909,26 @@ def parse_tx(raw: bytes) -> tuple[list[tuple[str, int]], list[tuple[int, bytes]]
     return inputs, outputs
 
 
+def txid(raw: bytes) -> str:
+    """The display txid: double SHA-256 of the serialization without the
+    segwit marker, flag and witnesses (the wtxid would include them)."""
+    parse_tx(raw)  # refuses bytes that do not parse exactly
+    base = raw
+    if raw[4] == 0 and raw[5] == 1:
+        i, end = 6, 0
+        count, i = _varint(raw, i)
+        for _ in range(count):
+            length, i = _varint(raw, i + 36)
+            i += length + 4
+        count, i = _varint(raw, i)
+        for _ in range(count):
+            length, i = _varint(raw, i + 8)
+            i += length
+        end = i
+        base = raw[:4] + raw[6:end] + raw[-4:]
+    return hashlib.sha256(hashlib.sha256(base).digest()).digest()[::-1].hex()
+
+
 def post_declaration_sha256(raw_tx: bytes, outpoint: str) -> str:
     """O-6a SPEC §3 well-formed post: spends F; exactly one OP_RETURN output,
     value 0, scriptPubKey exactly `6a25 'AQTC2' <32 bytes>`."""
@@ -973,9 +993,7 @@ def verify_chain(
         raise ChainError("the protocol bytes do not hash to protocol_hash")
     log = {
         "acceptance_record_sha256": hashlib.sha256(acceptance_record).hexdigest(),
-        "post_txid": hashlib.sha256(hashlib.sha256(post_raw_tx).digest())
-        .digest()[::-1]
-        .hex(),
+        "post_txid": txid(post_raw_tx),
         "declaration_sha256": declaration_sha256,
         "protocol_hash": protocol_hash,
     }
@@ -1136,7 +1154,6 @@ def run_evaluation(
     store: Store,
     *,
     evaluation: Evaluation,
-    startup_check_id: str,
     request: Request,
     signed: Signed,
     artifact_bytes: bytes | None,
@@ -1169,7 +1186,10 @@ def run_evaluation(
                 "eligibility_result_id": evaluation.eligibility_result_id,
                 "lockbox_evaluation_id": evaluation.lockbox_evaluation_id,
                 "sealing_id": evaluation.sealing_id,
-                "startup_check_id": startup_check_id,
+                # the id of the very record the check used, never a caller's
+                "startup_check_id": None
+                if startup is None
+                else startup.get("startup_check_id"),
                 "lockbox_module_sha256": signed.lockbox_module_sha256,
                 "image_digest": image_digest,
                 "result": result,
