@@ -1,9 +1,10 @@
-# R-14a modules: design rev 4 (lockbox module, confirmation module)
+# R-14a modules: design rev 5 (lockbox module, confirmation module)
 
 **Author:** Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-01. AI drafting, not an authority.
-**Status: DESIGN DRAFT rev 4** (rev 3 `1d42bb7` plus repairs of
-`SOL_DESIGN_RECHECK_1D42BB7.md` R14D3-S-1..4, adjudicated in §0.1 and marked inline;
-rev 3 = rev 2 `670d56f` plus repairs of `SOL_DESIGN_RECHECK_670D56F.md` R14D2-S-1..4;
+**Status: DESIGN DRAFT rev 5** (rev 4 `c2c5131` plus repairs of
+`ASTRA_DESIGN_RECHECK_C2C5131.md` R14D4-A-1..3, adjudicated in §0.2 and marked inline;
+rev 4 = rev 3 `1d42bb7` plus repairs of `SOL_DESIGN_RECHECK_1D42BB7.md` R14D3-S-1..4,
+adjudicated in §0.1; rev 3 = rev 2 `670d56f` plus repairs of `SOL_DESIGN_RECHECK_670D56F.md` R14D2-S-1..4;
 Astra's re-check of rev 2 did not complete, `ASTRA_DESIGN_RECHECK_670D56F_ATTEMPT_1.md`).
 Replaces rev 1 (`3f141fb`) whole. No code yet.
 Nothing here changes a decided rule. Every rule is cited to the signed-C2 draft; a choice
@@ -46,8 +47,18 @@ Adjudicated by Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-02, against the cite
 |---|---|---|
 | R14D3-S-1 (BLOCKER: the fresh module has no `.py` `__spec__.origin`, so `bytecode_problem()` refuses the valid start) | **Accepted.** Verified: `rundef.py` l.338-342 refuses any `aqt`/`calibration` module whose `__spec__.origin` does not end in `.py`; a module object built without a spec has origin `None`. Repair: build the spec with `importlib.util.spec_from_file_location` and the module with `module_from_spec`, then execute the verified code object into it; the loader's `exec_module` is never called, so the file is not read again. Probe (2026-11-02, repo `.venv`, Python 3.14): a module made this way from in-memory bytes has a `.py` origin and `__cached__` under the prefix, and the frozen `bytecode_problem()` returns `None` before and after loading it. | §4 step 5 |
 | R14D3-S-2 (BLOCKER: the `__main__`-guard route executes the file before its own check) | **Accepted.** Running `python module.py` executes whatever bytes are on disk, so a substituted file need not check itself. Repair: the `__main__` route is removed; only a launcher that authenticates the bytes before executing them may start a module. Where the launcher's own text is bound, so that R-14a's "nothing else is loaded" holds, is an open review question (§10). | §4, §10 |
-| R14D3-S-3 (BLOCKER: the P18-0 (iii) check would reject an eligible C2 window) | **Accepted in part.** The rev 3 wording was ambiguous and is repaired. Sol's reading, that Annex A exempts C2 from the gap, is not adopted: Annex A l.31-32 makes the v1 partition eligible "with its first `embargo` dropped under (iii)", i.e. the window's first `embargo` days are removed so that (iii) holds; the gap is not waived. The check `w0 ≥ last + embargo` is therefore the same for every cycle, and for C2 `w0` is the partition start plus `embargo`. If the owner reads the sentence as a waiver, that is an owner question, not a design choice. | §2 P18-0 |
+| R14D3-S-3 (BLOCKER: the P18-0 (iii) check would reject an eligible C2 window) | **Accepted in part.** The rev 3 wording was ambiguous and is repaired. Sol's reading, that Annex A exempts C2 from the gap, is not adopted (rev 5, R14D4-A-1 note: the decisive source is DRAFT R-3, l.147, which defines "its first embargo dropped" as excluding the partition's first `gap_embargo.value_days` days, with the start bound at l.196): Annex A l.31-32 makes the v1 partition eligible "with its first `embargo` dropped under (iii)", i.e. the window's first `embargo` days are removed so that (iii) holds; the gap is not waived. The check `w0 ≥ last + embargo` is therefore the same for every cycle, and for C2 `w0` is the partition start plus `embargo`. If the owner reads the sentence as a waiver, that is an owner question, not a design choice. | §2 P18-0 |
 | R14D3-S-4 (BLOCKER: A-U1's pre-declaration fail-closed null screen has no owner) | **Accepted.** The screen exists in frozen code: `screen.declare` (`screen.py` l.2012, at `eba1c21`) runs the trial set on the `n_S = 30` simulated null paths and returns `outcome` `SCREEN_AVAILABLE` or `INVALID`. Repair: an allocation row; no new rule. | §2 A-U1 |
+
+### 0.2 Adjudication of the rev 4 re-check (`ASTRA_DESIGN_RECHECK_C2C5131.md`)
+
+Adjudicated by Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-02, against the cited sources.
+
+| ID | Disposition | Where |
+|---|---|---|
+| R14D4-A-1 (BLOCKER: P18-0 (iii)'s embargo source omits R-9) | **Accepted.** Verified: DRAFT R-9 (l.153) replaces "data outside the window" with "data mounted in the sandbox or evaluated before declaration", and `gap_embargo.rule` (l.204) computes the value from that data only. Rev 4 still said "outside the window", which unexposed lockbox data would satisfy. Repair: the governance consumer computes `gap_embargo.value_days` by `gap_embargo.rule` and records its input manifest; the module checks the value against the bound one and the inputs against the pre-declaration mount/evaluation inventory. Restates R-9; no new rule. Also adopted: Astra's stronger citation (R-3, l.147, l.196) for the R14D3-S-3 adjudication. | §2 P18-0, §0.1 |
+| R14D4-A-2 (BLOCKER: §7.1 omits Annex D A6's asset and same-series/start checks) | **Accepted.** Verified: Annex D l.371-377 lists, per leg, the asset and "the same series and `start` for both legs"; §7.1's refusals did not. `screen.daily_returns` takes only the result, so it cannot check either. Repair: both checks added to §7.1's refusals, with wrong-asset and different-series tests in §8. | §7.1, §8 |
+| R14D4-A-3 (NON-BLOCKING for the design, mandatory before signing: launcher authority) | **Accepted.** Rev 4's suggestion that stating the launcher's text in the signed C2 bytes would admit it is withdrawn: R-14a admits exactly two further files and nothing else. R14D3-S-2 stays **open as a pre-signing build item**: before the owner signs C2 there must be a launch route whose every executed line lies in the engine commit, a later object file, or one of the two signed modules; if none exists, the owner must decide a change to R-14a's draft wording under the applicable process. Neither the design nor a reviewer can admit it. | §4, §10 |
 
 ---
 
@@ -86,7 +97,7 @@ vectors, of which ~400-600 are the statistics above.
 
 | Rule | Executed by | How |
 |---|---|---|
-| P18-0 (i)-(iv) eligibility, A-B7 (v) | **governance consumer** (the declaration's preparer, before the declaration post) produces the evidence; the confirmation module **checks** it | The declaration must record: the window id and manifest; the non-overlap list against every exposed segment; for (i) the job-log extract showing the window was never mounted in the sandbox and an inventory showing no evaluation output on any part of it existed (verified by a person from the job log and output store, recorded with who verified it); for (iii) the last mounted or evaluated observation instant and the `embargo` value with its source outside the window; for (iv) the declaration timestamp; `T ≥ T_min`. The module refuses unless every field is present, recomputes the (iii) gap `w0 ≥ last + embargo`, the same check for every cycle (for C2, `w0` is the v1 partition start plus `embargo`, Annex A l.31-32's "first `embargo` dropped"; R14D3-S-3) and the (v) count from the manifest, and refuses on any failure. It cannot itself prove (i)'s negative; that stays a recorded governance check **[DESIGN]** (R14D2-S-2) |
+| P18-0 (i)-(iv) eligibility, A-B7 (v) | **governance consumer** (the declaration's preparer, before the declaration post) produces the evidence; the confirmation module **checks** it | The declaration must record: the window id and manifest; the non-overlap list against every exposed segment; for (i) the job-log extract showing the window was never mounted in the sandbox and an inventory showing no evaluation output on any part of it existed (verified by a person from the job log and output store, recorded with who verified it); for (iii) the last mounted or evaluated observation instant, and `embargo` = `gap_embargo.value_days` computed by `gap_embargo.rule` (DRAFT l.204) with the manifest of its inputs, every input being data mounted in the sandbox or evaluated before declaration (R-9, DRAFT l.153; no confirmation or lockbox data not so mounted or evaluated; R14D4-A-1); for (iv) the declaration timestamp; `T ≥ T_min`. The module refuses unless every field is present, recomputes the (iii) gap `w0 ≥ last + embargo`, the same check for every cycle (for C2, `w0` = `partitions.confirmation.start` = 2022-01-01T00:00:00Z + `gap_embargo.value_days`, DRAFT R-3 l.147 and l.196; R14D3-S-3) and the (v) count from the manifest, checks the recorded `embargo` equals the bound `gap_embargo.value_days` and that every input in its manifest appears in the pre-declaration mount/evaluation inventory, and refuses on any failure. It cannot itself prove (i)'s negative; that stays a recorded governance check **[DESIGN]** (R14D2-S-2) |
 | A-U1 fail-closed screen before declaration | **governance consumer** runs the frozen `screen.declare` on the actual trial set before the declaration is committed; the confirmation module **checks** the record (R14D3-S-4) | The declaration lists the screen record. A set whose record has `outcome` `INVALID`, or that has no record, cannot be declared and spends no `m`. Before the first evaluation the module refuses unless the listed record's bytes match the hash in the declaration, its `trial_set_sha256` equals the declared set's (`screen.trial_set_sha256`), its `qualification_object_sha256` is the posted object, and its `outcome` is `SCREEN_AVAILABLE`. The module does not re-run the screen; the record is seeded from `trial_set_sha256`, so any reviewer can reproduce it **[DESIGN]** |
 | P18-1 declared set | confirmation module, before the first evaluation | `1 ≤ |J_f| ≤ 80`, unique ids, complete hashes, both families when eligible; invalid → cycle does not start |
 | P18-1 automatic re-run | confirmation module, using `core/attempts.py` accounting | one re-run per family, first crash only, same hash and seed; `attempts.py` l.81-90 disclaims enforcement, so the module enforces it |
@@ -291,7 +302,7 @@ builds (D-3.9).
 | Complete-window rule | exactly 457 days and 10,968 hourly segments per leg; anything else → `DAYS_INCOMPLETE` |
 | Transformations | daily returns `screen.daily_returns`; `T_L = sharpe(d).scaled`; MDD `_max_drawdown((1.0, *equity))`; E-IMPROV via `paired_sharpe_statistics`; `q` from the sealed artifact, never recomputed |
 | Availability → result | D-1.6 items 5-7; A6 failures `DAYS_INCOMPLETE`, `NONFINITE_EQUITY`; equity `EventContractError` → `RUN:NONFINITE_EQUITY`; other runner error → `RUN:RUN_FAILED`; BTC failure nulls L-1..L-3, ETH failure nulls L-4; each atomic comparison null iff an input is null |
-| Refusals | missing, duplicate, out-of-order or off-grid bar; series interval ≠ 1 h; start ≠ L0; non-finite or non-positive equity: refuse, never fill or drop |
+| Refusals | missing, duplicate, out-of-order or off-grid bar; per leg, a series whose asset is not the leg's (BTC or ETH); candidate and benchmark legs not on the same series and the same `start` (Annex D A6, l.371-377; R14D4-A-2); series interval ≠ 1 h; start ≠ L0; non-finite or non-positive equity: refuse, never fill or drop |
 | Output fields | B4.2 `aqt.lockbox.sealed_bundle.v1` exactly: `schema`, `evaluation_id`, `kind` (RESULT; the DEFAULT is the store's), `result`, `cause_class`, `values {t_l, q, mdd_btc_cand, mdd_btc_bench, eth_e_improv, mdd_eth_cand, mdd_eth_bench}` (hexf or null), `conditions {L1..L4}`, `reasons`, `upside`, `capture {engine_commit, image_digest, input_manifest_sha256, lockbox_module_sha256, prediction_artifact_sha256}`; `operational {read_start, sealed_at, startup_check_id}` filled by the store only |
 | A7 fields produced here | none (reads the artifact; checks `code.lockbox_module_sha256` and `code.confirmation_module_sha256` against the signed rows) |
 
@@ -318,7 +329,7 @@ tracked as an open build item, not closed by this design.
 
 Synthetic data only. Loader (§4). A1a artifacts; A1b seeds (incl. one mapping to 0); A5
 vectors and startup refusal; A6 (kernel vs `_max_drawdown` bit-equal; BTC/ETH availability
-independent; hourly instants; two-hour series refused; terminal bar changes only the last
+independent; hourly instants; two-hour series refused; wrong-asset leg and candidate/benchmark on different series (identical timestamps, lengths, starts) refused (R14D4-A-2); terminal bar changes only the last
 return); A7 `seed_hex` vector and `seed_source` mismatch; B4.2 byte-exact bundles incl. the
 PASS fixture (1,053 bytes, `d64d228b…ba520`); per gate: a PASS, a FAIL and an UNAVAILABLE
 case, incl. Astra's examples (negative finite ETH improvement fails G-3; 500 tied null
@@ -338,8 +349,10 @@ reaching each statistic is exactly the contract's; the duplicated-code identity 
 ## 10. Still open (to settle in review or build)
 
 The drand verification library inside the pinned image (§5.1); the exact confirmation
-partition access path and identity mechanism; where the launcher's text is bound
-(§4, R14D3-S-2): a launcher file outside the engine commit, the object and the two signed
-modules would be code R-14/R-14a do not admit, so its exact text must either be stated in
-the signed C2 bytes or reach the evaluation by another route review accepts; the store
-interface names (§6.5).
+partition access path and identity mechanism; the store interface names (§6.5).
+
+**Pre-signing build item (R14D3-S-2, R14D4-A-3):** the launch route. Every executed line
+must lie in the engine commit, a later object file, or one of the two signed modules;
+stating a launcher's text in the signed C2 bytes does not admit a third file. If no such
+route exists, the owner decides a change to R-14a's draft wording under the applicable
+process; this design and its reviewers cannot admit it.
