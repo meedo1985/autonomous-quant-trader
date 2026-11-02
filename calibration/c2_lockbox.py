@@ -1,12 +1,12 @@
 """R-14a lockbox module (Annex D; review/r14a-modules/DESIGN.md §6, §7.1).
 
-Slices 1-2 of the build, pure functions only (no store, no data read, no
-clock): the A4 forecast generator, the A5 reference vectors, the A6 adapter,
-the L-1..L-4 pass rule, the `aqt.lockbox.sealed_bundle.v1` body and the
-pre-read checks (§6.3). The load-and-verify start (DESIGN §4), the store
-calls and the read are a later slice. Nothing here binds until its SHA-256
-is a row of the signed C2 (R-14a item 1); until then it is a draft under
-review.
+Slices 1-3a of the build (no store, no clock; the bars come from a caller's
+read function): the A4 forecast generator, the A5 reference vectors, the A6
+adapter, the L-1..L-4 pass rule, the `aqt.lockbox.sealed_bundle.v1` body,
+the pre-read checks (§6.3) and the lockbox run, read and computed twice
+(§6.4). The load-and-verify start (DESIGN §4) and the store calls are slice
+3b. Nothing here binds until its SHA-256 is a row of the signed C2 (R-14a
+item 1); until then it is a draft under review.
 
 R-14a item 3: imports only engine-commit modules, the object's `screen.py`,
 the standard library and pinned image libraries; never the confirmation
@@ -27,13 +27,25 @@ from dataclasses import dataclass, fields
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import numpy as np
+
 import aqt.metrics.statistics as st
-from aqt.backtest.event_contract import EventContractError, EventResult
+from aqt.backtest.costs import (
+    ewma_hourly_volatility_bps_series,
+    hourly_log_returns_bps,
+)
+from aqt.backtest.event_contract import (
+    EventContractError,
+    EventResult,
+    run_event_contract,
+)
 from aqt.core.preregistration import PreregistrationError, trial_seed
 from aqt.data.bars import BarSeries
+from aqt.features.columns import feature_columns
 from aqt.metrics.descriptive import _max_drawdown
 from calibration import screen
 from calibration.seeds import cj, sha
+from calibration.semi import SYMBOLS
 
 # Annex D §D-1.1, §D-1.8
 L0 = datetime(2025, 6, 1, tzinfo=UTC)
@@ -711,3 +723,114 @@ def pre_read_check(
     except _Refused as r:
         return r.code
     return "PASS"
+
+
+# --- the lockbox run (DESIGN §6.4, §7.1; Annex D §D-1.8 items 3-6, §D-3.3) ---
+#
+# screen.py has no public "run a trial on real bars" function: its run is a
+# closure inside screen_gates. This glue calls the same frozen pieces in the
+# same order (path_series, feature_columns, the cost volatility,
+# model_column, load, leg_targets, benchmark_targets, run_event_contract)
+# with w0 = L0, the warm-up from S_pre and the nominee's estimator seed. It is
+# post-freeze glue (Annex D §D-3.1 accepted residual): review it as such.
+
+RUN_HOURS = int((L1 - L0) / HOUR)  # 10,968
+WARMUP_HOURS = int((L0 - S_PRE) / HOUR)  # the history part, S_pre .. L0
+READ_HOURS = WARMUP_HOURS + RUN_HOURS  # bars with open_time in [S_pre, L1)
+
+
+def check_read(series: BarSeries, asset: str) -> None:
+    """§7.1 C-T: the served bars are exactly `[S_pre, L1)` hourly, ascending,
+    each once, before `path_series` rebuilds times from row positions
+    (`screen.py` l.911). Anything else refuses; nothing is filled or dropped."""
+    if series.symbol != asset or series.interval != HOUR:
+        raise LockboxError("DAYS_INCOMPLETE", "asset or interval")
+    bars = series.bars
+    if len(bars) != READ_HOURS or any(
+        b.open_time != S_PRE + i * HOUR for i, b in enumerate(bars)
+    ):
+        raise LockboxError("DAYS_INCOMPLETE", "bars are not exactly [S_pre, L1)")
+
+
+def run_asset(
+    trial: dict[str, Any], bars: BarSeries, symbol: int, estimator_seed: int
+) -> Legs:
+    """The nominee's 1x baseline pair on one asset over `[L0, L1)`: both legs
+    flat at L0 with equity 1.0 (run_event_contract's start, R-14d), the
+    final close by `confirmation_path`, then the A6 adapter. Depends only on
+    this asset's bars, so BTC and ETH fail independently (§D-1.6, §D-3.3)."""
+    asset = SYMBOLS[symbol]
+    check_read(bars, asset)
+    # rows (hours, symbols, OHLCV) as confirmation_path takes them; only this
+    # asset's slot is filled with real bars and only it is read (path_series
+    # reads column `symbol`; each symbol's terminal row is its own last close)
+    row = [[b.open, b.high, b.low, b.close, b.volume] for b in bars.bars]
+    rows = [[r, r] for r in row]
+    path = screen.confirmation_path(np.asarray(rows, dtype=float))
+    series = screen.path_series(path, symbol, S_PRE)
+    first, columns = feature_columns(series)
+    sigma = ewma_hourly_volatility_bps_series(hourly_log_returns_bps(series))
+    if trial["model"] is not None:  # rule-based nominees skip fitting
+        column = screen.model_column(
+            trial, series, first, columns, WARMUP_HOURS, RUN_HOURS, 0,
+            model_seed=estimator_seed,
+        )  # fmt: skip
+        columns = {**columns, f"model:{trial['model']['id']}": tuple(column)}
+    closes = [b.close for b in series.bars]
+    signal = screen.load(trial["signal"], trial["signal_sha256"])
+    overlay = (
+        None
+        if trial["overlay"] is None
+        else screen.load(trial["overlay"], trial["overlay_sha256"])
+    )
+    candidate, _ = screen.leg_targets(
+        trial, signal, overlay, columns, first, closes, WARMUP_HOURS, RUN_HOURS, 0
+    )
+    benchmark = screen.benchmark_targets(columns, first, WARMUP_HOURS, RUN_HOURS)
+    legs = [
+        run_event_contract(series, targets, WARMUP_HOURS, sigma_bps=sigma)
+        for targets in (candidate, benchmark)
+    ]
+    return adapt(series, legs[0], series, legs[1], asset, L0, M_DAYS)
+
+
+def compute(
+    evaluation_id: str,
+    trial: dict[str, Any],
+    estimator_seed: int,
+    read: Callable[[], tuple[BarSeries, BarSeries]],
+    q: float,
+    replicates_sorted: Sequence[float],
+    capture: dict[str, str],
+) -> dict[str, Any]:
+    """One read and compute: BTC (L-1..L-3) and ETH (L-4), each failing
+    independently (§D-3.3)."""
+    screen.check_trial(trial)
+    if type(estimator_seed) is not int or not 0 <= estimator_seed < 2**31:
+        raise LockboxError("INVALID_ARGUMENT", "estimator_seed")
+    btc_bars, eth_bars = read()
+    btc = run_legs(lambda: run_asset(trial, btc_bars, 0, estimator_seed))
+    eth = run_legs(lambda: run_asset(trial, eth_bars, 1, estimator_seed))
+    return evaluate(evaluation_id, btc, eth, q, replicates_sorted, capture)
+
+
+def compute_twice(
+    evaluation_id: str,
+    trial: dict[str, Any],
+    estimator_seed: int,
+    read: Callable[[], tuple[BarSeries, BarSeries]],
+    q: float,
+    replicates_sorted: Sequence[float],
+    capture: dict[str, str],
+) -> dict[str, Any]:
+    """§D-1.8 item 6: read and compute twice; the bundles must be identical.
+    This checks determinism only. A difference is a technical FAIL, recorded
+    as RUN:RUN_FAILED on both assets [DESIGN: the reason list has no
+    determinism code]."""
+    args = (evaluation_id, trial, estimator_seed, read, q, replicates_sorted, capture)
+    first, second = compute(*args), compute(*args)
+    if cj(first) == cj(second):
+        return first
+    return evaluate(
+        evaluation_id, "RUN_FAILED", "RUN_FAILED", q, replicates_sorted, capture
+    )
