@@ -545,6 +545,7 @@ class Request:
     prediction_artifact_sha256: str  # from aqt.lockbox.sealing.v1
     family_seed: str  # R-7, from the governing records
     manifest_sha256: str  # the cycle's data-manifest hash
+    trial_index: int  # from the nominee's immutable C2 trial record (§D-3.2)
 
 
 class _Refused(Exception):
@@ -569,9 +570,14 @@ def _check_items(ledger: Mapping[str, Any], files: Mapping[str, bytes]) -> bytes
         _need(
             isinstance(item, Mapping)
             and set(item) == {"kind", "sha256", "size"}
-            and item["kind"] in ARTIFACT_KINDS,
+            and isinstance(item["kind"], str)
+            and item["kind"] in ARTIFACT_KINDS
+            and isinstance(item["sha256"], str)
+            and len(item["sha256"]) == 64
+            and set(item["sha256"]) <= _HEX
+            and type(item["size"]) is int,
             "IDENTITY_MISMATCH",
-        )
+        )  # R14L-S-5: types checked before the lookup
         raw = files.get(item["sha256"])
         if raw is None:
             raise _Refused("ARTIFACT_NOT_FOUND")
@@ -625,11 +631,16 @@ def _check_shape(artifact: object) -> dict[str, Any]:
 def _check_identity(a: dict[str, Any], request: Request, signed: Signed) -> None:
     """A1b, A7 and the signed values; any difference is IDENTITY_MISMATCH."""
     n, s, c = a["nominee"], a["stream"], a["code"]
+    # the index is the trial record's, never the artifact's own (R14L-S-1)
+    _need(
+        type(n["trial_index"]) is int and n["trial_index"] == request.trial_index,
+        "IDENTITY_MISMATCH",
+    )
     try:
         seed_l266 = trial_seed(
             protocol_hash=signed.protocol_hash,
             hypothesis_hash=request.hypothesis_hash,
-            trial_index=n["trial_index"],
+            trial_index=request.trial_index,
         )
         estimator = screen.estimator_seed(seed_l266)
     except (PreregistrationError, screen.TrialError):
@@ -859,6 +870,17 @@ def compute_twice(
 
 POST_SCRIPT_PREFIX = bytes.fromhex("6a25") + b"AQTC2"
 MODULE_ROWS = ("lockbox_module_sha256", "confirmation_module_sha256")
+MODULE_PATHS = {  # DESIGN §5, §6
+    "lockbox_module_sha256": "calibration/c2_lockbox.py",
+    "confirmation_module_sha256": "calibration/c2_confirmation.py",
+}
+# further signed-C2 rows `start` reads [DESIGN; to be bound in the S4 text]
+SIGNED_ROWS = (
+    "engine_commit",
+    "screen_object_sha256",
+    "qualification_object_sha256",
+    "image_digest",
+)
 
 
 class ChainError(ValueError):
@@ -945,6 +967,43 @@ def post_declaration_sha256(raw_tx: bytes, outpoint: str) -> str:
     return script[7:].hex()
 
 
+ACCEPTANCE_SCHEMA = "aqt.c2.post_acceptance.v1"
+ACCEPTANCE_FIELDS = frozenset(
+    {"schema", "txid", "raw_tx", "block_hash", "height", "confirmations",
+     "first_post"}
+)  # fmt: skip
+MIN_CONFIRMATIONS = 6  # O-6a SPEC §5, DRAFT seed_disclosure first_post_rule
+
+
+def check_acceptance(record: bytes, post_raw_tx: bytes) -> None:
+    """R14L-S-3: the frozen acceptance record [DESIGN schema] must name this
+    very post, as the first post, at 6 or more confirmations. What the module
+    cannot check is that the record is true: that needs the validating node
+    and the explorers of O-6a SPEC §4, and stays the governance procedure's;
+    the record's hash is logged for §27."""
+    try:
+        acceptance = json.loads(record)
+        canonical = cj(acceptance)
+    except ValueError as e:
+        raise ChainError("the acceptance record is not JSON") from e
+    if (
+        canonical != record
+        or not isinstance(acceptance, dict)
+        or set(acceptance) != ACCEPTANCE_FIELDS
+    ):
+        raise ChainError("the acceptance record is not the canonical schema")
+    confirmations = acceptance["confirmations"]
+    if (
+        acceptance["schema"] != ACCEPTANCE_SCHEMA
+        or acceptance["raw_tx"] != post_raw_tx.hex()
+        or acceptance["txid"] != txid(post_raw_tx)
+        or acceptance["first_post"] is not True
+        or type(confirmations) is not int
+        or confirmations < MIN_CONFIRMATIONS
+    ):
+        raise ChainError("the acceptance record does not accept this post")
+
+
 def protocol_row(protocol: bytes, name: str) -> str:
     """The value of `<name>: "<value>"`, which must occur exactly once."""
     text = protocol.decode("utf-8")
@@ -975,6 +1034,7 @@ def verify_chain(
     module bytes (`modules` maps each row name to the exact bytes that will
     be compiled). Raises ChainError at the first broken step; returns the
     log to record (Constitution §27)."""
+    check_acceptance(acceptance_record, post_raw_tx)
     # F is read from the protocol bytes, which are themselves verified two
     # steps on; any failure anywhere refuses the whole chain
     posted = post_declaration_sha256(post_raw_tx, protocol_row(protocol, "outpoint_F"))
@@ -1040,8 +1100,8 @@ def verify_code(
     still refused."""
     from calibration import mapping, qobj
 
-    if len(modules) != 2:
-        raise ChainError("exactly the two R-14a module files")
+    if set(modules) != set(MODULE_PATHS.values()):  # R14L-S-4
+        raise ChainError("exactly the two named R-14a module files")
     manifest = json.loads((obj / "manifest.json").read_bytes())
     if sha(manifest) != posted_sha256:
         raise ChainError("the qualification object is not the posted one")
@@ -1119,6 +1179,61 @@ class Evaluation:
     sealing_id: str
 
 
+@dataclass(frozen=True)
+class Started:
+    """What `start` verified; `run_evaluation` takes only this (R14L-S-2)."""
+
+    signed: Signed
+    chain_log: dict[str, str]
+    startup_check_id: str
+
+
+def start(
+    store: Store,
+    *,
+    root: Path,
+    obj: Path,
+    acceptance_record: bytes,
+    post_raw_tx: bytes,
+    declaration: bytes,
+    protocol: bytes,
+    image_digest: str,
+) -> Started:
+    """DESIGN §4 and §6.1, before any protected-data read: the start chain
+    over the two module files as they are on disk, the signed values read
+    from the verified protocol bytes (never from a caller), the code check,
+    then the startup record. Any failure raises ChainError and nothing is
+    appended. That the *running* bytes are these files is the launch
+    route's to establish (LG-8, R14D3-S-2): this function cannot run before
+    the module that contains it."""
+    files = {row: (root / path).read_bytes() for row, path in MODULE_PATHS.items()}
+    log = verify_chain(
+        acceptance_record=acceptance_record,
+        post_raw_tx=post_raw_tx,
+        declaration=declaration,
+        protocol=protocol,
+        modules=files,
+    )
+    rows = {name: protocol_row(protocol, name) for name in SIGNED_ROWS}
+    signed = Signed(
+        protocol_hash=log["protocol_hash"],
+        lockbox_module_sha256=log["lockbox_module_sha256"],
+        confirmation_module_sha256=log["confirmation_module_sha256"],
+        engine_commit=rows["engine_commit"],
+        screen_object_sha256=rows["screen_object_sha256"],
+        image_digest=rows["image_digest"],
+    )
+    defn = verify_code(
+        obj,
+        rows["qualification_object_sha256"],
+        root,
+        {MODULE_PATHS[row]: data for row, data in files.items()},
+    )
+    if defn.get("engine_commit") != signed.engine_commit:
+        raise ChainError("the object's engine commit is not the signed one")
+    return Started(signed, log, record_startup(store, signed, image_digest))
+
+
 def record_startup(store: Store, signed: Signed, image_digest: str) -> str:
     """§6.1 / §D-3.4: once per process start, after the start chain:
     recompute the A5 vectors and ask the store to append the record."""
@@ -1154,8 +1269,8 @@ def run_evaluation(
     store: Store,
     *,
     evaluation: Evaluation,
+    started: Started,
     request: Request,
-    signed: Signed,
     artifact_bytes: bytes | None,
     artifacts_ledger: Mapping[str, Any],
     files: Mapping[str, bytes],
@@ -1166,6 +1281,7 @@ def run_evaluation(
 ) -> str:
     """§6.3-§6.5 in order. Returns what happened: the pre-read reason code,
     "STOPPED" (a store refusal; nothing written), or the bundle's result."""
+    signed = started.signed
     result = pre_read_check(
         request=request,
         signed=signed,

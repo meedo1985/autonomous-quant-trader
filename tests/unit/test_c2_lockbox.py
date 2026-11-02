@@ -312,3 +312,21 @@ def test_t_l_is_ediff_of_btc_legs() -> None:
     b = lb.evaluate("x", legs, _legs(1.0), -1.0, [0.0] * 2000, CAPTURE)
     d = [x - y for x, y in zip(legs.candidate, legs.benchmark, strict=True)]
     assert lb.unhexf(b["values"]["t_l"]) == st.sharpe(d).scaled
+
+
+def test_generator_pinned_vectors() -> None:
+    # R14L-S-7: fixed literals, not a second computation. These parts are
+    # integer and stdlib-random only (no libm), so they hold on every platform;
+    # the full A5 hash is frozen on the qualified image (LG-6).
+    assert hashlib.sha256(lb.seed_material(SEED, WINDOW, 7)).hexdigest() == (
+        "152c4387432a63922e849d0125bc710da7da1b1da0131d00cf424caf9ced2029"
+    )
+    assert list(lb.replicate_indices(SEED, WINDOW, 40, 4.0, 0)[:12]) == [
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15,
+    ]  # fmt: skip
+    assert (
+        hashlib.sha256(
+            bytes(lb.replicate_indices(SEED, WINDOW, 40, 4.0, 1999))
+        ).hexdigest()
+        == "cc6ee717ac1d0f6167d24e21dafa19b886d025d3f9dd85cf6e218e2621bb0815"
+    )

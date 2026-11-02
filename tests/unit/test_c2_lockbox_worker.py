@@ -5,6 +5,7 @@ are the store build's tests, not these."""
 
 from __future__ import annotations
 
+import hashlib
 import math
 import sys
 from pathlib import Path
@@ -14,6 +15,7 @@ import pytest
 
 from aqt.data.bars import BarSeries
 from calibration import c2_lockbox as lb
+from calibration.seeds import cj
 from tests.unit import test_c2_lockbox_preread as pre
 
 EVALUATION = lb.Evaluation("C2/trend/1", "elig-1", "lbe-1", "seal-1")
@@ -90,7 +92,10 @@ def _run(store: FakeStore, tmp_path: Path, **over: Any) -> str:
     case = pre._case()
     case["startup"] = {**case["startup"], "startup_check_id": "C2/startup/1"}
     case.update(over)
-    return lb.run_evaluation(store, evaluation=EVALUATION, code_dir=tmp_path, **case)
+    started = lb.Started(case.pop("signed"), {}, "C2/startup/1")
+    return lb.run_evaluation(
+        store, evaluation=EVALUATION, started=started, code_dir=tmp_path, **case
+    )
 
 
 def test_record_startup(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -215,3 +220,79 @@ def test_end_to_end_with_the_real_run(
     assert bundle["conditions"]["L1"] is None and bundle["conditions"]["L4"] is False
     assert bundle["cause_class"] == "PERFORMANCE"
     assert bundle["values"]["mdd_btc_cand"] is not None
+
+
+# --- start (R14L-S-2) ----------------------------------------------------------
+
+
+def _start_inputs(tmp_path: Path, **rows: str) -> dict[str, Any]:
+    from tests.unit.test_c2_lockbox_chain import F_TXID, _acceptance, _post
+
+    files = {
+        "lockbox_module_sha256": b"L = 1\n",
+        "confirmation_module_sha256": b"C = 1\n",
+    }
+    for row, data in files.items():
+        path = tmp_path / lb.MODULE_PATHS[row]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    values = {
+        "outpoint_F": f"{F_TXID}:1",
+        **{row: hashlib.sha256(data).hexdigest() for row, data in files.items()},
+        "engine_commit": "e" * 40,
+        "screen_object_sha256": "5" * 64,
+        "qualification_object_sha256": "9" * 64,
+        "image_digest": "sha256:" + "1" * 64,
+        **rows,
+    }
+    protocol = ("\n".join(f'  {k}: "{v}"' for k, v in values.items()) + "\n").encode()
+    declaration = cj({"protocol_hash": hashlib.sha256(protocol).hexdigest()})
+    post = _post(hashlib.sha256(declaration).hexdigest())
+    return {
+        "root": tmp_path,
+        "obj": tmp_path / "obj",
+        "acceptance_record": _acceptance(post),
+        "post_raw_tx": post,
+        "declaration": declaration,
+        "protocol": protocol,
+        "image_digest": "sha256:" + "1" * 64,
+    }
+
+
+def test_start_reads_signed_values_from_the_verified_protocol(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def verify_code(
+        obj: Path, posted: str, root: Path, modules: dict[str, bytes]
+    ) -> Any:
+        seen.update(posted=posted, modules=modules)
+        return {"engine_commit": "e" * 40}
+
+    monkeypatch.setattr(lb, "verify_code", verify_code)
+    store = FakeStore()
+    started = lb.start(store, **_start_inputs(tmp_path))
+    assert started.signed.engine_commit == "e" * 40
+    assert started.signed.image_digest == "sha256:" + "1" * 64
+    assert (
+        started.signed.lockbox_module_sha256 == hashlib.sha256(b"L = 1\n").hexdigest()
+    )
+    assert seen["posted"] == "9" * 64
+    assert set(seen["modules"]) == set(lb.MODULE_PATHS.values())
+    assert started.startup_check_id == "C2/startup/1"
+    assert store.names() == ["append_startup"]
+
+
+def test_start_refuses_before_any_append(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(lb, "verify_code", lambda *a: {"engine_commit": "f" * 40})
+    store = FakeStore()
+    with pytest.raises(lb.ChainError):  # the object's engine is not the signed one
+        lb.start(store, **_start_inputs(tmp_path))
+    inputs = _start_inputs(tmp_path)
+    (tmp_path / "calibration" / "c2_lockbox.py").write_bytes(b"L = 2\n")  # swapped
+    with pytest.raises(lb.ChainError):
+        lb.start(store, **inputs)
+    assert store.names() == []

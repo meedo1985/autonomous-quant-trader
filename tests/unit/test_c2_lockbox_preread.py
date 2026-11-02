@@ -138,6 +138,7 @@ def _case(
             prediction_artifact_sha256=hashlib.sha256(raw).hexdigest(),
             family_seed=FAMILY_SEED,
             manifest_sha256=MANIFEST,
+            trial_index=TRIAL_INDEX,
         ),
         "signed": SIGNED,
         "artifact_bytes": raw,
@@ -308,3 +309,28 @@ def test_image_and_startup() -> None:
     ):
         startup = {**c["startup"], **change}
         assert _check({**c, "startup": startup}) == "REFERENCE_VECTOR_MISMATCH"
+
+
+def test_coherent_wrong_trial_index_refused() -> None:
+    # R14L-S-1: index 4 with both seeds recomputed for it and the artifact
+    # hash recomputed: self-consistent, but not the trial record's index 3
+    a = _artifact()
+    seed = trial_seed(
+        protocol_hash=SIGNED.protocol_hash, hypothesis_hash=HYPOTHESIS, trial_index=4
+    )
+    a["nominee"].update(
+        trial_index=4, seed_l266=seed, estimator_seed=screen.estimator_seed(seed)
+    )
+    assert _check(_case(a)) == "IDENTITY_MISMATCH"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("sha256", []), ("sha256", "A" * 64), ("size", True), ("size", "12"),
+     ("kind", ["trial"])],
+)  # fmt: skip
+def test_malformed_ledger_item_is_a_reason_code(field: str, value: object) -> None:
+    # R14L-S-5: a recorded Q2b code, never an uncaught TypeError
+    c = _case()
+    c["artifacts_ledger"]["items"][1][field] = value
+    assert _check(c) == "IDENTITY_MISMATCH"

@@ -58,14 +58,29 @@ def _protocol(**rows: str) -> bytes:
     return ("\n".join(lines) + "\n").encode()
 
 
+def _acceptance(post: bytes, **over: object) -> bytes:
+    record = {
+        "schema": "aqt.c2.post_acceptance.v1",
+        "txid": lb.txid(post),
+        "raw_tx": post.hex(),
+        "block_hash": "00" * 32,
+        "height": 900000,
+        "confirmations": 6,
+        "first_post": True,
+        **over,
+    }
+    return cj(record)
+
+
 def _chain(**over: Any) -> dict[str, Any]:
     protocol = over.pop("protocol", _protocol())
     declaration = over.pop(
         "declaration", cj({"protocol_hash": hashlib.sha256(protocol).hexdigest()})
     )
+    post = over.pop("post_raw_tx", _post(hashlib.sha256(declaration).hexdigest()))
     args = {
-        "acceptance_record": b"record",
-        "post_raw_tx": _post(hashlib.sha256(declaration).hexdigest()),
+        "acceptance_record": _acceptance(post),
+        "post_raw_tx": post,
         "declaration": declaration,
         "protocol": protocol,
         "modules": dict(MODULES),
@@ -127,14 +142,19 @@ def test_valid_chain_logs_every_link() -> None:
     assert log["declaration_sha256"] == hashlib.sha256(args["declaration"]).hexdigest()
     assert log["protocol_hash"] == hashlib.sha256(args["protocol"]).hexdigest()
     assert log["lockbox_module_sha256"] == hashlib.sha256(b"lockbox").hexdigest()
-    assert log["acceptance_record_sha256"] == hashlib.sha256(b"record").hexdigest()
+    assert (
+        log["acceptance_record_sha256"]
+        == hashlib.sha256(args["acceptance_record"]).hexdigest()
+    )
 
 
 def test_each_broken_link_refuses() -> None:
     good = _chain()
     other_decl = cj({"protocol_hash": "0" * 64})
+    other_post = _post(hashlib.sha256(other_decl).hexdigest())
     cases: list[dict[str, Any]] = [
-        {"post_raw_tx": _post(hashlib.sha256(other_decl).hexdigest())},  # post
+        # a well-accepted post of another declaration
+        {"post_raw_tx": other_post, "acceptance_record": _acceptance(other_post)},
         {"declaration": json.dumps(json.loads(good["declaration"]), indent=1).encode()},
         {"declaration": other_decl},  # protocol_hash differs
         {"protocol": _protocol(lockbox_module_sha256="")},  # row missing
@@ -234,6 +254,37 @@ def test_verify_code_extends_reviewed_by_exactly_the_modules(
         lb.verify_code(tmp_path, "0" * 64, ROOT, modules)
     with pytest.raises(lb.ChainError):
         lb.verify_code(tmp_path, sha(manifest), ROOT, {**modules, "x.py": b"c"})
+    # R14L-S-4: two files, but not the two named ones
+    wrong = {"calibration/c2_lockbox.py": b"a", "calibration/other.py": b"b"}
+    with pytest.raises(lb.ChainError):
+        lb.verify_code(tmp_path, sha(manifest), ROOT, wrong)
     (tmp_path / "screen.py").write_bytes(b"tampered")
     with pytest.raises(lb.ChainError):
         lb.verify_code(tmp_path, sha(manifest), ROOT, modules)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"confirmations": 5},
+        {"confirmations": 6.0},
+        {"first_post": False},
+        {"raw_tx": "00"},
+        {"txid": "00" * 32},
+        {"schema": "other"},
+    ],
+)
+def test_acceptance_record_must_accept_this_post(change: dict[str, object]) -> None:
+    # R14L-S-3: the record is bound to the post; its truth stays governance's
+    args = _chain()
+    args["acceptance_record"] = _acceptance(args["post_raw_tx"], **change)
+    with pytest.raises(lb.ChainError):
+        lb.verify_chain(**args)
+
+
+def test_acceptance_record_must_be_canonical() -> None:
+    args = _chain()
+    record = json.loads(args["acceptance_record"])
+    args["acceptance_record"] = json.dumps(record, indent=1).encode()
+    with pytest.raises(lb.ChainError):
+        lb.verify_chain(**args)

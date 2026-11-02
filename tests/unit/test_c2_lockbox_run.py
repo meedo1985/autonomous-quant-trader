@@ -156,8 +156,19 @@ def test_nondeterministic_read_is_technical(
 
 
 def test_model_trial_refits_with_estimator_seed(
-    market: tuple[BarSeries, BarSeries], code: Callable[..., dict[str, Any]]
+    market: tuple[BarSeries, BarSeries],
+    code: Callable[..., dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # R14L-S-7: a spy at the frozen model-construction boundary
+    seeds: list[int] = []
+    build = screen.build_model
+
+    def spy(cls: str, params: Any, seed: int) -> Any:
+        seeds.append(seed)
+        return build(cls, params, seed=seed)
+
+    monkeypatch.setattr(screen, "build_model", spy)
     model = {
         "id": "m1",
         "class": "ridge",
@@ -177,6 +188,8 @@ def test_model_trial_refits_with_estimator_seed(
     )
     b = _run(t, lambda: market)
     assert b["reasons"] == [] and b["values"]["t_l"] is not None
+    # 16 refits (k = 0..15) per asset, every one with the estimator seed
+    assert len(seeds) == 2 * 16 and set(seeds) == {12345}
 
 
 def test_bad_estimator_seed_refused(code: Callable[..., dict[str, Any]]) -> None:
