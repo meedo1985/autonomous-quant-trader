@@ -693,10 +693,40 @@ def _check_p4(a: dict[str, Any]) -> None:
     )
 
 
+def _check_declared(request: Request, declaration: Mapping[str, Any]) -> None:
+    """R14L2-S-1: the nominee's cycle, family, hashes and trial index must be
+    the posted declaration's entry for it, the only trial record the chain
+    has verified. [DESIGN] declaration layout, to be bound in the S4 text:
+    top-level `cycle_id` and `trials`, a list of
+    `{family, trial_id, hypothesis_hash, configuration_hash, trial_index}`."""
+    trials = declaration.get("trials")
+    if not isinstance(trials, list):
+        raise _Refused("IDENTITY_MISMATCH")
+    entries = [
+        t
+        for t in trials
+        if isinstance(t, Mapping) and t.get("trial_id") == request.nominee_trial_id
+    ]
+    _need(
+        declaration.get("cycle_id") == request.cycle_id and len(entries) == 1,
+        "IDENTITY_MISMATCH",
+    )
+    entry = entries[0]
+    _need(
+        entry.get("family") == request.family
+        and entry.get("hypothesis_hash") == request.hypothesis_hash
+        and entry.get("configuration_hash") == request.configuration_hash
+        and type(entry.get("trial_index")) is int
+        and entry.get("trial_index") == request.trial_index,
+        "IDENTITY_MISMATCH",
+    )
+
+
 def pre_read_check(
     *,
     request: Request,
     signed: Signed,
+    declaration: Mapping[str, Any],
     artifact_bytes: bytes | None,
     artifacts_ledger: Mapping[str, Any],
     files: Mapping[str, bytes],
@@ -711,6 +741,7 @@ def pre_read_check(
         if artifact_bytes is None:
             raise _Refused("ARTIFACT_NOT_FOUND")
         trial_bytes = _check_items(artifacts_ledger, files)
+        _check_declared(request, declaration)
         _need(
             hashlib.sha256(artifact_bytes).hexdigest()
             == request.prediction_artifact_sha256,
@@ -977,10 +1008,12 @@ MIN_CONFIRMATIONS = 6  # O-6a SPEC §5, DRAFT seed_disclosure first_post_rule
 
 def check_acceptance(record: bytes, post_raw_tx: bytes) -> None:
     """R14L-S-3: the frozen acceptance record [DESIGN schema] must name this
-    very post, as the first post, at 6 or more confirmations. What the module
-    cannot check is that the record is true: that needs the validating node
-    and the explorers of O-6a SPEC §4, and stays the governance procedure's;
-    the record's hash is logged for §27."""
+    very post, as the first post, at 6 or more confirmations, with a
+    well-formed block hash and height. What the module cannot check is that
+    the record is true: that needs the validating node and the explorers of
+    O-6a SPEC §4. Who vouches for the record, and how its provenance is
+    verified before `start()`, is an open owner decision (R14L2-S-2); the
+    record's hash is logged for §27."""
     try:
         acceptance = json.loads(record)
         canonical = cj(acceptance)
@@ -998,6 +1031,11 @@ def check_acceptance(record: bytes, post_raw_tx: bytes) -> None:
         or acceptance["raw_tx"] != post_raw_tx.hex()
         or acceptance["txid"] != txid(post_raw_tx)
         or acceptance["first_post"] is not True
+        or not isinstance(acceptance["block_hash"], str)
+        or len(acceptance["block_hash"]) != 64
+        or not set(acceptance["block_hash"]) <= _HEX
+        or type(acceptance["height"]) is not int
+        or acceptance["height"] <= 0
         or type(confirmations) is not int
         or confirmations < MIN_CONFIRMATIONS
     ):
@@ -1184,6 +1222,7 @@ class Started:
     """What `start` verified; `run_evaluation` takes only this (R14L-S-2)."""
 
     signed: Signed
+    declaration: dict[str, Any]  # the verified, posted declaration
     chain_log: dict[str, str]
     startup_check_id: str
 
@@ -1231,7 +1270,10 @@ def start(
     )
     if defn.get("engine_commit") != signed.engine_commit:
         raise ChainError("the object's engine commit is not the signed one")
-    return Started(signed, log, record_startup(store, signed, image_digest))
+    if image_digest != signed.image_digest:  # R14L2-S-3: before any append
+        raise ChainError("the running image is not the signed one")
+    startup_check_id = record_startup(store, signed, image_digest)
+    return Started(signed, json.loads(declaration), log, startup_check_id)
 
 
 def record_startup(store: Store, signed: Signed, image_digest: str) -> str:
@@ -1285,6 +1327,7 @@ def run_evaluation(
     result = pre_read_check(
         request=request,
         signed=signed,
+        declaration=started.declaration,
         artifact_bytes=artifact_bytes,
         artifacts_ledger=artifacts_ledger,
         files=files,

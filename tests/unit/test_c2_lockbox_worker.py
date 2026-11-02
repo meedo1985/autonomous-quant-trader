@@ -92,7 +92,9 @@ def _run(store: FakeStore, tmp_path: Path, **over: Any) -> str:
     case = pre._case()
     case["startup"] = {**case["startup"], "startup_check_id": "C2/startup/1"}
     case.update(over)
-    started = lb.Started(case.pop("signed"), {}, "C2/startup/1")
+    started = lb.Started(
+        case.pop("signed"), case.pop("declaration"), {}, "C2/startup/1"
+    )
     return lb.run_evaluation(
         store, evaluation=EVALUATION, started=started, code_dir=tmp_path, **case
     )
@@ -293,6 +295,18 @@ def test_start_refuses_before_any_append(
         lb.start(store, **_start_inputs(tmp_path))
     inputs = _start_inputs(tmp_path)
     (tmp_path / "calibration" / "c2_lockbox.py").write_bytes(b"L = 2\n")  # swapped
+    with pytest.raises(lb.ChainError):
+        lb.start(store, **inputs)
+    assert store.names() == []
+
+
+def test_start_refuses_a_running_image_that_is_not_signed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R14L2-S-3: no PASS startup record for an unsigned image digest
+    monkeypatch.setattr(lb, "verify_code", lambda *a: {"engine_commit": "e" * 40})
+    store = FakeStore()
+    inputs = {**_start_inputs(tmp_path), "image_digest": "sha256:" + "2" * 64}
     with pytest.raises(lb.ChainError):
         lb.start(store, **inputs)
     assert store.names() == []

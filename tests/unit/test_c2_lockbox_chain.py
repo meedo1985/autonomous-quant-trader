@@ -272,6 +272,11 @@ def test_verify_code_extends_reviewed_by_exactly_the_modules(
         {"raw_tx": "00"},
         {"txid": "00" * 32},
         {"schema": "other"},
+        {"block_hash": None},  # R14L2-S-2: field types
+        {"block_hash": "zz" * 32},
+        {"height": "not-a-height"},
+        {"height": True},
+        {"height": 0},
     ],
 )
 def test_acceptance_record_must_accept_this_post(change: dict[str, object]) -> None:

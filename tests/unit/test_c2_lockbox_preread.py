@@ -53,6 +53,15 @@ HYPOTHESIS = _h("hypothesis")
 FAMILY_SEED = _h("family-seed")
 MANIFEST = _h("manifest")
 TRIAL_INDEX = 3
+DECLARATION: dict[str, Any] = {
+    "cycle_id": "C2",
+    "trials": [
+        {"family": "trend", "trial_id": "t007", "hypothesis_hash": HYPOTHESIS,
+         "configuration_hash": screen.trial_sha256(TRIAL), "trial_index": TRIAL_INDEX},
+        {"family": "trend", "trial_id": "t008", "hypothesis_hash": HYPOTHESIS,
+         "configuration_hash": "c" * 64, "trial_index": 4},
+    ],
+}  # fmt: skip
 FORECAST = lb.forecast(lb.reference_d()[:40], _h("x"), lb.REFERENCE_WINDOW)
 
 
@@ -141,6 +150,7 @@ def _case(
             trial_index=TRIAL_INDEX,
         ),
         "signed": SIGNED,
+        "declaration": copy.deepcopy(DECLARATION),
         "artifact_bytes": raw,
         "artifacts_ledger": {"items": items},
         "files": files,
@@ -333,4 +343,37 @@ def test_malformed_ledger_item_is_a_reason_code(field: str, value: object) -> No
     # R14L-S-5: a recorded Q2b code, never an uncaught TypeError
     c = _case()
     c["artifacts_ledger"]["items"][1][field] = value
+    assert _check(c) == "IDENTITY_MISMATCH"
+
+
+def test_request_and_artifact_coherently_wrong_index_refused() -> None:
+    # R14L2-S-1, Sol's scenario: request and artifact both say 4 with the
+    # seeds and hash recomputed; the posted declaration says 3
+    a = _artifact()
+    seed = trial_seed(
+        protocol_hash=SIGNED.protocol_hash, hypothesis_hash=HYPOTHESIS, trial_index=4
+    )
+    a["nominee"].update(
+        trial_index=4, seed_l266=seed, estimator_seed=screen.estimator_seed(seed)
+    )
+    c = _case(a)
+    c["request"] = replace(c["request"], trial_index=4)
+    assert _check(c) == "IDENTITY_MISMATCH"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda d: d.update(cycle_id="C3"),
+        lambda d: d["trials"].pop(0),  # no entry for the nominee
+        lambda d: d["trials"].append(dict(d["trials"][0])),  # two entries
+        lambda d: d["trials"][0].update(trial_index=True),
+        lambda d: d["trials"][0].update(family="vol"),
+        lambda d: d["trials"][0].update(hypothesis_hash="0" * 64),
+        lambda d: d.update(trials="t007"),
+    ],
+)
+def test_declared_entry_binds_the_nominee(change: Any) -> None:
+    c = _case()
+    change(c["declaration"])
     assert _check(c) == "IDENTITY_MISMATCH"
