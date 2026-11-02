@@ -1,12 +1,13 @@
 """R-14a lockbox module (Annex D; review/r14a-modules/DESIGN.md §6, §7.1).
 
-Slices 1-3b-1 of the build (no store, no clock; the bars come from a caller's
-read function): the A4 forecast generator, the A5 reference vectors, the A6
-adapter, the L-1..L-4 pass rule, the `aqt.lockbox.sealed_bundle.v1` body,
-the pre-read checks (§6.3) and the lockbox run, read and computed twice
-(§6.4), and the start chain and loader (DESIGN §4). The store calls are
-slice 3b-2. Nothing here binds until its SHA-256 is a row of the signed C2 (R-14a
-item 1); until then it is a draft under review.
+The lockbox_eval worker (slices 1-3b-2 of the build; the store, publisher
+and signer are separate builds): the A4 forecast generator, the A5
+reference vectors, the A6 adapter, the L-1..L-4 pass rule, the
+`aqt.lockbox.sealed_bundle.v1` body, the pre-read checks (§6.3), the
+lockbox run, read and computed twice (§6.4), the start chain and loader
+(DESIGN §4), and the worker's store calls (§6.5). Nothing here binds until
+its SHA-256 is a row of the signed C2 (R-14a item 1); until then it is a
+draft under review.
 
 R-14a item 3: imports only engine-commit modules, the object's `screen.py`,
 the standard library and pinned image libraries; never the confirmation
@@ -29,7 +30,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -1044,3 +1045,160 @@ def verify_code(
     )
     mapping.check_runtime(defn)
     return defn
+
+
+# --- the worker's store calls (DESIGN §6.1, §6.4, §6.5; Annex D §D-3.7) ------
+#
+# The store, publisher and signer are separate builds (§D-3.9). This is only
+# the lockbox_eval worker's side: it never authorises its own read, never
+# holds L_store, and never fills `operational`. The store enforces C and D*
+# (the time rule); a refusal is StoreRefused and the worker stops without
+# writing, so the DEFAULT bundle sealed at begin_read stands.
+
+
+class StoreRefused(Exception):
+    """The store refused a call (deadline, cap, gate, entitlement)."""
+
+
+class ReadSession(Protocol):
+    def read(self) -> tuple[BarSeries, BarSeries]:
+        """BTC and ETH 1h bars over [S_pre, L1), each bar under the store's D*
+        start check; raises StoreRefused once D* is reached."""
+        ...
+
+
+class Store(Protocol):
+    def append_startup(self, record: dict[str, Any]) -> str:
+        """Append aqt.lockbox.startup.v1; returns startup_check_id."""
+        ...
+
+    def record_pre_read_check(self, record: dict[str, Any]) -> str:
+        """Seal aqt.lockbox.pre_read_check.v1 (deadline C; at most one per
+        evaluation); the store adds check_id and checked_at."""
+        ...
+
+    def open_read(self, evaluation_id: str) -> ReadSession:
+        """The read gate: only after begin_read's entry is durable, its
+        DEFAULT verifies and a PASS startup record exists (§D-3.7)."""
+        ...
+
+    def write_bundle(self, evaluation_id: str, bundle: dict[str, Any]) -> None:
+        """Seal the RESULT bundle; the store adds operational and commits."""
+        ...
+
+    def mark_finished(self, evaluation_id: str) -> None:
+        """Count the finish if before D* (§D-3.7 mark_finished)."""
+        ...
+
+
+@dataclass(frozen=True)
+class Evaluation:
+    """The evaluation's record identifiers (§D-3.7 pre-read check record)."""
+
+    evaluation_id: str
+    eligibility_result_id: str
+    lockbox_evaluation_id: str
+    sealing_id: str
+
+
+def record_startup(store: Store, signed: Signed, image_digest: str) -> str:
+    """§6.1 / §D-3.4: once per process start, after the start chain:
+    recompute the A5 vectors and ask the store to append the record."""
+    vectors, result = startup_result()
+    return store.append_startup(
+        {
+            "lockbox_module_sha256": signed.lockbox_module_sha256,
+            "image_digest": image_digest,
+            "vectors_sha256": vectors,
+            "result": result,
+        }
+    )
+
+
+def _install_trial_code(
+    trial: dict[str, Any], files: Mapping[str, bytes], code_dir: Path
+) -> None:
+    """Write the nominee's signal and overlay sources (verified by the
+    pre-read check) as `<module>.py` into an empty directory placed last on
+    the import path, as the screen's driver does (`screen._extend_path`);
+    `screen.load` hashes them again before executing."""
+    if any(code_dir.iterdir()):
+        raise LockboxError("INVALID_ARGUMENT", "the code directory is not empty")
+    for ref, digest in ((trial["signal"], trial["signal_sha256"]),
+                        (trial["overlay"], trial["overlay_sha256"])):  # fmt: skip
+        if ref is not None:
+            (code_dir / f"{ref.split(':')[0]}.py").write_bytes(files[digest])
+    engine, code = screen._paths(code_dir)
+    screen._extend_path(engine, code)
+
+
+def run_evaluation(
+    store: Store,
+    *,
+    evaluation: Evaluation,
+    startup_check_id: str,
+    request: Request,
+    signed: Signed,
+    artifact_bytes: bytes | None,
+    artifacts_ledger: Mapping[str, Any],
+    files: Mapping[str, bytes],
+    manifest_sha256: str,
+    image_digest: str,
+    startup: Mapping[str, Any] | None,
+    code_dir: Path,
+) -> str:
+    """§6.3-§6.5 in order. Returns what happened: the pre-read reason code,
+    "STOPPED" (a store refusal; nothing written), or the bundle's result."""
+    result = pre_read_check(
+        request=request,
+        signed=signed,
+        artifact_bytes=artifact_bytes,
+        artifacts_ledger=artifacts_ledger,
+        files=files,
+        manifest_sha256=manifest_sha256,
+        image_digest=image_digest,
+        startup=startup,
+    )
+    try:
+        store.record_pre_read_check(
+            {
+                "evaluation_id": evaluation.evaluation_id,
+                "family": request.family,
+                "nominee_trial_id": request.nominee_trial_id,
+                "prediction_artifact_sha256": request.prediction_artifact_sha256,
+                "eligibility_result_id": evaluation.eligibility_result_id,
+                "lockbox_evaluation_id": evaluation.lockbox_evaluation_id,
+                "sealing_id": evaluation.sealing_id,
+                "startup_check_id": startup_check_id,
+                "lockbox_module_sha256": signed.lockbox_module_sha256,
+                "image_digest": image_digest,
+                "result": result,
+            }
+        )
+        if result != "PASS":
+            return result  # nothing read; the segment is not EXPOSED
+        assert artifact_bytes is not None
+        artifact = json.loads(artifact_bytes)
+        trial = json.loads(_check_items(artifacts_ledger, files))
+        _install_trial_code(trial, files, code_dir)
+        session = store.open_read(evaluation.evaluation_id)
+        bundle = compute_twice(
+            evaluation.evaluation_id,
+            trial,
+            artifact["nominee"]["estimator_seed"],
+            session.read,
+            unhexf(artifact["q"]),
+            [unhexf(x) for x in artifact["replicates_sorted"]],
+            {
+                "engine_commit": signed.engine_commit,
+                "image_digest": image_digest,
+                "input_manifest_sha256": manifest_sha256,
+                "lockbox_module_sha256": signed.lockbox_module_sha256,
+                "prediction_artifact_sha256": request.prediction_artifact_sha256,
+            },
+        )
+        store.write_bundle(evaluation.evaluation_id, bundle)
+        store.mark_finished(evaluation.evaluation_id)
+    except StoreRefused:
+        return "STOPPED"
+    return str(bundle["result"])
