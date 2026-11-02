@@ -1,11 +1,11 @@
 """R-14a lockbox module (Annex D; review/r14a-modules/DESIGN.md §6, §7.1).
 
-Slices 1-3a of the build (no store, no clock; the bars come from a caller's
+Slices 1-3b-1 of the build (no store, no clock; the bars come from a caller's
 read function): the A4 forecast generator, the A5 reference vectors, the A6
 adapter, the L-1..L-4 pass rule, the `aqt.lockbox.sealed_bundle.v1` body,
 the pre-read checks (§6.3) and the lockbox run, read and computed twice
-(§6.4). The load-and-verify start (DESIGN §4) and the store calls are slice
-3b. Nothing here binds until its SHA-256 is a row of the signed C2 (R-14a
+(§6.4), and the start chain and loader (DESIGN §4). The store calls are
+slice 3b-2. Nothing here binds until its SHA-256 is a row of the signed C2 (R-14a
 item 1); until then it is a draft under review.
 
 R-14a item 3: imports only engine-commit modules, the object's `screen.py`,
@@ -18,13 +18,17 @@ as Annex D §D-3.4 states it.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import math
 import random
 import struct
+import sys
+import types
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -834,3 +838,209 @@ def compute_twice(
     return evaluate(
         evaluation_id, "RUN_FAILED", "RUN_FAILED", q, replicates_sorted, capture
     )
+
+
+# --- the start chain and the loader (DESIGN §4; R-14a item 2) ----------------
+#
+# Format bindings the S4 text does not fix yet, chosen here and to be stated
+# in the signed C2 [DESIGN; pre-signing item]:
+# - the signed protocol bytes carry each of `lockbox_module_sha256`,
+#   `confirmation_module_sha256` and `outpoint_F` exactly once, on its own
+#   line as `<name>: "<value>"` (any indentation), replacing the
+#   <<BUILD>>/<<SIGNING>> markers; `outpoint_F` is `<txid hex>:<vout>`;
+# - the C2 declaration is canonical JSON (cj) with a top-level
+#   `protocol_hash`.
+# What this chain cannot verify: that the post is *accepted* (6
+# confirmations, first post, no later post; O-6a SPEC §3-§5). That needs a
+# validating node and is the frozen acceptance record's; the chain checks
+# that record's transaction is well formed, spends F and names this
+# declaration, and logs the record's hash.
+
+POST_SCRIPT_PREFIX = bytes.fromhex("6a25") + b"AQTC2"
+MODULE_ROWS = ("lockbox_module_sha256", "confirmation_module_sha256")
+
+
+class ChainError(ValueError):
+    """A broken or unverifiable step of the start chain; nothing is read."""
+
+
+def _varint(raw: bytes, i: int) -> tuple[int, int]:
+    first = raw[i]
+    if first < 0xFD:
+        return first, i + 1
+    width = {0xFD: 2, 0xFE: 4, 0xFF: 8}[first]
+    return int.from_bytes(raw[i + 1 : i + 1 + width], "little"), i + 1 + width
+
+
+def parse_tx(raw: bytes) -> tuple[list[tuple[str, int]], list[tuple[int, bytes]]]:
+    """A Bitcoin transaction's spent outpoints (display txid hex, vout) and
+    its outputs (value in satoshi, scriptPubKey). Legacy or segwit."""
+    try:
+        i = 4  # version
+        segwit = raw[i] == 0 and raw[i + 1] == 1
+        if segwit:
+            i += 2
+        count, i = _varint(raw, i)
+        inputs = []
+        for _ in range(count):
+            txid = raw[i : i + 32][::-1].hex()
+            vout = int.from_bytes(raw[i + 32 : i + 36], "little")
+            length, i = _varint(raw, i + 36)
+            i += length + 4  # scriptSig, sequence
+            inputs.append((txid, vout))
+        count, i = _varint(raw, i)
+        outputs = []
+        for _ in range(count):
+            value = int.from_bytes(raw[i : i + 8], "little")
+            length, i = _varint(raw, i + 8)
+            outputs.append((value, raw[i : i + length]))
+            i += length
+        if segwit:
+            for _ in inputs:
+                items, i = _varint(raw, i)
+                for _ in range(items):
+                    length, i = _varint(raw, i)
+                    i += length
+        if i + 4 != len(raw) or not inputs or not outputs:
+            raise ChainError("transaction bytes do not parse exactly")
+    except (IndexError, KeyError) as e:
+        raise ChainError("transaction bytes do not parse") from e
+    return inputs, outputs
+
+
+def post_declaration_sha256(raw_tx: bytes, outpoint: str) -> str:
+    """O-6a SPEC §3 well-formed post: spends F; exactly one OP_RETURN output,
+    value 0, scriptPubKey exactly `6a25 'AQTC2' <32 bytes>`."""
+    inputs, outputs = parse_tx(raw_tx)
+    txid, _, vout = outpoint.partition(":")
+    if not vout.isdigit() or (txid, int(vout)) not in inputs:
+        raise ChainError("the post does not spend the bound coin F")
+    returns = [(v, s) for v, s in outputs if s[:1] == b"\x6a"]
+    if len(returns) != 1:
+        raise ChainError("the post needs exactly one OP_RETURN output")
+    value, script = returns[0]
+    if value != 0 or len(script) != 39 or script[:7] != POST_SCRIPT_PREFIX:
+        raise ChainError("the OP_RETURN output is not the AQTC2 message")
+    return script[7:].hex()
+
+
+def protocol_row(protocol: bytes, name: str) -> str:
+    """The value of `<name>: "<value>"`, which must occur exactly once."""
+    text = protocol.decode("utf-8")
+    hits = [
+        line.strip()[len(name) + 2 :]
+        for line in text.splitlines()
+        if line.strip().startswith(f"{name}: ")
+    ]
+    if len(hits) != 1:
+        raise ChainError(f"{name} is not exactly one row of the signed C2")
+    value = hits[0]
+    if len(value) < 2 or value[0] != '"' or value[-1] != '"':
+        raise ChainError(f"{name} row is not a quoted value")
+    return value[1:-1]
+
+
+def verify_chain(
+    *,
+    acceptance_record: bytes,
+    post_raw_tx: bytes,
+    declaration: bytes,
+    protocol: bytes,
+    modules: Mapping[str, bytes],
+) -> dict[str, str]:
+    """R-14a item 2, in order: the accepted post → the declaration bytes
+    matching its declaration_sha256 → the declaration's protocol_hash → the
+    complete signed C2 bytes hashing to it, with both module rows → the
+    module bytes (`modules` maps each row name to the exact bytes that will
+    be compiled). Raises ChainError at the first broken step; returns the
+    log to record (Constitution §27)."""
+    # F is read from the protocol bytes, which are themselves verified two
+    # steps on; any failure anywhere refuses the whole chain
+    posted = post_declaration_sha256(post_raw_tx, protocol_row(protocol, "outpoint_F"))
+    declaration_sha256 = hashlib.sha256(declaration).hexdigest()
+    if declaration_sha256 != posted:
+        raise ChainError("the declaration is not the posted one")
+    try:
+        decl = json.loads(declaration)
+        canonical = cj(decl)
+    except ValueError as e:
+        raise ChainError("the declaration is not JSON") from e
+    if canonical != declaration or not isinstance(decl, dict):
+        raise ChainError("the declaration is not canonical JSON")
+    protocol_hash = decl.get("protocol_hash")
+    if hashlib.sha256(protocol).hexdigest() != protocol_hash:
+        raise ChainError("the protocol bytes do not hash to protocol_hash")
+    log = {
+        "acceptance_record_sha256": hashlib.sha256(acceptance_record).hexdigest(),
+        "post_txid": hashlib.sha256(hashlib.sha256(post_raw_tx).digest())
+        .digest()[::-1]
+        .hex(),
+        "declaration_sha256": declaration_sha256,
+        "protocol_hash": protocol_hash,
+    }
+    if set(modules) != set(MODULE_ROWS):
+        raise ChainError("exactly the two R-14a modules must be verified")
+    for name in MODULE_ROWS:
+        signed = protocol_row(protocol, name)
+        if hashlib.sha256(modules[name]).hexdigest() != signed:
+            raise ChainError(f"the loaded {name} bytes are not the signed ones")
+        log[name] = signed
+    return log
+
+
+def load_verified(name: str, path: Path, sha256: str) -> types.ModuleType:
+    """DESIGN §4 step 5: read the file once, hash those bytes, refuse on a
+    mismatch, compile and execute exactly those bytes into a module whose
+    spec names the `.py` source (so `rundef.bytecode_problem` passes,
+    R14D3-S-1); the loader's exec_module never runs, so the file is not
+    read again."""
+    source = path.read_bytes()
+    if hashlib.sha256(source).hexdigest() != sha256:
+        raise ChainError(f"{path} is not the signed module")
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None:
+        raise ChainError(f"no module spec for {path}")
+    module = importlib.util.module_from_spec(spec)
+    code = compile(source, str(path), "exec")
+    sys.modules[name] = module
+    try:
+        exec(code, module.__dict__)  # noqa: S102 - the hashed bytes only
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
+def verify_code(
+    obj: Path, posted_sha256: str, root: Path, modules: Mapping[str, bytes]
+) -> dict[str, Any]:
+    """DESIGN §4 code check: `screen.check_object`'s steps, with
+    `check_screen_code`'s reviewed map extended by exactly the two signed
+    module files (`modules` maps repository path to the verified bytes).
+    R-14's two checks are otherwise unchanged; a third extra module is
+    still refused."""
+    from calibration import mapping, qobj
+
+    if len(modules) != 2:
+        raise ChainError("exactly the two R-14a module files")
+    manifest = json.loads((obj / "manifest.json").read_bytes())
+    if sha(manifest) != posted_sha256:
+        raise ChainError("the qualification object is not the posted one")
+    files = {}
+    for name, digest in manifest.items():
+        data = (obj / name).read_bytes()
+        if hashlib.sha256(data).hexdigest() != digest:
+            raise ChainError(f"{name} does not match the object's manifest")
+        files[name] = data
+    _, defn = qobj.read(files)
+    screen.check_screen_code(
+        defn,
+        root,
+        {
+            "calibration/mapping.py": files["mapping.py"],
+            screen.SCREEN_SELF: files["screen.py"],
+            **modules,
+        },
+    )
+    mapping.check_runtime(defn)
+    return defn
