@@ -1,11 +1,12 @@
 """R-14a lockbox module (Annex D; review/r14a-modules/DESIGN.md §6, §7.1).
 
-Slice 1 of the build: the pure computation core. No store, no data read, no
-clock. The A4 forecast generator, the A5 reference vectors, the A6 adapter,
-the L-1..L-4 pass rule and the `aqt.lockbox.sealed_bundle.v1` body. The
-pre-read checks, the load-and-verify start (DESIGN §4) and the store calls
-are later slices. Nothing here binds until its SHA-256 is a row of the
-signed C2 (R-14a item 1); until then it is a draft under review.
+Slices 1-2 of the build, pure functions only (no store, no data read, no
+clock): the A4 forecast generator, the A5 reference vectors, the A6 adapter,
+the L-1..L-4 pass rule, the `aqt.lockbox.sealed_bundle.v1` body and the
+pre-read checks (§6.3). The load-and-verify start (DESIGN §4), the store
+calls and the read are a later slice. Nothing here binds until its SHA-256
+is a row of the signed C2 (R-14a item 1); until then it is a draft under
+review.
 
 R-14a item 3: imports only engine-commit modules, the object's `screen.py`,
 the standard library and pinned image libraries; never the confirmation
@@ -21,17 +22,18 @@ import json
 import math
 import random
 import struct
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import aqt.metrics.statistics as st
 from aqt.backtest.event_contract import EventContractError, EventResult
+from aqt.core.preregistration import PreregistrationError, trial_seed
 from aqt.data.bars import BarSeries
 from aqt.metrics.descriptive import _max_drawdown
 from calibration import screen
-from calibration.seeds import cj
+from calibration.seeds import cj, sha
 
 # Annex D §D-1.1, §D-1.8
 L0 = datetime(2025, 6, 1, tzinfo=UTC)
@@ -462,3 +464,250 @@ def evaluate(
     return assemble(
         evaluation_id, v, reasons, upside(v["t_l"], replicates_sorted), capture
     )
+
+
+# --- pre-read checks (DESIGN §6.3; Annex D §D-1.8 item 2, §D-3.5, §D-2.2 P-4) --
+
+POLICY = "L266_MOD_2_31"
+ARTIFACT_KINDS = ("trial", "signal", "overlay")  # [DESIGN] A1a item kinds
+_ARTIFACT_SHAPE: dict[str, frozenset[str] | None] = {
+    "cycle_id": None,
+    "family": None,
+    "nominee": frozenset(
+        {
+            "trial_id",
+            "configuration_hash",
+            "hypothesis_hash",
+            "protocol_hash",
+            "trial_index",
+            "seed_l266",
+            "estimator_seed_policy",
+            "estimator_seed",
+        }
+    ),  # fmt: skip
+    "source": frozenset({"window_id", "n", "d_sha256", "evaluation_record_sha256"}),
+    "block": frozenset({"psi_sha256", "value", "raw", "clipping"}),
+    "stream": frozenset(
+        {"seed_hex", "seed_source", "purpose", "asset", "cost", "m", "attempts"}
+    ),
+    "replicates_sorted": None,
+    "q": None,
+    "code": frozenset(
+        {
+            "lockbox_module_sha256",
+            "confirmation_module_sha256",
+            "engine_commit",
+            "screen_object_sha256",
+        }
+    ),  # fmt: skip
+}
+
+
+@dataclass(frozen=True)
+class Signed:
+    """Values the signed C2 protocol bytes fix (read from them, never from a
+    caller, by the start check of a later slice)."""
+
+    protocol_hash: str
+    lockbox_module_sha256: str
+    confirmation_module_sha256: str
+    engine_commit: str
+    screen_object_sha256: str
+    image_digest: str
+
+
+@dataclass(frozen=True)
+class Request:
+    """The identifiers handed over (§D-1.8 item 1) and the sealing entry."""
+
+    cycle_id: str
+    family: str
+    nominee_trial_id: str
+    hypothesis_hash: str
+    configuration_hash: str
+    prediction_artifact_sha256: str  # from aqt.lockbox.sealing.v1
+    family_seed: str  # R-7, from the governing records
+    manifest_sha256: str  # the cycle's data-manifest hash
+
+
+class _Refused(Exception):
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+def _need(ok: bool, code: str) -> None:
+    if not ok:
+        raise _Refused(code)
+
+
+def _check_items(ledger: Mapping[str, Any], files: Mapping[str, bytes]) -> bytes:
+    """A1a: every item of `aqt.c2.artifacts.v1` present with its hash and size;
+    returns the trial object's bytes. Only the trial object is parsed as JSON."""
+    items = ledger.get("items") if isinstance(ledger, Mapping) else None
+    if not isinstance(items, list) or not items:
+        raise _Refused("IDENTITY_MISMATCH")
+    trial_bytes: bytes | None = None
+    for item in items:
+        _need(
+            isinstance(item, Mapping)
+            and set(item) == {"kind", "sha256", "size"}
+            and item["kind"] in ARTIFACT_KINDS,
+            "IDENTITY_MISMATCH",
+        )
+        raw = files.get(item["sha256"])
+        if raw is None:
+            raise _Refused("ARTIFACT_NOT_FOUND")
+        _need(
+            hashlib.sha256(raw).hexdigest() == item["sha256"]
+            and len(raw) == item["size"],
+            "ARTIFACT_HASH_MISMATCH",
+        )
+        if item["kind"] == "trial":
+            _need(trial_bytes is None, "IDENTITY_MISMATCH")
+            trial_bytes = raw
+    if trial_bytes is None:
+        raise _Refused("IDENTITY_MISMATCH")
+    return trial_bytes
+
+
+def _check_trial(
+    trial_bytes: bytes, ledger: Mapping[str, Any], request: Request
+) -> None:
+    try:
+        trial = json.loads(trial_bytes)
+        configuration_hash = screen.trial_sha256(trial)
+    except (ValueError, screen.TrialError):
+        raise _Refused("IDENTITY_MISMATCH") from None
+    items = {(i["kind"], i["sha256"]) for i in ledger["items"]}
+    wanted = {("signal", trial["signal_sha256"])}
+    if trial["overlay"] is not None:
+        wanted.add(("overlay", trial["overlay_sha256"]))
+    code_items = {i for i in items if i[0] != "trial"}
+    _need(
+        configuration_hash == request.configuration_hash
+        and trial["trial_id"] == request.nominee_trial_id
+        and trial["family"] == request.family
+        and code_items == wanted,  # the trial object and exactly its code
+        "IDENTITY_MISMATCH",
+    )
+
+
+def _check_shape(artifact: object) -> dict[str, Any]:
+    if not isinstance(artifact, dict) or set(artifact) != set(_ARTIFACT_SHAPE):
+        raise _Refused("PREDICTION_ARTIFACT_INVALID")
+    for key, inner in _ARTIFACT_SHAPE.items():
+        if inner is not None:
+            _need(
+                isinstance(artifact[key], dict) and set(artifact[key]) == inner,
+                "PREDICTION_ARTIFACT_INVALID",
+            )
+    return artifact
+
+
+def _check_identity(a: dict[str, Any], request: Request, signed: Signed) -> None:
+    """A1b, A7 and the signed values; any difference is IDENTITY_MISMATCH."""
+    n, s, c = a["nominee"], a["stream"], a["code"]
+    try:
+        seed_l266 = trial_seed(
+            protocol_hash=signed.protocol_hash,
+            hypothesis_hash=request.hypothesis_hash,
+            trial_index=n["trial_index"],
+        )
+        estimator = screen.estimator_seed(seed_l266)
+    except (PreregistrationError, screen.TrialError):
+        raise _Refused("IDENTITY_MISMATCH") from None
+    seed_hex = sha({"family_seed": request.family_seed, "trial_id": n["trial_id"]})
+    _need(
+        a["cycle_id"] == request.cycle_id
+        and a["family"] == request.family
+        and n["trial_id"] == request.nominee_trial_id
+        and n["configuration_hash"] == request.configuration_hash
+        and n["hypothesis_hash"] == request.hypothesis_hash
+        and n["protocol_hash"] == signed.protocol_hash
+        and n["seed_l266"] == seed_l266
+        and n["estimator_seed_policy"] == POLICY  # never a test on the value 0
+        and type(n["estimator_seed"]) is int
+        and n["estimator_seed"] == estimator
+        and s["seed_hex"] == seed_hex
+        and s["seed_source"] == SEED_SOURCE
+        and (s["purpose"], s["asset"], s["cost"]) == (PURPOSE, ASSET, COST)
+        and type(s["m"]) is int
+        and s["m"] == M_DAYS
+        and type(s["attempts"]) is int
+        and s["attempts"] == ATTEMPTS
+        and c
+        == {
+            "lockbox_module_sha256": signed.lockbox_module_sha256,
+            "confirmation_module_sha256": signed.confirmation_module_sha256,
+            "engine_commit": signed.engine_commit,
+            "screen_object_sha256": signed.screen_object_sha256,
+        },
+        "IDENTITY_MISMATCH",
+    )
+
+
+def _check_p4(a: dict[str, Any]) -> None:
+    """P-4: 2,000 finite ascending replicates; type-7 at p = 1/20 returns q."""
+    reps = a["replicates_sorted"]
+    if not isinstance(reps, list) or len(reps) != ATTEMPTS:
+        raise _Refused("PREDICTION_ARTIFACT_INVALID")
+    try:
+        values = [unhexf(x) for x in reps]
+        q = unhexf(a["q"])
+    except LockboxError:
+        raise _Refused("PREDICTION_ARTIFACT_INVALID") from None
+    _need(
+        all(math.isfinite(x) for x in values)
+        and all(x <= y for x, y in zip(values, values[1:], strict=False))
+        and st.type_seven_quantile(values, QUANTILE) == q,
+        "PREDICTION_ARTIFACT_INVALID",
+    )
+
+
+def pre_read_check(
+    *,
+    request: Request,
+    signed: Signed,
+    artifact_bytes: bytes | None,
+    artifacts_ledger: Mapping[str, Any],
+    files: Mapping[str, bytes],
+    manifest_sha256: str,
+    image_digest: str,
+    startup: Mapping[str, Any] | None,
+) -> str:
+    """PASS or the Q2b reason code, before any lockbox byte is read. Order
+    [DESIGN]: presence, hashes, identities, the artifact's P-4 content, the
+    image, the startup record; the first failure is the code returned."""
+    try:
+        if artifact_bytes is None:
+            raise _Refused("ARTIFACT_NOT_FOUND")
+        trial_bytes = _check_items(artifacts_ledger, files)
+        _need(
+            hashlib.sha256(artifact_bytes).hexdigest()
+            == request.prediction_artifact_sha256,
+            "ARTIFACT_HASH_MISMATCH",
+        )
+        try:
+            artifact = json.loads(artifact_bytes)
+            canonical = cj(artifact)
+        except ValueError:
+            raise _Refused("PREDICTION_ARTIFACT_INVALID") from None
+        # artifact_sha256 = SHA256(cj(artifact)): the stored bytes are canonical
+        _need(canonical == artifact_bytes, "PREDICTION_ARTIFACT_INVALID")
+        _check_trial(trial_bytes, artifacts_ledger, request)
+        a = _check_shape(artifact)
+        _check_identity(a, request, signed)
+        _need(manifest_sha256 == request.manifest_sha256, "IDENTITY_MISMATCH")
+        _check_p4(a)
+        _need(image_digest == signed.image_digest, "IMAGE_MISMATCH")
+        _need(
+            startup is not None
+            and startup.get("result") == "PASS"
+            and startup.get("lockbox_module_sha256") == signed.lockbox_module_sha256
+            and startup.get("image_digest") == image_digest,
+            "REFERENCE_VECTOR_MISMATCH",
+        )
+    except _Refused as r:
+        return r.code
+    return "PASS"
