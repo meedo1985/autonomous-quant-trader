@@ -693,12 +693,23 @@ def _check_p4(a: dict[str, Any]) -> None:
     )
 
 
-def _check_declared(request: Request, declaration: Mapping[str, Any]) -> None:
+def _check_declared(request: Request, declaration_bytes: bytes, sha256: str) -> None:
     """R14L2-S-1: the nominee's cycle, family, hashes and trial index must be
     the posted declaration's entry for it, the only trial record the chain
     has verified. [DESIGN] declaration layout, to be bound in the S4 text:
     top-level `cycle_id` and `trials`, a list of
-    `{family, trial_id, hypothesis_hash, configuration_hash, trial_index}`."""
+    `{family, trial_id, hypothesis_hash, configuration_hash, trial_index}`.
+    R14L3-S-1: the declaration arrives as the verified bytes and the hash the
+    chain checked, both immutable; it is re-hashed and parsed here, so a
+    handoff changed after `start()` is refused."""
+    if hashlib.sha256(declaration_bytes).hexdigest() != sha256:
+        raise _Refused("IDENTITY_MISMATCH")
+    try:
+        declaration = json.loads(declaration_bytes)
+    except ValueError:
+        raise _Refused("IDENTITY_MISMATCH") from None
+    if not isinstance(declaration, dict):
+        raise _Refused("IDENTITY_MISMATCH")
     trials = declaration.get("trials")
     if not isinstance(trials, list):
         raise _Refused("IDENTITY_MISMATCH")
@@ -726,7 +737,8 @@ def pre_read_check(
     *,
     request: Request,
     signed: Signed,
-    declaration: Mapping[str, Any],
+    declaration: bytes,
+    declaration_sha256: str,
     artifact_bytes: bytes | None,
     artifacts_ledger: Mapping[str, Any],
     files: Mapping[str, bytes],
@@ -741,7 +753,7 @@ def pre_read_check(
         if artifact_bytes is None:
             raise _Refused("ARTIFACT_NOT_FOUND")
         trial_bytes = _check_items(artifacts_ledger, files)
-        _check_declared(request, declaration)
+        _check_declared(request, declaration, declaration_sha256)
         _need(
             hashlib.sha256(artifact_bytes).hexdigest()
             == request.prediction_artifact_sha256,
@@ -1222,8 +1234,9 @@ class Started:
     """What `start` verified; `run_evaluation` takes only this (R14L-S-2)."""
 
     signed: Signed
-    declaration: dict[str, Any]  # the verified, posted declaration
-    chain_log: dict[str, str]
+    declaration: bytes  # the verified, posted declaration bytes (R14L3-S-1)
+    declaration_sha256: str  # as the chain verified it against the post
+    chain_log: Mapping[str, str]  # read-only view
     startup_check_id: str
 
 
@@ -1273,7 +1286,13 @@ def start(
     if image_digest != signed.image_digest:  # R14L2-S-3: before any append
         raise ChainError("the running image is not the signed one")
     startup_check_id = record_startup(store, signed, image_digest)
-    return Started(signed, json.loads(declaration), log, startup_check_id)
+    return Started(
+        signed,
+        bytes(declaration),
+        log["declaration_sha256"],
+        types.MappingProxyType(dict(log)),
+        startup_check_id,
+    )
 
 
 def record_startup(store: Store, signed: Signed, image_digest: str) -> str:
@@ -1328,6 +1347,7 @@ def run_evaluation(
         request=request,
         signed=signed,
         declaration=started.declaration,
+        declaration_sha256=started.declaration_sha256,
         artifact_bytes=artifact_bytes,
         artifacts_ledger=artifacts_ledger,
         files=files,

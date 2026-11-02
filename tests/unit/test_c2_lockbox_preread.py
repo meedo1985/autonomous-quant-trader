@@ -150,7 +150,8 @@ def _case(
             trial_index=TRIAL_INDEX,
         ),
         "signed": SIGNED,
-        "declaration": copy.deepcopy(DECLARATION),
+        "declaration": cj(DECLARATION),
+        "declaration_sha256": hashlib.sha256(cj(DECLARATION)).hexdigest(),
         "artifact_bytes": raw,
         "artifacts_ledger": {"items": items},
         "files": files,
@@ -374,6 +375,28 @@ def test_request_and_artifact_coherently_wrong_index_refused() -> None:
     ],
 )
 def test_declared_entry_binds_the_nominee(change: Any) -> None:
-    c = _case()
-    change(c["declaration"])
+    # a different but correctly hashed declaration: refused on content
+    declaration = copy.deepcopy(DECLARATION)
+    change(declaration)
+    raw = cj(declaration)
+    c = {**_case(), "declaration": raw}
+    c["declaration_sha256"] = hashlib.sha256(raw).hexdigest()
+    assert _check(c) == "IDENTITY_MISMATCH"
+
+
+def test_declaration_changed_after_start_refused() -> None:
+    # R14L3-S-1, Sol's probe: the verified hash is kept, the bytes changed
+    # (index 3 -> 4) and request and artifact made coherent with index 4
+    declaration = copy.deepcopy(DECLARATION)
+    declaration["trials"][0]["trial_index"] = 4
+    a = _artifact()
+    seed = trial_seed(
+        protocol_hash=SIGNED.protocol_hash, hypothesis_hash=HYPOTHESIS, trial_index=4
+    )
+    a["nominee"].update(
+        trial_index=4, seed_l266=seed, estimator_seed=screen.estimator_seed(seed)
+    )
+    c = _case(a)
+    c["request"] = replace(c["request"], trial_index=4)
+    c["declaration"] = cj(declaration)  # declaration_sha256 still the verified one
     assert _check(c) == "IDENTITY_MISMATCH"

@@ -93,7 +93,11 @@ def _run(store: FakeStore, tmp_path: Path, **over: Any) -> str:
     case["startup"] = {**case["startup"], "startup_check_id": "C2/startup/1"}
     case.update(over)
     started = lb.Started(
-        case.pop("signed"), case.pop("declaration"), {}, "C2/startup/1"
+        case.pop("signed"),
+        case.pop("declaration"),
+        case.pop("declaration_sha256"),
+        {},
+        "C2/startup/1",
     )
     return lb.run_evaluation(
         store, evaluation=EVALUATION, started=started, code_dir=tmp_path, **case
@@ -310,3 +314,19 @@ def test_start_refuses_a_running_image_that_is_not_signed(
     with pytest.raises(lb.ChainError):
         lb.start(store, **inputs)
     assert store.names() == []
+
+
+def test_started_carries_immutable_verified_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R14L3-S-1: the handoff from start() cannot be edited in place
+    monkeypatch.setattr(lb, "verify_code", lambda *a: {"engine_commit": "e" * 40})
+    inputs = _start_inputs(tmp_path)
+    started = lb.start(FakeStore(), **inputs)
+    assert isinstance(started.declaration, bytes)
+    assert started.declaration == inputs["declaration"]
+    assert (
+        started.declaration_sha256 == hashlib.sha256(inputs["declaration"]).hexdigest()
+    )
+    with pytest.raises(TypeError):
+        started.chain_log["protocol_hash"] = "0" * 64  # type: ignore[index]
