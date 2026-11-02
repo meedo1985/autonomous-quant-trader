@@ -120,6 +120,8 @@ vectors, of which ~400-600 are the statistics above.
 
 **Where should the missing C2 pass decisions and statistics of §1 live?**
 
+**Owner decision, 2026-11-02: (b)** (`OWNER_DECISION_QP1.md`).
+
 - **(b) Baseline, already decided (R-14a).** In the confirmation module, written after the
   `AQTQ1` post. Bound by the C2 declaration post's chain, reviewed under §16, tested
   against its contract. Accepted residual: promotion statistics are frozen later than
