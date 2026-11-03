@@ -1,0 +1,22 @@
+# Codex Sol re-check 4 of D-12 revision 5 (6a880c2)
+
+Prompt: `REREVIEW4_PROMPT.md`. Reviewer metadata from the Codex CLI header (2026-10-26): model `gpt-6-sol`, sandbox read-only, reasoning effort high, session id `01a17711-b675-7011-9c87-93c7fc9daeb2`, 74,428 tokens.
+
+Verdict: **FIX** (2 BLOCKER, 2 NON-BLOCKING). Findings D12R5-S-1 .. S-4.
+
+**ID note:** as in re-check 3, the reviewer could not see its model identity inside the session and used provisional IDs `D12R5-U-1` .. `U-4`. The CLI header verifies `gpt-6-sol`; `D12R5-U-n` is **`D12R5-S-n`** (same n).
+
+## Report (verbatim)
+
+**Verdict: FIX.** Revision 5 corrects the fractional bounds and substantially addresses the prior timing, cooling-off, wording, and commitment findings. The following issues remain before the owner questions are ready for decision.
+
+| ID | Severity | Finding |
+|---|---|---|
+| **D12R5-U-1** | **BLOCKER** | [Q2a’s recommended cycle label](/D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/governance-statistics-amendment/d12-proposal/PROPOSAL_REV5.md:65) and [Q1’s FAIL-item option](/D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/governance-statistics-amendment/d12-proposal/PROPOSAL_REV5.md:60) disclose more than PASS/FAIL to research. [Constitution §7](/D:/PMP-programs-for-sharawi/aqt-freeze-sheet/docs/RESEARCH_CONSTITUTION.md:79) permits PASS/FAIL only, and [§3](/D:/PMP-programs-for-sharawi/aqt-freeze-sheet/docs/RESEARCH_CONSTITUTION.md:41) places it above the protocol. “Explicit C2 wording” alone cannot authorize either option. State that these choices also require a formal Constitution amendment, or remove them. The [§11 owner-dependent summary](/D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/governance-statistics-amendment/d12-proposal/PROPOSAL_REV5.md:125) omits that cost. |
+| **D12R5-U-2** | **BLOCKER** | [P-7](/D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/governance-statistics-amendment/d12-proposal/PROPOSAL_REV5.md:36) says an overrun moves the batch to another slot, but does not bind the store to reject a marker committed after its recorded \(V_k\). Such a marker could become readable immediately while its pre-signed certificate starts cooling-off at the earlier \(V_k\). Require an atomic store-clock deadline and slot/certificate reselection on a late commit. [T-4–T-6](/D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/governance-statistics-amendment/d12-proposal/PROPOSAL_REV5.md:100) do not test that boundary. Until it is enforced, the claimed full 72 hours after visibility is unproved. |
+| **D12R5-U-3** | **NON-BLOCKING** | [P-7’s “at most 912” pre-signed attestations at \(g=0\)](/D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/governance-statistics-amendment/d12-proposal/PROPOSAL_REV5.md:42) applies to the *second* family’s read. The first read, scheduled 30 days earlier, has **1,632** candidate hourly slots through day 255. Correct the bound and tell the owner that this route can require thousands of signatures and stored certificates. It is more machinery than the timing problem plainly calls for; justify it or narrow the signing window. |
+| **D12R5-U-4** | **NON-BLOCKING** | [The proposed revision/invalidation wording](/D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/governance-statistics-amendment/d12-proposal/PROPOSAL_REV5.md:46) should say that a nominee’s attested status is fixed **at the revision or invalidation event**, and that an unselected pre-signed certificate cannot later become effective. “Ends processing” suggests this result, but the new pool of already signed certificates warrants an explicit store rule. |
+
+For the earlier Sol and Astra records, the fractional correction is sound: the no-delay limits are \(37+23/24\) days for visibility and \(34+23/24\) days for completed cooling-off; the stated slack formula is correct. The single definition of “attested,” P-8’s store-computed commitment, and the narrower confidentiality claims address the corresponding prior objections **subject to the two blockers above**. Q2b–Q5 and the stated Q6 options are understandable; Q1 and Q2a understate the amendment cost.
+
+**Model attribution limit:** this interface does not expose whether this run is `gpt-6-sol` or `gpt-6-astra`. I cannot honestly identify either earlier record as my own or assign an S/A ID. The `U` IDs are provisional, and this response cannot serve as a verified model-family R19-2 record. The check was read-only; no file was written or committed. Implementation tests are not applicable to this proposal review.

@@ -35,14 +35,14 @@ place.
 `[derived]` = follows from decided rules. `<<OWNER x>>` = owner decision still
 needed (none remain; §7). `<<OPEN D-19 route>>` = a
 certification route still to be drafted with the D-19 preregistration (§4). `<<D19: x>>` = value only the D-19 calibration can supply.
-`<<DECLARATION: x>>` = value computed at C2's declaration. `<<OPEN D-nn>>` =
+`<<DECLARATION: x>>` = value computed at C2's declaration. `<<BUILD: x>>` = a code hash known only once that build is reviewed and merged. `<<OPEN D-nn>>` =
 clause governed by an open decision row. **The amendment cannot be signed
 while any `<<…>>` marker remains.**
 
 ## 0. Structure, precedence and activation
 
 The amendment consists of Constitution v1.1 changes (§1), specification and
-protocol line changes (§1a), protocol v1.1 for cycle C2 (§2–§4), and three
+protocol line changes (§1a), protocol v1.1 for cycle C2 (§2–§4), and four
 annexes plus the O-6a channel specification, which the protocol binds by hash:
 
 | Annex | Content | SHA-256 (LF, as committed) |
@@ -50,23 +50,24 @@ annexes plus the O-6a channel specification, which the protocol binds by hash:
 | `ANNEX_A_SELECTION_RULE.md` | D-18 rev. 7 §2 (P18-0..P18-7) verbatim, plus clauses A-B7, A-U1 and A-V1 (owner decisions B-7, U-1, D-20 partial) | `3b3f2d260aa7a25cc981b90000cf7e269732e89cbb837f1ffb6486be4621980f` |
 | `ANNEX_B_DSR_METHOD.md` | broadened method rev. 3 §2.1–§2.6 verbatim | `80ad6b785de337568e806d6feda9168f2ec9b07aed2d8e1e5c14c955ff2b25d0` |
 | `ANNEX_C_GATE_DEFINITIONS.md` | operative definitions of gates G-1..G-8, G-10..G-12 and G-14 and the event contract, consolidated from the decided rows (not verbatim; see its fidelity rule) | computed at signing: the annex still carries `<<…>>` markers |
+| `ANNEX_D_LOCKBOX.md` | the lockbox: D-11 (prediction and pass rule L-1..L-4), D-12 as changed by D-20 option C (release on request, delivery, certification, promotion guard), the D-20 bindings and store, consolidated from the decided records (not verbatim; same fidelity rule as Annex C) | computed at signing |
 | `o6a-channel/SPEC.md` (rev 5, `84fca9c`) | the declaration-hash channel: Bitcoin post, archive timestamp `T`, acceptance, deadline (O-6a (A)) | computed at signing, with the `<<SIGNING>>` values filled |
 
 **Precedence** (FA2-1, FA2-12, SA2-1), highest first:
 1. Constitution v1.1.
-2. The reading and override clauses R-1..R-10 in §2.0.
+2. The reading and override clauses in §2.0 (R-1..R-14 and R-14a..R-14d).
 3. The annex text.
 4. The other protocol v1.1 clauses.
 
 Annexes A and B stay verbatim, so their hashes stay those of the decided
-text; corrections live only in §2.0. Annex C is a consolidated restatement,
-and a divergence from a cited owner record is corrected in Annex C itself
+text; corrections live only in §2.0. Annexes C and D are consolidated restatements,
+and a divergence from a cited owner record is corrected in the annex itself
 before signing. The hashes are recomputed at activation if the
 owner edits an annex, and the edited text is then re-reviewed (§6 step 2).
 
 **On activation** [AI default]: new files `docs/RESEARCH_CONSTITUTION_v1.1.md`,
 `protocols/protocol_v1.1.yaml`, `specs/BACKTESTER_SPEC_v1.1.md`,
-`specs/CANONICAL_BENCHMARKS_v1.1.md` (§1a) and the three annexes under `specs/`, each with a
+`specs/CANONICAL_BENCHMARKS_v1.1.md`, `docs/THREAT_MODEL_v1.1.md` (§1a) and the four annexes under `specs/`, each with a
 SHA-256 sidecar, sit beside the preserved, unchanged v1.0 files. Their `-text`
 entries are added to `.gitattributes` before hashing. The `FROZEN_HASHES.json`
 additions are made in the owner's signed activation commit, as an append that
@@ -78,10 +79,13 @@ changes no existing entry.
 |---|---|---|
 | header l.2, 5, 8 | `Research Constitution v1.0`; effective 2026-09-11; content hash | `v1.1`; effective = activation date; content hash recomputed per `HASH_CANONICALIZATION_v1.md` |
 | §0 new, after l.19 | — | "Eligible confirmation window = a confirmation segment meeting at least conditions (i)–(v) of the eligibility rule in the selection-rule annex frozen with the C2 protocol (never mounted in the sandbox and never evaluated before declaration; no overlap with any exposed segment; separated from all mounted or evaluated data by the gap embargo; for post-v1 data, declared before its first observation; at least `T_min` days). A cycle may nominate and promote only on an eligible window. A later protocol may add conditions but not remove these." (FA2-9) |
+| §0 l.20 | "Lockbox = future data readable only by lockbox_eval." | "Lockbox = data later than the confirmation partition and held back from research, readable only by lockbox_eval. 'Future' here means later than confirmation and held back from research; a lockbox whose period had ended before the protocol was frozen is a historical held-back check, not a fresh test, because its prices are public." [AI wording of D-11 Q3; Annex D §D-1.1] |
 | §5 l.61 | "Every cycle protocol must define family-budget exhaustion, calendar/time limit, and candidate-promotion termination. Otherwise invalid." | unchanged, plus: "When the protocol has a single nomination look, budget exhaustion means completion of the declared plan, termination follows the protocol's post-nomination procedure, and the calendar limit includes the post-nomination window." (FA3-7) |
 | §5 l.63 | "Outcomes: `CANDIDATE_PROMOTED`, `NO_EDGE_FOUND`, `PROTOCOL_REVISION`, `INVALIDATED`." | "Outcomes: `CANDIDATE_PROMOTED`, `NO_EDGE_FOUND`, `RESEARCH_ONLY` (no eligible window; no nomination possible), `NO_RESULT` (eligible cycle with no result in every declared family: the family is unavailable, a mandatory gate of its nominee is unavailable or technically invalid, or its lockbox read failed technically), `PROTOCOL_REVISION`, `INVALIDATED`. Only `NO_EDGE_FOUND` opens the deployable-baseline path; `RESEARCH_ONLY` and `NO_RESULT` do not." [AI default: the label names] (O-4; FA2-11) |
 | §5 l.67 | "Prior-cycle results are not pooled into later DSR/PBO matrices; lifetime trial counts persist." | "... lifetime trial counts persist: they are recorded and reported with every result, and enter neither the DSR score nor PBO enablement." (B-2; D-09. The D-09 proposal cites this override as "l.61"; it means this row.) |
+| §7 l.79 | "Research receives PASS/FAIL only." | "Research receives PASS/FAIL only, except as follows. (a) The cycle outcome of §5 may show that a family had no result because its lockbox read failed technically. (b) The lockbox service's release request answers only with one of these fixed responses: not yet; FAIL; PASS, certificate pending; PASS, certified; PASS, not certifiable; or stopped, a refusal whose cause is withheld. (c) Research may see these accounting records, with only the fields the protocol lists for each: a read's identity, exposure and earliest release time; a pre-read rejection or barred descendant with its reason code; a released result with its release time; delivery kinds and times; a certificate refused as not certifiable, with its reason (cap or revision); revision and invalidation entries; the pending list; and the cycle report, complete or incomplete. (d) How quickly the service answers any request, and a stopped answer; a delay of any length in a release, its delivery or its certification; an expiry at the processing cap caused by such a delay; and a technical fail caused by a delay before the worker deadline are not results under this rule, even where they allow a guess about a result or about another read's progress. This exception permits no other research-visible field, message, record or diagnostic. No component may vary its timing to convey a result." (D-12 Q2a, D-20 QC3; text of `d20-lockbox-proposal/OPTION_C_PROPOSAL_REV4.md` item 4; the field list for (c) is Annex D §D-2.8) |
 | §7 new, after l.81 | — | "An exposed segment rolled into confirmation is never part of an eligible confirmation window." |
+| §7a l.90 | "Confirmation is accessible only through the registered experiment engine." | "... registered experiment engine, except that for a lockbox evaluation lockbox_eval may read, read-only and under the cycle's data manifest, the BTC and ETH 1h bars from 2022-11-13T00:00Z up to the lockbox start, and run the registered strategy itself; nothing it reads or computes leaves its identity except what §7 allows." [AI wording of D-11 Q2; Annex D §D-1.8] |
 | §7a l.92 | "Sandbox receives only metrics.json, 3-month fold aggregates, and report.md from confirmation." | "... and, for a trial attempt that wrote no result artifact, one fixed crash code. Crash diagnostics stay outside the sandbox." (O18-7) |
 | §8 new, after l.97 | — | "A cycle's complete trial set is declared and hashed before its first evaluation; no hypothesis or grid point is registered into that cycle afterwards." (P18-1) |
 | §9 l.104 | "All failures count. Lifetime family accounting persists." | "All failures count, including every automatic re-run attempt (P18-1). Lifetime family accounting persists as recorded and reported counts (B-2)." |
@@ -89,13 +93,13 @@ changes no existing entry.
 | §9 new, after l.106 | — | "False-promotion allowance: the m-th eligible cycle, counted from the first cycle declared on an eligible window, has a whole-cycle allowance of 0.05 / 2^(m−1), split equally between its families. After n eligible cycles the total is 0.10·(1 − 2^(−n)), always below 0.10. A cycle protocol may set a smaller allowance, never a larger one. Every cycle declared on an eligible window increments `m`, whatever its outcome." (B-5; O-1) |
 | §27 l.194 | "Promotion-relevant artifacts must reproduce from recorded hashes/seeds or are void." | "... from recorded hashes/seeds, including the family seeds of the frozen DSR method, or are void." |
 
-Not changed in v1.1: §0 l.20, §7 l.81 and l.83. C2 uses only the v1
+Not changed in v1.1: §7 l.81 and l.83. C2 uses only the v1
 confirmation partition. Admitting post-v1 data to confirmation needs a later
 amendment, before C3, that fixes the assignment rule before the data exist.
 
-## 1a. Frozen specification and protocol lines changed (D-15, N-4, D-14, D-08)
+## 1a. Frozen specification and protocol lines changed (D-15, N-4, D-14, D-08, D-11, D-12)
 
-These v1.1 texts are required by Annex C (C-6, C-9, C-10). Leaf shapes are
+These v1.1 texts are required by Annex C (C-6, C-9, C-10) and Annex D. Leaf shapes are
 kept (§2).
 
 | File, line | v1.0 text (abridged) | v1.1 text |
@@ -112,6 +116,7 @@ kept (§2).
 | `CANONICAL_BENCHMARKS` l.12 | "Intraday band-triggered actions are allowed only to reduce exposure." | "... only to reduce exposure; an exit to zero is never blocked by the band." |
 | `CANONICAL_BENCHMARKS` l.3, l.38 | "Cycle-1 canonical benchmark specification"; "not tunable in Cycle 1" | "Canonical benchmark specification v1.1 (cycle C2 onward)"; "not tunable within a cycle" [AI default] |
 | `BACKTESTER_SPEC` l.3 | "Status: pre-implementation specification." | "Status: specification v1.1 (cycle C2 onward)." [AI default] |
+| `THREAT_MODEL` l.9 | "lockbox_eval: lockbox read + attestation signing only; no exchange credentials." | "lockbox_eval: lockbox read, and for a lockbox evaluation the read of the BTC and ETH 1h bars from 2022-11-13T00:00Z up to the lockbox start (Constitution v1.1 §7a) and running the registered strategy itself on them, + attestation signing only; no exchange credentials." A new line after it: "Lockbox publisher: starts and releases lockbox reads, delivers results and attestations to the owner's record, and validates attestations; it never reads lockbox data, sealed bundles or nonces; no exchange credentials." [AI wording of D-11 Q2 and D-12 Q6(i); Annex D §D-2.3] |
 | `FROZEN_HASHES.json` | `benchmark_set_sha256` (v1.0) | unchanged; a new key `benchmark_set_v1_1_sha256` is appended, along with keys for every new v1.1 file (§0) |
 
 The canonical benchmarks change too, so every benchmark hash is recomputed,
@@ -144,13 +149,17 @@ annex_reading:
   R-5: "P18-1's 'to be confirmed in the amendment' on budget scope is resolved as per cycle (trial_accounting below)."   # derived
   R-6: "P18-2(a) 'the cycle ends only when (b)-(d) complete' is subject to the calendar limit cycle_termination.calendar_days_elapsed and to calendar_cap_rule below."   # FA2-1, SA2-1, SA2-3
   R-7: "Annex B §2.4's family seed is extended, not replaced: family_seed_f = SHA256(cj({\"annex_b_seed\": <hex>, \"beacon_randomness\": <hex>, \"round\": <int>})), per seed_disclosure, where cj is canonical JSON (UTF-8, sorted keys, no whitespace, decimal integers, lowercase hex); annex_b_seed is the Annex B §2.4 digest and beacon_randomness the drand randomness field, each 64 lowercase hex characters, and round the drand round fixed by seed_disclosure, a positive integer; the C2 builder validates all three before hashing. The seed is fixed after the declaration post and before the first evaluation and any stream use. The sentence 'Seeds are fixed before any data exists ... cannot be gamed' is informative and does not hold for C2."   # SA2-2, FA2-7, FA5-5
-  R-8: "These references bind to the code at the engine commit recorded in the D-19 qualification object (definition.json engine_commit, checked by its code inventory hash), on that object's pinned runtime and image: in src/aqt/metrics/statistics.py, sharpe, paired_sharpe_statistics, paired_sharpe_improvement_influence, block_length, bootstrap_indices, replicate_seed_material, replicate_seed, SEED_DOMAIN, paired_sharpe_improvement_interval and the functions it calls, type_seven_quantile and effective_sample_size (Annex C C-0, C-1, C-11, C-14); max_drawdown in src/aqt/metrics/descriptive.py (C-0, G-2); reaches_rebalance_band in src/aqt/benchmarks/canonical.py (C-6); seed_material and trial_seed in src/aqt/core/preregistration.py (protocol line 266); and, for G-9, calibration/dsr.py evaluate and the functions it calls, including _replicate_seed and indices, whose WINDOW constant is a fixed domain label. The DSR replicate Sharpes S*_{b,j} and S°_{b,j} of Annex B §2.3 are computed by method V, as d20-proposal/OWNER_DECISION_D20_V.md records (Annex A A-V1). The qualification object's later files (mapping.py, screen.py, heldout.py) bind to their bytes in that object. No lockbox clause is bound here; those stay with D-11."   # FA1-2 residue, FA5-10; D-20 (rest) B1
+  R-8: "These references bind to the code at the engine commit recorded in the D-19 qualification object (definition.json engine_commit, checked by its code inventory hash), on that object's pinned runtime and image: in src/aqt/metrics/statistics.py, sharpe, paired_sharpe_statistics, paired_sharpe_improvement_influence, block_length, bootstrap_indices, replicate_seed_material, replicate_seed, SEED_DOMAIN, paired_sharpe_improvement_interval and the functions it calls, type_seven_quantile and effective_sample_size (Annex C C-0, C-1, C-11, C-14); max_drawdown in src/aqt/metrics/descriptive.py (C-0, G-2); reaches_rebalance_band in src/aqt/benchmarks/canonical.py (C-6); seed_material and trial_seed in src/aqt/core/preregistration.py (protocol line 266); and, for G-9, calibration/dsr.py evaluate and the functions it calls, including _replicate_seed and indices, whose WINDOW constant is a fixed domain label. The DSR replicate Sharpes S*_{b,j} and S°_{b,j} of Annex B §2.3 are computed by method V, as d20-proposal/OWNER_DECISION_D20_V.md records (Annex A A-V1). The qualification object's later files (mapping.py, screen.py, heldout.py) bind to their bytes in that object. The lockbox clauses are bound by R-14b."   # FA1-2 residue, FA5-10; D-20 (rest) B1; lockbox sentence replaced per D-20 A6 (Annex D §D-3.3)
   R-9: "In P18-0 (iii), the embargo used for the gap is gap_embargo.value_days, computed by gap_embargo.rule; 'data outside the window' is replaced by 'data mounted in the sandbox or evaluated before declaration'. No confirmation or lockbox data not already so mounted or evaluated may be used."   # SA3-2
   R-10: "Annex C defines gates G-1..G-8, G-10..G-12 and G-14, and the event contract; G-9 is defined by Annex A P18-6 and G-13 in promotion.gates. Annex A P18-7's availability and cause-code rules apply to Annex C's UNAVAILABLE results."   # derived, SA5-7
   R-12: "Annex B §2.4's sentence that the build 'would extend the conventions (IMPLEMENTATION_CONVENTIONS.md), the stream, and regenerate and review reference vectors (I-10)' is replaced: the DSR replicate seeds and indices are calibration/dsr.py _replicate_seed and indices at the engine commit (R-8), and the I-10 reference vectors are the D-19 reference-vector suite, which runs dsr.evaluate."   # D-20 (rest) M13
   R-13: "For Annex C C-1 (the G-1 bootstrap stream), C-10 (3) (the G-11 shifts) and C-12 (5) (the G-14 offsets and model seeds) only, the trial seed is the beacon-protected seed trial_seed_j = SHA256(cj({\"family_seed\": family_seed_f, \"trial_id\": <id>})), with family_seed_f per R-7 and trial_id exactly as Annex B §2.4 hashes it; this prevails over protocol line 266 for these streams. Every other use of line 266, including the nominee's own fit, is unchanged. These gates cannot run without the beacon and follow seed_disclosure's failure rule. The evaluation records every trial_seed_j (Constitution §27)."   # D-20 (rest) §4 option (b)
   R-14: "A C2 evaluation verifies the loaded bytes of its code with two disjoint checks: each loaded calibration or aqt module that is not a later object file equals the engine commit's file (R-8); each later object file (mapping.py, screen.py, heldout.py), loaded as a module or run as the entry point, equals the qualification object's copy, verified against the posted manifest, which replaces any engine-commit entry for the same path; nothing is loaded from outside these. The C2 evaluation's own code therefore lies in the engine commit or in a later object file."   # D-20 (rest) §1
   R-11: "Annex B §2.3's sentence 'Means and variances are computed with math.fsum and the two-pass algorithm, in replicate index order' governs S0 and var_b, the statistics across replicates; the replicate Sharpes S*_{b,j} and S°_{b,j} are computed by method V (R-8, A-V1)."   # owner decision D-20 (partial), clarification of decided text
+  R-14a: "R-14a changes where code may live, not who may read which data. Besides the code R-14 allows, a C2 evaluation may load exactly two further files: the lockbox module (D-20 Q4) and the confirmation module (<<BUILD: lockbox_module_sha256, confirmation_module_sha256>>). For each file: (1) Identity of the bytes. Each is one file, merged under Constitution §16 review, with an independent different-model review record and human PR review before merge. Its SHA-256 is a row of the signed C2. (2) Verified before any protected-data read. The evaluation verifies and logs this chain, and refuses on any mismatch or unverifiable step, reading no protected data: the accepted C2 post (§2.0 seed_disclosure; O-6a SPEC §3); the declaration bytes matching its declaration_sha256; the declaration's protocol_hash; the complete signed C2 protocol bytes that hash to it, which contain both module SHA-256 rows of this R-14a; the loaded module bytes. A module hash recorded anywhere other than those protocol bytes does not satisfy this item. Nothing else is loaded from outside R-14 and this row. (3) Imports. Each imports only engine-commit modules, later object files, the standard library and pinned image libraries. Neither imports the other. (4) What they may implement. Only rules that the signed C2 states (Annex A-D, D-11, D-20 and the rows naming them). Where an engine-commit or later-object-file function implements a rule, the module calls it and does not re-implement it; the final-hour rule is screen.py's confirmation_path. A rule with no such function, such as D-20 A4's lockbox bootstrap with m != n and the lockbox_prediction stream, is implemented in the module exactly as the signed text states it and is listed in that module's contract (item 5). No other scientific choice is permitted. (5) Input-to-record contract. For each module, the signed C2 states, from C-0, C-6, A4, A6 and A7: the exact timestamps read and their order; how candidate and benchmark legs are paired by day; the complete-window rule; each transformation; how availability and errors map to UNAVAILABLE or technical FAIL; and the exact output fields. Missing, duplicate or misaligned observations refuse; nothing is dropped, filled or re-paired silently. §16 review checks the module against this contract. Synthetic tests at the consumer boundary show each refusal, and that the paired series reaching each statistic is exactly the contract's. The confirmation module's contract allocates D-20 A7's confirmation-side work (recomputing the confirmation source, the forecast of A4, and sealing the prediction artifact) to the experiment-engine path; the lockbox module's contract covers only the lockbox_eval side. Each contract names the code that produces each A7 field. (6) Identity and data boundary. The confirmation module's entry point runs only as the registered experiment-engine identity, on the confirmation partition the signed C2 allows, and returns only the C2 evaluation record. The lockbox module's entry point runs only as lockbox_eval, on D-11's authorised range, through its read gate, and returns only what Constitution §7 and §7a and D-12/D-20 allow. D-11's handoff rules and its Constitution §7a and access amendments still govern. §16 review checks these boundaries. (7) Seeds the confirmation module verifies itself. Before calling any gate, it verifies against the governing records, never from its caller: the accepted post; the selected drand round of the bound chain; the beacon signature and randomness; the derived family seed (R-7) and every trial seed (R-13); the line-266 seed and the estimator seed under the signed estimator_seed_policy; the C-0 window and its id; and g. Failure follows seed_disclosure's rule: the evaluation is invalid and no gate runs. Every value and its provenance is recorded (Constitution §27). (8) R-8 extension. R-8's code binding extends to the two module hashes of this row (R-14b). R-8, R-13 and R-14's two checks are otherwise unchanged. The accepted residuals are disclosed in Annex D §D-3.1."   # owner decision R-14a (OWNER_DECISION_R14A.md): r14-exception/PROPOSAL_REV2.md §1 items 1-8 with PROPOSAL_REV3.md items 1-2 applied, inlined (S4F-S-2)
+  R-14b: "For the lockbox clauses L-1..L-4 (Annex D), R-8's binding extends to: in src/aqt/metrics/statistics.py, sharpe, paired_sharpe_statistics, _influence, block_length, _uniform_index, SEED_DOMAIN, CONVENTION_DOCUMENT_SHA256 and type_seven_quantile; _max_drawdown in src/aqt/metrics/descriptive.py; daily_returns, estimator_seed and confirmation_path in the qualification object's screen.py; and the two module hashes of R-14a; on the qualified image."   # D-20 A6, R-14a item 8; Annex D §D-3.3
+  R-14c: "R-13's beacon-protected trial seed also seeds the lockbox prediction stream (purpose lockbox_prediction, asset BTCUSDT, cost 1.0; Annex D §D-3.2), and lockbox_prediction is an added purpose (added_purposes). The nominee's own fit keeps line 266 under estimator_seed_policy L266_MOD_2_31: estimator_seed = int(seed_l266, 16) mod 2^31. In Annex C C-12 (5), 'The nominee's own fit keeps the model seed its declaration fixes' reads: 'The nominee's own fit uses the estimator seed of the signed estimator-seed policy (D-20 A1b). Null-draw seeds come from their own stream and are never derived from it; an equal value arising by chance is not reuse.'"   # D-20 Q3, Q5; rev 4 A1b
+  R-14d: "In Annex C C-0 and C-6, the price at a window's end instant is the close of the window's last bar (close(t) = open(t+1) used as a definition); every C2 confirmation run and the lockbox run supply it by screen.py confirmation_path, so no run reads the bar at its window's end. Both legs of the nominee's confirmation source baseline run (from w0) and of the lockbox runs (from L0) start flat and pay their entry cost at their first permitted entry; this changes no other run's start convention (Annex C C-14 included)."   # D-20 Q2(i), Q2(ii); D20L-34, D20L-42, D20L-48; Annex D §D-3.3
 seed_disclosure:                               # O-6
   value: "The C2 family seeds are derived from public randomness published after the declaration is committed."
   procedure:                                   # [AI default] mechanics; FA5-1, SA5-3, FA5-4
@@ -229,6 +238,7 @@ cycle_termination:
   nomination_deadline_days: 180                # the single nomination look happens by this day
   post_nomination_window_days: 75              # O-2
   calendar_days_elapsed: 255                   # O-2; 180 + 75, the hard calendar limit
+  processing_cap: "C = min(T + 255 × 86,400 s, nomination look + 75 × 86,400 s), with T the archive timestamp of the declaration post; computed once, held in the lockbox store's configuration; 'day 255' in calendar_cap_rule means C"   # D11-15, owner choice 1 (OWNER_DECISION_S4_FOLDIN.md); D-20 rev 3 B3a; Annex D §D-2.7
   plan_complete_rule: "the declared plan is complete at the nomination look; a trial unfinished then is a U_ops timeout (Annex A P18-7)"   # FA2-8
   ends_when_any: ["all_family_trial_budgets_exhausted","calendar_days_elapsed","candidate_promoted","protocol_revision","cycle_invalidated"]
   ends_when_any_meaning:
@@ -239,10 +249,11 @@ cycle_termination:
   recorded_times: ["declaration","plan_exhaustion","nomination_look","each_gate_and_lockbox_read","outcome"]
 post_nomination_procedure:
   order: "trend nominee, then volatility nominee; a promotion of one never stops processing of the other"
-  per_nominee: "every gate in promotion.gates with stage pre_lockbox is computed; only a nominee that is ELIGIBLE (Constitution §13) requests a lockbox read; then attestation with the 72 h cooling-off (line 300)"
+  per_nominee: "every gate in promotion.gates with stage pre_lockbox is computed; only a nominee that is ELIGIBLE (Constitution §13) requests a lockbox read; the read, its release on request, delivery, attestation, the 72 h cooling-off (line 300) and the promotion guard follow Annex D"   # D-11, D-12, D-20 QC1
   lockbox_cooldown_days: 30                    # line 75, applied between the two families' reads [AI default]
-  calendar_cap_rule: "at day 255 processing ends; no nominee not yet attested is promoted; the expiry is recorded with cause U_ops (Annex A P18-7)"   # O-2; SA2-6
-  revision_or_invalidation_after_look: "ends processing of every nominee not yet attested; an attested promotion is unaffected ('open promotion' in Constitution §4 l.48 means attested)"   # O-3 reading (a)
+  calendar_cap_rule: "At day 255 processing ends. A nominee whose lockbox result is not yet visible, or whose visible PASS attestation still awaits an owner decision, expires unpromoted, recorded with cause U_ops (Annex A P18-7). An outcome completed earlier is kept: a visible FAIL stays a FAIL, a pre-read rejection stays a rejection, a barred descendant stays barred. A nominee is promoted only if it is attested and the owner's decision is recorded after its full cooling-off and by day 255."   # D-12 P-6 l.244 as decided (replaces the O-2/SA2-6 wording); meaning of 'visible' and 'attested' under option C: Annex D §D-2.7
+  revision_or_invalidation_after_look: "A revision or invalidation fixes every nominee's status at the moment it happens. It ends processing of every nominee not attested at that moment. An attested nominee is unaffected: 'open promotion' in Constitution §4 l.48 means attested in this sense. An entry already committed but not yet visible then still shows its result, but its attestation is void. No signature that is not effective at that moment can become effective later."   # D-12 P-6 l.245 as decided (O-3 reading (a) kept)
+  lockbox_rules: {annex: "ANNEX_D_LOCKBOX.md", sha256: "<<computed at signing>>"}   # D-11, D-12, D-20, R-14a
   before_look: "no nomination and no promotion"
 ```
 
@@ -251,7 +262,7 @@ post_nomination_procedure:
 ```yaml
 validation:
   bootstrap:                                   # type, block_method, iterations unchanged
-    added_purposes: ["dsr_family_max_null","random_exposure_null","shuffled_labels_null"]    # existing purposes, incl. the lockbox interval (line 85), unchanged
+    added_purposes: ["dsr_family_max_null","random_exposure_null","shuffled_labels_null","lockbox_prediction"]    # existing purposes unchanged; lockbox_prediction added per R-14c (D-20 Q3)
   dsr:
     series: {value: "BTC candidate_minus_VOL_TARGET_BUY_AND_HOLD paired OOS return series (E-DIFF), complete UTC days", justification: "unchanged"}
     minimum: "z-test, Annex A P18-6"           # was 0.95
@@ -305,10 +316,10 @@ promotion:
     G-12: {lines: "242-244, 290", def: "Annex C C-11", na: "never", stage: pre_lockbox, status: "decided N-1"}
     G-13: {lines: "291", def: "benchmark hash matches the v1.1 canonical benchmark hash (§1a)", na: "never", stage: pre_lockbox, status: "defined"}
     G-14: {lines: "141-145, 289", def: "Annex C C-12", na: "trial fits no model of the vol-scaled target, fixed at preregistration", stage: pre_lockbox, status: "decided N-2 (a); seed stream D-20 (Annex C C-12)"}
-    L-1:  {lines: "83-91", pass: "BTC lockbox delta-Sharpe >= 5th percentile of the prediction distribution", na: "never", stage: lockbox, status: "<<OPEN D-11>>"}
-    L-2:  {lines: "91", pass: "BTC lockbox delta-Sharpe > 0", na: "never", stage: lockbox, status: "<<OPEN D-11>>"}
-    L-3:  {lines: "91", pass: "DD(BTC) (Annex C C-0) holds on the lockbox", na: "never", stage: lockbox, status: "<<OPEN D-11>>"}
-    L-4:  {lines: "91", pass: "Annex C C-3 rule on the lockbox (E-IMPROV, D-02)", na: "never", stage: lockbox, status: "<<OPEN D-11>>"}
+    L-1:  {lines: "83-91", pass: "BTC lockbox delta-Sharpe >= 5th percentile of the prediction distribution", na: "never", stage: lockbox, status: "decided (D-11 Route A); Annex D §D-1.5"}
+    L-2:  {lines: "91", pass: "BTC lockbox delta-Sharpe > 0", na: "never", stage: lockbox, status: "decided (D-11 Route A); Annex D §D-1.5"}
+    L-3:  {lines: "91", pass: "DD(BTC) (Annex C C-0) holds on the lockbox", na: "never", stage: lockbox, status: "decided (D-11 Route A); Annex D §D-1.5"}
+    L-4:  {lines: "91", pass: "Annex C C-3 rule on the lockbox (E-IMPROV, D-02)", na: "never", stage: lockbox, status: "decided (D-11 Route A); Annex D §D-1.5"}
   informative:
     oos_is_ratio: {lines: "245-249", note: "no frozen threshold: reported, not a gate; N/A for rule-based models (line 249)"}
   enforcement:
@@ -334,12 +345,15 @@ and 300 stay in force. (Restored per FA5-9.)
 
 | v1.0 lines / place | Clause | Marker |
 |---|---|---|
-| 77–79 | lockbox attestation coarse fields | `<<OPEN D-12>>` |
-| 83–92 | lockbox prediction interval and pass rule (L-1..L-4) | `<<OPEN D-11>>` |
-| 83–92 (with D-11) | code bindings and streams of any lockbox clause | `<<OPEN D-20>>` |
-| §2.0 beacon; §2.0 channel | the drand chain hash and public key; address A, outpoint F, amount, funding height, deadline height D | `<<SIGNING>>` |
+| §2.0 R-14a | the SHA-256 of the lockbox module and of the confirmation module, after their builds and §16 reviews | `<<BUILD>>` |
+| §2.0 beacon; §2.0 channel; Annex D §D-3.6 | the drand chain hash and public key; address A, outpoint F, amount, funding height, deadline height D; the lockbox signer's raw Ed25519 public key (64 hex) | `<<SIGNING>>` |
 | §2.1, §2.4, G-9 | `T_min`, `family_block_rule`, `z_crit`, `U_proc` allocation | `<<D19>>` |
 | §2.1 start, gap | values fixed at declaration | `<<DECLARATION>>` |
+
+The lockbox clauses (v1.0 lines 77–79 and 83–92) are no longer blocked. D-11,
+D-12, D-20 and R-14a are decided, and Annex D holds them. **D11-15** is decided
+(owner choice 1, `OWNER_DECISION_S4_FOLDIN.md`): processing ends at the earlier of
+day 255 and 75 days after the look (`processing_cap` in §2.3; Annex D §D-2.7).
 
 **D-19 also has to settle how each gate enters the `U_proc` certification**
 (N-2 proposal §3). There are two routes:
@@ -388,17 +402,20 @@ blocked. (Restored per FA5-9.)
 
 1. Fill every `<<…>>` marker (FA3-12).
    - **Done (owner choices):** D-01..D-10, D-14, D-15, N-1..N-4,
-     O-1..O-7, REG (A), O-8, O-9 and O-6a (A). The owner's answers added N-1..N-4 as decision rows; the
+     O-1..O-7, REG (A), O-8, O-9, O-6a (A), D-11, D-12, D-13, D-20 (rest and lockbox),
+     R-14a, and the four S4 fold-in choices (`OWNER_DECISION_S4_FOLDIN.md`). The owner's answers added N-1..N-4 as decision rows; the
      `HUMAN_DECISION_MATRIX.md` file itself is not yet edited.
    - **Remaining, in this order:**
      1. the D-19 preregistration, including the certification route, run
         and accepted, so that its frozen qualification object covers the
         final gates;
-     2. D-11..D-13 and D-20;
-     3. the `<<SIGNING>>` values: the beacon, and the channel's address,
-        bound coin and deadline height.
+     2. the `<<BUILD>>` values: the lockbox module and the confirmation
+        module, each built, reviewed and merged under §16 (R-14a);
+     3. the `<<SIGNING>>` values: the beacon, the channel's address,
+        bound coin and deadline height, and the lockbox signer's public key
+        (Annex D §D-3.6).
 2. Two different-model reviews of the final wording, with records committed
-   (R19-2). These include a fidelity check of Annex C against the owner
+   (R19-2). These include a fidelity check of Annexes C and D against the owner
    records. If the owner materially edits the reviewed text or an annex, it
    is re-reviewed.
 3. **Safety-relevant (O-5).** No open incident or post-HALT cooling-off
@@ -453,14 +470,43 @@ blocked. (Restored per FA5-9.)
   reviewed by Fable (OF1..OF4) and Sol (OS1..OS4, READY at rev 5). The
   owner takes the steps only when C2 is declared.
 
-**Still open:** no owner item. The remaining work is in §6 step 1.
+**Decided 2026-10-25** (`../d11-proposal/OWNER_DECISION_D11.md`): **D-11**
+Route A (E-DIFF; m = 457; ψ blocks; 2,000 attempts; type-7 5th percentile;
+float64 decides), the history read and execution contract (Constitution §7a
+and THREAT_MODEL rows), and the lockbox kept as a historical held-back check
+(Constitution §0 row). Annex D §D-1.
+
+**Decided 2026-10-26** (`../d12-proposal/OWNER_DECISION_D12.md`): **D-12**,
+the recommended option on Q1-Q6 (PASS-only attestation; technical FAIL
+disclosed and counted; reasons shown; descendants; R-a reproduction; sealed
+details; separate publisher; the day-255 cap wording). P-5 and P-7 were later
+replaced by D-20 QC1. Annex D §D-2.
+
+**Decided 2026-10-31** (`../d20-lockbox-proposal/OWNER_DECISION_D20_LOCKBOX.md`):
+**D-20 lockbox**, the recommended option on QC1-QC3, Q7 and Q2-Q5 (release on
+request; the detail rules; the Constitution §7 exception; the save-timing rule;
+flat starts and last-close end; the post-protected forecast seed; a separate
+lockbox module; the protocol seed for the nominee's fit). Annex D §D-2, §D-3;
+§1 §7 row; §2.0 R-14b..R-14d.
+
+**Decided 2026-10-31** (`../r14-exception/OWNER_DECISION_R14A.md`):
+**R-14a**, the exception that lets the lockbox module and the confirmation
+module live outside the frozen object. §2.0 R-14a.
+
+**Still open:** no owner item. The remaining work is in §6 step 1. S4 must
+still fix the forced-command channel, the clock source, the reconciler and
+his view, and the governance action that appends revision entries (Annex D
+§D-3.9).
 
 ## 8. Next
 
 [AI default]
 1. Run the D-19 calibration preregistration, which supplies the `<<D19>>`
    values and the certification route.
-2. Draft D-11..D-13 and D-20.
-3. Run the two-model review of the final wording. It includes Annex C
-   fidelity and the fold-ins of REG (A), O-8 (a), O-9 (a), FR1-7 and O-6a
-   (A), none of which has been reviewed in place yet.
+2. Build and review the lockbox module and the confirmation module
+   (R-14a), with their contracts and tests, to fill `<<BUILD>>`. Also build
+   the store, publisher, signer and access tooling, each under §16 review.
+3. Run the two-model review of the final wording. It includes the fidelity
+   of Annexes C and D and the fold-ins of REG (A), O-8 (a), O-9 (a), FR1-7,
+   O-6a (A), D-11, D-12, D-20 and R-14a, none of which has been reviewed in
+   place yet.

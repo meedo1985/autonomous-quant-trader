@@ -1,0 +1,23 @@
+# Codex review of the FP3 supplementary acceptance draft (54b0197)
+
+Prompt: `review/fp3/FP3_SUPPLEMENTARY_ACCEPTANCE_REVIEW_PROMPT.md`.
+Reviewer metadata from the Codex CLI header (2026-10-25): model `gpt-6-sol`, sandbox read-only, reasoning effort high, live web search on, session id `01a1727c-ec57-7a40-8826-a92491b023dd`, 99,375 tokens.
+
+Verdict: **FIX**. Findings FP3S-R1 .. FP3S-R4. Dispositions: `ADJUDICATION_FP3_SUPPLEMENTARY.md`.
+
+## Report (verbatim)
+
+## Verdict: FIX
+
+The draft preserves the owner’s chosen R3-strong route, selects **quicknet**, consumes a key on a pre-run drand void, and permits attempt 2 to re-post the same object with no recorded change. The round rule and its formula agree with [D-19 §8](</D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/governance-statistics-amendment/d19-preregistration/PREREGISTRATION.md:397>) and [O-6a §5](</D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/governance-statistics-amendment/o6a-channel/SPEC.md>). I found no conflict in the attempt-2, permanent-halt, or conditional C2 clauses. The following wording needs repair before owner adoption.
+
+| ID | Severity | Place, failure scenario, minimal repair |
+|---|---|---|
+| **FP3S-R1** | **Blocker** | [Rule 5](</D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/fp3/FP3_SUPPLEMENTARY_ACCEPTANCE_DRAFT.md:26>) defines “exists” as *obtained by a machine within seven days*. A valid output could have been publicly available by the deadline but recovered or documented later; the rule would void an attempt despite the owner’s existence choice. “No source can supply” is also an unprovable universal negative. **Repair:** define the public-existence event separately from its evidence, the exact UTC cutoff, what timestamped evidence can establish timely existence, and when a void decision becomes final. Require a committed void decision and its lookup evidence before re-posting. |
+| **FP3S-R2** | **Major** | [Rule 5’s “no other chain or source”](</D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/fp3/FP3_SUPPLEMENTARY_ACCEPTANCE_DRAFT.md:29>) conflicts with its instruction to try other public drand sources. A verifier could reject a valid quicknet signature copied from another relay or archive. **Repair:** forbid a substitute *beacon or randomness source* while expressly allowing copies of the fixed quicknet round from any source that satisfy the verification and existence rules. |
+| **FP3S-R3** | **Major** | The [status and signature conditions](</D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/fp3/FP3_SUPPLEMENTARY_ACCEPTANCE_DRAFT.md:3>) say owner adoption plus a signed commit suffices. The owner chose R3-strong, which also calls for two different-model reviews; [AGENTS.md](</D:/PMP-programs-for-sharawi/aqt-freeze-sheet/AGENTS.md>) requires their findings and model metadata to be committed. **Repair:** make committed review records and the owner’s personal, verifiably signed and dated adoption explicit pre-G conditions. Identify which records satisfy the two reviews before treating the route as complete. |
+| **FP3S-R4** | **Minor** | [Rule 8](</D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/fp3/FP3_SUPPLEMENTARY_ACCEPTANCE_DRAFT.md:35>) states that “Nobody can know” a future output. That is stronger than the record can establish and obscures the drand unpredictability assumption. **Repair:** state the checkable timing claim: at adoption the attempt’s `T_Qn` and selected round are not fixed and the selected output is not public; the protection then relies on the fixed chain’s security. |
+
+**Drand fact check:** The chain hash, public key, `bls-unchained-g1-rfc9380` scheme, three-second period, and genesis time match [drand’s quicknet record](https://docs.drand.love/blog/2023/10/16/quicknet-is-live/). Drand’s [protocol specification](https://docs.drand.love/docs/specification/) supports round 1 at genesis and subsequent rounds one period apart. Its [client documentation](https://github.com/drand/drand-client) confirms SHA-256 of the signature as randomness, including when a v2 response omits the randomness field. The draft’s stored `/info` file has the stated SHA-256. I could not fetch the live `/info` endpoint through web access, so the official published record and the stored bytes are the independent checks here.
+
+This was read-only: `git status`, working diff, and staged diff were clean. Tests, lint, type, and import-boundary checks are N/A to this wording review. **This review is not a committed review record**; under AGENTS.md, its findings and reviewer metadata must be recorded and committed before it is counted toward R3-strong. Step G remains blocked.
