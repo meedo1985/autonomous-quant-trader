@@ -1202,7 +1202,10 @@ class Store(Protocol):
     of the check record (`aqt.lockbox.pre_read_check.v1`) equals the sealing
     record (`aqt.lockbox.sealing.v1`) and the request, and the check's
     `startup_check_id` names a `PASS` startup record for the same module hash
-    and image. The artifact bytes and the artifacts ledger it hands over are
+    and image. With no check record or differing identities it refuses,
+    writes nothing and logs an incident; a check record whose result is a
+    reason code appends a rejection entry and grants no read (R14L6-S-1).
+    The artifact bytes and the artifacts ledger it hands over are
     the sealed and `aqt.c2.artifacts.v1` records. The read gate serves only
     bars under the cycle's data-manifest hash, which the store takes from its
     own governing cycle record, never from the request or this worker (a

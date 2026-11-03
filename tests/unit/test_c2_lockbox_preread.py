@@ -292,6 +292,17 @@ def test_malformed_request_seed_l266_refused(seed: object) -> None:
     assert _check(c) == "IDENTITY_MISMATCH"
 
 
+@pytest.mark.parametrize("seed", ["A" * 64, "0" * 63])
+def test_coherent_malformed_seed_l266_refused(seed: str) -> None:
+    # R14L6-S-2: nominee and request agree on a malformed seed with a
+    # plausible estimator value; only the format refusal can catch it
+    a = _artifact()
+    a["nominee"].update(seed_l266=seed, estimator_seed=int(seed, 16) % 2**31)
+    c = _case(a)
+    c["request"] = replace(c["request"], seed_l266=seed)
+    assert _check(c) == "IDENTITY_MISMATCH"
+
+
 def test_seed_l266_is_the_requests_never_re_derived() -> None:
     # R14L5-S-2 (owner decision (a)): request and artifact agree on a seed
     # that is not the preregistration derivation; the module does not derive
