@@ -24,3 +24,7 @@ source of an authenticated `family_seed_f` on the lockbox side.
 Validation (Windows, repo `.venv`, Python 3.14.7): lockbox tests and the five fast
 calibration-tree test files 273 passed; `test_calibration_rundef` in the commit message;
 ruff, ruff format, mypy strict per file and lint-imports (7 kept) clean.
+
+Rundef completion (2026-11-03, on 2f062b7, node paused): `.venv\Scripts\python.exe -m
+pytest -q -p no:cacheprovider tests/unit/test_calibration_rundef.py` -> 76 passed in
+668.23s. With this, validation of the R14L4 repairs is complete.
