@@ -22,8 +22,8 @@ jobs:
       - run: ruff format --check .
       - run: ruff check .
       - run: mypy src
-      # The D-19 engine is tested on its own runtime, in calibration-tests.
-      - run: python -m pytest --ignore-glob="tests/unit/test_calibration_*"
+      # The D-19 engine (and the R-14a lockbox) is tested on its own runtime, in calibration-tests.
+      - run: python -m pytest --ignore-glob="tests/unit/test_calibration_*" --ignore-glob="tests/unit/test_c2_lockbox*"
       - run: lint-imports
 
   # The D-19 engine's runtime is the calibration image's: Python 3.14 and
@@ -67,7 +67,7 @@ jobs:
           if [ "$rc" = 139 ]; then echo "::error::inconclusive: the probe segfaulted (seen only on AMD EPYC Zen 4/5 runners, under the pinned OpenBLAS kernel); check the CPU line above and rerun the job"; fi
           exit "$rc"
       - name: Engine tests
-        run: python -m pytest tests/unit/test_calibration_*.py tests/unit/test_d19_deploy.py
+        run: python -m pytest tests/unit/test_calibration_*.py tests/unit/test_c2_lockbox*.py tests/unit/test_d19_deploy.py
         env:
           PYTHONFAULTHANDLER: "1"  # a crashed subprocess shows where
 

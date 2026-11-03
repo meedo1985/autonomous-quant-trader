@@ -1,0 +1,38 @@
+# Sol independent review of the R-14a lockbox module (6047bc1)
+
+- Reviewer: Codex `gpt-6-sol`, reasoning effort high, `codex exec -s read-only` (run log model line: `model: gpt-6-sol`; session 01a19c53-3678-7bb0-8216-14dd155e9d51; 131,493 tokens), 2026-11-02. The report says runtime model metadata was not exposed to it; the run log header records it.
+- Role: the different-model review R-14a item 1 requires. Author of the module: Claude Opus 5.5.
+- Prompt: review/r14a-modules/RECHECK_LOCKBOX_PROMPT_SOL.md.
+- Finding IDs: R14L-S-1..6 (BLOCKER), R14L-S-7 (NON-BLOCKING). Verdict: **FIX**.
+- Sandbox limits it reports: pytest, mypy and import-linter could not run in its read-only sandbox; ruff passed.
+- Adjudication: `LOCKBOX_ADJUDICATION_6047BC1.md` (with the repairs).
+
+## Report (verbatim)
+
+## Verdict: **FIX**
+
+What this change does: `c2_lockbox.py` builds the prediction forecast, validates the sealed artifact, runs both lockbox legs, assembles the result, and provides start-chain and store helpers. I reviewed the six added code and test files at `6047bc1` against `fb3142f`, using `git show` for the reviewed source. I found no mismatch in the A4 seed layout or draw order, the L-1..L-4 comparisons and precedence, or the static `run_asset` call sequence against the frozen `screen.py` run closure. The following gaps prevent acceptance.
+
+### Blockers
+
+1. **R14L-S-1 — The nominee’s trial index is checked against itself.** [c2_lockbox.py:629](D:/PMP-programs-for-sharawi/autonomous-quant-trader/calibration/c2_lockbox.py:629) re-derives `seed_l266` from `nominee.trial_index` in the artifact, without checking that index against the immutable C2 trial record. With synthetic inputs, I changed index 3 to 4, recomputed the two seed fields and artifact hash, and `pre_read_check` returned `PASS`. Annex D §D-1.8 item 2, §D-3.2 and §D-3.5 require the nominee’s recorded identity and seed before a read. A wrongly sealed index can therefore authorize a different fit seed. **Correction:** look up and verify the immutable trial and hypothesis records, then derive the seed from their bound index and hashes. The existing single-field mutation test does not catch a coherent wrong index.
+
+2. **R14L-S-2 — The start checks do not gate the worker.** [c2_lockbox.py:1153](D:/PMP-programs-for-sharawi/autonomous-quant-trader/calibration/c2_lockbox.py:1153) accepts caller-supplied `Signed` values and can reach `open_read` without calling `verify_chain`, `load_verified`, or `verify_code`. The worker’s passing test uses fabricated signed values and no start chain. R-14a item 2 and DESIGN §4 require that chain and code verification before any protected-data read. **Impact:** this entry path does not establish that the running bytes are the signed C2 bytes. **Correction:** bind a verified launch route to `run_evaluation`, with the signed values derived from its checked protocol bytes and refusal before `open_read` on any failed step. The launch route remains an acknowledged open design item in LG-8; this review does not resolve its authority.
+
+3. **R14L-S-3 — The supplied “acceptance record” proves no acceptance.** [c2_lockbox.py:964](D:/PMP-programs-for-sharawi/autonomous-quant-trader/calibration/c2_lockbox.py:964) only hashes `acceptance_record`; it never relates its contents to the transaction. [The valid-chain test](D:/PMP-programs-for-sharawi/autonomous-quant-trader/tests/unit/test_c2_lockbox_chain.py:124) passes `b"record"`. R-14a item 2 and O-6a SPEC §3–§5 require the accepted *first* post, including the six-confirmation frozen record. **Impact:** a valid-looking raw post can pass this function without proof that it governed C2. **Correction:** the authorized start path must verify the node-backed acceptance evidence and bind that evidence to `post_raw_tx` before recording this link as verified.
+
+4. **R14L-S-4 — The code check can whitelist the wrong two files.** [c2_lockbox.py:1033](D:/PMP-programs-for-sharawi/autonomous-quant-trader/calibration/c2_lockbox.py:1033) checks only `len(modules) == 2` before expanding the map into `check_screen_code`. A caller can supply `c2_lockbox.py` and an extra loaded module while omitting `c2_confirmation.py`; the extra becomes a reviewed exception. R-14a items 2–3 and DESIGN §4 permit exactly the named two module files. **Correction:** require the exact repository-path key set and the same bytes verified against the two signed rows.
+
+5. **R14L-S-5 — A malformed artifact ledger escapes the Q2b rejection path.** [c2_lockbox.py:569](D:/PMP-programs-for-sharawi/autonomous-quant-trader/calibration/c2_lockbox.py:569) uses `item["sha256"]` as a map key before validating its type. Setting it to `[]` raises an uncaught `TypeError` in a synthetic reproduction; no pre-read reason record is made. Annex D §D-1.8 item 2 and §D-3.7 require a recorded pre-read refusal on an identity or artifact mismatch. **Correction:** validate each ledger item’s field types before lookup and return the applicable Q2b code.
+
+6. **R14L-S-6 — Startup cannot pass in the reviewed bytes.** [c2_lockbox.py:239](D:/PMP-programs-for-sharawi/autonomous-quant-trader/calibration/c2_lockbox.py:239) leaves `FROZEN_VECTORS_SHA256 = None`; [startup_result](D:/PMP-programs-for-sharawi/autonomous-quant-trader/calibration/c2_lockbox.py:264) consequently always reports `REFERENCE_VECTOR_MISMATCH`. Annex D §D-3.4 requires a frozen reference-vector hash and a PASS startup on the qualified image. **Correction:** establish and review the expected hash on that image before signing the module bytes. LG-6 identifies this as a pre-signing item; it still blocks a usable signed module.
+
+### Test gap
+
+7. **R14L-S-7 — Seed and vector tests can pass without protecting their stated contracts.** [test_c2_lockbox.py:86](D:/PMP-programs-for-sharawi/autonomous-quant-trader/tests/unit/test_c2_lockbox.py:86) compares a computed vector hash only with another computation and then monkeypatches the missing expected hash. [test_c2_lockbox_run.py:158](D:/PMP-programs-for-sharawi/autonomous-quant-trader/tests/unit/test_c2_lockbox_run.py:158) checks that a Ridge run succeeds but never observes the seed passed to the fit. Both can pass after a wrong fixed vector or an ignored estimator seed. Annex D §D-3.4 and §D-3.2 require those bindings. **Correction:** assert an independently fixed vector and use a seed-sensitive fit or a spy at the frozen model-call boundary. **NON-BLOCKING** as test coverage, alongside blockers 1 and 6.
+
+### Checks and limits
+
+The A6 adapter checks asset, series/start alignment, hourly grid, length, and positive finite equity. `run_asset` uses `confirmation_path`, reads `[S_pre, L1)`, supplies `WARMUP_HOURS` and the estimator seed to the frozen model path, and runs BTC and ETH separately; I found no static look-ahead, fill, drop, or fallback in that glue. The PASS bundle fixture checks the specified 1,053 bytes and hash. These observations do not establish behavior on the qualified image.
+
+Ruff check and format check passed. Pytest could not start because the read-only sandbox has no usable temporary directory; mypy exited with an internal error, and import-linter reported access denied. I did not verify the qualified Linux image, a Bitcoin node’s acceptance evidence, the separate store/read gate, or an actual protected-data run. The frozen-path diff from `fb3142f` is empty. This response changes no files; under `AGENTS.md`, the independent review record and its findings still need to be committed before the review check is complete. Exact runtime model metadata was not exposed to me, so it should be recorded as unavailable rather than guessed.
