@@ -14,8 +14,9 @@ Item 4: frozen functions are called, not re-implemented.
 
 from __future__ import annotations
 
+import json
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -23,6 +24,19 @@ from typing import Any
 import numpy as np
 
 import aqt.metrics.statistics as st
+from aqt.backtest.costs import (
+    CostModelError,
+    ewma_hourly_volatility_bps_series,
+    hourly_log_returns_bps,
+)
+from aqt.backtest.event_contract import (
+    EventContractError,
+    EventResult,
+    run_event_contract,
+)
+from aqt.data.bars import BarSeries
+from aqt.features.columns import feature_columns
+from aqt.features.factory import FeatureFactoryError
 from calibration import gates, screen
 
 PASS, FAIL, NA, UNAVAILABLE = "PASS", "FAIL", "N/A", "UNAVAILABLE"
@@ -314,3 +328,278 @@ def g9(z_star: float | None, z_crit: str) -> Gate:
 def g13(benchmark_sha256: str, canonical_sha256: str) -> Gate:
     """R-10: the benchmark's hash equals the v1.1 canonical benchmark hash."""
     return _rule(benchmark_sha256 == canonical_sha256, sha256=benchmark_sha256)
+
+
+# --- Slice 2: the nominee's runs, keeping their statistics -------------------
+#
+# `screen_gates` (frozen, screen.py l.1060) performs these same runs but
+# reports availability only. `nominee_gates` repeats its run glue in the same
+# order with the same frozen building blocks and per-run checks (prepare,
+# inputs, contract, run, g11_check, g14_check), keeping each run's numbers
+# for the slice 1 rules. A test pins that every gate is UNAVAILABLE exactly
+# when `screen_gates` gives a reason, with that reason, and N/A exactly where
+# it gives N/A.
+#
+# C2 seeds (R-13): `trial_seed` is the beacon-protected trial_seed_j, used
+# for the G-1 stream (the Task 12 `paired_sharpe_ci` stream, BTCUSDT, cost
+# 1.0, the C-0 window id), the G-11 shifts and the G-14 offsets;
+# `model_seed` is the nominee's `estimator_seed` (D-20 A1b). G-9, G-10 and
+# G-13 are family-level and come from the orchestration (slice 3).
+
+NOMINEE_GATES = ("G-1", "G-2", "G-3", "G-4", "G-5", "G-6", "G-7", "G-8",
+                 "G-11", "G-12", "G-14")  # fmt: skip
+Prepared = tuple[BarSeries, int, dict[str, tuple[float, ...]]]
+
+
+@dataclass(frozen=True)
+class _Run:
+    candidate: EventResult
+    benchmark: EventResult
+    signals: list[float]
+
+
+def _stats(run: _Run | str) -> Stats:
+    if isinstance(run, str):
+        return run
+    try:
+        return screen.leg_stats(run.candidate, run.benchmark)
+    except screen.RunUnavailable as e:
+        return e.reason
+
+
+def nominee_gates(
+    trial: dict[str, Any],
+    path: np.ndarray,
+    w0: datetime,
+    window_hours: int,
+    trial_seed: str,
+    window_id: str,
+    g_days: int,
+    model_seed: int,
+) -> dict[str, Gate]:
+    """Annex C gates of one nominee on its confirmation path (DESIGN §5.2
+    step 6); every gate is computed whatever the others give (P18-7)."""
+    screen.check_trial(trial)
+    if type(model_seed) is not int or not 0 <= model_seed < 2**31:
+        raise screen.TrialError("model_seed must be an int in [0, 2**31)")
+    warmup = trial["warmup_hours"]
+    if window_hours < 48 or window_hours % 24 or len(path) != warmup + window_hours + 1:
+        raise screen.TrialError(
+            "path length must be warmup + whole window days + 1 hour"
+        )
+    if trial["model"] is not None and warmup < screen.model_warmup_hours(w0):
+        raise screen.TrialError(
+            f"a model trial needs warmup_hours >= {screen.model_warmup_hours(w0)}"
+        )
+    g8_na = not screen.plateau_dimensions(trial)
+    g11_na = trial["g11_class"] == "constant_signal"
+    g14_na = not screen.g14_applies(trial)
+    nas = {"G-8": g8_na, "G-11": g11_na, "G-14": g14_na}
+    if trial["sigma"] != screen.DEFAULT_SIGMA:
+        return {
+            g: Gate(NA) if nas.get(g) else _unavailable("SIGMA_UNBOUND")
+            for g in NOMINEE_GATES
+        }
+    start = w0 - timedelta(hours=warmup)
+    days = window_hours // 24
+    prepared: dict[int, Prepared] = {}
+    emissions: dict[tuple[int, int, str], list[float]] = {}
+    sigmas: dict[int, tuple[float, ...]] = {}
+    mismatched: list[int] = []
+
+    def prepare(s: int) -> Prepared:
+        if s not in prepared:  # features and cost volatility once per symbol
+            series = screen.path_series(path, s, start)
+            try:
+                prepared[s] = (series, *feature_columns(series))
+                sigmas[s] = ewma_hourly_volatility_bps_series(
+                    hourly_log_returns_bps(series)
+                )
+            except (FeatureFactoryError, CostModelError) as e:
+                raise screen.RunUnavailable("FEATURES_UNAVAILABLE") from e
+        return prepared[s]
+
+    def inputs(s: int, lag: int, at: dict[str, Any]) -> Prepared:
+        series, first, columns = prepare(s)
+        if at["model"] is not None:
+            key = (s, lag, json.dumps(screen.model_params(at), sort_keys=True))
+            if key not in emissions:
+                emissions[key] = screen.model_column(
+                    at, series, first, columns, warmup, window_hours, lag,
+                    model_seed=model_seed,
+                )  # fmt: skip
+            columns = {**columns, f"model:{at['model']['id']}": tuple(emissions[key])}
+        return series, first, columns
+
+    def contract(
+        series: BarSeries, s: int, targets: list[float], **kw: Any
+    ) -> EventResult:
+        try:
+            return run_event_contract(
+                series, targets, warmup, sigma_bps=sigmas[s], **kw
+            )
+        except (EventContractError, CostModelError) as e:
+            raise screen.RunUnavailable("RUN_INVALID") from e
+
+    def run(s: int, cost: float = 1.0, delay: int = 0, lag: int = 0,
+            at: dict[str, Any] = trial) -> _Run | str:  # fmt: skip
+        try:
+            series, first, columns = inputs(s, lag, at)
+            closes = [b.close for b in series.bars]
+            signal = screen.load(at["signal"], at["signal_sha256"])  # fresh per run
+            overlay = (
+                None if at["overlay"] is None
+                else screen.load(at["overlay"], at["overlay_sha256"])
+            )  # fmt: skip
+            candidate, signals = screen.leg_targets(
+                at, signal, overlay, columns, first, closes, warmup, window_hours, lag
+            )
+            if screen.class_mismatch(at, np.asarray(signals)):
+                mismatched.append(s)
+            legs = [
+                contract(series, s, targets, stress_multiplier=cost, delay=delay)
+                for targets in (
+                    candidate,
+                    screen.benchmark_targets(columns, first, warmup, window_hours),
+                )
+            ]
+        except screen.RunUnavailable as e:
+            return e.reason
+        return _Run(legs[0], legs[1], signals)
+
+    out: dict[str, Gate] = {}
+    out["G-3"] = g3(_stats(run(1)))
+    base = run(0)
+    btc = _stats(base)
+    stressed: tuple[tuple[str, dict[str, Any]], ...] = (
+        ("G-5", {"cost": screen.STRESS_COST}),
+        ("G-6", {"lag": 1}),
+        ("G-7", {"delay": 1}),
+    )
+    for gate, kwargs in stressed:
+        out[gate] = survival(_stats(run(0, **kwargs)), out["G-3"])
+    out["G-2"] = g2(btc)
+    if isinstance(base, str):
+        for gate in ("G-1", "G-4", "G-12"):
+            out[gate] = _unavailable(base)
+    else:
+        cand = screen.daily_returns(base.candidate)
+        bench = screen.daily_returns(base.benchmark)
+        stream = st.ReplicateStream(
+            trial_seed, st.CONVENTION_DOCUMENT_SHA256, "BTCUSDT", "1.0", window_id
+        )
+        out["G-1"] = g1(
+            st.paired_sharpe_improvement_interval(cand, bench, stream=stream)
+        )
+        out["G-4"] = g4(w0, w0 + timedelta(hours=window_hours),
+                        [w0 + k * DAY for k in range(days)], cand, bench)  # fmt: skip
+        out["G-12"] = g12(cand, trial["horizon_hours"])
+    if g8_na:
+        out["G-8"] = Gate(NA)
+    else:  # C-8: baseline E-IMPROV of the point and every present neighbour
+        reasons: list[str] = []
+
+        def e_improv(r: Stats) -> float | None:
+            if isinstance(r, str):
+                reasons.append(r)
+                return None
+            return r["e_improv"]
+
+        v = e_improv(btc)
+        near = [
+            e_improv(_stats(run(0, at=nb))) for nb in screen.plateau_neighbours(trial)
+        ]
+        plateau = g8(trial, v, near)
+        out["G-8"] = _unavailable(reasons[0]) if reasons else plateau
+    if g11_na:
+        out["G-11"] = Gate(NA)
+    else:
+        out["G-11"] = _g11(trial, base, btc, inputs, contract, trial_seed, window_id,
+                           days, g_days, warmup, window_hours)  # fmt: skip
+    if g14_na:
+        out["G-14"] = Gate(NA)
+    else:
+        out["G-14"] = _g14(trial, prepare, w0, warmup, window_hours, trial_seed,
+                           window_id, model_seed)  # fmt: skip
+    if mismatched:
+        out["G-11"] = _unavailable("CLASS_MISMATCH")
+    return {g: out[g] for g in NOMINEE_GATES}
+
+
+def _g11(
+    trial: dict[str, Any],
+    base: _Run | str,
+    btc: Stats,
+    inputs: Callable[[int, int, dict[str, Any]], Prepared],
+    contract: Callable[..., EventResult],
+    trial_seed: str,
+    window_id: str,
+    days: int,
+    g_days: int,
+    warmup: int,
+    window_hours: int,
+) -> Gate:
+    """C-10 (3)-(7): the screen's g11_check, keeping each draw's E-IMPROV."""
+    if isinstance(btc, str) or isinstance(base, str):
+        return _unavailable(btc if isinstance(btc, str) else str(base))
+    try:
+        shifts = screen.g11_shifts(trial_seed, window_id, days, g_days)
+    except screen.GateUnavailable as e:
+        return _unavailable(e.reason)
+    draws: list[float | None] = []
+    try:
+        series, first, columns = inputs(0, 0, trial)
+        closes = [b.close for b in series.bars]
+        for k in shifts:
+            fresh = (
+                None if trial["overlay"] is None
+                else screen.load(trial["overlay"], trial["overlay_sha256"])
+            )  # fmt: skip
+            targets = screen.g11_targets(trial, fresh, base.signals, columns, first,
+                                         closes, warmup, window_hours, k)  # fmt: skip
+            stats = screen.leg_stats(contract(series, 0, targets), base.benchmark)
+            draws.append(stats["e_improv"])
+    except screen.RunUnavailable as e:
+        return _unavailable(e.reason)
+    gate = null_rule(btc["e_improv"], draws)
+    return Gate(
+        gate.result,
+        gate.reason,
+        {**gate.values, "shifts_sha256": screen.g11_shifts_sha256(shifts)},
+    )
+
+
+def _g14(
+    trial: dict[str, Any],
+    prepare: Callable[[int], Prepared],
+    w0: datetime,
+    warmup: int,
+    window_hours: int,
+    trial_seed: str,
+    window_id: str,
+    model_seed: int,
+) -> Gate:
+    """C-12: the screen's g14_check, keeping the nominee's and every draw's IC."""
+    try:
+        series, first, columns = prepare(0)
+        bars = series.bars
+        hours = trial["horizon_hours"]
+        w1 = w0 + timedelta(hours=window_hours)
+        ics: list[float] = []
+        ys: list[float] = []
+        draws = [None, *((trial_seed, window_id, d) for d in range(screen.G14_DRAWS))]
+        for draw in draws:
+            window, preds = screen.walk_forward(
+                trial, series, first, columns, warmup, window_hours, 0, draw, model_seed
+            )
+            keep = [i for i, j in enumerate(window)
+                    if bars[j].open_time + timedelta(hours=hours) < w1]  # fmt: skip
+            if not ys:
+                sigma = ewma_hourly_volatility_bps_series(
+                    hourly_log_returns_bps(series)
+                )
+                ys = screen.labels(series, sigma, [window[i] for i in keep], hours)
+            ics.append(screen.spearman_ic([preds[i] for i in keep], ys))
+    except screen.RunUnavailable as e:
+        return _unavailable(e.reason)
+    return null_rule(ics[0], list(ics[1:]))
