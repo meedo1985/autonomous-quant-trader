@@ -80,18 +80,20 @@ def test_g1_uses_the_r13_trial_seed_stream(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seen: list[st.ReplicateStream] = []
+    got: list[st.PairedBootstrapInterval] = []
     real = st.paired_sharpe_improvement_interval
 
     def spy(*a: Any, stream: st.ReplicateStream) -> st.PairedBootstrapInterval:
         seen.append(stream)
-        return real(*a, stream=stream)
+        got.append(real(*a, stream=stream))
+        return got[-1]
 
     monkeypatch.setattr(st, "paired_sharpe_improvement_interval", spy)
     trial = ts._screen_trial(tmp_path, monkeypatch)
     ours = cf.nominee_gates(
         trial, ts._screen_path(), ts.W0, ts.WINDOW_H, SEED, WINDOW, G, 0
     )
-    assert ours["G-1"].result in (cf.PASS, cf.FAIL, cf.UNAVAILABLE)
+    assert ours["G-1"] == cf.g1(got[0])  # R14C-S-6: the decision on that interval
     (s,) = seen
     assert (
         s.trial_seed_hex,
@@ -126,8 +128,9 @@ def test_g4_and_g12_read_the_baseline_btc_series(
     assert len(cand) == len(bench) == 30
 
 
+@pytest.mark.parametrize("case", ["pass", "fail", "unavailable"])
 def test_g14_wires_the_nominee_and_500_seeded_draws(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
     """C-12 (5), (7): draw None is the nominee's own fit (its model_seed);
     draws d = 0..499 carry (trial_seed, window_id, d)."""
@@ -146,18 +149,19 @@ def test_g14_wires_the_nominee_and_500_seeded_draws(
     ) -> tuple[list[int], list[float]]:
         draws.append((draw, model_seed))
         rows = list(range(j0, j0 + n, 24))
-        lift = 1.0 if draw is None else 0.0  # nominee tracks the target; draws do not
-        return rows, [
-            lift * i + (0 if draw is None else (-1) ** i * (draw[2] + 1))
-            for i in range(len(rows))
-        ]
+        if draw is None and case == "pass":  # nominee tracks the target
+            return rows, [float(i) for i in range(len(rows))]
+        k = 1 if draw is None else draw[2] + 1  # "fail": nominee ranks like draw 0
+        return rows, [float((-1) ** i * k) for i in range(len(rows))]
 
     monkeypatch.setattr(screen, "walk_forward", walk_forward)
-    monkeypatch.setattr(
-        screen,
-        "labels",
-        lambda series, sigma, rows, h: [float(i) for i in range(len(rows))],
-    )
+
+    def labels(series: Any, sigma: Any, rows: Any, h: int) -> list[float]:
+        if case == "unavailable":
+            raise screen.RunUnavailable("NONFINITE_LABEL")
+        return [float(i) for i in range(len(rows))]
+
+    monkeypatch.setattr(screen, "labels", labels)
     series = ts._series("BTCUSDT", list(range(48 + 24 * 40)), 1.0)
     trial = {"horizon_hours": 24}
     g = cf._g14(
@@ -171,5 +175,11 @@ def test_g14_wires_the_nominee_and_500_seeded_draws(
         7,
     )
     assert draws[0] == (None, 7)
+    if case == "unavailable":
+        assert (g.result, g.reason) == (cf.UNAVAILABLE, "NONFINITE_LABEL")
+        return
     assert [d for d, _ in draws[1:]] == [(SEED, WINDOW, d) for d in range(500)]
-    assert (g.result, g.values["below"]) == (cf.PASS, 500)
+    if case == "pass":
+        assert (g.result, g.values["below"]) == (cf.PASS, 500)
+    else:
+        assert g.result == cf.FAIL and g.values["below"] < 476

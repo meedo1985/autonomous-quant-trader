@@ -24,6 +24,7 @@ from typing import Any
 
 import numpy as np
 
+import aqt.core.attempts as attempts
 import aqt.metrics.statistics as st
 from aqt.backtest.costs import (
     CostModelError,
@@ -615,7 +616,11 @@ def _g14(
 # rule, the classifier) is passed in from the signed C2, never defaulted here.
 
 FAMILIES = ("trend", "vol")
-MAX_DECLARED = 80  # P18-1: one slot of the family budget of 81 is the re-run
+# P18-1 allows 1..80, but A-U1 needs a screen record and the frozen screen
+# accepts at most 20 trials: refused here (owner decision R14C-S-5, 2026-11-07)
+MAX_DECLARED = screen.MAX_TRIALS
+GATES = tuple(f"G-{i}" for i in range(1, 15))
+NA_GATES = frozenset({"G-8", "G-10", "G-11", "G-14"})  # Annex C C-8, C-9, C-10, C-12
 LOOK_DAYS = 180  # P18-2
 CRASH = "CRASH_NO_ARTIFACT"  # P18-1: ended without writing any result artifact
 # P18-7: reasons that are infrastructure or governance (U_ops); every other
@@ -632,7 +637,7 @@ def check_declaration(
     declared: dict[str, list[dict[str, Any]]], eligible: bool
 ) -> None:
     """P18-1: before the first evaluation. With an eligible window both families
-    are declared; each declared family has 1..80 trials with unique ids, every
+    are declared; each declared family has 1..MAX_DECLARED trials with unique ids, every
     trial a valid interface (`screen.check_trial`) belonging to its family."""
     if set(declared) - set(FAMILIES):
         raise CycleError(f"unknown family {sorted(set(declared) - set(FAMILIES))}")
@@ -656,20 +661,32 @@ def check_declaration(
                 raise CycleError(f"{t['trial_id']} is not a {family} trial")
 
 
-def check_eligibility(*, w0: datetime, t_days: int, t_min: int, last_seen: datetime,
-                      embargo_days: int, g_days: int) -> None:  # fmt: skip
-    """P18-0 (iii) and A-B7 (v), recomputed: the recorded embargo is the bound
-    `gap_embargo.value_days` (g), the window starts at least that far after the
-    last observation mounted or evaluated before declaration, and T >= T_min.
-    (i), (ii) and (iv) are recorded governance checks the module cannot prove."""
+def check_eligibility(*, partition_start: datetime, window_end: datetime, t_min: int,
+                      last_seen: datetime, embargo_days: int,
+                      g_days: int) -> tuple[datetime, int]:  # fmt: skip
+    """P18-0 (iii) and A-B7 (v), recomputed (R14C-S-3). The window start is
+    derived, never taken from the caller: w0 = partition start + g (DRAFT R-3:
+    the partition's first g days are dropped). `window_end` (exclusive) is the
+    end of the validated C2 manifest's complete days (loader slice); T is the
+    whole days in [w0, window_end). The recorded embargo is the bound g, w0 is
+    at least g after the last observation mounted or evaluated before
+    declaration, and T >= T_min. Returns (w0, T). (i), (ii) and (iv) are
+    recorded governance checks the module cannot prove."""
     if embargo_days != g_days:
         raise CycleError(f"recorded embargo {embargo_days} != bound g {g_days}")
+    for name, t in (("partition start", partition_start), ("window end", window_end)):
+        if t.utcoffset() != timedelta(0) or t != t.replace(hour=0, minute=0, second=0,
+                                                           microsecond=0):  # fmt: skip
+            raise CycleError(f"{name} {t} is not a UTC day boundary")
+    w0 = partition_start + timedelta(days=g_days)
     if w0 < last_seen + timedelta(days=embargo_days):
         raise CycleError(
             "window starts inside the embargo after the last seen observation"
         )
+    t_days = (window_end - w0) // DAY
     if t_days < t_min:
         raise CycleError(f"T = {t_days} < T_min = {t_min}")
+    return w0, t_days
 
 
 def check_screen_record(record: bytes, record_sha256: str, trials: list[dict[str, Any]],
@@ -688,26 +705,74 @@ def check_screen_record(record: bytes, record_sha256: str, trials: list[dict[str
         raise CycleError(f"screen outcome {r.get('outcome')!r}")
 
 
-def trial_state(attempts: list[dict[str, Any]], slot_used_by: str | None,
-                trial_id: str) -> str:  # fmt: skip
-    """P18-1: `completed`, `rerun` (its first crash may use the family's one
-    slot), or `final` (finished without a completed evaluation). `attempts`
-    are this trial's in order ({"outcome", "reason_code"}); `slot_used_by`
-    is the trial that already used the family's re-run slot, if any."""
-    if any(a["outcome"] == "completed" for a in attempts):
-        if (
-            attempts[-1]["outcome"] != "completed"
-            or sum(a["outcome"] == "completed" for a in attempts) != 1
-        ):
-            raise CycleError(
-                f"{trial_id}: completed evaluation must be its last and only"
-            )
-        return "completed"
-    if not attempts:
-        return "unstarted"
-    # only a trial's first attempt, a crash, while the slot is free, re-runs
-    first_crash = len(attempts) == 1 and attempts[0].get("reason_code") == CRASH
-    return "rerun" if first_crash and slot_used_by is None else "final"
+def family_attempts(
+    entries: Sequence[Any],
+    *,
+    family: str,
+    cycle: str,
+    trial_of: dict[tuple[str, int], str],
+) -> list[dict[str, Any]]:
+    """The family's confirmation attempts in this cycle, in ledger order, from
+    the durable `core.attempts` records (R14C-S-2). Every start record is
+    validated first (`attempt_counts` fails closed); `trial_of` maps a start's
+    (hypothesis_hash, trial_index) to its declared trial id [DESIGN: until the
+    S4 record layout binds it]. `outcome` is None while no outcome is recorded."""
+    attempts.attempt_counts(entries, family=family, cycle=cycle)
+    outcomes: dict[str, dict[str, Any]] = {}
+    for e in entries:
+        if e.record_type == attempts.ATTEMPT_OUTCOME_RECORD_TYPE:
+            aid = e.payload["attempt_id"]
+            if aid in outcomes:
+                raise CycleError(f"attempt {aid} has two outcome records")
+            outcomes[aid] = e.payload
+    out = []
+    for p in attempts.recorded_attempts(entries):
+        if (p["family"], p["cycle"], p["partition"]) != (
+            family, cycle, attempts.PARTITION_CONFIRMATION
+        ):  # fmt: skip
+            continue
+        key = (p["hypothesis_hash"], p["trial_index"])
+        if key not in trial_of:
+            raise CycleError(f"attempt {p['attempt_id']} is for an undeclared trial")
+        o = outcomes.get(p["attempt_id"], {})
+        out.append({"trial_id": trial_of[key], "outcome": o.get("outcome"),
+                    "reason_code": o.get("reason_code")})  # fmt: skip
+    return out
+
+
+def trial_states(family_attempts_: list[dict[str, Any]],
+                 trial_ids: list[str]) -> dict[str, str]:  # fmt: skip
+    """P18-1 over the whole family, in ledger order (R14C-S-2). The family's one
+    re-run slot goes to its first crash that is a trial's first attempt; only
+    that trial may have a second attempt, and nothing may follow it. States:
+    `unstarted`, `running` (last attempt has no outcome yet), `completed`,
+    `rerun` (its slot crash awaits the re-run) or `final` (ended without a
+    completed evaluation). Any other sequence is refused."""
+    by: dict[str, list[dict[str, Any]]] = {tid: [] for tid in trial_ids}
+    slot: str | None = None
+    for a in family_attempts_:
+        tid = a["trial_id"]
+        if tid not in by:
+            raise CycleError(f"attempt for undeclared trial {tid}")
+        prior = by[tid]
+        if prior and not (tid == slot and len(prior) == 1):
+            raise CycleError(f"{tid}: attempt {len(prior) + 1} is not permitted")
+        if not prior and slot is None and a["reason_code"] == CRASH:
+            slot = tid
+        prior.append(a)
+    states = {}
+    for tid, seq in by.items():
+        if not seq:
+            states[tid] = "unstarted"
+        elif seq[-1]["outcome"] is None:
+            states[tid] = "running"
+        elif seq[-1]["outcome"] == attempts.OUTCOME_COMPLETED:
+            states[tid] = "completed"
+        elif tid == slot and len(seq) == 1:
+            states[tid] = "rerun"
+        else:
+            states[tid] = "final"
+    return states
 
 
 def look_allowed(states: dict[str, str], cycle_start: datetime, now: datetime,
@@ -734,49 +799,57 @@ class Nomination:
     task12: dsr.FamilyResult  # reported; V governs (A-V1)
     v: dsr.FamilyResult
     x: np.ndarray | None = None  # T x K, columns in ascending trial-id order
+    cause: str | None = None  # P18-7 when A_f fails: U_ops or U_proc
 
 
 def nominate(
     family: str,
-    trial_ids: list[str],
-    completed: dict[str, tuple[str, list[float]]],
+    states: dict[str, str],
+    completed: dict[str, tuple[str, list[Any], list[float]]],
     declared_hashes: dict[str, str],
     family_seed: str,
     rule: str,
     classifier: Callable[[np.ndarray, list[float]], bool] | None,
 ) -> Nomination:
-    """`completed[id] = (configuration hash, daily BTC E-DIFF series)` for each
-    trial with its completed evaluation. A_f fails on any missing or
-    mismatched trial (no trial is omitted) or on any dsr.evaluate
-    unavailability. Columns are in ascending trial-id order whatever order
-    the caller gives, so dsr.evaluate's lowest-column tie rule is P18-4's
+    """`states` is `trial_states` over the durable attempt records, one entry
+    per declared trial; `completed[id] = (configuration hash, days, daily BTC
+    E-DIFF values)` for each trial whose state is `completed` (R14C-S-4).
+    A_f fails on any trial not completed, a hash mismatch or a day index not
+    identical and strictly increasing across trials (all U_ops, P18-7), or on
+    any dsr.evaluate unavailability (U_proc). Columns are in ascending
+    trial-id order, so dsr.evaluate's lowest-column tie rule is P18-4's
     lowest-declared-id rule; its column maps back to that id. Method V
-    refuses (U_ops) unless `dsr.v_runtime_check` passed at startup (A-V1)."""
+    refuses unless `dsr.v_runtime_check` passed at startup (A-V1)."""
     if classifier is None:  # D-18 O18-2: never evaluated without it
         raise CycleError("the supported-law classifier is required")
-    if sorted(trial_ids) != sorted(declared_hashes) or len(set(trial_ids)) != len(
-        trial_ids
-    ):
+    if set(states) != set(declared_hashes):
         raise CycleError(f"{family}: trial ids do not match the declaration")
-    trial_ids = sorted(trial_ids)
+    if any(states[tid] != "completed" for tid in completed if tid in states) or (
+        set(completed) - set(states)
+    ):
+        raise CycleError(f"{family}: evaluation output without a completed attempt")
+    trial_ids = sorted(states)
     empty = dsr.FamilyResult("NOT_EVALUATED")
+
+    def ops(reason: str) -> Nomination:
+        return Nomination(False, reason, None, None, empty, empty, cause="U_ops")
+
     for tid in trial_ids:
-        if tid not in completed:
-            return Nomination(
-                False, f"{tid}: no completed evaluation", None, None, empty, empty
-            )
+        if states[tid] != "completed" or tid not in completed:
+            return ops(f"{tid}: no completed evaluation ({states[tid]})")
         if completed[tid][0] != declared_hashes[tid]:
-            return Nomination(
-                False, f"{tid}: configuration hash mismatch", None, None, empty, empty
-            )
-    lengths = {len(completed[tid][1]) for tid in trial_ids}
-    if len(lengths) != 1:
-        return Nomination(False, "series lengths differ", None, None, empty, empty)
-    x = np.array([completed[tid][1] for tid in trial_ids], dtype=float).T
+            return ops(f"{tid}: configuration hash mismatch")
+        days, values = completed[tid][1], completed[tid][2]
+        increasing = all(a < b for a, b in zip(days, days[1:], strict=False))
+        if len(days) != len(values) or not increasing:
+            return ops(f"{tid}: MISALIGNED_SERIES")
+    if any(completed[tid][1] != completed[trial_ids[0]][1] for tid in trial_ids):
+        return ops("MISALIGNED_SERIES: day indexes differ")
+    x = np.array([completed[tid][2] for tid in trial_ids], dtype=float).T
     v = dsr.evaluate(x, family_seed, rule, numerics="v", classifier=classifier)
     t12 = dsr.evaluate(x, family_seed, rule, numerics="task12", classifier=classifier)
     if v.reason is not None or v.nominee is None:
-        return Nomination(False, v.reason, None, None, t12, v, x)
+        return Nomination(False, v.reason, None, None, t12, v, x, cause="U_proc")
     return Nomination(True, None, trial_ids[v.nominee], v.z, t12, v, x)
 
 
@@ -803,10 +876,18 @@ def cause_code(gate: Gate) -> str | None:
 def nominee_outcome(gates_: dict[str, Gate]) -> str:
     """P18-5: the nominee proceeds only if every pre-lockbox gate is PASS or a
     frozen N/A; any FAIL or UNAVAILABLE leaves the family with no promotable
-    trial (no fallback, no replacement)."""
-    if any(g.result == UNAVAILABLE for g in gates_.values()):
+    trial (no fallback, no replacement). All 14 gates are read: a gate not
+    computed counts as UNAVAILABLE (P18-7), and N/A is accepted only where
+    Annex C fixes it (C-0 Outcomes; R14C-S-1)."""
+    if set(gates_) - set(GATES):
+        raise CycleError(f"unknown gates {sorted(set(gates_) - set(GATES))}")
+    bad = sorted(k for k, g in gates_.items() if g.result == NA and k not in NA_GATES)
+    if bad:
+        raise CycleError(f"N/A is not fixed by Annex C for {bad}")
+    results = [gates_[k].result if k in gates_ else UNAVAILABLE for k in GATES]
+    if UNAVAILABLE in results:
         return "NO_RESULT"
-    if any(g.result == FAIL for g in gates_.values()):
+    if FAIL in results:
         return "FAILED"
     return "PROCEEDS_TO_LOCKBOX"
 
