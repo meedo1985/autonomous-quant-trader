@@ -68,22 +68,28 @@ def test_declaration_rules() -> None:
 
 
 def test_eligibility_recomputed() -> None:
-    """R14C-S-3: w0 is derived as partition start + g; T from the window end."""
-    start = W0 - timedelta(days=30)
-    end = W0 + timedelta(days=365)
-    ok: dict[str, Any] = {"partition_start": start, "window_end": end, "t_min": 365,
-          "last_seen": start, "embargo_days": 30, "g_days": 30}  # fmt: skip
-    assert cf.check_eligibility(**ok) == (W0, 365)
+    """R14C-S-3, R14C5-S-1: w0 is the bound C2 start, which must be the v1
+    partition start (2022-01-01) plus g; T from the window end."""
+    v1 = datetime(2022, 1, 1, tzinfo=UTC)
+    c2 = v1 + timedelta(days=30)  # the signed C2's partitions.confirmation.start
+    end = c2 + timedelta(days=365)
+    ok: dict[str, Any] = {"c2_start": c2, "window_end": end, "t_min": 365,
+          "last_seen": v1, "embargo_days": 30, "g_days": 30}  # fmt: skip
+    assert cf.check_eligibility(**ok) == (c2, 365)  # not shifted a second time
+    with pytest.raises(cf.CycleError, match="v1 partition start plus g"):
+        cf.check_eligibility(**{**ok, "c2_start": v1})  # unshifted start
+    with pytest.raises(cf.CycleError, match="v1 partition start plus g"):
+        cf.check_eligibility(**{**ok, "c2_start": c2 + timedelta(days=1)})
     with pytest.raises(cf.CycleError, match="bound g"):
         cf.check_eligibility(**{**ok, "embargo_days": 29})
     with pytest.raises(cf.CycleError, match="inside the embargo"):
-        cf.check_eligibility(**{**ok, "last_seen": start + timedelta(seconds=1)})
+        cf.check_eligibility(**{**ok, "last_seen": v1 + timedelta(seconds=1)})
     with pytest.raises(cf.CycleError, match="day boundary"):
         cf.check_eligibility(**{**ok, "window_end": end - timedelta(hours=1)})
     with pytest.raises(cf.CycleError, match="T_min"):  # 364 complete days
         cf.check_eligibility(**{**ok, "window_end": end - timedelta(days=1)})
     with pytest.raises(cf.CycleError, match="day boundary"):
-        cf.check_eligibility(**{**ok, "partition_start": start + timedelta(hours=1)})
+        cf.check_eligibility(**{**ok, "c2_start": c2 + timedelta(hours=1)})
     with pytest.raises(cf.CycleError, match="day boundary"):  # naive time
         cf.check_eligibility(**{**ok, "window_end": end.replace(tzinfo=None)})
 

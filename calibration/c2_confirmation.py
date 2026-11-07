@@ -19,7 +19,7 @@ import json
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import numpy as np
@@ -622,6 +622,7 @@ MAX_DECLARED = screen.MAX_TRIALS
 GATES = tuple(f"G-{i}" for i in range(1, 15))
 NA_GATES = frozenset({"G-8", "G-10", "G-11", "G-14"})  # Annex C C-8, C-9, C-10, C-12
 LOOK_DAYS = 180  # P18-2
+V1_CONFIRMATION_START = datetime(2022, 1, 1, tzinfo=UTC)  # protocol_v1.yaml:66
 CRASH = "CRASH_NO_ARTIFACT"  # P18-1: ended without writing any result artifact
 NOT_COMPLETED = (attempts.OUTCOME_FAILED, attempts.OUTCOME_ABORTED)
 # P18-7: reasons that are infrastructure or governance (U_ops); every other
@@ -662,24 +663,30 @@ def check_declaration(
                 raise CycleError(f"{t['trial_id']} is not a {family} trial")
 
 
-def check_eligibility(*, partition_start: datetime, window_end: datetime, t_min: int,
+def check_eligibility(*, c2_start: datetime, window_end: datetime, t_min: int,
                       last_seen: datetime, embargo_days: int,
                       g_days: int) -> tuple[datetime, int]:  # fmt: skip
-    """P18-0 (iii) and A-B7 (v), recomputed (R14C-S-3). The window start is
-    derived, never taken from the caller: w0 = partition start + g (DRAFT R-3:
-    the partition's first g days are dropped). `window_end` (exclusive) is the
-    end of the validated C2 manifest's complete days (loader slice); T is the
-    whole days in [w0, window_end). The recorded embargo is the bound g, w0 is
-    at least g after the last observation mounted or evaluated before
+    """P18-0 (iii) and A-B7 (v), recomputed (R14C-S-3, R14C5-S-1). `c2_start`
+    is the signed C2's `partitions.confirmation.start`, which DRAFT R-3 makes
+    the eligible window's start and the C2 binding fixes at the v1 partition
+    start plus g (DRAFT_WORDING `partitions`): it must equal exactly
+    V1_CONFIRMATION_START + g, and w0 = c2_start. `window_end` (exclusive) is
+    the end of the validated C2 manifest's complete days (loader slice); T is
+    the whole days in [w0, window_end). The recorded embargo is the bound g,
+    w0 is at least g after the last observation mounted or evaluated before
     declaration, and T >= T_min. Returns (w0, T). (i), (ii) and (iv) are
     recorded governance checks the module cannot prove."""
     if embargo_days != g_days:
         raise CycleError(f"recorded embargo {embargo_days} != bound g {g_days}")
-    for name, t in (("partition start", partition_start), ("window end", window_end)):
+    for name, t in (("C2 start", c2_start), ("window end", window_end)):
         if t.utcoffset() != timedelta(0) or t != t.replace(hour=0, minute=0, second=0,
                                                            microsecond=0):  # fmt: skip
             raise CycleError(f"{name} {t} is not a UTC day boundary")
-    w0 = partition_start + timedelta(days=g_days)
+    if c2_start != V1_CONFIRMATION_START + timedelta(days=g_days):
+        raise CycleError(
+            f"C2 start {c2_start} is not the v1 partition start plus g = {g_days} days"
+        )
+    w0 = c2_start
     if w0 < last_seen + timedelta(days=embargo_days):
         raise CycleError(
             "window starts inside the embargo after the last seen observation"
