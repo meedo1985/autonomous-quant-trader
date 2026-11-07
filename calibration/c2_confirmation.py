@@ -756,8 +756,10 @@ def trial_states(family_attempts_: list[dict[str, Any]],
     was recorded first. Only that trial may have a second attempt, started
     after the crash was recorded, and nothing may follow it. While a first
     attempt that started before that crash record has no outcome, the slot is
-    undetermined (it may be an earlier unrecorded crash) and is refused until
-    recovery records its outcome (R14C3-S-2). States:
+    undetermined (it may be an earlier unrecorded crash): no re-run is
+    permitted until recovery records its outcome (R14C3-S-2), and the crashed
+    trials are `undetermined`, not finished, so the look waits for them or
+    day 180 (R14C4-S-1). States:
     `unstarted`, `running` (last attempt has no outcome yet), `completed`,
     `rerun` (its slot crash awaits the re-run) or `final` (ended without a
     completed evaluation). Any other sequence is refused."""
@@ -772,14 +774,13 @@ def trial_states(family_attempts_: list[dict[str, Any]],
         and seq[0]["reason_code"] == CRASH and seq[0]["end"] is not None
     ]  # fmt: skip
     first = min(crashes, key=lambda a: a["end"]) if crashes else None
-    slot = first["trial_id"] if first else None
-    if first and any(
+    # R14C4-S-1: an undetermined slot grants no re-run, but states are still
+    # returned so the day-180 look can record the family (P18-2, P18-7)
+    undetermined = first is not None and any(
         seq and seq[0]["end"] is None and seq[0]["start"] < first["end"]
         for seq in by.values()
-    ):
-        raise CycleError(
-            "re-run slot undetermined: an earlier-started attempt has no outcome"
-        )
+    )
+    slot = first["trial_id"] if first and not undetermined else None
     for tid, seq in by.items():
         if len(seq) > 2 or (
             len(seq) == 2 and (tid != slot or seq[1]["start"] < seq[0]["end"])
@@ -795,6 +796,8 @@ def trial_states(family_attempts_: list[dict[str, Any]],
             states[tid] = "completed"
         elif tid == slot and len(seq) == 1:
             states[tid] = "rerun"
+        elif undetermined and len(seq) == 1 and seq[0] in crashes:
+            states[tid] = "undetermined"  # may still get the slot
         else:
             states[tid] = "final"
     return states

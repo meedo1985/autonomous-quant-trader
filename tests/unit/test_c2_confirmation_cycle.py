@@ -168,10 +168,17 @@ def test_slot_is_undetermined_while_an_earlier_attempt_has_no_outcome() -> None:
     unrecorded); t2's recorded crash cannot take the slot until it is resolved."""
     t1 = {**_a("t1", None), "start": 0, "end": None}
     t2 = {**_a("t2", "failed", CRASH), "start": 1, "end": 2}
-    with pytest.raises(cf.CycleError, match="undetermined"):
-        cf.trial_states([t1, t2], ["t1", "t2"])
-    with pytest.raises(cf.CycleError, match="undetermined"):
+    states = cf.trial_states([t1, t2], ["t1", "t2"])
+    assert states == {"t1": "running", "t2": "undetermined"}
+    with pytest.raises(cf.CycleError, match="not permitted"):  # no re-run yet
         cf.trial_states([t1, t2, {**_a("t2"), "start": 3, "end": 4}], ["t1", "t2"])
+    # R14C4-S-1: the look still comes at day 180 and the family is U_ops
+    assert not cf.look_allowed(states, W0, W0 + timedelta(days=179), False, False)
+    assert cf.look_allowed(states, W0, W0 + timedelta(days=180), False, False)
+    completed, hashes = _family(2)
+    hashes = {"t1": hashes["t000"], "t2": hashes["t001"]}
+    n = cf.nominate("trend", states, WIN, {}, hashes, FAMILY_SEED, "largest", always)
+    assert (n.available, n.cause) == (False, "U_ops")
     later = {**_a("t1", None), "start": 3, "end": None}  # started after the record
     assert cf.trial_states([t2, later], ["t1", "t2"]) == {
         "t1": "running", "t2": "rerun"}  # fmt: skip
