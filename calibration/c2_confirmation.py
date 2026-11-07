@@ -716,17 +716,22 @@ def family_attempts(
     the durable `core.attempts` records (R14C-S-2). Every start record is
     validated first (`attempt_counts` fails closed); `trial_of` maps a start's
     (hypothesis_hash, trial_index) to its declared trial id [DESIGN: until the
-    S4 record layout binds it]. `outcome` is None while no outcome is recorded."""
+    S4 record layout binds it]. `start` and `end` are the ledger positions of
+    the start and outcome records (R14C2-S-1); `outcome` and `end` are None
+    while no outcome is recorded."""
     attempts.attempt_counts(entries, family=family, cycle=cycle)
-    outcomes: dict[str, dict[str, Any]] = {}
-    for e in entries:
+    outcomes: dict[str, tuple[int, dict[str, Any]]] = {}
+    for i, e in enumerate(entries):
         if e.record_type == attempts.ATTEMPT_OUTCOME_RECORD_TYPE:
             aid = e.payload["attempt_id"]
             if aid in outcomes:
                 raise CycleError(f"attempt {aid} has two outcome records")
-            outcomes[aid] = e.payload
+            outcomes[aid] = (i, e.payload)
     out = []
-    for p in attempts.recorded_attempts(entries):
+    for i, e in enumerate(entries):
+        if e.record_type != attempts.ATTEMPT_STARTED_RECORD_TYPE:
+            continue
+        p = e.payload
         if (p["family"], p["cycle"], p["partition"]) != (
             family, cycle, attempts.PARTITION_CONFIRMATION
         ):  # fmt: skip
@@ -734,32 +739,40 @@ def family_attempts(
         key = (p["hypothesis_hash"], p["trial_index"])
         if key not in trial_of:
             raise CycleError(f"attempt {p['attempt_id']} is for an undeclared trial")
-        o = outcomes.get(p["attempt_id"], {})
+        end, o = outcomes.get(p["attempt_id"], (None, {}))
         out.append({"trial_id": trial_of[key], "outcome": o.get("outcome"),
-                    "reason_code": o.get("reason_code")})  # fmt: skip
+                    "reason_code": o.get("reason_code"), "start": i,
+                    "end": end})  # fmt: skip
     return out
 
 
 def trial_states(family_attempts_: list[dict[str, Any]],
                  trial_ids: list[str]) -> dict[str, str]:  # fmt: skip
-    """P18-1 over the whole family, in ledger order (R14C-S-2). The family's one
-    re-run slot goes to its first crash that is a trial's first attempt; only
-    that trial may have a second attempt, and nothing may follow it. States:
+    """P18-1 over the whole family (R14C-S-2, R14C2-S-1/2). Attempts carry
+    their ledger positions (`start`, `end`). A crash is a trial's first attempt
+    recorded `failed` with the crash code; the family's one re-run slot goes
+    to the crash whose outcome was recorded first. Only that trial may have a
+    second attempt, started after the crash was recorded, and nothing may
+    follow it. States:
     `unstarted`, `running` (last attempt has no outcome yet), `completed`,
     `rerun` (its slot crash awaits the re-run) or `final` (ended without a
     completed evaluation). Any other sequence is refused."""
     by: dict[str, list[dict[str, Any]]] = {tid: [] for tid in trial_ids}
-    slot: str | None = None
-    for a in family_attempts_:
-        tid = a["trial_id"]
-        if tid not in by:
-            raise CycleError(f"attempt for undeclared trial {tid}")
-        prior = by[tid]
-        if prior and not (tid == slot and len(prior) == 1):
-            raise CycleError(f"{tid}: attempt {len(prior) + 1} is not permitted")
-        if not prior and slot is None and a["reason_code"] == CRASH:
-            slot = tid
-        prior.append(a)
+    for a in sorted(family_attempts_, key=lambda a: a["start"]):
+        if a["trial_id"] not in by:
+            raise CycleError(f"attempt for undeclared trial {a['trial_id']}")
+        by[a["trial_id"]].append(a)
+    crashes = [
+        seq[0] for seq in by.values()
+        if seq and seq[0]["outcome"] == attempts.OUTCOME_FAILED
+        and seq[0]["reason_code"] == CRASH and seq[0]["end"] is not None
+    ]  # fmt: skip
+    slot = min(crashes, key=lambda a: a["end"])["trial_id"] if crashes else None
+    for tid, seq in by.items():
+        if len(seq) > 2 or (
+            len(seq) == 2 and (tid != slot or seq[1]["start"] < seq[0]["end"])
+        ):
+            raise CycleError(f"{tid}: attempt {len(seq)} is not permitted")
     states = {}
     for tid, seq in by.items():
         if not seq:
@@ -805,6 +818,7 @@ class Nomination:
 def nominate(
     family: str,
     states: dict[str, str],
+    window: tuple[datetime, int],
     completed: dict[str, tuple[str, list[Any], list[float]]],
     declared_hashes: dict[str, str],
     family_seed: str,
@@ -814,8 +828,10 @@ def nominate(
     """`states` is `trial_states` over the durable attempt records, one entry
     per declared trial; `completed[id] = (configuration hash, days, daily BTC
     E-DIFF values)` for each trial whose state is `completed` (R14C-S-4).
-    A_f fails on any trial not completed, a hash mismatch or a day index not
-    identical and strictly increasing across trials (all U_ops, P18-7), or on
+    `window` is check_eligibility's (w0, T): every day index must be exactly
+    the T complete UTC days from w0 (Annex B §2.1; R14C2-S-3).
+    A_f fails on any trial not completed, a hash mismatch or a day index
+    other than the window's (all U_ops, P18-7), or on
     any dsr.evaluate unavailability (U_proc). Columns are in ascending
     trial-id order, so dsr.evaluate's lowest-column tie rule is P18-4's
     lowest-declared-id rule; its column maps back to that id. Method V
@@ -829,6 +845,7 @@ def nominate(
     ):
         raise CycleError(f"{family}: evaluation output without a completed attempt")
     trial_ids = sorted(states)
+    expected = [window[0] + i * DAY for i in range(window[1])]
     empty = dsr.FamilyResult("NOT_EVALUATED")
 
     def ops(reason: str) -> Nomination:
@@ -840,11 +857,8 @@ def nominate(
         if completed[tid][0] != declared_hashes[tid]:
             return ops(f"{tid}: configuration hash mismatch")
         days, values = completed[tid][1], completed[tid][2]
-        increasing = all(a < b for a, b in zip(days, days[1:], strict=False))
-        if len(days) != len(values) or not increasing:
+        if list(days) != expected or len(values) != len(expected):
             return ops(f"{tid}: MISALIGNED_SERIES")
-    if any(completed[tid][1] != completed[trial_ids[0]][1] for tid in trial_ids):
-        return ops("MISALIGNED_SERIES: day indexes differ")
     x = np.array([completed[tid][2] for tid in trial_ids], dtype=float).T
     v = dsr.evaluate(x, family_seed, rule, numerics="v", classifier=classifier)
     t12 = dsr.evaluate(x, family_seed, rule, numerics="task12", classifier=classifier)
@@ -881,6 +895,10 @@ def nominee_outcome(gates_: dict[str, Gate]) -> str:
     Annex C fixes it (C-0 Outcomes; R14C-S-1)."""
     if set(gates_) - set(GATES):
         raise CycleError(f"unknown gates {sorted(set(gates_) - set(GATES))}")
+    outcomes = (PASS, FAIL, NA, UNAVAILABLE)
+    odd = sorted(k for k, g in gates_.items() if g.result not in outcomes)
+    if odd:  # C-0: only four outcomes (R14C2-S-4)
+        raise CycleError(f"result outside PASS/FAIL/N/A/UNAVAILABLE for {odd}")
     bad = sorted(k for k, g in gates_.items() if g.result == NA and k not in NA_GATES)
     if bad:
         raise CycleError(f"N/A is not fixed by Annex C for {bad}")

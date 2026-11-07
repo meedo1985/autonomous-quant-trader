@@ -120,34 +120,59 @@ def _a(tid: str, outcome: str | None = "completed",
     return {"trial_id": tid, "outcome": outcome, "reason_code": reason}
 
 
+def seq(*atts: dict[str, Any]) -> list[dict[str, Any]]:
+    """Ledger positions: each attempt's outcome right after its start."""
+    return [{**x, "start": 2 * i, "end": None if x["outcome"] is None else 2 * i + 1}
+            for i, x in enumerate(atts)]  # fmt: skip
+
+
 CRASH, PARTIAL = cf.CRASH, "PARTIAL_OUTPUT"
 
 
 def test_rerun_slot_goes_to_the_first_crash_of_the_family_only() -> None:
     """R14C-S-2: the slot is derived from the family's ordered attempts."""
     ids = ["t1", "t2", "t3", "t4"]
-    got = cf.trial_states([_a("t1", "failed", CRASH), _a("t2", "failed", CRASH),
-                           _a("t3", "failed", PARTIAL), _a("t1")], ids)  # fmt: skip
+    got = cf.trial_states(seq(_a("t1", "failed", CRASH), _a("t2", "failed", CRASH),
+                              _a("t3", "failed", PARTIAL), _a("t1")), ids)  # fmt: skip
     assert got == {"t1": "completed", "t2": "final", "t3": "final", "t4": "unstarted"}
-    assert cf.trial_states([_a("t1", "failed", CRASH)], ["t1"]) == {"t1": "rerun"}
-    assert cf.trial_states([_a("t1", None)], ["t1"]) == {"t1": "running"}
-    second = [_a("t1", "failed", CRASH), _a("t1", "failed", CRASH)]
+    assert cf.trial_states(seq(_a("t1", "failed", CRASH)), ["t1"]) == {"t1": "rerun"}
+    assert cf.trial_states(seq(_a("t1", None)), ["t1"]) == {"t1": "running"}
+    second = seq(_a("t1", "failed", CRASH), _a("t1", "failed", CRASH))
     assert cf.trial_states(second, ["t1"]) == {"t1": "final"}
 
 
+def test_slot_follows_the_order_crashes_were_recorded() -> None:
+    """R14C2-S-1: t1 starts first but t2 crashes first: the slot is t2's."""
+    t1 = {**_a("t1", "failed", CRASH), "start": 0, "end": 3}
+    t2 = {**_a("t2", "failed", CRASH), "start": 1, "end": 2}
+    assert cf.trial_states([t1, t2], ["t1", "t2"]) == {"t1": "final", "t2": "rerun"}
+    rerun = {**_a("t2"), "start": 4, "end": 5}
+    got = cf.trial_states([t1, t2, rerun], ["t1", "t2"])
+    assert got == {"t1": "final", "t2": "completed"}
+    with pytest.raises(cf.CycleError, match="not permitted"):
+        cf.trial_states([t1, t2, {**_a("t1"), "start": 4, "end": 5}], ["t1", "t2"])
+    early = {**_a("t2"), "start": 1, "end": 5}  # re-run started before the crash record
+    crash = {**_a("t2", "failed", CRASH), "start": 0, "end": 2}
+    with pytest.raises(cf.CycleError, match="not permitted"):
+        cf.trial_states([crash, early], ["t2"])
+
+
 @pytest.mark.parametrize(
-    "seq",
+    "atts",
     [
         [_a("t1", "failed", PARTIAL), _a("t1")],  # partial output is final
         [_a("t1"), _a("t1")],  # two completions
+        [_a("t1", "completed", CRASH), _a("t1")],  # R14C2-S-2: crash code on success
         [_a("t1", "failed", CRASH), _a("t2", "failed", CRASH), _a("t2")],  # slot used
         [_a("t1", "failed", CRASH), _a("t1", "failed", CRASH), _a("t1")],  # 3rd attempt
         [_a("t9")],  # undeclared
     ],
 )
-def test_attempt_sequences_outside_p18_1_are_refused(seq: list[dict[str, Any]]) -> None:
+def test_attempt_sequences_outside_p18_1_are_refused(
+    atts: list[dict[str, Any]],
+) -> None:
     with pytest.raises(cf.CycleError):
-        cf.trial_states(seq, ["t1", "t2"])
+        cf.trial_states(seq(*atts), ["t1", "t2"])
 
 
 def test_family_attempts_come_from_the_durable_ledger(tmp_path: Any) -> None:
@@ -160,19 +185,23 @@ def test_family_attempts_come_from_the_durable_ledger(tmp_path: Any) -> None:
                                partition=partition, hypothesis_hash=h, protocol_hash=h,
                                trial_index=idx, symbols=["BTCUSDT"])  # fmt: skip
 
-    start("attempt-a1", 0)
+    start("attempt-a1", 0)  # ledger position 0
+    start("attempt-a2", 1)  # 1
+    start("attempt-x1", 0, family="vol")  # 2: another family, ignored
+    start("attempt-x2", 0, partition="exploration")  # 3: not counted, ignored
     attempts.finish_attempt(
         led, attempt_id="attempt-a1", outcome="failed", reason_code=CRASH
-    )
-    start("attempt-a2", 1)
-    start("attempt-x1", 0, family="vol")  # another family: ignored
-    start("attempt-x2", 0, partition="exploration")  # not counted: ignored
-    start("attempt-a3", 0)
-    attempts.finish_attempt(led, attempt_id="attempt-a3", outcome="completed")
+    )  # 4
+    start("attempt-a3", 0)  # 5
+    attempts.finish_attempt(led, attempt_id="attempt-a3", outcome="completed")  # 6
     trial_of = {(h, 0): "t000", (h, 1): "t001"}
     entries = read_entries(led)
     got = cf.family_attempts(entries, family="trend", cycle="c1", trial_of=trial_of)
-    assert got == [_a("t000", "failed", CRASH), _a("t001", None), _a("t000")]
+    assert got == [
+        {**_a("t000", "failed", CRASH), "start": 0, "end": 4},
+        {**_a("t001", None), "start": 1, "end": None},
+        {**_a("t000"), "start": 5, "end": 6},
+    ]
     assert cf.trial_states(got, ["t000", "t001"]) == {
         "t000": "completed", "t001": "running"}  # fmt: skip
     with pytest.raises(cf.CycleError, match="undeclared"):
@@ -204,6 +233,7 @@ def test_look_trigger() -> None:
 
 Completed = dict[str, tuple[str, list[Any], list[float]]]
 DAYS = [W0 + timedelta(days=i) for i in range(400)]
+WIN = (W0, 400)  # check_eligibility's (w0, T)
 
 
 def _family(k: int = 3, t: int = 400) -> tuple[Completed, dict[str, str]]:
@@ -227,7 +257,7 @@ def always(x: np.ndarray, lengths: list[float]) -> bool:
 def test_nominee_is_the_best_trial_and_both_numerics_reported() -> None:
     completed, hashes = _family()
     n = cf.nominate(
-        "trend", _done(hashes), completed, hashes, FAMILY_SEED, "largest", always
+        "trend", _done(hashes), WIN, completed, hashes, FAMILY_SEED, "largest", always
     )
     assert (n.available, n.nominee) == (True, "t001")
     assert n.z == n.v.z and n.task12.reason is None  # A-V1: V governs, Task 12 reported
@@ -238,7 +268,9 @@ def test_tie_goes_to_the_lowest_declared_id_whatever_the_given_order() -> None:
     completed, hashes = _family()
     completed["t000"] = ("h0", DAYS, completed["t001"][2])  # t000 ties t001 exactly
     states = {"t002": "completed", "t001": "completed", "t000": "completed"}
-    n = cf.nominate("trend", states, completed, hashes, FAMILY_SEED, "largest", always)
+    n = cf.nominate(
+        "trend", states, WIN, completed, hashes, FAMILY_SEED, "largest", always
+    )
     assert n.nominee == "t000"
 
 
@@ -249,7 +281,7 @@ def test_unfinished_mismatched_or_misaligned_trial_fails_the_family_as_u_ops() -
 
     def run(states: dict[str, str], comp: Completed) -> cf.Nomination:
         return cf.nominate(
-            "trend", states, comp, hashes, FAMILY_SEED, "largest", always
+            "trend", states, WIN, comp, hashes, FAMILY_SEED, "largest", always
         )
 
     missing = {k: v for k, v in completed.items() if k != "t002"}
@@ -267,6 +299,13 @@ def test_unfinished_mismatched_or_misaligned_trial_fails_the_family_as_u_ops() -
     rev = list(reversed(DAYS))
     n = run(_done(hashes), {**completed, "t002": ("h2", rev, completed["t002"][2])})
     assert n.cause == "U_ops" and "MISALIGNED_SERIES" in str(n.reason)
+    # R14C2-S-3: identical across trials but not the window's days
+    other = {t: (c[0], list(range(1, 401)), c[2]) for t, c in completed.items()}
+    n = run(_done(hashes), other)
+    assert n.cause == "U_ops" and "MISALIGNED_SERIES" in str(n.reason)
+    short = {t: (c[0], DAYS[:399], c[2][:399]) for t, c in completed.items()}
+    n = run(_done(hashes), short)
+    assert n.cause == "U_ops" and "MISALIGNED_SERIES" in str(n.reason)
     with pytest.raises(cf.CycleError, match="without a completed attempt"):
         run({**_done(hashes), "t002": "final"}, completed)
     with pytest.raises(cf.CycleError, match="do not match"):
@@ -277,17 +316,19 @@ def test_classifier_is_required_and_can_refuse() -> None:
     completed, hashes = _family()
     with pytest.raises(cf.CycleError, match="classifier"):
         cf.nominate(
-            "trend", _done(hashes), completed, hashes, FAMILY_SEED, "largest", None
+            "trend", _done(hashes), WIN, completed, hashes, FAMILY_SEED, "largest", None
         )
-    n = cf.nominate("trend", _done(hashes), completed, hashes, FAMILY_SEED, "largest",
-                    lambda x, lengths: False)  # fmt: skip
+    refuse = lambda x, lengths: False  # noqa: E731
+    n = cf.nominate(
+        "trend", _done(hashes), WIN, completed, hashes, FAMILY_SEED, "largest", refuse
+    )
     assert (n.available, n.reason, n.cause) == (False, "UNSUPPORTED_LAW", "U_proc")
 
 
 def test_family_gates_use_the_nomination_matrix() -> None:
     completed, hashes = _family()
     n = cf.nominate(
-        "trend", _done(hashes), completed, hashes, FAMILY_SEED, "largest", always
+        "trend", _done(hashes), WIN, completed, hashes, FAMILY_SEED, "largest", always
     )
     g = cf.family_gates(n, "1.0", "a" * 64, "a" * 64)
     assert g["G-10"].result == cf.NA  # 3 trials < 20: frozen N/A
@@ -328,6 +369,8 @@ def test_incomplete_gate_map_is_no_result_and_na_only_where_fixed() -> None:
         cf.nominee_outcome({**ok, "G-2": cf.Gate(cf.NA)})
     with pytest.raises(cf.CycleError, match="unknown gates"):
         cf.nominee_outcome({**ok, "G-15": cf.Gate(cf.PASS)})
+    with pytest.raises(cf.CycleError, match="outside PASS"):  # R14C2-S-4
+        cf.nominee_outcome({**ok, "G-2": cf.Gate("BOGUS")})
 
 
 def test_r13_seeds_are_recorded_per_trial() -> None:
