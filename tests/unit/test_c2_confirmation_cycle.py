@@ -72,10 +72,15 @@ def test_eligibility_recomputed() -> None:
     partition start (2022-01-01) plus g; T from the window end."""
     v1 = datetime(2022, 1, 1, tzinfo=UTC)
     c2 = v1 + timedelta(days=30)  # the signed C2's partitions.confirmation.start
-    end = c2 + timedelta(days=365)
-    ok: dict[str, Any] = {"c2_start": c2, "window_end": end, "t_min": 365,
+    end = datetime(2025, 5, 31, 23, 59, 59, tzinfo=UTC)  # its inclusive end
+    ok: dict[str, Any] = {"c2_start": c2, "c2_end": end, "t_min": 365,
           "last_seen": v1, "embargo_days": 30, "g_days": 30}  # fmt: skip
-    assert cf.check_eligibility(**ok) == (c2, 365)  # not shifted a second time
+    # not shifted a second time; every day to 2025-05-31 inclusive (R14C6-S-1)
+    assert cf.check_eligibility(**ok) == (c2, 1217)
+    assert c2 + 1217 * cf.DAY == datetime(2025, 6, 1, tzinfo=UTC)
+    for wrong in (end - cf.DAY, end + cf.DAY, end + timedelta(seconds=1)):
+        with pytest.raises(cf.CycleError, match="C2 end"):
+            cf.check_eligibility(**{**ok, "c2_end": wrong})
     with pytest.raises(cf.CycleError, match="v1 partition start plus g"):
         cf.check_eligibility(**{**ok, "c2_start": v1})  # unshifted start
     with pytest.raises(cf.CycleError, match="v1 partition start plus g"):
@@ -84,14 +89,12 @@ def test_eligibility_recomputed() -> None:
         cf.check_eligibility(**{**ok, "embargo_days": 29})
     with pytest.raises(cf.CycleError, match="inside the embargo"):
         cf.check_eligibility(**{**ok, "last_seen": v1 + timedelta(seconds=1)})
-    with pytest.raises(cf.CycleError, match="day boundary"):
-        cf.check_eligibility(**{**ok, "window_end": end - timedelta(hours=1)})
-    with pytest.raises(cf.CycleError, match="T_min"):  # 364 complete days
-        cf.check_eligibility(**{**ok, "window_end": end - timedelta(days=1)})
+    with pytest.raises(cf.CycleError, match="T_min"):
+        cf.check_eligibility(**{**ok, "t_min": 1218})
     with pytest.raises(cf.CycleError, match="day boundary"):
         cf.check_eligibility(**{**ok, "c2_start": c2 + timedelta(hours=1)})
     with pytest.raises(cf.CycleError, match="day boundary"):  # naive time
-        cf.check_eligibility(**{**ok, "window_end": end.replace(tzinfo=None)})
+        cf.check_eligibility(**{**ok, "c2_start": c2.replace(tzinfo=None)})
 
 
 # --- A-U1 screen record ------------------------------------------------------------

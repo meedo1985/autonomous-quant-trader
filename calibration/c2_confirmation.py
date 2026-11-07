@@ -623,6 +623,8 @@ GATES = tuple(f"G-{i}" for i in range(1, 15))
 NA_GATES = frozenset({"G-8", "G-10", "G-11", "G-14"})  # Annex C C-8, C-9, C-10, C-12
 LOOK_DAYS = 180  # P18-2
 V1_CONFIRMATION_START = datetime(2022, 1, 1, tzinfo=UTC)  # protocol_v1.yaml:66
+# inclusive end, the same in v1 and in the C2 binding (DRAFT_WORDING partitions)
+V1_CONFIRMATION_END = datetime(2025, 5, 31, 23, 59, 59, tzinfo=UTC)
 CRASH = "CRASH_NO_ARTIFACT"  # P18-1: ended without writing any result artifact
 NOT_COMPLETED = (attempts.OUTCOME_FAILED, attempts.OUTCOME_ABORTED)
 # P18-7: reasons that are infrastructure or governance (U_ops); every other
@@ -663,21 +665,26 @@ def check_declaration(
                 raise CycleError(f"{t['trial_id']} is not a {family} trial")
 
 
-def check_eligibility(*, c2_start: datetime, window_end: datetime, t_min: int,
+def check_eligibility(*, c2_start: datetime, c2_end: datetime, t_min: int,
                       last_seen: datetime, embargo_days: int,
                       g_days: int) -> tuple[datetime, int]:  # fmt: skip
     """P18-0 (iii) and A-B7 (v), recomputed (R14C-S-3, R14C5-S-1). `c2_start`
     is the signed C2's `partitions.confirmation.start`, which DRAFT R-3 makes
     the eligible window's start and the C2 binding fixes at the v1 partition
     start plus g (DRAFT_WORDING `partitions`): it must equal exactly
-    V1_CONFIRMATION_START + g, and w0 = c2_start. `window_end` (exclusive) is
-    the end of the validated C2 manifest's complete days (loader slice); T is
-    the whole days in [w0, window_end). The recorded embargo is the bound g,
+    V1_CONFIRMATION_START + g, and w0 = c2_start. `c2_end` is the signed C2's
+    inclusive `partitions.confirmation.end`, which must equal
+    V1_CONFIRMATION_END; T is the whole days in [w0, c2_end + 1 s)
+    (R14C6-S-1). That every one of those days is present is the loader's
+    manifest check (slice 6). The recorded embargo is the bound g,
     w0 is at least g after the last observation mounted or evaluated before
     declaration, and T >= T_min. Returns (w0, T). (i), (ii) and (iv) are
     recorded governance checks the module cannot prove."""
     if embargo_days != g_days:
         raise CycleError(f"recorded embargo {embargo_days} != bound g {g_days}")
+    if c2_end != V1_CONFIRMATION_END:
+        raise CycleError(f"C2 end {c2_end} is not {V1_CONFIRMATION_END}")
+    window_end = c2_end + timedelta(seconds=1)
     for name, t in (("C2 start", c2_start), ("window end", window_end)):
         if t.utcoffset() != timedelta(0) or t != t.replace(hour=0, minute=0, second=0,
                                                            microsecond=0):  # fmt: skip
