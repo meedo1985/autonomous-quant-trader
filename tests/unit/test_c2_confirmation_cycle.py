@@ -157,6 +157,26 @@ def test_slot_follows_the_order_crashes_were_recorded() -> None:
         cf.trial_states([crash, early], ["t2"])
 
 
+def test_aborted_crash_takes_the_slot() -> None:
+    """R14C3-S-1: any non-completed outcome with the crash code is a crash."""
+    got = cf.trial_states(seq(_a("t1", "aborted", CRASH)), ["t1"])
+    assert got == {"t1": "rerun"}
+
+
+def test_slot_is_undetermined_while_an_earlier_attempt_has_no_outcome() -> None:
+    """R14C3-S-2: t1 started first and has no outcome (it may have crashed
+    unrecorded); t2's recorded crash cannot take the slot until it is resolved."""
+    t1 = {**_a("t1", None), "start": 0, "end": None}
+    t2 = {**_a("t2", "failed", CRASH), "start": 1, "end": 2}
+    with pytest.raises(cf.CycleError, match="undetermined"):
+        cf.trial_states([t1, t2], ["t1", "t2"])
+    with pytest.raises(cf.CycleError, match="undetermined"):
+        cf.trial_states([t1, t2, {**_a("t2"), "start": 3, "end": 4}], ["t1", "t2"])
+    later = {**_a("t1", None), "start": 3, "end": None}  # started after the record
+    assert cf.trial_states([t2, later], ["t1", "t2"]) == {
+        "t1": "running", "t2": "rerun"}  # fmt: skip
+
+
 @pytest.mark.parametrize(
     "atts",
     [
@@ -186,20 +206,20 @@ def test_family_attempts_come_from_the_durable_ledger(tmp_path: Any) -> None:
                                trial_index=idx, symbols=["BTCUSDT"])  # fmt: skip
 
     start("attempt-a1", 0)  # ledger position 0
-    start("attempt-a2", 1)  # 1
-    start("attempt-x1", 0, family="vol")  # 2: another family, ignored
-    start("attempt-x2", 0, partition="exploration")  # 3: not counted, ignored
+    start("attempt-x1", 0, family="vol")  # 1: another family, ignored
+    start("attempt-x2", 0, partition="exploration")  # 2: not counted, ignored
     attempts.finish_attempt(
         led, attempt_id="attempt-a1", outcome="failed", reason_code=CRASH
-    )  # 4
+    )  # 3
+    start("attempt-a2", 1)  # 4
     start("attempt-a3", 0)  # 5
     attempts.finish_attempt(led, attempt_id="attempt-a3", outcome="completed")  # 6
     trial_of = {(h, 0): "t000", (h, 1): "t001"}
     entries = read_entries(led)
     got = cf.family_attempts(entries, family="trend", cycle="c1", trial_of=trial_of)
     assert got == [
-        {**_a("t000", "failed", CRASH), "start": 0, "end": 4},
-        {**_a("t001", None), "start": 1, "end": None},
+        {**_a("t000", "failed", CRASH), "start": 0, "end": 3},
+        {**_a("t001", None), "start": 4, "end": None},
         {**_a("t000"), "start": 5, "end": 6},
     ]
     assert cf.trial_states(got, ["t000", "t001"]) == {
@@ -302,6 +322,10 @@ def test_unfinished_mismatched_or_misaligned_trial_fails_the_family_as_u_ops() -
     # R14C2-S-3: identical across trials but not the window's days
     other = {t: (c[0], list(range(1, 401)), c[2]) for t, c in completed.items()}
     n = run(_done(hashes), other)
+    assert n.cause == "U_ops" and "MISALIGNED_SERIES" in str(n.reason)
+    # R14C3-S-3: every trial on the same valid UTC days, shifted one day
+    late = {t: (c[0], [d + cf.DAY for d in DAYS], c[2]) for t, c in completed.items()}
+    n = run(_done(hashes), late)
     assert n.cause == "U_ops" and "MISALIGNED_SERIES" in str(n.reason)
     short = {t: (c[0], DAYS[:399], c[2][:399]) for t, c in completed.items()}
     n = run(_done(hashes), short)

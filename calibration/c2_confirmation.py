@@ -623,6 +623,7 @@ GATES = tuple(f"G-{i}" for i in range(1, 15))
 NA_GATES = frozenset({"G-8", "G-10", "G-11", "G-14"})  # Annex C C-8, C-9, C-10, C-12
 LOOK_DAYS = 180  # P18-2
 CRASH = "CRASH_NO_ARTIFACT"  # P18-1: ended without writing any result artifact
+NOT_COMPLETED = (attempts.OUTCOME_FAILED, attempts.OUTCOME_ABORTED)
 # P18-7: reasons that are infrastructure or governance (U_ops); every other
 # unavailability is a procedure no-result (U_proc) [DESIGN: list for review]
 U_OPS_REASONS = frozenset({"MISSING_DAY", "DUPLICATED_DAY", "IRREGULAR_DAY",
@@ -750,10 +751,13 @@ def trial_states(family_attempts_: list[dict[str, Any]],
                  trial_ids: list[str]) -> dict[str, str]:  # fmt: skip
     """P18-1 over the whole family (R14C-S-2, R14C2-S-1/2). Attempts carry
     their ledger positions (`start`, `end`). A crash is a trial's first attempt
-    recorded `failed` with the crash code; the family's one re-run slot goes
-    to the crash whose outcome was recorded first. Only that trial may have a
-    second attempt, started after the crash was recorded, and nothing may
-    follow it. States:
+    recorded not completed (`failed` or `aborted`) with the crash code
+    (R14C3-S-1); the family's one re-run slot goes to the crash whose outcome
+    was recorded first. Only that trial may have a second attempt, started
+    after the crash was recorded, and nothing may follow it. While a first
+    attempt that started before that crash record has no outcome, the slot is
+    undetermined (it may be an earlier unrecorded crash) and is refused until
+    recovery records its outcome (R14C3-S-2). States:
     `unstarted`, `running` (last attempt has no outcome yet), `completed`,
     `rerun` (its slot crash awaits the re-run) or `final` (ended without a
     completed evaluation). Any other sequence is refused."""
@@ -764,10 +768,18 @@ def trial_states(family_attempts_: list[dict[str, Any]],
         by[a["trial_id"]].append(a)
     crashes = [
         seq[0] for seq in by.values()
-        if seq and seq[0]["outcome"] == attempts.OUTCOME_FAILED
+        if seq and seq[0]["outcome"] in NOT_COMPLETED
         and seq[0]["reason_code"] == CRASH and seq[0]["end"] is not None
     ]  # fmt: skip
-    slot = min(crashes, key=lambda a: a["end"])["trial_id"] if crashes else None
+    first = min(crashes, key=lambda a: a["end"]) if crashes else None
+    slot = first["trial_id"] if first else None
+    if first and any(
+        seq and seq[0]["end"] is None and seq[0]["start"] < first["end"]
+        for seq in by.values()
+    ):
+        raise CycleError(
+            "re-run slot undetermined: an earlier-started attempt has no outcome"
+        )
     for tid, seq in by.items():
         if len(seq) > 2 or (
             len(seq) == 2 and (tid != slot or seq[1]["start"] < seq[0]["end"])
