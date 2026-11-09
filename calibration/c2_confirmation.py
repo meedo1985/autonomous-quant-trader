@@ -47,6 +47,7 @@ from aqt.features.columns import feature_columns
 from aqt.features.factory import FeatureFactoryError
 from calibration import dsr, gates, screen
 from calibration.seeds import cj, sha
+from calibration.semi import SYMBOLS
 
 PASS, FAIL, NA, UNAVAILABLE = "PASS", "FAIL", "N/A", "UNAVAILABLE"
 DD_LIMIT = 0.05  # C-0 drawdown condition (absolute)
@@ -2730,3 +2731,118 @@ def start(
         declaration_sha256=log["declaration_sha256"],
         chain_log=types.MappingProxyType(dict(log)),
     )
+
+
+# --- Slice 6b, part 1: the read contract and the pre-look record --------------
+#
+# DESIGN_SLICE6B.md 6B-3 (read contract) and 6B-4 (pre-look record), the
+# parts that do not depend on the open bindings (signed row names, the
+# classifier bounds, the store).
+
+TRIAL_RESULT_SCHEMA = "aqt.c2.trial_result.v1"
+HOUR = timedelta(hours=1)
+
+
+def check_confirmation_read(
+    btc: BarSeries, eth: BarSeries, start: datetime, end: datetime
+) -> np.ndarray:
+    """6B-3, DESIGN §7.2 C-T: the served bars are BTCUSDT and ETHUSDT, hourly,
+    exactly `[start, end)` ascending and each once, on identical times, before
+    any row position stands for a time (`screen.path_series`). Returns the
+    joint rows `(n, symbols, OHLCV)` without the terminal row. Anything else
+    refuses the evaluation; nothing is filled, dropped or repaired."""
+    if (end - start) % HOUR or end <= start:
+        raise CycleError("C-T: the read span is not whole hours")
+    n = (end - start) // HOUR
+    rows = np.empty((n, len(SYMBOLS), 5))
+    for s, (series, asset) in enumerate(zip((btc, eth), SYMBOLS, strict=True)):
+        if not isinstance(series, BarSeries) or series.symbol != asset:
+            raise CycleError(f"C-T: series {s} is not {asset}")
+        if series.interval != HOUR or len(series.bars) != n:
+            raise CycleError(f"C-T: {asset} is not {n} hourly bars")
+        for i, b in enumerate(series.bars):
+            if b.open_time != start + i * HOUR:
+                raise CycleError(f"C-T: {asset} bar {i} is not at its hour")
+            rows[i, s] = (b.open, b.high, b.low, b.close, b.volume)
+    try:
+        screen.confirmation_path(rows)  # the OHLCV rules, refused not repaired
+    except screen.TrialError as e:
+        raise CycleError(f"C-T: {e}") from None
+    return rows
+
+
+def trial_path(
+    rows: np.ndarray, start: datetime, w0: datetime, warmup: int, window_hours: int
+) -> np.ndarray:
+    """A trial's confirmation path: the last `warmup + window` hours of the
+    checked read, which must end at w1, plus `confirmation_path`'s terminal
+    row (the bar at w1 is never read)."""
+    offset = (w0 - timedelta(hours=warmup) - start) // HOUR
+    if offset < 0 or offset + warmup + window_hours != len(rows):
+        raise CycleError("C-T: the read does not cover this trial's warm-up and window")
+    return screen.confirmation_path(rows[offset:])
+
+
+def trial_result(
+    *,
+    cycle_id: str,
+    trial: dict[str, Any],
+    record: dict[str, Any],
+    attempt_id: str,
+    path: np.ndarray,
+    w0: datetime,
+    window_hours: int,
+    estimator_seed: int,
+) -> dict[str, Any]:
+    """6B-4, DESIGN §5.2 step 4: the trial's pre-look record. `d` is the
+    BTC 1x baseline pair's daily E-DIFF (`baseline_d`, the series the DSR test
+    and A7 step 2 use); `d_sha256` its big-endian float64 hash (LG5-3). A run
+    that is technically unavailable is recorded with `d: null` and its reason
+    (A_f then fails, U_ops); a trial that does not match its immutable record
+    is refused."""
+    if trial["trial_id"] != record["trial_id"] or (
+        screen.trial_sha256(trial) != record["configuration_hash"]
+    ):
+        raise CycleError("the trial object is not its immutable record")
+    w1 = w0 + timedelta(hours=window_hours)
+    out: dict[str, Any] = {
+        "schema": TRIAL_RESULT_SCHEMA,
+        "cycle_id": cycle_id,
+        "trial_id": trial["trial_id"],
+        "family": trial["family"],
+        "configuration_hash": record["configuration_hash"],
+        "attempt_id": attempt_id,
+        "window_id": window_id(w0, w1),
+        "days": [_time(w0 + k * DAY) for k in range(window_hours // 24)],
+        "d": None,
+        "d_sha256": None,
+        "reason": None,
+    }
+    try:
+        d = baseline_d(trial, path, w0, window_hours, estimator_seed)
+    except screen.RunUnavailable as e:
+        return {**out, "reason": e.reason}
+    except (EventContractError, CostModelError, FeatureFactoryError) as e:
+        return {**out, "reason": type(e).__name__}
+    except SealError as e:
+        if str(e) != "DAYS_INCOMPLETE":
+            raise  # a caller's input error, not unavailability
+        return {**out, "reason": "DAYS_INCOMPLETE"}
+    return {**out, "d": [hexf(x) for x in d], "d_sha256": _floats_sha256(d)}
+
+
+def completed_entry(result: dict[str, Any]) -> tuple[str, list[datetime], list[float]]:
+    """`nominate`'s `completed[id]` from a pre-look record: (configuration hash,
+    days, d). An unavailable run gives no values, which `nominate` reports as
+    MISALIGNED_SERIES (U_ops); a `d` that does not hash to its `d_sha256`
+    is refused."""
+    if result.get("schema") != TRIAL_RESULT_SCHEMA:
+        raise CycleError("not a pre-look trial record")
+    days = [datetime.strptime(t, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+            for t in result["days"]]  # fmt: skip
+    if result["d"] is None:
+        return result["configuration_hash"], days, []
+    values = [struct.unpack(">d", bytes.fromhex(x))[0] for x in result["d"]]
+    if _floats_sha256(values) != result["d_sha256"]:
+        raise CycleError("the pre-look d does not hash to its d_sha256")
+    return result["configuration_hash"], days, values
