@@ -15,13 +15,17 @@ Item 4: frozen functions are called, not re-implemented.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import math
 import random
 import struct
-from collections.abc import Callable, Sequence
+import sys
+import types
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -2284,3 +2288,365 @@ def cpcv_report(
                 "p05": st.type_seven_quantile(values, 0.05),
             }
     return {**head, "paths": paths, "summaries": summaries}
+
+
+# --- the start chain and the loader (DESIGN §4; R-14a item 2) ----------------
+#
+# Format bindings the S4 text does not fix yet, chosen here and to be stated
+# in the signed C2 [DESIGN; pre-signing item]:
+# - the signed protocol bytes carry each of `lockbox_module_sha256`,
+#   `confirmation_module_sha256` and `outpoint_F` exactly once, on its own
+#   line as `<name>: "<value>"` (any indentation), replacing the
+#   <<BUILD>>/<<SIGNING>> markers; `outpoint_F` is `<txid hex>:<vout>`;
+# - the C2 declaration is canonical JSON (cj) with a top-level
+#   `protocol_hash`.
+# What this chain cannot verify: that the post is *accepted* (6
+# confirmations, first post, no later post; O-6a SPEC §3-§5). That needs a
+# validating node and is the frozen acceptance record's; the chain checks
+# that record's transaction is well formed, spends F and names this
+# declaration, and logs the record's hash.
+
+POST_SCRIPT_PREFIX = bytes.fromhex("6a25") + b"AQTC2"
+MODULE_ROWS = ("lockbox_module_sha256", "confirmation_module_sha256")
+MODULE_PATHS = {  # DESIGN §5, §6
+    "lockbox_module_sha256": "calibration/c2_lockbox.py",
+    "confirmation_module_sha256": "calibration/c2_confirmation.py",
+}
+# further signed-C2 rows `start` reads [DESIGN; to be bound in the S4 text]
+SIGNED_ROWS = (
+    "engine_commit",
+    "screen_object_sha256",
+    "qualification_object_sha256",
+    "image_digest",
+)
+
+
+class ChainError(ValueError):
+    """A broken or unverifiable step of the start chain; nothing is read."""
+
+
+def _varint(raw: bytes, i: int) -> tuple[int, int]:
+    first = raw[i]
+    if first < 0xFD:
+        return first, i + 1
+    width = {0xFD: 2, 0xFE: 4, 0xFF: 8}[first]
+    return int.from_bytes(raw[i + 1 : i + 1 + width], "little"), i + 1 + width
+
+
+def parse_tx(raw: bytes) -> tuple[list[tuple[str, int]], list[tuple[int, bytes]]]:
+    """A Bitcoin transaction's spent outpoints (display txid hex, vout) and
+    its outputs (value in satoshi, scriptPubKey). Legacy or segwit."""
+    try:
+        i = 4  # version
+        segwit = raw[i] == 0 and raw[i + 1] == 1
+        if segwit:
+            i += 2
+        count, i = _varint(raw, i)
+        inputs = []
+        for _ in range(count):
+            txid = raw[i : i + 32][::-1].hex()
+            vout = int.from_bytes(raw[i + 32 : i + 36], "little")
+            length, i = _varint(raw, i + 36)
+            i += length + 4  # scriptSig, sequence
+            inputs.append((txid, vout))
+        count, i = _varint(raw, i)
+        outputs = []
+        for _ in range(count):
+            value = int.from_bytes(raw[i : i + 8], "little")
+            length, i = _varint(raw, i + 8)
+            outputs.append((value, raw[i : i + length]))
+            i += length
+        if segwit:
+            for _ in inputs:
+                items, i = _varint(raw, i)
+                for _ in range(items):
+                    length, i = _varint(raw, i)
+                    i += length
+        if i + 4 != len(raw) or not inputs or not outputs:
+            raise ChainError("transaction bytes do not parse exactly")
+    except (IndexError, KeyError) as e:
+        raise ChainError("transaction bytes do not parse") from e
+    return inputs, outputs
+
+
+def txid(raw: bytes) -> str:
+    """The display txid: double SHA-256 of the serialization without the
+    segwit marker, flag and witnesses (the wtxid would include them)."""
+    parse_tx(raw)  # refuses bytes that do not parse exactly
+    base = raw
+    if raw[4] == 0 and raw[5] == 1:
+        i, end = 6, 0
+        count, i = _varint(raw, i)
+        for _ in range(count):
+            length, i = _varint(raw, i + 36)
+            i += length + 4
+        count, i = _varint(raw, i)
+        for _ in range(count):
+            length, i = _varint(raw, i + 8)
+            i += length
+        end = i
+        base = raw[:4] + raw[6:end] + raw[-4:]
+    return hashlib.sha256(hashlib.sha256(base).digest()).digest()[::-1].hex()
+
+
+def post_declaration_sha256(raw_tx: bytes, outpoint: str) -> str:
+    """O-6a SPEC §3 well-formed post: spends F; exactly one OP_RETURN output,
+    value 0, scriptPubKey exactly `6a25 'AQTC2' <32 bytes>`."""
+    inputs, outputs = parse_tx(raw_tx)
+    txid, _, vout = outpoint.partition(":")
+    if not vout.isdigit() or (txid, int(vout)) not in inputs:
+        raise ChainError("the post does not spend the bound coin F")
+    returns = [(v, s) for v, s in outputs if s[:1] == b"\x6a"]
+    if len(returns) != 1:
+        raise ChainError("the post needs exactly one OP_RETURN output")
+    value, script = returns[0]
+    if value != 0 or len(script) != 39 or script[:7] != POST_SCRIPT_PREFIX:
+        raise ChainError("the OP_RETURN output is not the AQTC2 message")
+    return script[7:].hex()
+
+
+ACCEPTANCE_SCHEMA = "aqt.c2.post_acceptance.v1"
+ACCEPTANCE_FIELDS = frozenset(
+    {"schema", "txid", "raw_tx", "block_hash", "height", "confirmations",
+     "first_post"}
+)  # fmt: skip
+MIN_CONFIRMATIONS = 6  # O-6a SPEC §5, DRAFT seed_disclosure first_post_rule
+
+
+def check_acceptance(record: bytes, post_raw_tx: bytes) -> None:
+    """R14L-S-3: the frozen acceptance record [DESIGN schema] must name this
+    very post, as the first post, at 6 or more confirmations, with a
+    well-formed block hash and height. What the module cannot check is that
+    the record is true: that needs the validating node and the explorers of
+    O-6a SPEC §4. Who vouches for the record, and how its provenance is
+    verified before `start()`, is an open owner decision (R14L2-S-2); the
+    record's hash is logged for §27."""
+    try:
+        acceptance = json.loads(record)
+        canonical = cj(acceptance)
+    except ValueError as e:
+        raise ChainError("the acceptance record is not JSON") from e
+    if (
+        canonical != record
+        or not isinstance(acceptance, dict)
+        or set(acceptance) != ACCEPTANCE_FIELDS
+    ):
+        raise ChainError("the acceptance record is not the canonical schema")
+    confirmations = acceptance["confirmations"]
+    if (
+        acceptance["schema"] != ACCEPTANCE_SCHEMA
+        or acceptance["raw_tx"] != post_raw_tx.hex()
+        or acceptance["txid"] != txid(post_raw_tx)
+        or acceptance["first_post"] is not True
+        or not isinstance(acceptance["block_hash"], str)
+        or len(acceptance["block_hash"]) != 64
+        or not set(acceptance["block_hash"]) <= _HEX
+        or type(acceptance["height"]) is not int
+        or acceptance["height"] <= 0
+        or type(confirmations) is not int
+        or confirmations < MIN_CONFIRMATIONS
+    ):
+        raise ChainError("the acceptance record does not accept this post")
+
+
+def protocol_row(protocol: bytes, name: str) -> str:
+    """The value of `<name>: "<value>"`, which must occur exactly once."""
+    text = protocol.decode("utf-8")
+    hits = [
+        line.strip()[len(name) + 2 :]
+        for line in text.splitlines()
+        if line.strip().startswith(f"{name}: ")
+    ]
+    if len(hits) != 1:
+        raise ChainError(f"{name} is not exactly one row of the signed C2")
+    value = hits[0]
+    if len(value) < 2 or value[0] != '"' or value[-1] != '"':
+        raise ChainError(f"{name} row is not a quoted value")
+    return value[1:-1]
+
+
+def verify_chain(
+    *,
+    acceptance_record: bytes,
+    post_raw_tx: bytes,
+    declaration: bytes,
+    protocol: bytes,
+    modules: Mapping[str, bytes],
+) -> dict[str, str]:
+    """R-14a item 2, in order: the accepted post → the declaration bytes
+    matching its declaration_sha256 → the declaration's protocol_hash → the
+    complete signed C2 bytes hashing to it, with both module rows → the
+    module bytes (`modules` maps each row name to the exact bytes that will
+    be compiled). Raises ChainError at the first broken step; returns the
+    log to record (Constitution §27)."""
+    check_acceptance(acceptance_record, post_raw_tx)
+    # F is read from the protocol bytes, which are themselves verified two
+    # steps on; any failure anywhere refuses the whole chain
+    posted = post_declaration_sha256(post_raw_tx, protocol_row(protocol, "outpoint_F"))
+    declaration_sha256 = hashlib.sha256(declaration).hexdigest()
+    if declaration_sha256 != posted:
+        raise ChainError("the declaration is not the posted one")
+    try:
+        decl = json.loads(declaration)
+        canonical = cj(decl)
+    except ValueError as e:
+        raise ChainError("the declaration is not JSON") from e
+    if canonical != declaration or not isinstance(decl, dict):
+        raise ChainError("the declaration is not canonical JSON")
+    protocol_hash = decl.get("protocol_hash")
+    if hashlib.sha256(protocol).hexdigest() != protocol_hash:
+        raise ChainError("the protocol bytes do not hash to protocol_hash")
+    log = {
+        "acceptance_record_sha256": hashlib.sha256(acceptance_record).hexdigest(),
+        "post_txid": txid(post_raw_tx),
+        "declaration_sha256": declaration_sha256,
+        "protocol_hash": protocol_hash,
+    }
+    if set(modules) != set(MODULE_ROWS):
+        raise ChainError("exactly the two R-14a modules must be verified")
+    for name in MODULE_ROWS:
+        signed = protocol_row(protocol, name)
+        if hashlib.sha256(modules[name]).hexdigest() != signed:
+            raise ChainError(f"the loaded {name} bytes are not the signed ones")
+        log[name] = signed
+    return log
+
+
+def load_verified(name: str, path: Path, sha256: str) -> types.ModuleType:
+    """DESIGN §4 step 5: read the file once, hash those bytes, refuse on a
+    mismatch, compile and execute exactly those bytes into a module whose
+    spec names the `.py` source (so `rundef.bytecode_problem` passes,
+    R14D3-S-1); the loader's exec_module never runs, so the file is not
+    read again."""
+    source = path.read_bytes()
+    if hashlib.sha256(source).hexdigest() != sha256:
+        raise ChainError(f"{path} is not the signed module")
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None:
+        raise ChainError(f"no module spec for {path}")
+    module = importlib.util.module_from_spec(spec)
+    code = compile(source, str(path), "exec")
+    sys.modules[name] = module
+    try:
+        exec(code, module.__dict__)  # noqa: S102 - the hashed bytes only
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
+def verify_code(
+    obj: Path, posted_sha256: str, root: Path, modules: Mapping[str, bytes]
+) -> dict[str, Any]:
+    """DESIGN §4 code check: `screen.check_object`'s steps, with
+    `check_screen_code`'s reviewed map extended by exactly the two signed
+    module files (`modules` maps repository path to the verified bytes).
+    R-14's two checks are otherwise unchanged; a third extra module is
+    still refused."""
+    from calibration import mapping, qobj
+
+    if set(modules) != set(MODULE_PATHS.values()):  # R14L-S-4
+        raise ChainError("exactly the two named R-14a module files")
+    manifest = json.loads((obj / "manifest.json").read_bytes())
+    if sha(manifest) != posted_sha256:
+        raise ChainError("the qualification object is not the posted one")
+    files = {}
+    for name, digest in manifest.items():
+        data = (obj / name).read_bytes()
+        if hashlib.sha256(data).hexdigest() != digest:
+            raise ChainError(f"{name} does not match the object's manifest")
+        files[name] = data
+    _, defn = qobj.read(files)
+    screen.check_screen_code(
+        defn,
+        root,
+        {
+            "calibration/mapping.py": files["mapping.py"],
+            screen.SCREEN_SELF: files["screen.py"],
+            **modules,
+        },
+    )
+    mapping.check_runtime(defn)
+    return defn
+
+
+# --- Slice 6a: the confirmation module's start (DESIGN §4, §5.2 step 1) -------
+#
+# The section above is the lockbox module's start chain and loader, copied
+# text for text (DESIGN §4: each module carries its own copy, no
+# cross-import; a test pins the copies equal). Readings ST-n (proposed):
+# - ST-1 `start` runs the chain over both module files as on disk, reads the
+#   signed values from the verified protocol bytes, runs the code check and
+#   the image check, then loads line 266 (`load_line266`) before returning:
+#   nothing protected is read before all of it passes (R-14a items 2, 7;
+#   R14S4-S-1 route M). Unlike the lockbox there is no startup record.
+# - ST-2 The confirmation-specific signed values (the drand chain, z_crit,
+#   T_min, g, the classifier) are not read here; their row names are open
+#   (OD-4) and slice 6b reads them from the same verified bytes.
+
+
+@dataclass(frozen=True)
+class Started:
+    """What `start` verified; the evaluation takes only this."""
+
+    protocol_hash: str
+    lockbox_module_sha256: str
+    confirmation_module_sha256: str
+    engine_commit: str
+    screen_object_sha256: str
+    image_digest: str
+    protocol: bytes  # the verified signed C2 bytes, for slice 6b's rows
+    declaration: bytes  # the verified, posted declaration bytes
+    declaration_sha256: str
+    chain_log: Mapping[str, str]  # read-only view, for the record (§27)
+
+
+def start(
+    *,
+    root: Path,
+    obj: Path,
+    acceptance_record: bytes,
+    post_raw_tx: bytes,
+    declaration: bytes,
+    protocol: bytes,
+    image_digest: str,
+) -> Started:
+    """ST-1: DESIGN §4 before any protected-data read. Any failure raises
+    ChainError (line 266 failing to load raises SeedError) and nothing is
+    read. That the *running* bytes are these files is the launch route's to
+    establish (R14D3-S-2): this function cannot run before its own module."""
+    files = {row: (root / path).read_bytes() for row, path in MODULE_PATHS.items()}
+    log = verify_chain(
+        acceptance_record=acceptance_record,
+        post_raw_tx=post_raw_tx,
+        declaration=declaration,
+        protocol=protocol,
+        modules=files,
+    )
+    rows = {name: protocol_row(protocol, name) for name in SIGNED_ROWS}
+    defn = verify_code(
+        obj,
+        rows["qualification_object_sha256"],
+        root,
+        {MODULE_PATHS[row]: data for row, data in files.items()},
+    )
+    if defn.get("engine_commit") != rows["engine_commit"]:
+        raise ChainError("the object's engine commit is not the signed one")
+    if image_digest != rows["image_digest"]:
+        raise ChainError("the running image is not the signed one")
+    try:
+        load_line266()
+    except Exception as e:
+        raise SeedError(f"line 266 did not load: {type(e).__name__}") from None
+    return Started(
+        protocol_hash=log["protocol_hash"],
+        lockbox_module_sha256=log["lockbox_module_sha256"],
+        confirmation_module_sha256=log["confirmation_module_sha256"],
+        engine_commit=rows["engine_commit"],
+        screen_object_sha256=rows["screen_object_sha256"],
+        image_digest=rows["image_digest"],
+        protocol=bytes(protocol),
+        declaration=bytes(declaration),
+        declaration_sha256=log["declaration_sha256"],
+        chain_log=types.MappingProxyType(dict(log)),
+    )
