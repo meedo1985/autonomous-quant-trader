@@ -12,6 +12,16 @@
 | Test note (R-13 bytes) | — | **Accepted, repaired.** | The provenance test now checks each `trial_seed` against the literal bytes `{"family_seed":…,"trial_id":…}`, not `seeds_record`. |
 | Test note (zero through derivation) | — | **Accepted, repaired.** | `test_estimator_seed_zero_is_kept` also runs `derive_seeds` with a line-266 seed mapping to 0 and checks the record keeps 0. |
 
+**Correction (same day, before any work on it):** option (a) is not available. The
+accepted preregistration (§13 rev 7g item 6, A-V1) requires C2's real evaluation to run in
+the same image as the calibration, and the full calibration run has started on the current
+image (`cb76232`). Rebuilding the image would break that rule or restart the run. Remaining
+routes, both needing review and the owner's choice: a separately pinned verifier run outside
+the evaluation whose outputs are bound into a governing record that the module checks
+against (DESIGN §5.1 already allows "a verified subprocess"; compare the owner's R14L5-S-2
+(a) decision that `seed_l266` comes from the sealing record), or option (b) above for line
+266 with the BLS question left to the first route.
+
 ## Validation after the repairs (Windows 11, repo `.venv`, Python 3.14)
 
 | Command | Result |
