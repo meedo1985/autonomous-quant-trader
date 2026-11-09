@@ -628,6 +628,30 @@ def _check_shape(artifact: object) -> dict[str, Any]:
                 isinstance(artifact[key], dict) and set(artifact[key]) == inner,
                 "PREDICTION_ARTIFACT_INVALID",
             )
+    # R14S5-S-3: the source and block values, not only their keys (§D-3.5)
+    src, blk = artifact["source"], artifact["block"]
+
+    def hex64(v: object) -> bool:
+        return isinstance(v, str) and len(v) == 64 and set(v) <= _HEX
+
+    try:
+        value = unhexf(blk["value"])
+        raw = None if blk["raw"] is None else unhexf(blk["raw"])
+    except LockboxError:
+        raise _Refused("PREDICTION_ARTIFACT_INVALID") from None
+    _need(
+        isinstance(src["window_id"], str)
+        and type(src["n"]) is int
+        and src["n"] >= 2
+        and hex64(src["d_sha256"])
+        and hex64(src["evaluation_record_sha256"])
+        and hex64(blk["psi_sha256"])
+        and math.isfinite(value)
+        and value >= 1
+        and (raw is None or math.isfinite(raw))
+        and blk["clipping"] in (None, "LOWER", "UPPER"),
+        "PREDICTION_ARTIFACT_INVALID",
+    )
     return artifact
 
 

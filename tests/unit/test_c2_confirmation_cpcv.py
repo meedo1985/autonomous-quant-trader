@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import ast
+import random
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 import test_calibration_screen as ts  # the screen tests' fixtures
 
@@ -56,22 +58,55 @@ def test_every_split_lies_on_exactly_one_path_through_both_its_groups() -> None:
     assert cf.cpcv_path_splits(1)[:2] == [(0, 1), (0, 1)]
 
 
-def test_training_rows_purge_and_embargo() -> None:
+def test_training_rows_purge_and_embargo(monkeypatch: pytest.MonkeyPatch) -> None:
     t0 = datetime(2022, 1, 1, tzinfo=UTC)
     times = [t0 + timedelta(days=k) for k in range(20)]
+    ys = [float(k) for k in range(20)]
     w1 = t0 + timedelta(days=20)
     test = [(t0 + timedelta(days=5), t0 + timedelta(days=8))]  # days 5, 6, 7
+    seen: list[tuple[list[float | None], int]] = []
+
+    def embargo(daily: list[float | None], h: int) -> int:
+        seen.append((daily, h))
+        return 2
+
+    monkeypatch.setattr(screen, "embargo_days", embargo)
     # H = 48 h: day 4's label [4, 6) meets the test group, day 3's [3, 5) does
-    # not; embargo 2 days drops days 8, 9; the last day's label is unrealised
-    rows = cf.cpcv_training_rows(times, test, 48, 2, w1)
-    assert rows == [0, 1, 2, 3, *range(10, 19)]
-    assert cf.cpcv_training_rows(times, test, 24, 0, w1) == [
-        *range(5), *range(8, 20)
-    ]  # fmt: skip
+    # not; embargo 2 days drops days 8, 9; day 19's label is unrealised
+    kept = cf.cpcv_training_rows(times, ys, test, 48, w1)
+    assert kept == [0, 1, 2, 3, *range(10, 19)]
+    # R14S5B-S-1: the cutoff sees only the purged training labels, by
+    # calendar day, test and purged days as gaps
+    assert seen == [([0.0, 1.0, 2.0, 3.0, None, None, None, None,
+                      *map(float, range(8, 19))], 2)]  # fmt: skip
     two = [*test, (t0 + timedelta(days=12), t0 + timedelta(days=14))]
-    assert cf.cpcv_training_rows(times, two, 24, 1, w1) == [
-        0, 1, 2, 3, 4, 9, 10, 11, *range(15, 20)
+    assert cf.cpcv_training_rows(times, ys, two, 24, w1) == [
+        0, 1, 2, 3, 4, 10, 11, *range(16, 20)
     ]  # fmt: skip
+    with pytest.raises(screen.RunUnavailable, match="TRAINING_ROWS"):
+        cf.cpcv_training_rows(times, ys, [(t0, w1)], 24, w1)
+
+
+def test_test_group_labels_cannot_change_the_training_rows() -> None:
+    # R14S5B-S-1: with the real ACF cutoff, rewriting every label inside the
+    # test groups (and their purge zones) leaves the kept rows unchanged
+    t0 = datetime(2022, 1, 1, tzinfo=UTC)
+    times = [t0 + timedelta(days=k) for k in range(60)]
+    w1 = t0 + timedelta(days=60)
+    gen = random.Random(5)
+    ys = [gen.gauss(0, 1) for _ in times]
+    test = [(t0 + timedelta(days=10), t0 + timedelta(days=17)),
+            (t0 + timedelta(days=40), t0 + timedelta(days=47))]  # fmt: skip
+    base = cf.cpcv_training_rows(times, ys, test, 72, w1)
+    for k in (0.0, 1.0, 9.0):
+        # strongly autocorrelated test-zone labels that would lengthen a
+        # window-wide cutoff
+        other = [
+            (k + 0.01 * i) if any(s - timedelta(days=3) < t < e for s, e in test)
+            else y
+            for i, (t, y) in enumerate(zip(times, ys, strict=True))
+        ]  # fmt: skip
+        assert cf.cpcv_training_rows(times, other, test, 72, w1) == base
 
 
 # --- the switch ---------------------------------------------------------------
@@ -205,8 +240,8 @@ def test_a_model_trial_fits_once_per_split_without_its_test_groups(
     kept: list[tuple[list[tuple[datetime, datetime]], list[datetime]]] = []
     real_rows = cf.cpcv_training_rows
 
-    def rows(times: Any, test: Any, hours: int, e: int, w1: datetime) -> list[int]:
-        out = real_rows(times, test, hours, e, w1)
+    def rows(times: Any, ys: Any, test: Any, hours: int, w1: datetime) -> list[int]:
+        out = real_rows(times, ys, test, hours, w1)
         kept.append((list(test), [times[i] for i in out]))
         return out
 
@@ -230,6 +265,72 @@ def test_a_model_trial_fits_once_per_split_without_its_test_groups(
         "median": st.type_seven_quantile(values, 0.5),
         "p05": st.type_seven_quantile(values, 0.05),
     }
+
+
+class _Constant:
+    """A stand-in fitted model predicting one value per split."""
+
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def fit(self, x: Any, y: Any) -> None:
+        pass
+
+    def predict(self, x: Any) -> Any:
+        return np.full(len(x), self.value)
+
+
+def test_every_path_takes_group_g_from_split_g_xor_p(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R14S5B-S-3: each split's fit predicts its own constant, so every path's
+    # value is checked against a write-out of C-14 (3), group by group
+    trial: dict[str, Any] = ts._model_trial(tmp_path, monkeypatch)
+    path = ts._long_path()
+    order: list[tuple[int, int]] = []
+    groups = cf.cpcv_groups(ts.WINDOW_H // 24)
+    real_rows = cf.cpcv_training_rows
+
+    def rows(times: Any, ys: Any, test: Any, hours: int, w1: datetime) -> list[int]:
+        order.append(tuple(  # type: ignore[arg-type]
+            groups.index(((s - ts.W0).days, (e - ts.W0).days)) for s, e in test
+        ))  # fmt: skip
+        return real_rows(times, ys, test, hours, w1)
+
+    value = {split: 0.01 * k for k, split in enumerate(cf.cpcv_splits())}
+    monkeypatch.setattr(cf, "cpcv_training_rows", rows)
+    monkeypatch.setattr(
+        screen, "build_model", lambda *_, **__: _Constant(value[order[-1]])
+    )
+    got = cf.cpcv_report(trial, path, ts.W0, ts.WINDOW_H, 0, ON)
+
+    warmup = trial["warmup_hours"]
+    series = screen.path_series(path, 0, ts.W0 - timedelta(hours=warmup))
+    first, columns = feature_columns(series)
+    sigma = ewma_hourly_volatility_bps_series(hourly_log_returns_bps(series))
+    closes = [b.close for b in series.bars]
+    bench = screen.daily_returns(run_event_contract(
+        series, screen.benchmark_targets(columns, first, warmup, ts.WINDOW_H), warmup,
+        sigma_bps=sigma))  # fmt: skip
+
+    def group(g: int, c: float) -> list[float]:
+        cols = {**columns, "model:m": (c,) * len(columns["rv_168"])}
+        signal = screen.load(trial["signal"], trial["signal_sha256"])
+        targets, _ = screen.leg_targets(trial, signal, None, cols, first, closes,
+                                        warmup, ts.WINDOW_H, 0)  # fmt: skip
+        a, b = groups[g]
+        run = run_event_contract(series, targets[24 * a : 24 * b], warmup + 24 * a,
+                                 sigma_bps=sigma)  # fmt: skip
+        return screen.daily_returns(run)
+
+    for entry in got["paths"]:
+        p = entry["path"]
+        cand = [r for g in range(8)
+                for r in group(g, value[(min(g, g ^ p), max(g, g ^ p))])]  # fmt: skip
+        stats = st.paired_sharpe_statistics(cand, bench)
+        assert entry["E-DIFF"] == stats.difference_series_sharpe.scaled
+        assert entry["E-IMPROV"] == stats.paired_sharpe_improvement
+    assert len({e["E-DIFF"] for e in got["paths"]}) == 7
 
 
 def test_one_failed_split_makes_its_path_and_the_summaries_unavailable(

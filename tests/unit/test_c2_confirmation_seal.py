@@ -5,6 +5,7 @@ Synthetic data only (the screen tests' path and trial fixtures)."""
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import inspect
 from datetime import timedelta
@@ -125,6 +126,32 @@ def test_a_sealed_artifact_passes_the_lockbox_pre_read_checks() -> None:
     _lockbox_accepts(artifact, _nominee())
 
 
+@pytest.mark.parametrize(
+    ("part", "key", "value"),
+    [
+        ("source", "n", -1),
+        ("source", "n", True),
+        ("source", "d_sha256", "bad"),
+        ("source", "evaluation_record_sha256", "A" * 64),
+        ("source", "window_id", 7),
+        ("block", "value", "bad"),
+        ("block", "value", cf.hexf(0.5)),  # a block length below 1
+        ("block", "value", cf.hexf(float("inf"))),
+        ("block", "raw", "bad"),
+        ("block", "psi_sha256", "0" * 63),
+        ("block", "clipping", "SIDEWAYS"),
+    ],
+)
+def test_the_lockbox_refuses_bad_source_and_block_values(
+    part: str, key: str, value: object
+) -> None:
+    # R14S5-S-3: values are checked before any read, not only the keys
+    artifact = _artifact()
+    artifact[part] = {**artifact[part], key: value}
+    with pytest.raises(lb._Refused, match="PREDICTION_ARTIFACT_INVALID"):
+        _lockbox_accepts(artifact, _nominee())
+
+
 def test_d_must_hash_to_the_pre_look_d_sha256() -> None:
     with pytest.raises(cf.SealError, match="pre-look"):
         _artifact(d_sha256="0" * 64)
@@ -152,16 +179,31 @@ def test_a_short_source_is_refused_by_the_a4_generator() -> None:
 # --- the baseline re-run (A7 step 1) ------------------------------------------
 
 
-def _independent_d(trial: dict[str, Any], path: np.ndarray) -> tuple[float, ...]:
-    """The same pair through the frozen blocks, written out in the test."""
+def _independent_d(
+    trial: dict[str, Any], path: np.ndarray, seed: int = 0
+) -> tuple[float, ...]:
+    """The same pair through the frozen blocks, written out in the test: the
+    walk-forward model column at the registered seed, the overlay fresh."""
     warmup = trial["warmup_hours"]
     series = screen.path_series(path, 0, ts.W0 - timedelta(hours=warmup))
     first, columns = feature_columns(series)
+    if trial["model"] is not None:
+        _, preds = screen.walk_forward(trial, series, first, columns, warmup,
+                                       ts.WINDOW_H, 0, None, seed)  # fmt: skip
+        col = [float("nan")] * len(columns["rv_168"])
+        for i, y in enumerate(preds):  # one emission per day, held 24 hours
+            for h in range(24):
+                col[warmup + 24 * i + h - 1 - first] = y
+        columns = {**columns, "model:m": tuple(col)}
     sigma = ewma_hourly_volatility_bps_series(hourly_log_returns_bps(series))
     closes = [b.close for b in series.bars]
     signal = screen.load(trial["signal"], trial["signal_sha256"])
+    overlay = (
+        None if trial["overlay"] is None
+        else screen.load(trial["overlay"], trial["overlay_sha256"])
+    )  # fmt: skip
     cand, _ = screen.leg_targets(
-        trial, signal, None, columns, first, closes, warmup, ts.WINDOW_H, 0
+        trial, signal, overlay, columns, first, closes, warmup, ts.WINDOW_H, 0
     )
     bench = screen.benchmark_targets(columns, first, warmup, ts.WINDOW_H)
     c, b = (
@@ -186,6 +228,37 @@ def test_baseline_d_is_the_daily_ediff_of_the_1x_btc_pair(
         cf.baseline_d(trial, path, ts.W0, ts.WINDOW_H, -1)
 
 
+OVERLAY = (
+    "def o(t, m, state):\n"
+    "    state['n'] = state.get('n', 0) + 1\n"
+    "    return 0.0 if state['n'] % 48 < 12 else t\n"
+)
+
+
+def test_baseline_d_runs_the_registered_model_and_overlay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R14S5-S-4: a model nominee with an overlay at a nonzero registered seed;
+    # the model fits use that seed and dropping the overlay changes d
+    digest = ts._module(tmp_path, monkeypatch, "seal_overlay", OVERLAY)
+    trial = ts._model_trial(tmp_path, monkeypatch, overlay="seal_overlay:o",
+                            overlay_sha256=digest)  # fmt: skip
+    seeds: list[int] = []
+    real = screen.build_model
+
+    def build(cls: str, params: Any, seed: int) -> Any:
+        seeds.append(seed)
+        return real(cls, params, seed)
+
+    monkeypatch.setattr(screen, "build_model", build)
+    path = ts._long_path()
+    d = cf.baseline_d(trial, path, ts.W0, ts.WINDOW_H, 12345)
+    assert seeds and set(seeds) == {12345}
+    assert d == _independent_d(trial, path, 12345)
+    plain = {**trial, "overlay": None, "overlay_sha256": None}
+    assert d != cf.baseline_d(plain, path, ts.W0, ts.WINDOW_H, 12345)
+
+
 # --- statuses (a)-(d) and the sealing record (§D-1.7) ------------------------
 
 
@@ -195,8 +268,24 @@ def _nomination(available: bool, nominee: str | None = "t000") -> cf.Nomination:
                          empty, empty)  # fmt: skip
 
 
+@pytest.fixture(autouse=True)
+def _line266_loaded() -> None:
+    cf.load_line266()  # as the loader does before any protected read
+
+
+@functools.cache
+def _l266() -> str:
+    assert cf._TRIAL_SEED is not None
+    return cf._TRIAL_SEED(protocol_hash=PROTOCOL, hypothesis_hash="a" * 64,
+                          trial_index=3)  # fmt: skip
+
+
 def _seal(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str | None, **over: Any
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str | None,
+    seed_over: dict[str, Any] | None = None,
+    **over: Any,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     trial = ts._screen_trial(tmp_path, monkeypatch)
     path = ts._screen_path()
@@ -213,9 +302,10 @@ def _seal(
                 "trials": {
                     "t000": {
                         "trial_index": 3,
-                        "seed_l266": SEED_L266,
+                        "seed_l266": _l266(),
                         "estimator_seed_policy": cf.POLICY,
-                        "estimator_seed": screen.estimator_seed(SEED_L266),
+                        "estimator_seed": screen.estimator_seed(_l266()),
+                        **(seed_over or {}),
                     }
                 },
             }
@@ -251,7 +341,7 @@ def test_status_a_seals_an_eligible_nominee(
     assert (
         entry["prediction_artifact_sha256"] == hashlib.sha256(cj(artifact)).hexdigest()
     )
-    assert (entry["seed_l266"], entry["trial_index"]) == (SEED_L266, 3)
+    assert (entry["seed_l266"], entry["trial_index"]) == (_l266(), 3)
     nominee = artifact["nominee"]
     assert (nominee["trial_id"], nominee["protocol_hash"]) == ("t000", PROTOCOL)
     assert artifact["source"]["window_id"] == WINDOW
@@ -292,6 +382,51 @@ def test_statuses_b_c_d(
     assert entry["seed_l266"] is None
 
 
+@pytest.mark.parametrize(
+    "seed_over",
+    [
+        {"trial_index": 4},
+        {"seed_l266": "7" * 64},
+        {"estimator_seed_policy": "OTHER"},
+        {"estimator_seed": "plus_one"},
+        {"estimator_seed": True},
+    ],
+)
+def test_seeds_off_the_record_or_line_266_give_status_d(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, seed_over: dict[str, Any]
+) -> None:
+    # R14S5-S-1: an artifact the lockbox would refuse is never status (a)
+    if seed_over.get("estimator_seed") == "plus_one":
+        seed_over = {"estimator_seed": screen.estimator_seed(_l266()) + 1}
+    entry, artifact = _seal(tmp_path, monkeypatch, "PROCEEDS_TO_LOCKBOX", seed_over)
+    assert (entry["status"], entry["reason"], artifact) == (
+        "d", "SEAL_FAILED:SealError", None
+    )  # fmt: skip
+
+
+def test_without_line_266_loaded_sealing_gives_status_d(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seed = _l266()
+    seeds = {"families": {"trend": {"family_seed": FAMILY_SEED, "trials": {
+        "t000": {"trial_index": 3, "seed_l266": seed,
+                 "estimator_seed_policy": cf.POLICY,
+                 "estimator_seed": screen.estimator_seed(seed)}}}}}  # fmt: skip
+    monkeypatch.setattr(cf, "_TRIAL_SEED", None)
+    entry, _ = _seal(tmp_path, monkeypatch, "PROCEEDS_TO_LOCKBOX", seeds=seeds)
+    assert (entry["status"], entry["reason"]) == ("d", "SEAL_FAILED:SealError")
+
+
+def test_a_seed_record_without_the_family_invalidates_the_evaluation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R14S5-S-5: a seed-derivation failure, not a sealing failure
+    with pytest.raises(cf.CycleError, match="no family seed"):
+        _seal(tmp_path, monkeypatch, "FAILED", family="vol")
+    with pytest.raises(cf.CycleError, match="no family seed"):
+        _seal(tmp_path, monkeypatch, "FAILED", seeds={})
+
+
 def test_an_unknown_outcome_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -301,12 +436,22 @@ def test_an_unknown_outcome_is_refused(
 
 def test_the_sealing_record() -> None:
     entry = {"status": "b", "reason": "U"}
-    rec = cf.sealing_record("C2", EVAL, 1_000_000, {"vol": entry, "trend": entry})
+    both = ("trend", "vol")
+    rec = cf.sealing_record("C2", EVAL, 1_000_000, {"vol": entry, "trend": entry},
+                            both)  # fmt: skip
     assert rec["schema"] == "aqt.lockbox.sealing.v1"
     assert list(rec["families"]) == ["trend", "vol"]
-    with pytest.raises(cf.CycleError, match="declared families"):
-        cf.sealing_record("C2", EVAL, 1, {"other": entry})
-    with pytest.raises(cf.CycleError, match="declared families"):
-        cf.sealing_record("C2", EVAL, 1, {})
+    one = cf.sealing_record("C2", EVAL, 1, {"vol": entry}, ("vol",))
+    assert list(one["families"]) == ["vol"]
+    # R14S5-S-2: a declared family missing from the record is refused
+    for entries, declared in (
+        ({"trend": entry}, both),
+        ({"other": entry}, ("other",)),
+        ({}, both),
+        ({"trend": entry, "vol": entry}, ("trend",)),
+        ({}, ()),
+    ):
+        with pytest.raises(cf.CycleError, match="declared families"):
+            cf.sealing_record("C2", EVAL, 1, entries, declared)
     with pytest.raises(cf.CycleError, match="status"):
-        cf.sealing_record("C2", EVAL, 1, {"trend": {"status": "e"}})
+        cf.sealing_record("C2", EVAL, 1, {"trend": {"status": "e"}}, ("trend",))

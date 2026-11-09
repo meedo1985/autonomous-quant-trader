@@ -58,7 +58,7 @@ None touched.
 - **LG5B-1 [DESIGN] CP-2 training set:** window days only, no rows from the warm-up before
   `w0` (C-14 (2) says the T OOS days form the groups; l.222 removes the 24-month window).
   One fit per split, with no 30-day refits inside a split.
-- **LG5B-2 [DESIGN] CP-2 embargo:** one `E` per trial, from WF-3's ACF rule applied to the
+- **LG5B-2 [DESIGN] CP-2 embargo (superseded by R14S5B-S-1: the cutoff is per split, from the split's own purged training labels):** one `E` per trial, from WF-3's ACF rule applied to the
   window's original labels (`t + H <= w1`). It is applied after each test group only, not
   before. The purge drops labels whose span `[t, t + H)` meets a test group.
 - **LG5B-3 [DESIGN] CP-3 signal state:** C-14 (3) lists exposure, pending order, clock and
@@ -70,6 +70,7 @@ None touched.
 - **LG5B-5 [DESIGN] report layout:** `{role, status, ess, groups, paths[{path, E-IMPROV,
   E-DIFF, reason}], summaries{E-IMPROV, E-DIFF: {median, p05} | {result: UNAVAILABLE}}}`;
   floats are raw (slice 6 decides the record encoding).
+- **LG5B-7 [OWNER/S4] feature lookback (R14S5B-S-2):** training rows after a test group may carry causal feature history from inside it; the protocol prescribes only a label purge and label-ACF embargo. The module claims no test-group labels reach a fit, not no test-group features.
 - **LG5B-6 (slice 6):** wiring. The trial, path, `estimator_seed` and G-12 gate come from
   the nominee's evaluation; the report is written to the C2 evaluation record.
 

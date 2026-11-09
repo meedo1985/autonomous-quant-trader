@@ -1922,8 +1922,12 @@ def seal_family(
     """One family's terminal pre-lockbox status (§D-1.7) and, for (a), its
     sealed artifact. `outcome` is nominee_outcome's; `seeds` is derive_seeds'
     record; `record` is the nominee's immutable C2 trial record. Any failure
-    while sealing an ELIGIBLE nominee gives (d) with its reason (§D-3.5)."""
-    fam_seeds = seeds["families"][family]
+    while sealing an ELIGIBLE nominee gives (d) with its reason (§D-3.5); a
+    seed record without the family is a seed-derivation failure, which
+    invalidates the evaluation (CycleError), not a sealing failure (R14S5-S-5)."""
+    fam_seeds = seeds.get("families", {}).get(family)
+    if not isinstance(fam_seeds, dict) or "family_seed" not in fam_seeds:
+        raise CycleError(f"{family}: the seed record has no family seed")
     entry: dict[str, Any] = {
         "status": "b",
         "nominee_trial_id": nomination.nominee,
@@ -1957,6 +1961,24 @@ def seal_family(
         if window != window_id(w0, w0 + timedelta(hours=window_hours)):
             raise SealError("window id is not the C-0 window's")
         t_seeds = fam_seeds["trials"][tid]
+        # R14S5-S-1: the seeds are the trial record's index and its line-266
+        # derivation, as the lockbox will check them (§D-3.2, A1b)
+        if _TRIAL_SEED is None:
+            raise SealError("line 266 is not loaded (load_line266)")
+        seed_l266 = _TRIAL_SEED(
+            protocol_hash=protocol_hash,
+            hypothesis_hash=record["hypothesis_hash"],
+            trial_index=record["trial_index"],
+        )
+        if not (
+            type(t_seeds["trial_index"]) is int
+            and t_seeds["trial_index"] == record["trial_index"]
+            and t_seeds["seed_l266"] == seed_l266
+            and t_seeds["estimator_seed_policy"] == POLICY
+            and type(t_seeds["estimator_seed"]) is int
+            and t_seeds["estimator_seed"] == screen.estimator_seed(seed_l266)
+        ):
+            raise SealError("seeds do not match the trial record and line 266")
         nominee = {
             "trial_id": tid,
             "configuration_hash": record["configuration_hash"],
@@ -1991,12 +2013,14 @@ def sealing_record(
     evaluation_record_sha256: str,
     round_: int,
     entries: dict[str, dict[str, Any]],
+    declared: Sequence[str],
 ) -> dict[str, Any]:
     """`aqt.lockbox.sealing.v1` [DESIGN layout]: every declared family's
     status (a)-(d), written before any lockbox read; for (a) the artifact hash
     and the seeds the lockbox request takes from here (R14L5-S-2, SV1-S-6)."""
-    if not entries or set(entries) - set(FAMILIES):
-        raise CycleError("a sealing record covers the declared families only")
+    # R14S5-S-2: exactly the declared families (check_declaration's set)
+    if not declared or set(declared) - set(FAMILIES) or set(entries) != set(declared):
+        raise CycleError("a sealing record covers exactly the declared families")
     if any(e["status"] not in STATUSES for e in entries.values()):
         raise CycleError("status outside (a)-(d)")
     return {
@@ -2018,7 +2042,9 @@ def sealing_record(
 #   whose label is realised in the window (t + H <= w1). Purge: drop t whose
 #   label span [t, t + H) meets a test group. Embargo: drop t in
 #   [end, end + E days) after each test group, E = `screen.embargo_days` over
-#   the window's original labels (WF-3's rule, applied to the window). The fit
+#   the split's own purged training labels as a calendar-day sequence (`None`
+#   on test and purged days), as `screen.training_rows` does, so no test
+#   label reaches the fit (R14S5B-S-1). The fit
 #   predicts every window decision from row j - 1, each emission held to the
 #   next 00:00, as `model_column` does.
 # - CP-3 The signal runs over the whole window with the split's model column
@@ -2066,19 +2092,30 @@ def cpcv_path_splits(p: int) -> list[Split]:
 
 def cpcv_training_rows(
     times: Sequence[datetime],
+    ys: Sequence[float],
     test: Sequence[tuple[datetime, datetime]],
     hours: int,
-    embargo_days: int,
     w1: datetime,
 ) -> list[int]:
-    """CP-2: positions of the decisions kept for a split's fit."""
-    horizon, e = timedelta(hours=hours), timedelta(days=embargo_days)
-    return [
+    """CP-2: positions of the decisions kept for a split's fit: label realised
+    in the window, purged, then embargoed with the cutoff of the split's own
+    training labels (`ys[i]` is the label at `times[i]`)."""
+    horizon = timedelta(hours=hours)
+    candidates = [
         i
         for i, t in enumerate(times)
         if t + horizon <= w1
         and not any(t < end and t + horizon > start for start, end in test)
-        and not any(end <= t < end + e for _, end in test)
+    ]
+    if not candidates:
+        raise screen.RunUnavailable("TRAINING_ROWS")
+    by_day = {times[i].date(): ys[i] for i in candidates}
+    first_day = times[candidates[0]].date()
+    span = (times[candidates[-1]].date() - first_day).days + 1
+    daily = [by_day.get(first_day + timedelta(days=d)) for d in range(span)]
+    e = timedelta(days=screen.embargo_days(daily, hours // 24))
+    return [
+        i for i in candidates if not any(end <= times[i] < end + e for _, end in test)
     ]
 
 
@@ -2136,18 +2173,16 @@ def cpcv_report(
     times = [bars[j].open_time for j in window]
     model = trial["model"]
     labels_: list[float] = []
-    embargo: list[int] = []
 
     def fit(split: Split) -> list[float]:
         """CP-2: the split's hourly model column."""
         hours, cls, names = trial["horizon_hours"], model["class"], model["features"]
-        if not embargo:  # the window's original labels, once
+        if not labels_:  # the window's realised labels, once
             done = [j for j, t in zip(window, times, strict=True)
                     if t + timedelta(hours=hours) <= w1]  # fmt: skip
             labels_.extend(screen.labels(series, sigma, done, hours))
-            embargo.append(screen.embargo_days(labels_, hours // 24))
         test = [(w0 + groups[g][0] * DAY, w0 + groups[g][1] * DAY) for g in split]
-        rows = cpcv_training_rows(times, test, hours, embargo[0], w1)
+        rows = cpcv_training_rows(times[: len(labels_)], labels_, test, hours, w1)
         if len(rows) < 2:
             raise screen.RunUnavailable("TRAINING_ROWS")
 
