@@ -2006,3 +2006,246 @@ def sealing_record(
         "beacon_round": round_,
         "families": {f: dict(entries[f]) for f in FAMILIES if f in entries},
     }
+
+
+# --- Slice 5b: the C-14 CPCV report (Annex C C-14; DESIGN §5.4) --------------
+#
+# Readings CP-n (proposed, for review; protocol_v1.yaml l.215-222):
+# - CP-1 Enabled iff the nominee's G-12 is computed with ESS >= 250 (C-11 (5));
+#   an UNAVAILABLE G-12 makes the report UNAVAILABLE with its reason.
+# - CP-2 One fit per split, with the nominee's `estimator_seed`, on the 00:00
+#   window decisions of the 6 training groups (no 24-month window: l.222)
+#   whose label is realised in the window (t + H <= w1). Purge: drop t whose
+#   label span [t, t + H) meets a test group. Embargo: drop t in
+#   [end, end + E days) after each test group, E = `screen.embargo_days` over
+#   the window's original labels (WF-3's rule, applied to the window). The fit
+#   predicts every window decision from row j - 1, each emission held to the
+#   next 00:00, as `model_column` does.
+# - CP-3 The signal runs over the whole window with the split's model column
+#   (signal state is not among C-14 (3)'s reset items). Each test group's
+#   targets are rebuilt from its own slice of `s` with a fresh overlay state
+#   (`g11_targets` with shift 0) and run from flat at its first 00:00
+#   decision. A non-model trial's group runs do not depend on the split.
+# - CP-4 Benchmark: the baseline run's window benchmark; sliced by group and
+#   concatenated in order it is the whole series.
+# - CP-5 Any RunUnavailable on a path makes that path unavailable (both
+#   estimands) with its reason; an estimand's summaries are UNAVAILABLE if any
+#   path's value is.
+
+CPCV_MIN_ESS = 250.0  # protocol_v1.yaml l.216
+CPCV_GROUPS = 8
+CPCV_PATHS = tuple(range(1, CPCV_GROUPS))
+CPCV_ROLE = "diagnostic_only"
+CPCV_OFF = "CPCV not enabled"
+Split = tuple[int, int]
+
+
+def cpcv_splits() -> list[Split]:
+    """C-14 (2): the 28 pairs `{a, b}`, `a < b`, in lexicographic order."""
+    return [(a, b) for a in range(CPCV_GROUPS) for b in range(a + 1, CPCV_GROUPS)]
+
+
+def cpcv_groups(days: int) -> list[tuple[int, int]]:
+    """C-14 (2): `[first, end)` day offsets of 8 chronological groups,
+    remainder days to the earliest groups."""
+    if days < CPCV_GROUPS:
+        raise screen.TrialError("CPCV needs at least 8 window days")
+    size, extra = divmod(days, CPCV_GROUPS)
+    out, start = [], 0
+    for g in range(CPCV_GROUPS):
+        end = start + size + (g < extra)
+        out.append((start, end))
+        start = end
+    return out
+
+
+def cpcv_path_splits(p: int) -> list[Split]:
+    """C-14 (3): path p's split for each group g, `{g, g XOR p}`."""
+    return [(min(g, g ^ p), max(g, g ^ p)) for g in range(CPCV_GROUPS)]
+
+
+def cpcv_training_rows(
+    times: Sequence[datetime],
+    test: Sequence[tuple[datetime, datetime]],
+    hours: int,
+    embargo_days: int,
+    w1: datetime,
+) -> list[int]:
+    """CP-2: positions of the decisions kept for a split's fit."""
+    horizon, e = timedelta(hours=hours), timedelta(days=embargo_days)
+    return [
+        i
+        for i, t in enumerate(times)
+        if t + horizon <= w1
+        and not any(t < end and t + horizon > start for start, end in test)
+        and not any(end <= t < end + e for _, end in test)
+    ]
+
+
+def cpcv_report(
+    trial: dict[str, Any],
+    path: np.ndarray,
+    w0: datetime,
+    window_hours: int,
+    estimator_seed: int,
+    g12_gate: Gate,
+) -> dict[str, Any]:
+    """C-14: the nominee's CPCV diagnostic report, `diagnostic_only`; no code
+    path reads it (test)."""
+    screen.check_trial(trial)
+    if type(estimator_seed) is not int or not 0 <= estimator_seed < 2**31:
+        raise screen.TrialError("estimator_seed must be an int in [0, 2**31)")
+    warmup = trial["warmup_hours"]
+    if window_hours < 48 or window_hours % 24 or len(path) != warmup + window_hours + 1:
+        raise screen.TrialError(
+            "path length must be warmup + whole window days + 1 hour"
+        )
+    head: dict[str, Any] = {"role": CPCV_ROLE}
+    if g12_gate.result == UNAVAILABLE:
+        return {**head, "status": UNAVAILABLE, "reason": g12_gate.reason}
+    ess = g12_gate.values["ess"]
+    if not ess >= CPCV_MIN_ESS:
+        return {**head, "status": CPCV_OFF, "ess": ess}
+    head |= {"status": "COMPUTED", "ess": ess}
+    if trial["sigma"] != screen.DEFAULT_SIGMA:
+        return {**head, "status": UNAVAILABLE, "reason": "SIGMA_UNBOUND"}
+    w1 = w0 + timedelta(hours=window_hours)
+    groups = cpcv_groups(window_hours // 24)
+    head["groups"] = [[_time(w0 + a * DAY), _time(w0 + b * DAY)] for a, b in groups]
+    try:
+        series = screen.path_series(path, 0, w0 - timedelta(hours=warmup))  # BTC
+        first, columns = feature_columns(series)
+        sigma = ewma_hourly_volatility_bps_series(hourly_log_returns_bps(series))
+        bench = screen.daily_returns(
+            run_event_contract(
+                series,
+                screen.benchmark_targets(columns, first, warmup, window_hours),
+                warmup,
+                sigma_bps=sigma,
+            )
+        )
+    except screen.RunUnavailable as e:
+        return {**head, "status": UNAVAILABLE, "reason": e.reason}
+    except (FeatureFactoryError, CostModelError, EventContractError) as e:
+        return {**head, "status": UNAVAILABLE, "reason": type(e).__name__}
+    bars = series.bars
+    closes = [b.close for b in bars]
+    window = [
+        j for j in range(warmup, warmup + window_hours) if bars[j].open_time.hour == 0
+    ]
+    times = [bars[j].open_time for j in window]
+    model = trial["model"]
+    labels_: list[float] = []
+    embargo: list[int] = []
+
+    def fit(split: Split) -> list[float]:
+        """CP-2: the split's hourly model column."""
+        hours, cls, names = trial["horizon_hours"], model["class"], model["features"]
+        if not embargo:  # the window's original labels, once
+            done = [j for j, t in zip(window, times, strict=True)
+                    if t + timedelta(hours=hours) <= w1]  # fmt: skip
+            labels_.extend(screen.labels(series, sigma, done, hours))
+            embargo.append(screen.embargo_days(labels_, hours // 24))
+        test = [(w0 + groups[g][0] * DAY, w0 + groups[g][1] * DAY) for g in split]
+        rows = cpcv_training_rows(times, test, hours, embargo[0], w1)
+        if len(rows) < 2:
+            raise screen.RunUnavailable("TRAINING_ROWS")
+
+        def row(j: int) -> list[float]:
+            values = [columns[f][j - 1 - first] for f in names]
+            if not all(map(math.isfinite, values)):
+                raise screen.RunUnavailable("INVALID_SERIES")
+            return values
+
+        x = np.array([row(window[i]) for i in rows], dtype=float)
+        xs = np.array([row(j) for j in window], dtype=float)
+        try:
+            fitted = screen.build_model(
+                cls, screen.model_params(trial), seed=estimator_seed
+            )
+            fitted.fit(x, screen.fit_target(cls, [labels_[i] for i in rows]))
+            preds = screen.predict(fitted, cls, xs)
+        except Exception as e:  # any library failure is unavailability
+            raise screen.RunUnavailable("MODEL_FIT_ERROR") from e
+        out = [math.nan] * len(columns[names[0]])
+        for j, v in zip(window, preds, strict=True):
+            for jj in range(j, min(j + 24, warmup + window_hours)):
+                out[jj - 1 - first] = float(v)
+        return out
+
+    signals_by: dict[Split | None, list[float] | str] = {}
+
+    def signals(split: Split | None) -> list[float]:
+        """CP-3: `s` over the whole window with the split's model column."""
+        if split not in signals_by:
+            try:
+                cols = columns
+                if split is not None:
+                    cols = {**columns, f"model:{model['id']}": tuple(fit(split))}
+                signal = screen.load(trial["signal"], trial["signal_sha256"])
+                signals_by[split] = screen.leg_targets(
+                    trial, signal, None, cols, first, closes, warmup, window_hours, 0
+                )[1]
+            except screen.RunUnavailable as e:
+                signals_by[split] = e.reason
+        got = signals_by[split]
+        if isinstance(got, str):
+            raise screen.RunUnavailable(got)
+        return got
+
+    runs: dict[tuple[int, Split | None], list[float]] = {}
+
+    def group_returns(g: int, split: Split | None) -> list[float]:
+        """CP-3: test group g simulated from flat, fresh overlay state."""
+        if (g, split) not in runs:
+            a, b = (24 * k for k in groups[g])
+            overlay = (
+                None if trial["overlay"] is None
+                else screen.load(trial["overlay"], trial["overlay_sha256"])
+            )  # fmt: skip
+            s = signals(split)[a:b]
+            targets = screen.g11_targets(
+                trial, overlay, s, columns, first, closes, warmup + a, b - a, 0
+            )
+            try:
+                result = run_event_contract(
+                    series, targets, warmup + a, sigma_bps=sigma
+                )
+            except (EventContractError, CostModelError) as e:
+                raise screen.RunUnavailable("RUN_INVALID") from e
+            runs[(g, split)] = screen.daily_returns(result)
+        return runs[(g, split)]
+
+    paths: list[dict[str, Any]] = []
+    for p in CPCV_PATHS:
+        entry: dict[str, Any] = {"path": p, "E-IMPROV": None, "E-DIFF": None,
+                                 "reason": None}  # fmt: skip
+        try:
+            cand = [
+                r
+                for g, split in enumerate(cpcv_path_splits(p))
+                for r in group_returns(g, split if model is not None else None)
+            ]
+            stats = st.paired_sharpe_statistics(cand, bench)
+        except screen.RunUnavailable as e:
+            entry["reason"] = e.reason
+        except st.StatisticsError as e:
+            entry["reason"] = e.code
+        else:
+            diff = stats.difference_series_sharpe
+            entry["E-IMPROV"] = stats.paired_sharpe_improvement
+            entry["E-DIFF"] = diff.scaled
+            if entry["E-IMPROV"] is None or entry["E-DIFF"] is None:
+                entry["reason"] = stats.reason or diff.reason
+        paths.append(entry)
+    summaries: dict[str, Any] = {}
+    for name in ("E-IMPROV", "E-DIFF"):
+        values = [e[name] for e in paths]
+        if any(v is None for v in values):
+            summaries[name] = {"result": UNAVAILABLE}
+        else:
+            summaries[name] = {
+                "median": st.type_seven_quantile(values, 0.5),
+                "p05": st.type_seven_quantile(values, 0.05),
+            }
+    return {**head, "paths": paths, "summaries": summaries}
