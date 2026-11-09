@@ -992,6 +992,7 @@ def load_line266() -> None:
     names and refuse if ever used; they are removed afterwards. No other
     jsonschema is ever loaded through here."""
     global _TRIAL_SEED
+    _TRIAL_SEED = None  # a failed reload must not leave an earlier one (R14SM-S-1)
     import importlib
     import sys
     import types

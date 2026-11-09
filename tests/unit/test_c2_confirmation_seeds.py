@@ -388,3 +388,22 @@ def test_the_module_imports_preregistration_only_in_load_line266() -> None:
         if isinstance(c, ast.Constant) and c.value == "aqt.core.preregistration"
     }
     assert holders == {"load_line266"}
+
+
+def test_a_failed_reload_clears_line266(monkeypatch: pytest.MonkeyPatch) -> None:
+    # R14SM-S-1: after one success, a failing load leaves nothing usable behind
+    import importlib
+    import sys
+
+    assert cf._TRIAL_SEED is not None
+    monkeypatch.delitem(sys.modules, "aqt.core.preregistration")
+
+    def fail(name: str) -> None:
+        raise ImportError(name)
+
+    monkeypatch.setattr(importlib, "import_module", fail)
+    with pytest.raises(ImportError):
+        cf.load_line266()
+    assert cf._TRIAL_SEED is None
+    with pytest.raises(cf.SeedError, match="load_line266"):
+        _derive()

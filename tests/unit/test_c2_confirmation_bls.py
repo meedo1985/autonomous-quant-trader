@@ -219,3 +219,11 @@ def test_the_other_sign_of_the_key_does_not_verify() -> None:
     other = bytearray(bytes.fromhex(KEY))
     other[0] ^= 0x20  # same x, the negated point: a valid key, the wrong one
     assert cf.bls_verify(other.hex(), 1_000_000, SIG_1M) is False
+
+
+def test_a_g2_key_outside_the_subgroup_is_refused() -> None:
+    # x = (0, 1), i.e. c1 = 1, c0 = 0: on the twist, not in G2 (R14SM-S-2)
+    key = bytearray((1).to_bytes(48, "big") + bytes(48))
+    key[0] |= 0x80
+    with pytest.raises(cf.SeedError, match="G2 subgroup"):
+        cf.bls_verify(key.hex(), 1_000_000, SIG_1M)
