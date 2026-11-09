@@ -1111,6 +1111,10 @@ def _check_records(
         raise SeedError(
             f"{family}: trial records do not match the declared trials in order"
         )
+    ids = [r["trial_id"] for r in records]
+    # a duplicate would silently drop a seed (P18-1, Constitution §27; R14S4-S-2)
+    if len(set(ids)) != len(ids):
+        raise SeedError(f"{family}: trial_id must be distinct")
     indices = [r["trial_index"] for r in records]
     if any(type(i) is not int or i < 0 for i in indices) or len(set(indices)) != len(
         indices

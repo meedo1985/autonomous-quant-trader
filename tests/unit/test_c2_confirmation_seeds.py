@@ -217,10 +217,11 @@ def test_derive_seeds_records_every_seed_with_its_provenance() -> None:
         assert list(fam["trials"]) == [r["trial_id"] for r in records[family]]
         for r in records[family]:
             t = fam["trials"][r["trial_id"]]
-            assert (
-                t["trial_seed"]
-                == cf.seeds_record(fam["family_seed"], [r["trial_id"]])[r["trial_id"]]
-            )
+            r13 = (
+                '{"family_seed":"' + fam["family_seed"] + '","trial_id":"'
+                + r["trial_id"] + '"}'
+            ).encode()  # fmt: skip
+            assert t["trial_seed"] == hashlib.sha256(r13).hexdigest()  # R14S4-S note
             assert t["seed_l266"] == preregistration.trial_seed(
                 protocol_hash=H, hypothesis_hash=r["hypothesis_hash"],
                 trial_index=r["trial_index"],
@@ -243,7 +244,20 @@ def test_a_different_beacon_gives_different_family_seeds() -> None:
 
 def test_estimator_seed_zero_is_kept() -> None:
     # A1b: a seed mapping to 0 is legitimate; the record keeps the policy, not a 0-test
-    assert screen.estimator_seed(format(2**31 * 7, "064x")) == 0
+    zero = format(2**31 * 7, "064x")
+    assert screen.estimator_seed(zero) == 0
+    rec = _derive(line266=lambda **kw: zero)  # through the full derivation
+    t = rec["families"]["trend"]["trials"]["t000"]
+    assert (t["seed_l266"], t["estimator_seed"]) == (zero, 0)
+
+
+def test_duplicate_trial_id_is_refused_not_dropped() -> None:
+    declared = _declared()
+    declared["trend"][1] = ts._trial(trial_id="t000", family="trend", horizon_hours=24)
+    records = _records(declared)
+    assert records["trend"][0]["trial_index"] != records["trend"][1]["trial_index"]
+    with pytest.raises(cf.SeedError, match="trial_id must be distinct"):
+        _derive(declared=declared, records=records)
 
 
 def _broken_records(change: Any) -> dict[str, list[dict[str, Any]]]:
