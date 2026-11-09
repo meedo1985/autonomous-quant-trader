@@ -109,10 +109,9 @@ def test_start_verifies_then_loads_line_266(
 
 
 @pytest.mark.parametrize(
-    "breakage",
-    ["module_swapped", "declaration", "protocol", "acceptance", "image", "engine"],
+    "breakage", ["module_swapped", "declaration", "protocol", "acceptance"]
 )
-def test_a_broken_link_refuses_before_line_266_loads(
+def test_a_broken_chain_link_refuses_before_line_266_loads(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     code_ok: dict[str, Any],
@@ -126,15 +125,92 @@ def test_a_broken_link_refuses_before_line_266_loads(
         inputs["declaration"] += b" "
     elif breakage == "protocol":
         inputs["protocol"] += b"# edited\n"
-    elif breakage == "acceptance":
-        inputs["acceptance_record"] = b"{}"
-    elif breakage == "image":
-        inputs["image_digest"] = "sha256:" + "2" * 64
     else:
-        monkeypatch.setattr(cf, "verify_code", lambda *a: {"engine_commit": "f" * 40})
+        inputs["acceptance_record"] = b"{}"
     with pytest.raises(cf.ChainError):
         cf.start(**inputs)
     assert line266 == []
+
+
+@pytest.mark.parametrize("breakage", ["image", "engine", "code"])
+def test_a_failure_after_line_266_loads_clears_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, breakage: str
+) -> None:
+    inputs = _start_inputs(tmp_path)
+    engine = "f" * 40 if breakage == "engine" else "e" * 40
+
+    def verify_code(*_: Any) -> Any:
+        if breakage == "code":
+            raise cf.ChainError("the qualification object is not the posted one")
+        return {"engine_commit": engine}
+
+    if breakage == "image":
+        inputs["image_digest"] = "sha256:" + "2" * 64
+    monkeypatch.setattr(cf, "verify_code", verify_code)
+    with pytest.raises(cf.ChainError):
+        cf.start(**inputs)
+    assert cf._TRIAL_SEED is None  # no seed derivation after a refused start
+
+
+def test_the_code_check_runs_after_line_266_is_loaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R14S6A-S-1: R-14's loaded-module inventory must see line 266's modules
+    seen: list[tuple[bool, bool]] = []
+
+    def verify_code(*_: Any) -> Any:
+        seen.append(
+            (cf._TRIAL_SEED is not None, "aqt.core.preregistration" in sys.modules)
+        )
+        return {"engine_commit": "e" * 40}
+
+    monkeypatch.setattr(cf, "_TRIAL_SEED", None)
+    monkeypatch.setattr(cf, "verify_code", verify_code)
+    cf.start(**_start_inputs(tmp_path))
+    assert seen == [(True, True)]
+
+
+def test_in_a_fresh_process_line_266_is_loaded_before_the_code_check(
+    tmp_path: Path,
+) -> None:
+    # R14S6A-S-1, as at a real start: preregistration is not yet imported
+    code = f"""
+import hashlib, pathlib, sys
+sys.path[:0] = [{str(ROOT)!r}, {str(ROOT / "src")!r}]
+from calibration import c2_confirmation as cf
+from calibration.seeds import cj
+from tests.unit.test_c2_lockbox_chain import F_TXID, _acceptance, _post
+assert "aqt.core.preregistration" not in sys.modules
+root = pathlib.Path({str(tmp_path)!r})
+files = {{"lockbox_module_sha256": b"L = 1\\n",
+          "confirmation_module_sha256": b"C = 1\\n"}}
+for row, data in files.items():
+    (root / cf.MODULE_PATHS[row]).parent.mkdir(parents=True, exist_ok=True)
+    (root / cf.MODULE_PATHS[row]).write_bytes(data)
+values = {{"outpoint_F": F_TXID + ":1",
+          **{{r: hashlib.sha256(d).hexdigest() for r, d in files.items()}},
+          "engine_commit": "e" * 40, "screen_object_sha256": "5" * 64,
+          "qualification_object_sha256": "9" * 64,
+          "image_digest": "sha256:" + "1" * 64}}
+protocol = "".join(f'  {{k}}: "{{v}}"\\n' for k, v in values.items()).encode()
+declaration = cj({{"protocol_hash": hashlib.sha256(protocol).hexdigest()}})
+post = _post(hashlib.sha256(declaration).hexdigest())
+seen = []
+def verify_code(*a):
+    seen.append("aqt.core.preregistration" in sys.modules)
+    return {{"engine_commit": "e" * 40}}
+cf.verify_code = verify_code
+cf.start(root=root, obj=root / "obj", acceptance_record=_acceptance(post),
+         post_raw_tx=post, declaration=declaration, protocol=protocol,
+         image_digest="sha256:" + "1" * 64)
+assert seen == [True], seen
+assert "jsonschema" not in sys.modules  # the placeholders are gone again
+print("ok")
+"""
+    out = subprocess.run(
+        [sys.executable, "-I", "-c", code], capture_output=True, text=True, check=False
+    )
+    assert out.stdout.strip() == "ok", out.stderr
 
 
 def test_line_266_failing_to_load_refuses_the_start(
@@ -191,3 +267,127 @@ print("ok")
         [sys.executable, "-I", "-c", code], capture_output=True, text=True, check=False
     )
     assert out.stdout.strip() == "ok", out.stderr
+
+
+# --- R14S6A-S-2: the loader executes the hashed bytes, and the refusals ---------
+
+
+@pytest.mark.parametrize("module", [cf, lb], ids=["confirmation", "lockbox"])
+def test_a_file_swapped_after_the_hash_is_not_what_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, module: Any
+) -> None:
+    # DESIGN §4: the file is replaced on disk between the hash check and
+    # execution; a loader that read the file again (exec_module) would run B
+    path = tmp_path / "c2_swap_probe.py"
+    path.write_bytes(b"VALUE = 'A'\n")
+    digest = hashlib.sha256(b"VALUE = 'A'\n").hexdigest()
+    real = compile
+
+    def swapping(source: Any, filename: str, mode: str) -> Any:
+        path.write_bytes(b"VALUE = 'B'\n")  # after the read and the hash
+        return real(source, filename, mode)
+
+    monkeypatch.setattr(module, "compile", swapping, raising=False)
+    name = f"c2_swap_probe_{module.__name__.rsplit('.', 1)[-1]}"
+    try:
+        loaded = module.load_verified(name, path, digest)
+        assert loaded.VALUE == "A"
+        assert path.read_bytes() == b"VALUE = 'B'\n"
+    finally:
+        sys.modules.pop(name, None)
+
+
+def _fresh(code: str, prefix: Path) -> str:
+    script = f"""
+import pathlib, sys
+sys.dont_write_bytecode = True
+sys.pycache_prefix = {str(prefix)!r}
+sys.path[:0] = [{str(ROOT)!r}, {str(ROOT / "src")!r}]
+from calibration import c2_confirmation as cf, rundef
+{code}
+"""
+    out = subprocess.run(
+        [sys.executable, "-I", "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert not out.stderr.strip() or "Traceback" not in out.stderr, out.stderr
+    return out.stdout.strip()
+
+
+def test_a_non_empty_bytecode_cache_is_refused(tmp_path: Path) -> None:
+    prefix = tmp_path / "pycache"
+    (prefix / "x").mkdir(parents=True)
+    (prefix / "x" / "stale.cpython-314.pyc").write_bytes(b"\0" * 16)
+    assert _fresh("print(rundef.bytecode_problem())", prefix) == (
+        "the bytecode cache directory is not empty"
+    )
+
+
+def test_a_module_run_from_a_planted_pyc_is_refused(tmp_path: Path) -> None:
+    prefix = tmp_path / "pycache"
+    prefix.mkdir()
+    pyc = tmp_path / "planted.pyc"
+    code = f"""
+import importlib.machinery, importlib.util, marshal
+body = marshal.dumps(compile("V = 1", "p", "exec"))
+data = importlib.util.MAGIC_NUMBER + bytes(12) + body
+pathlib.Path({str(pyc)!r}).write_bytes(data)
+loader = importlib.machinery.SourcelessFileLoader(
+    "calibration.c2_planted", {str(pyc)!r})
+spec = importlib.util.spec_from_loader("calibration.c2_planted", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+sys.modules["calibration.c2_planted"] = m
+print(rundef.bytecode_problem())
+"""
+    assert (
+        _fresh(code, prefix) == "calibration.c2_planted was not loaded from its source"
+    )
+
+
+def test_verify_code_refuses_a_third_loaded_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # DESIGN §4 (c): the two module files are the only additions; an extra
+    # loaded calibration module whose bytes are not the engine's is refused by
+    # the frozen check_screen_code through cf.verify_code
+    import json
+
+    from calibration import mapping, qobj, rundef, screen
+    from calibration.seeds import sha
+
+    files = {"mapping.py": b"m", "screen.py": b"s", "definition.json": b"{}"}
+    for name, data in files.items():
+        (tmp_path / name).write_bytes(data)
+    manifest = {k: hashlib.sha256(v).hexdigest() for k, v in files.items()}
+    (tmp_path / "manifest.json").write_bytes(json.dumps(manifest).encode())
+    engine = {"calibration/engine.py": b"E = 1\n"}
+    inventory = {k: rundef.canonical_sha256(v) for k, v in engine.items()}
+    defn = {"engine_commit": "e" * 40, "generator_sha256": sha(inventory)}
+    monkeypatch.setattr(qobj, "read", lambda f: (None, defn))
+    monkeypatch.setattr(mapping, "check_runtime", lambda d: None)
+    monkeypatch.setattr(rundef, "bytecode_problem", lambda: None)  # tested above
+
+    def git(root: Path, *args: str) -> bytes:
+        if args[0] == "ls-tree":
+            return "\n".join(engine).encode()
+        return engine[args[-1].split(":", 1)[1]]
+
+    monkeypatch.setattr(mapping, "_git", git)
+    modules = {
+        "calibration/c2_lockbox.py": b"L\n",
+        "calibration/c2_confirmation.py": b"C\n",
+    }
+    disk = {}
+    for rel, data in {**engine, **modules, "calibration/c2_extra.py": b"X\n"}.items():
+        disk[rel] = tmp_path / rel.replace("/", "_")
+        disk[rel].write_bytes(data)
+    loaded = {rel: disk[rel] for rel in [*engine, *modules]}
+    monkeypatch.setattr(mapping, "loaded", lambda: loaded)
+    assert cf.verify_code(tmp_path, sha(manifest), ROOT, modules) == defn
+    loaded["calibration/c2_extra.py"] = disk["calibration/c2_extra.py"]
+    with pytest.raises(ValueError, match="the loaded calibration/c2_extra.py"):
+        cf.verify_code(tmp_path, sha(manifest), ROOT, modules)
+    assert screen.check_screen_code is not None

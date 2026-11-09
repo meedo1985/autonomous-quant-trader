@@ -2576,10 +2576,13 @@ def verify_code(
 # text for text (DESIGN §4: each module carries its own copy, no
 # cross-import; a test pins the copies equal). Readings ST-n (proposed):
 # - ST-1 `start` runs the chain over both module files as on disk, reads the
-#   signed values from the verified protocol bytes, runs the code check and
-#   the image check, then loads line 266 (`load_line266`) before returning:
-#   nothing protected is read before all of it passes (R-14a items 2, 7;
-#   R14S4-S-1 route M). Unlike the lockbox there is no startup record.
+#   signed values from the verified protocol bytes, loads line 266
+#   (`load_line266`), and only then runs the code check, so R-14's
+#   loaded-module inventory covers `aqt.core.preregistration` (R14S6A-S-1),
+#   then the engine and image checks. Any failure after the load clears the
+#   stored line-266 function. Nothing protected is read before all of it
+#   passes (R-14a items 2, 7; route M). Unlike the lockbox there is no
+#   startup record.
 # - ST-2 The confirmation-specific signed values (the drand chain, z_crit,
 #   T_min, g, the classifier) are not read here; their row names are open
 #   (OD-4) and slice 6b reads them from the same verified bytes.
@@ -2624,20 +2627,26 @@ def start(
         modules=files,
     )
     rows = {name: protocol_row(protocol, name) for name in SIGNED_ROWS}
-    defn = verify_code(
-        obj,
-        rows["qualification_object_sha256"],
-        root,
-        {MODULE_PATHS[row]: data for row, data in files.items()},
-    )
-    if defn.get("engine_commit") != rows["engine_commit"]:
-        raise ChainError("the object's engine commit is not the signed one")
-    if image_digest != rows["image_digest"]:
-        raise ChainError("the running image is not the signed one")
+    global _TRIAL_SEED
     try:
         load_line266()
     except Exception as e:
+        _TRIAL_SEED = None
         raise SeedError(f"line 266 did not load: {type(e).__name__}") from None
+    try:  # the inventory now includes line 266's modules (R14S6A-S-1)
+        defn = verify_code(
+            obj,
+            rows["qualification_object_sha256"],
+            root,
+            {MODULE_PATHS[row]: data for row, data in files.items()},
+        )
+        if defn.get("engine_commit") != rows["engine_commit"]:
+            raise ChainError("the object's engine commit is not the signed one")
+        if image_digest != rows["image_digest"]:
+            raise ChainError("the running image is not the signed one")
+    except BaseException:
+        _TRIAL_SEED = None
+        raise
     return Started(
         protocol_hash=log["protocol_hash"],
         lockbox_module_sha256=log["lockbox_module_sha256"],

@@ -69,3 +69,4 @@ None touched; `c2_lockbox.py` is read (copied from), not changed.
   encoding), LG5-7, LG5B-6.
 
 Claude/Sol status: prompt `SLICE6A_PROMPT_SOL.md`, sent with this commit.
+- **LG6A-4 [OWNER] acceptance-record provenance (R14S6A-S-3):** inherited from the lockbox (R14L2-S-2). The chain checks that the record is consistent with the post, not that the post was accepted on chain. Binding who vouches for it is pre-signing, for both modules.
