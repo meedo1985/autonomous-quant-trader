@@ -1,8 +1,43 @@
 # Design: closing the two seed checks the evaluation cannot run (R14S4-S-1, LG4-1, LG4-6)
 
-- Status: **DRAFT for review**, rev 2, 2026-11-09 (reuses the FP3 drand verifier from `origin/freeze-sheet`). Author: Claude Opus 5.5
-  (`claude-opus-5-5`). Owner's route: "go with 1" then "go with rev 2" (2026-11-09).
-  No code until this design is reviewed and the owner decides §9.
+- Status: **rev 3, route M, built for review**, 2026-11-09. Author: Claude Opus 5.5
+  (`claude-opus-5-5`). Owner's choices: "go with 1", "go with rev 2", then **"go with M"**
+  (`ADJUDICATION_SEED_VERIFIER_REV2_DC4256C.md`).
+
+## Rev 3 (route M): what is in force
+
+Rev 2 was reviewed (Sol FIX, SV2-S-1..6, `SOL_SEED_VERIFIER_DESIGN_REV2_DC4256C.md`). All of
+SV2-S-1, S-2, S-4 and S-5 came from verifying BLS **outside** the image. Route M removes that:
+
+1. **BLS inside the module, standard library only** (`calibration/c2_confirmation.py`
+   `bls_verify` and helpers): ZCash-compressed G1 signature and G2 key with range, curve and
+   subgroup checks (infinity refused); message SHA-256(round, 8-byte big-endian); RFC 9380
+   hash-to-G1 (`expand_message_xmd` SHA-256, simplified SWU on the 11-isogenous curve, the
+   E.2 isogeny, `h_eff`) with DST `BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_`; optimal ate
+   Miller loop over |x| with the G2 point twisted into F_p12 (u -> w^6 - 1, divide by w^2,
+   w^3); check e(sig, -g2)·e(H(m), key) = 1 as (n1 n2)^E = (d1 d2)^E, E = (p^12 - 1)/r, with a
+   zero numerator or denominator refused. `check_beacon` calls it; the `Verifier` callable is
+   gone. `Chain` gains `scheme`, refused unless `bls-unchained-g1-rfc9380`. A signature for
+   round r under the fixed key cannot be forged, so the beacon needs **no authority**:
+   whoever supplies it, the module checks it. Rev 2's §3-§5 (external verifier, its record,
+   ledger authority, CI re-run) are **withdrawn**; R-14a item 7 is met literally.
+2. **Line 266 as rev 2 §2, with SV2-S-3's repair**: `load_line266()` imports the frozen
+   `aqt.core.preregistration` (placeholders for its three `jsonschema` names during that one
+   import only, always, so no jsonschema is ever loaded through it; `sys.modules` restored in
+   `finally`); the loader calls it **before any protected read**, so R-14's byte check covers
+   it; `derive_seeds` refuses if it was not called. The `line266` callable is gone.
+3. **Evidence**: RFC 9380 vectors (K.1 ×10, J.9.1 ×5 incl. the map-to-curve point), the G2
+   generator and twist checks, FP3's real rounds and negatives, malformed encodings and a
+   non-subgroup point (`tests/unit/test_c2_confirmation_bls.py`); a cross-check against
+   drand's own client on 40 real rounds and 40 swapped ones, 80/80 agree
+   (`bls-crosscheck-2026-11-09/`). 0.7 s per verification.
+4. **Still open**: the 7-day "no verifying output" rule stays operational (SV2-S-4: a failed
+   fetch is not the deadline outcome; the evaluation can only run once a verifying beacon
+   is supplied); OD-2 (the placeholder) and OD-4 (genesis and period in the signed C2) are
+   owner items; OD-1 and OD-3 fall away. The lockbox handoff (SV1-S-6) and R14S4-S-3 stay
+   slice-6 / lockbox items.
+
+The text below is rev 2, kept for the record; where it differs, this section governs.
 - Rev 1 (8317145) was reviewed by Sol: FIX, SV1-S-1..8, all accepted
   (`SOL_SEED_VERIFIER_DESIGN_8317145.md`, `ADJUDICATION_SEED_VERIFIER_8317145.md`).
 - Governing text cited from `origin/freeze-sheet` `DRAFT_WORDING.md` (R-8 l.152, R-13

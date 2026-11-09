@@ -966,6 +966,7 @@ class Chain:
     public_key: str
     genesis_time: int  # unix seconds of round 1
     period: int  # seconds between rounds
+    scheme: str  # must be SCHEME, the only one this module verifies (FP3)
 
 
 @dataclass(frozen=True)
@@ -977,16 +978,48 @@ class Beacon:
     signature: str
 
 
-# The BLS check of a beacon signature against the chain key. shortcut: injected
-# because no BLS library is in the pinned image (DESIGN §10, still open); the
-# real verifier is chosen before C2 signing (slice 4b).
-Verifier = Callable[[str, Beacon], bool]
+# Protocol line 266, the frozen `aqt.core.preregistration.trial_seed` (R-8), set
+# only by load_line266 (DESIGN_SEED_VERIFIER rev 3 §2).
+_TRIAL_SEED: Callable[..., str] | None = None
 
-# Protocol line 266, `aqt.core.preregistration.trial_seed` (R-8). shortcut:
-# injected because that module imports jsonschema, which the pinned image
-# lacks (test_d19_deploy), so importing it here would break the image run;
-# how the real run reaches it is decided with slice 4b (LG4-6).
-Line266 = Callable[..., str]
+
+def load_line266() -> None:
+    """Import line 266's frozen `trial_seed` on the qualified image (R-8). The
+    caller runs this before any protected read, so R-14's byte check covers
+    `preregistration.py` and its imports (SV2-S-3). That module imports
+    `jsonschema` at top level for `_validate_against_schema` only, and the image
+    lacks it: for this one import, inert placeholders stand in for its three
+    names and refuse if ever used; they are removed afterwards. No other
+    jsonschema is ever loaded through here."""
+    global _TRIAL_SEED
+    import importlib
+    import sys
+    import types
+
+    def refuse(*_: object, **__: object) -> None:
+        raise SeedError("jsonschema is not available to the evaluation")
+
+    root = types.ModuleType("jsonschema")
+    exc = types.ModuleType("jsonschema.exceptions")
+    root.Draft202012Validator = type(  # type: ignore[attr-defined]
+        "Draft202012Validator",
+        (),
+        {"__init__": refuse, "check_schema": staticmethod(refuse)},
+    )
+    for name in ("SchemaError", "ValidationError"):
+        setattr(exc, name, type(name, (Exception,), {"__init__": refuse}))
+    root.exceptions = exc  # type: ignore[attr-defined]
+    names = ("jsonschema", "jsonschema.exceptions")
+    saved = {n: sys.modules[n] for n in names if n in sys.modules}
+    try:
+        if "aqt.core.preregistration" not in sys.modules:
+            sys.modules.update({"jsonschema": root, "jsonschema.exceptions": exc})
+        module = importlib.import_module("aqt.core.preregistration")
+    finally:
+        for n in names:
+            sys.modules.pop(n, None)
+        sys.modules.update(saved)
+    _TRIAL_SEED = module.trial_seed
 
 
 def _hex(value: object, length: int | None = None) -> bool:
@@ -997,6 +1030,411 @@ def _hex(value: object, length: int | None = None) -> bool:
         and set(value) <= _HEX
         and (length is None or len(value) == length)
     )
+
+
+# --- slice 4a, route M: drand quicknet BLS verification, standard library only ---
+# seed_disclosure `verification` and R-14a item 7: the module verifies the beacon
+# signature itself. Scheme `bls-unchained-g1-rfc9380` (FP3): signature on G1, key on
+# G2, message SHA-256(round as 8-byte big-endian), hash-to-G1 by RFC 9380
+# BLS12381G1_XMD:SHA-256_SSWU_RO_ with drand's DST. Constants from RFC 9380 (§8.8.1,
+# Appendix E.2) and the BLS12-381 definition; pinned by the RFC's vectors and real
+# drand rounds in the tests. Public data only, so constant time is not needed.
+
+SCHEME = "bls-unchained-g1-rfc9380"
+_DST = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_"
+_P = 0x1A0111EA397FE69A4B1BA7B6434BACD764774B84F38512BF6730D2A0F6B0F6241EABFFFEB153FFFFB9FEFFFFFFFFAAAB  # noqa: E501
+_R = 0x73EDA753299D7D483339D80809A1D80553BDA402FFFE5BFEFFFFFFFF00000001
+_X_ABS = 0xD201000000010000  # |x|, the BLS12-381 parameter x is negative
+_H_EFF = 0xD201000000010001  # RFC 9380 §8.8.1 h_eff = 1 - x
+_A_ISO = 0x144698A3B8E9433D693A02C96D4982B0EA985383EE66A8D8E8981AEFD881AC98936F8DA0E0F97F5CF428082D584C1D  # noqa: E501
+_B_ISO = 0x12E2908D11688030018B12E8753EEE3B2016C1F0F24F4070A0B9C14FCEF35EF55A23215A316CEAA5D1CC48E98E172BE0  # noqa: E501
+_Z_ISO = 11
+_G2_X = (
+    0x024AA2B2F08F0A91260805272DC51051C6E47AD4FA403B02B4510B647AE3D1770BAC0326A805BBEFD48056C8C121BDB8,
+    0x13E02B6052719F607DACD3A088274F65596BD0D09920B61AB5DA61BBDC7F5049334CF11213945D57E5AC7D055D042B7E,
+)
+_G2_Y = (
+    0x0CE5D527727D6E118CC9CDC6DA2E351AADFD9BAA8CBDD3A76D429A695160D12C923AC9CC3BACA289E193548608B82801,
+    0x0606C4A02EA734CC32ACD2B02BC28B99CB3E287E85A763AF267492AB572E99AB3F370D275CEC1DA1AAA9075FF05F79BE,
+)
+# RFC 9380 Appendix E.2, k_(i,j) for j = 0.. (x_den and y_den are monic)
+_ISO1 = (
+    0x11A05F2B1E833340B809101DD99815856B303E88A2D7005FF2627B56CDB4E2C85610C2D5F2E62D6EAEAC1662734649B7,
+    0x17294ED3E943AB2F0588BAB22147A81C7C17E75B2F6A8417F565E33C70D1E86B4838F2A6F318C356E834EEF1B3CB83BB,
+    0xD54005DB97678EC1D1048C5D10A9A1BCE032473295983E56878E501EC68E25C958C3E3D2A09729FE0179F9DAC9EDCB0,
+    0x1778E7166FCC6DB74E0609D307E55412D7F5E4656A8DBF25F1B33289F1B330835336E25CE3107193C5B388641D9B6861,
+    0xE99726A3199F4436642B4B3E4118E5499DB995A1257FB3F086EEB65982FAC18985A286F301E77C451154CE9AC8895D9,
+    0x1630C3250D7313FF01D1201BF7A74AB5DB3CB17DD952799B9ED3AB9097E68F90A0870D2DCAE73D19CD13C1C66F652983,
+    0xD6ED6553FE44D296A3726C38AE652BFB11586264F0F8CE19008E218F9C86B2A8DA25128C1052ECADDD7F225A139ED84,
+    0x17B81E7701ABDBE2E8743884D1117E53356DE5AB275B4DB1A682C62EF0F2753339B7C8F8C8F475AF9CCB5618E3F0C88E,
+    0x80D3CF1F9A78FC47B90B33563BE990DC43B756CE79F5574A2C596C928C5D1DE4FA295F296B74E956D71986A8497E317,
+    0x169B1F8E1BCFA7C42E0C37515D138F22DD2ECB803A0C5C99676314BAF4BB1B7FA3190B2EDC0327797F241067BE390C9E,
+    0x10321DA079CE07E272D8EC09D2565B0DFA7DCCDDE6787F96D50AF36003B14866F69B771F8C285DECCA67DF3F1605FB7B,
+    0x6E08C248E260E70BD1E962381EDEE3D31D79D7E22C837BC23C0BF1BC24C6B68C24B1B80B64D391FA9C8BA2E8BA2D229,
+)
+_ISO2 = (
+    0x8CA8D548CFF19AE18B2E62F4BD3FA6F01D5EF4BA35B48BA9C9588617FC8AC62B558D681BE343DF8993CF9FA40D21B1C,
+    0x12561A5DEB559C4348B4711298E536367041E8CA0CF0800C0126C2588C48BF5713DAA8846CB026E9E5C8276EC82B3BFF,
+    0xB2962FE57A3225E8137E629BFF2991F6F89416F5A718CD1FCA64E00B11ACEACD6A3D0967C94FEDCFCC239BA5CB83E19,
+    0x3425581A58AE2FEC83AAFEF7C40EB545B08243F16B1655154CCA8ABC28D6FD04976D5243EECF5C4130DE8938DC62CD8,
+    0x13A8E162022914A80A6F1D5F43E7A07DFFDFC759A12062BB8D6B44E833B306DA9BD29BA81F35781D539D395B3532A21E,
+    0xE7355F8E4E667B955390F7F0506C6E9395735E9CE9CAD4D0A43BCEF24B8982F7400D24BC4228F11C02DF9A29F6304A5,
+    0x772CAACF16936190F3E0C63E0596721570F5799AF53A1894E2E073062AEDE9CEA73B3538F0DE06CEC2574496EE84A3A,
+    0x14A7AC2A9D64A8B230B3F5B074CF01996E7F63C21BCA68A81996E1CDF9822C580FA5B9489D11E2D311F7D99BBDCC5A5E,
+    0xA10ECF6ADA54F825E920B3DAFC7A3CCE07F8D1D7161366B74100DA67F39883503826692ABBA43704776EC3A79A1D641,
+    0x95FC13AB9E92AD4476D6E3EB3A56680F682B4EE96F7D03776DF533978F31C1593174E4B4B7865002D6384D168ECDD0A,
+)
+_ISO3 = (
+    0x90D97C81BA24EE0259D1F094980DCFA11AD138E48A869522B52AF6C956543D3CD0C7AEE9B3BA3C2BE9845719707BB33,
+    0x134996A104EE5811D51036D776FB46831223E96C254F383D0F906343EB67AD34D6C56711962FA8BFE097E75A2E41C696,
+    0xCC786BAA966E66F4A384C86A3B49942552E2D658A31CE2C344BE4B91400DA7D26D521628B00523B8DFE240C72DE1F6,
+    0x1F86376E8981C217898751AD8746757D42AA7B90EEB791C09E4A3EC03251CF9DE405ABA9EC61DECA6355C77B0E5F4CB,
+    0x8CC03FDEFE0FF135CAF4FE2A21529C4195536FBE3CE50B879833FD221351ADC2EE7F8DC099040A841B6DAECF2E8FEDB,
+    0x16603FCA40634B6A2211E11DB8F0A6A074A7D0D4AFADB7BD76505C3D3AD5544E203F6326C95A807299B23AB13633A5F0,
+    0x4AB0B9BCFAC1BBCB2C977D027796B3CE75BB8CA2BE184CB5231413C4D634F3747A87AC2460F415EC961F8855FE9D6F2,
+    0x987C8D5333AB86FDE9926BD2CA6C674170A05BFE3BDD81FFD038DA6C26C842642F64550FEDFE935A15E4CA31870FB29,
+    0x9FC4018BD96684BE88C9E221E4DA1BB8F3ABD16679DC26C1E8B6E6A1F20CABE69D65201C78607A360370E577BDBA587,
+    0xE1BBA7A1186BDB5223ABDE7ADA14A23C42A0CA7915AF6FE06985E7ED1E4D43B9B3F7055DD4EBA6F2BAFAAEBCA731C30,
+    0x19713E47937CD1BE0DFD0B8F1D43FB93CD2FCBCB6CAF493FD1183E416389E61031BF3A5CCE3FBAFCE813711AD011C132,
+    0x18B46A908F36F6DEB918C143FED2EDCC523559B8AAF0C2462E6BFE7F911F643249D9CDF41B44D606CE07C8A4D0074D8E,
+    0xB182CAC101B9399D155096004F53F447AA7B12A3426B08EC02710E807B4633F06C851C1919211F20D4C04F00B971EF8,
+    0x245A394AD1ECA9B72FC00AE7BE315DC757B3B080D4C158013E6632D3C40659CC6CF90AD1C232A6442D9D3F5DB980133,
+    0x5C129645E44CF1102A159F748C4A3FC5E673D81D7E86568D9AB0F5D396A7CE46BA1049B6579AFB7866B1E715475224B,
+    0x15E6BE4E990F03CE4EA50B3B42DF2EB5CB181D8F84965A3957ADD4FA95AF01B2B665027EFEC01C7704B456BE69C8B604,
+)
+_ISO4 = (
+    0x16112C4C3A9C98B252181140FAD0EAE9601A6DE578980BE6EEC3232B5BE72E7A07F3688EF60C206D01479253B03663C1,
+    0x1962D75C2381201E1A0CBD6C43C348B885C84FF731C4D59CA4A10356F453E01F78A4260763529E3532F6102C2E49A03D,
+    0x58DF3306640DA276FAAAE7D6E8EB15778C4855551AE7F310C35A5DD279CD2ECA6757CD636F96F891E2538B53DBF67F2,
+    0x16B7D288798E5395F20D23BF89EDB4D1D115C5DBDDBCD30E123DA489E726AF41727364F2C28297ADA8D26D98445F5416,
+    0xBE0E079545F43E4B00CC912F8228DDCC6D19C9F0F69BBB0542EDA0FC9DEC916A20B15DC0FD2EDEDDA39142311A5001D,
+    0x8D9E5297186DB2D9FB266EAAC783182B70152C65550D881C5ECD87B6F0F5A6449F38DB9DFA9CCE202C6477FAAF9B7AC,
+    0x166007C08A99DB2FC3BA8734ACE9824B5EECFDFA8D0CF8EF5DD365BC400A0051D5FA9C01A58B1FB93D1A1399126A775C,
+    0x16A3EF08BE3EA7EA03BCDDFABBA6FF6EE5A4375EFA1F4FD7FEB34FD206357132B920F5B00801DEE460EE415A15812ED9,
+    0x1866C8ED336C61231A1BE54FD1D74CC4F9FB0CE4C6AF5920ABC5750C4BF39B4852CFE2F7BB9248836B233D9D55535D4A,
+    0x167A55CDA70A6E1CEA820597D94A84903216F763E13D87BB5308592E7EA7D4FBC7385EA3D529B35E346EF48BB8913F55,
+    0x4D2F259EEA405BD48F010A01AD2911D9C6DD039BB61A6290E591B36E636A5C871A5C29F4F83060400F8B49CBA8F6AA8,
+    0xACCBB67481D033FF5852C1E48C50C477F94FF8AEFCE42D28C0F9A88CEA7913516F968986F7EBBEA9684B529E2561092,
+    0xAD6B9514C767FE3C3613144B45F1496543346D98ADF02267D5CEEF9A00D9B8693000763E3B90AC11E99B138573345CC,
+    0x2660400EB2E4F3B628BDD0D53CD76F2BF565B94E72927C1CB748DF27942480E420517BD8714CC80D1FADC1326ED06F7,
+    0xE0FA1D816DDC03E6B24255E0D7819C171C40F65E273B853324EFCD6356CAA205CA2F570F13497804415473A1D634B8F,
+)
+
+
+def _inv(a: int) -> int:
+    if a % _P == 0:
+        raise SeedError("BLS arithmetic: division by zero")
+    return pow(a, -1, _P)
+
+
+def _sqrt(a: int) -> int | None:
+    """A square root mod p (p = 3 mod 4), or None."""
+    y = pow(a, (_P + 1) // 4, _P)
+    return y if y * y % _P == a % _P else None
+
+
+class _Fq:
+    """F_p[w]/(w^D + sum MOD), coefficients low to high; D = 1 is F_p."""
+
+    __slots__ = ("c",)
+    D = 1
+    MOD: tuple[tuple[int, int], ...] = ()
+
+    def __init__(self, c: Sequence[int]) -> None:
+        self.c = tuple(v % _P for v in c)
+
+    @classmethod
+    def of(cls, v: int) -> Any:
+        return cls((v,) + (0,) * (cls.D - 1))
+
+    def _co(self, o: Any) -> Any:
+        return o if isinstance(o, _Fq) else self.of(o)
+
+    def __add__(self, o: Any) -> Any:
+        return type(self)([a + b for a, b in zip(self.c, self._co(o).c, strict=True)])
+
+    __radd__ = __add__
+
+    def __sub__(self, o: Any) -> Any:
+        return type(self)([a - b for a, b in zip(self.c, self._co(o).c, strict=True)])
+
+    def __rsub__(self, o: Any) -> Any:
+        return self._co(o) - self
+
+    def __neg__(self) -> Any:
+        return type(self)([-a for a in self.c])
+
+    def __mul__(self, o: Any) -> Any:
+        if isinstance(o, int):
+            return type(self)([a * o for a in self.c])
+        d, t = self.D, [0] * (2 * self.D - 1)
+        for i, a in enumerate(self.c):
+            if a:
+                for j, b in enumerate(o.c):
+                    t[i + j] += a * b
+        for k in range(2 * d - 2, d - 1, -1):  # w^D = -sum(m_i w^i)
+            if t[k]:
+                for i, m in self.MOD:
+                    t[k - d + i] -= t[k] * m
+        return type(self)(t[:d])
+
+    __rmul__ = __mul__
+
+    def __eq__(self, o: object) -> bool:
+        return isinstance(o, _Fq | int) and self.c == self._co(o).c
+
+    def __hash__(self) -> int:
+        return hash(self.c)
+
+    def zero(self) -> bool:
+        return not any(self.c)
+
+
+class _F1(_Fq):
+    pass
+
+
+class _F2(_Fq):  # u^2 = -1
+    D, MOD = 2, ((0, 1),)
+
+
+class _F12(_Fq):  # w^12 = 2 w^6 - 2; u = w^6 - 1
+    D, MOD = 12, ((0, 2), (6, -2))
+
+
+_Pt = tuple[Any, Any, Any]  # homogeneous projective (X, Y, Z); Z = 0 is infinity
+
+
+def _double(pt: _Pt) -> _Pt:
+    x, y, z = pt
+    w = 3 * x * x
+    s = y * z
+    b = x * y * s
+    h = w * w - 8 * b
+    s2 = s * s
+    return 2 * h * s, w * (4 * b - h) - 8 * y * y * s2, 8 * s * s2
+
+
+def _add(p1: _Pt, p2: _Pt) -> _Pt:
+    if p1[2].zero():
+        return p2
+    if p2[2].zero():
+        return p1
+    x1, y1, z1 = p1
+    x2, y2, z2 = p2
+    u1, u2, v1, v2 = y2 * z1, y1 * z2, x2 * z1, x1 * z2
+    if v1 == v2:
+        return _double(p1) if u1 == u2 else (x1 * 0 + 1, x1 * 0 + 1, x1 * 0)
+    u, v = u1 - u2, v1 - v2
+    v2_, w = v * v, z1 * z2
+    v3, v2x = v * v2_, v2_ * v2
+    a = u * u * w - v3 - 2 * v2x
+    return v * a, u * (v2x - a) - v3 * u2, v3 * w
+
+
+def _mul(pt: _Pt, n: int) -> _Pt:
+    out = (pt[0] * 0 + 1, pt[0] * 0 + 1, pt[0] * 0)
+    for bit in bin(n)[2:]:
+        out = _double(out)
+        if bit == "1":
+            out = _add(out, pt)
+    return out
+
+
+def _affine1(pt: _Pt) -> tuple[int, int]:
+    z = _inv(pt[2].c[0])
+    return pt[0].c[0] * z % _P, pt[1].c[0] * z % _P
+
+
+def _g1(x: int, y: int) -> _Pt:
+    return _F1.of(x), _F1.of(y), _F1.of(1)
+
+
+def _g1_from_bytes(b: bytes) -> _Pt:
+    """ZCash compressed G1: curve, range and subgroup checks; infinity refused."""
+    if len(b) != 48 or b[0] & 0xE0 not in (0x80, 0xA0):
+        raise SeedError("BLS signature is not a compressed G1 point")
+    x = int.from_bytes(bytes([b[0] & 0x1F]) + b[1:], "big")
+    y = _sqrt(x**3 + 4) if x < _P else None
+    if y is None:
+        raise SeedError("BLS signature is not on the curve")
+    if (y > (_P - 1) // 2) != bool(b[0] & 0x20):
+        y = _P - y
+    pt = _g1(x, y)
+    if not _mul(pt, _R)[2].zero():
+        raise SeedError("BLS signature is not in the G1 subgroup")
+    return pt
+
+
+def _f2_sqrt(a0: int, a1: int) -> tuple[int, int] | None:
+    if a1 % _P == 0:
+        r = _sqrt(a0)
+        if r is not None:
+            return r, 0
+        r = _sqrt(-a0)
+        return (0, r) if r is not None else None
+    n = _sqrt(a0 * a0 + a1 * a1)
+    if n is None:
+        return None
+    for d in (a0 + n, a0 - n):
+        x0 = _sqrt(d * _inv(2))
+        if x0:
+            x1 = a1 * _inv(2 * x0) % _P
+            if ((x0 * x0 - x1 * x1) % _P, 2 * x0 * x1 % _P) == (a0 % _P, a1 % _P):
+                return x0, x1
+    return None
+
+
+def _g2_from_bytes(b: bytes) -> _Pt:
+    """ZCash compressed G2 (c1 then c0): curve, range and subgroup checks."""
+    if len(b) != 96 or b[0] & 0xE0 not in (0x80, 0xA0):
+        raise SeedError("BLS public key is not a compressed G2 point")
+    x1 = int.from_bytes(bytes([b[0] & 0x1F]) + b[1:48], "big")
+    x0 = int.from_bytes(b[48:], "big")
+    if x0 >= _P or x1 >= _P:
+        raise SeedError("BLS public key is out of range")
+    x = _F2((x0, x1))
+    rhs = x * x * x + _F2((4, 4))
+    y = _f2_sqrt(*rhs.c)
+    if y is None:
+        raise SeedError("BLS public key is not on the curve")
+    big = (y[1] if y[1] else y[0]) > (_P - 1) // 2
+    if big != bool(b[0] & 0x20):
+        y = ((_P - y[0]) % _P, (_P - y[1]) % _P)
+    pt = (x, _F2(y), _F2.of(1))
+    if not _mul(pt, _R)[2].zero():
+        raise SeedError("BLS public key is not in the G2 subgroup")
+    return pt
+
+
+def _expand_xmd(msg: bytes, dst: bytes, n: int) -> bytes:
+    """RFC 9380 §5.3.1 expand_message_xmd with SHA-256."""
+    ell = -(-n // 32)
+    if len(dst) > 255 or ell > 255:
+        raise SeedError("expand_message_xmd: bad lengths")
+    dst_p = dst + bytes([len(dst)])
+    b0 = hashlib.sha256(bytes(64) + msg + n.to_bytes(2, "big") + b"\0" + dst_p).digest()
+    out = [hashlib.sha256(b0 + b"\x01" + dst_p).digest()]
+    for i in range(2, ell + 1):
+        mixed = bytes(a ^ c for a, c in zip(b0, out[-1], strict=True))
+        out.append(hashlib.sha256(mixed + bytes([i]) + dst_p).digest())
+    return b"".join(out)[:n]
+
+
+def _sswu(u: int) -> tuple[int, int]:
+    """RFC 9380 §6.6.2 simplified SWU onto E' (A', B', Z = 11)."""
+    a, b, z = _A_ISO, _B_ISO, _Z_ISO
+    tv1 = (z * z * pow(u, 4, _P) + z * u * u) % _P
+    if tv1 == 0:
+        x1 = b * _inv(z * a) % _P
+    else:
+        x1 = -b * _inv(a) * (1 + _inv(tv1)) % _P
+    y = _sqrt(x1**3 + a * x1 + b)
+    x = x1
+    if y is None:
+        x = z * u * u * x1 % _P
+        y = _sqrt(x**3 + a * x + b)
+        if y is None:  # impossible for a correct map; refuse rather than guess
+            raise SeedError("simplified SWU found no square")
+    if u % 2 != y % 2:
+        y = _P - y
+    return x, y
+
+
+def _poly(coeffs: Sequence[int], x: int) -> int:
+    acc = 0
+    for c in reversed(coeffs):
+        acc = (acc * x + c) % _P
+    return acc
+
+
+def _iso_map(x: int, y: int) -> _Pt:
+    """RFC 9380 Appendix E.2, the 11-isogeny E' -> E."""
+    xd = _poly((*_ISO2, 1), x)
+    yd = _poly((*_ISO4, 1), x)
+    if xd == 0 or yd == 0:
+        return _F1.of(1), _F1.of(1), _F1.of(0)
+    return _g1(_poly(_ISO1, x) * _inv(xd) % _P, y * _poly(_ISO3, x) * _inv(yd) % _P)
+
+
+def _hash_to_g1(msg: bytes, dst: bytes = _DST) -> _Pt:
+    """RFC 9380 §3 hash_to_curve, suite BLS12381G1_XMD:SHA-256_SSWU_RO_."""
+    uniform = _expand_xmd(msg, dst, 128)
+    q0 = _iso_map(*_sswu(int.from_bytes(uniform[:64], "big") % _P))
+    q1 = _iso_map(*_sswu(int.from_bytes(uniform[64:], "big") % _P))
+    return _mul(_add(q0, q1), _H_EFF)
+
+
+def _twist(pt: _Pt) -> _Pt:
+    """G2 (y^2 = x^3 + 4(1 + u)) into E(F_p12) (y^2 = x^3 + 4): u -> w^6 - 1, so
+    1 + u = w^6, and (x, y) -> (x / w^2, y / w^3)."""
+
+    def lift(e: _F2) -> _F12:
+        return _F12((e.c[0] - e.c[1], 0, 0, 0, 0, 0, e.c[1], 0, 0, 0, 0, 0))
+
+    w_inv = _F12((0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, -_inv(2)))  # w^11 = 2w^5 - 2/w
+    w_inv2 = w_inv * w_inv
+    x, y, z = pt
+    return lift(x) * w_inv2, lift(y) * w_inv2 * w_inv, lift(z)
+
+
+def _line(p1: _Pt, p2: _Pt, t: _Pt) -> tuple[_F12, _F12]:
+    """The line through p1 and p2 (tangent if equal) at t, as numerator, denominator."""
+    x1, y1, z1 = p1
+    x2, y2, z2 = p2
+    xt, yt, zt = t
+    num, den = y2 * z1 - y1 * z2, x2 * z1 - x1 * z2
+    if den.zero():
+        if not num.zero():  # vertical
+            return xt * z1 - x1 * zt, z1 * zt
+        num, den = 3 * x1 * x1, 2 * y1 * z1
+    return num * (xt * z1 - x1 * zt) - den * (yt * z1 - y1 * zt), den * zt * z1
+
+
+def _miller(q: _Pt, p: _Pt) -> tuple[_F12, _F12]:
+    """Miller loop f_{|x|,Q}(P) as numerator, denominator (Q twisted, P lifted)."""
+    r, fn, fd = q, _F12.of(1), _F12.of(1)
+    for bit in bin(_X_ABS)[3:]:
+        n, d = _line(r, r, p)
+        fn, fd, r = fn * fn * n, fd * fd * d, _double(r)
+        if bit == "1":
+            n, d = _line(r, q, p)
+            fn, fd, r = fn * n, fd * d, _add(r, q)
+    return fn, fd
+
+
+def _pow12(a: _F12, e: int) -> _F12:
+    out: _F12 = _F12.of(1)
+    for bit in bin(e)[2:]:
+        out = out * out
+        if bit == "1":
+            out = out * a
+    return out
+
+
+def _lift1(pt: _Pt) -> _Pt:
+    x, y = _affine1(pt)
+    return _F12.of(x), _F12.of(y), _F12.of(1)
+
+
+def bls_verify(public_key: str, round_: int, signature: str) -> bool:
+    """True iff `signature` verifies for drand round `round_` under `public_key`
+    (scheme SCHEME). Malformed points raise SeedError."""
+    sig = _g1_from_bytes(bytes.fromhex(signature))
+    key = _g2_from_bytes(bytes.fromhex(public_key))
+    h = _hash_to_g1(hashlib.sha256(round_.to_bytes(8, "big")).digest())
+    if h[2].zero():
+        raise SeedError("hash to G1 gave the point at infinity")
+    neg_g2 = (_F2(_G2_X), -_F2(_G2_Y), _F2.of(1))
+    # e(sig, -g2) * e(H(m), key) == 1; numerator and denominator kept apart so no
+    # F_p12 inverse is needed: (n1 n2)^E == (d1 d2)^E, E = (p^12 - 1) / r.
+    n1, d1 = _miller(_twist(neg_g2), _lift1(sig))
+    n2, d2 = _miller(_twist(key), _lift1(h))
+    num, den = n1 * n2, d1 * d2
+    if num.zero() or den.zero():
+        raise SeedError("BLS pairing degenerated")
+    e = (_P**12 - 1) // _R
+    return _pow12(num, e) == _pow12(den, e)
 
 
 def beacon_round(capture_cdx: str, chain: Chain) -> int:
@@ -1027,11 +1465,13 @@ def beacon_round(capture_cdx: str, chain: Chain) -> int:
     return 1 + -(-(target - chain.genesis_time) // chain.period)  # ceiling division
 
 
-def check_beacon(beacon: Beacon, round_: int, chain: Chain, verify: Verifier) -> None:
+def check_beacon(beacon: Beacon, round_: int, chain: Chain) -> None:
     """seed_disclosure `verification`: the beacon is the fixed round, its
-    randomness is SHA-256 of its signature (drand's definition, checked here),
-    and its signature verifies against the chain key. Anything else, including
-    a verifier error, is a seed failure."""
+    randomness is SHA-256 of its signature (drand's definition), and its
+    signature verifies against the chain key, checked here by bls_verify
+    (R-14a item 7). Anything else is a seed failure."""
+    if chain.scheme != SCHEME:
+        raise SeedError(f"chain scheme {chain.scheme!r} is not {SCHEME}")
     if type(beacon.round) is not int or beacon.round != round_:
         raise SeedError(
             f"beacon round {beacon.round!r} is not the fixed round {round_}"
@@ -1046,11 +1486,7 @@ def check_beacon(beacon: Beacon, round_: int, chain: Chain, verify: Verifier) ->
         )
     if hashlib.sha256(bytes.fromhex(beacon.signature)).hexdigest() != beacon.randomness:
         raise SeedError("beacon randomness is not SHA-256 of its signature")
-    try:
-        ok = verify(chain.public_key, beacon)
-    except Exception as e:  # any verifier failure is "no verifying output"
-        raise SeedError(f"beacon verification failed: {type(e).__name__}") from None
-    if ok is not True:
+    if not bls_verify(chain.public_key, beacon.round, beacon.signature):
         raise SeedError("beacon signature does not verify against the chain key")
 
 
@@ -1140,8 +1576,6 @@ def derive_seeds(
     beacon: Beacon,
     capture_cdx: str,
     chain: Chain,
-    verify: Verifier,
-    line266: Line266,
 ) -> dict[str, Any]:
     """DESIGN §5.1, step 3: every seed of the evaluation, verified from the
     governing records, with its provenance (Constitution §27). Raises
@@ -1151,7 +1585,10 @@ def derive_seeds(
     if set(records) != set(declared):
         raise SeedError("trial records are not for exactly the declared families")
     round_ = beacon_round(capture_cdx, chain)
-    check_beacon(beacon, round_, chain, verify)
+    check_beacon(beacon, round_, chain)
+    line266 = _TRIAL_SEED
+    if line266 is None:
+        raise SeedError("line 266 is not loaded: call load_line266 before any read")
     families: dict[str, Any] = {}
     for family, trials in declared.items():
         recs = records[family]

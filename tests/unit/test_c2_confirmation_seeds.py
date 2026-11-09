@@ -1,6 +1,7 @@
 """R-14a confirmation module, slice 4a: seeds (DESIGN §5.1; DRAFT R-7, R-13,
-seed_disclosure; protocol line 266). Synthetic data, plus one public drand
-quicknet beacon as a real vector for the randomness = SHA-256(signature) link."""
+seed_disclosure; protocol line 266). Synthetic data, plus public drand quicknet
+beacons (rounds 1,000,000 and 1,000,001) as real vectors for the module's own BLS
+check (route M) and the randomness = SHA-256(signature) link."""
 
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ QUICKNET = cf.Chain(
     "09bd274ca73bab4af5a6e9c76a4bc09e76eae8991ef5ece45a",
     genesis_time=1692803367,
     period=3,
+    scheme="bls-unchained-g1-rfc9380",
 )
 REAL = cf.Beacon(
     round=1_000_000,
@@ -30,12 +32,19 @@ REAL = cf.Beacon(
     signature="83ad29e4c409f9470fc2ef02f90214df49e02b441a1a241a82d622d9f608ef98"
     "fd8b11a029f1bee9d9e83b45088abe72",
 )
+NEXT = cf.Beacon(  # round 1,000,001 (FP3 verifier-test-2026-10-25)
+    round=1_000_001,
+    randomness="9f45f439afd81e9846b3b4dc5e3e6051922c73c8459d18e9d507b52ddbd884ff",
+    signature="a5bd91e5e2d8c0bf51bffdfad87eef34348fd9c0b2df2bee39db90bdef7e1399"
+    "b1a77bb2fe98b24d84c0936a306c4218",
+)
 H = hashlib.sha256(b"protocol").hexdigest()
 MANIFEST = hashlib.sha256(b"manifest").hexdigest()
 
 
-def _accept(key: str, beacon: cf.Beacon) -> bool:
-    return True
+@pytest.fixture(autouse=True)
+def _line266_loaded() -> None:
+    cf.load_line266()  # as the loader does before any protected read
 
 
 def _cdx_for_round(r: int, chain: cf.Chain = QUICKNET) -> str:
@@ -82,8 +91,6 @@ def _derive(**over: Any) -> dict[str, Any]:
         "beacon": REAL,
         "capture_cdx": _cdx_for_round(REAL.round),
         "chain": QUICKNET,
-        "verify": _accept,
-        "line266": preregistration.trial_seed,  # the frozen function (R-8)
     }
     args.update(over)
     return cf.derive_seeds(**args)
@@ -102,12 +109,14 @@ def test_round_is_the_first_at_or_after_capture_plus_24h() -> None:
         with pytest.raises(cf.SeedError):
             cf.beacon_round(bad, QUICKNET)  # type: ignore[arg-type]
     with pytest.raises(cf.SeedError, match="period"):
-        cf.beacon_round("20261109000000", cf.Chain("ab", 1, 0))
+        cf.beacon_round("20261109000000", cf.Chain("ab", 1, 0, cf.SCHEME))
 
 
 def test_real_quicknet_beacon_passes_the_local_checks() -> None:
-    # drand's randomness is SHA-256 of the signature: true for the published vector
-    cf.check_beacon(REAL, REAL.round, QUICKNET, _accept)
+    # drand's randomness is SHA-256 of the signature, and the module's own BLS
+    # check accepts both published rounds (drand's client agrees: FP3 RESULTS.txt)
+    cf.check_beacon(REAL, REAL.round, QUICKNET)
+    cf.check_beacon(NEXT, NEXT.round, QUICKNET)
 
 
 @pytest.mark.parametrize(
@@ -125,28 +134,28 @@ def test_real_quicknet_beacon_passes_the_local_checks() -> None:
 )
 def test_beacon_refusals(beacon: cf.Beacon, match: str) -> None:
     with pytest.raises(cf.SeedError, match=match):
-        cf.check_beacon(beacon, REAL.round, QUICKNET, _accept)
+        cf.check_beacon(beacon, REAL.round, QUICKNET)
 
 
-def test_signature_must_verify_and_verifier_errors_fail_closed() -> None:
+def _resigned(round_: int, signature: str) -> cf.Beacon:
+    """A beacon whose randomness matches its signature, so only BLS can refuse it."""
+    r = hashlib.sha256(bytes.fromhex(signature)).hexdigest()
+    return cf.Beacon(round_, r, signature)
+
+
+def test_signature_must_verify_under_the_chain_key() -> None:
+    # FP3's negatives: another round's valid signature, a relabelled round
     with pytest.raises(cf.SeedError, match="does not verify"):
-        cf.check_beacon(REAL, REAL.round, QUICKNET, lambda k, b: False)
+        cf.check_beacon(_resigned(1_000_000, NEXT.signature), 1_000_000, QUICKNET)
     with pytest.raises(cf.SeedError, match="does not verify"):
-        cf.check_beacon(REAL, REAL.round, QUICKNET, lambda k, b: 1)  # type: ignore[arg-type,return-value]
-
-    def boom(key: str, beacon: cf.Beacon) -> bool:
-        raise RuntimeError("library missing")
-
-    with pytest.raises(cf.SeedError, match="verification failed: RuntimeError"):
-        cf.check_beacon(REAL, REAL.round, QUICKNET, boom)
-    seen: list[tuple[str, cf.Beacon]] = []
-
-    def spy(key: str, beacon: cf.Beacon) -> bool:
-        seen.append((key, beacon))
-        return True
-
-    cf.check_beacon(REAL, REAL.round, QUICKNET, spy)
-    assert seen == [(QUICKNET.public_key, REAL)]  # the chain key, never a caller's
+        cf.check_beacon(_resigned(1_000_001, REAL.signature), 1_000_001, QUICKNET)
+    # one hex digit changed: no longer a subgroup point (FP3 "NEG one hex digit")
+    flipped = REAL.signature[:3] + "e" + REAL.signature[4:]
+    with pytest.raises(cf.SeedError, match="G1"):
+        cf.check_beacon(_resigned(1_000_000, flipped), 1_000_000, QUICKNET)
+    other = cf.Chain(QUICKNET.public_key, 1692803367, 3, "pedersen-bls-chained")
+    with pytest.raises(cf.SeedError, match="scheme"):
+        cf.check_beacon(REAL, REAL.round, other)
 
 
 # --- R-7 and Annex B §2.4 encodings -----------------------------------------------
@@ -234,19 +243,20 @@ def test_derive_seeds_records_every_seed_with_its_provenance() -> None:
 
 
 def test_a_different_beacon_gives_different_family_seeds() -> None:
-    sig = "ab" * 48
-    other = cf.Beacon(REAL.round, hashlib.sha256(bytes.fromhex(sig)).hexdigest(), sig)
+    later = _derive(beacon=NEXT, capture_cdx=_cdx_for_round(NEXT.round))
+    assert later["beacon"]["round"] == NEXT.round
     assert (
-        _derive(beacon=other)["families"]["trend"]["family_seed"]
+        later["families"]["trend"]["family_seed"]
         != _derive()["families"]["trend"]["family_seed"]
     )
 
 
-def test_estimator_seed_zero_is_kept() -> None:
+def test_estimator_seed_zero_is_kept(monkeypatch: pytest.MonkeyPatch) -> None:
     # A1b: a seed mapping to 0 is legitimate; the record keeps the policy, not a 0-test
     zero = format(2**31 * 7, "064x")
     assert screen.estimator_seed(zero) == 0
-    rec = _derive(line266=lambda **kw: zero)  # through the full derivation
+    monkeypatch.setattr(cf, "_TRIAL_SEED", lambda **kw: zero)  # test double only
+    rec = _derive()  # through the full derivation
     t = rec["families"]["trend"]["trials"]["t000"]
     assert (t["seed_l266"], t["estimator_seed"]) == (zero, 0)
 
@@ -291,7 +301,7 @@ def test_record_refusals(change: Any, match: str) -> None:
 
 def test_seed_failures_refuse_the_whole_evaluation() -> None:
     with pytest.raises(cf.SeedError, match="does not verify"):
-        _derive(verify=lambda k, b: False)
+        _derive(beacon=_resigned(REAL.round, NEXT.signature))
     with pytest.raises(cf.SeedError, match="fixed round"):
         _derive(capture_cdx=_cdx_for_round(REAL.round + 1))
     with pytest.raises(cf.SeedError, match="64 lowercase hex"):
@@ -299,19 +309,68 @@ def test_seed_failures_refuse_the_whole_evaluation() -> None:
     assert issubclass(cf.SeedError, cf.CycleError)
 
 
-def test_line266_is_the_frozen_function_and_bad_output_fails_closed() -> None:
+def test_line266_output_is_checked_and_errors_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def broken(**kw: Any) -> str:
-        raise RuntimeError("jsonschema missing")
+        raise RuntimeError("boom")
 
+    monkeypatch.setattr(cf, "_TRIAL_SEED", broken)
     with pytest.raises(cf.SeedError, match="line-266 seed failed: RuntimeError"):
-        _derive(line266=broken)
+        _derive()
+    monkeypatch.setattr(cf, "_TRIAL_SEED", lambda **kw: "A" * 64)
     with pytest.raises(cf.SeedError, match="line-266 seed is not 64"):
-        _derive(line266=lambda **kw: "A" * 64)
+        _derive()
+    monkeypatch.setattr(cf, "_TRIAL_SEED", None)
+    with pytest.raises(cf.SeedError, match="load_line266"):
+        _derive()
 
 
-def test_the_module_does_not_import_preregistration() -> None:
+def test_load_line266_is_the_frozen_function() -> None:
+    assert cf._TRIAL_SEED is preregistration.trial_seed
+
+
+def test_load_line266_without_jsonschema_uses_the_frozen_file() -> None:
+    # the image's case: jsonschema absent; placeholders only for the one import,
+    # gone afterwards; the seed equals the frozen function's (R-8)
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    code = chr(10).join(
+        [
+            "import sys",
+            "sys.path[:0] = ['.', 'src']",
+            "sys.modules['jsonschema'] = None",  # import jsonschema now fails
+            "from calibration import c2_confirmation as cf",
+            "cf.load_line266()",
+            "assert sys.modules['jsonschema'] is None",
+            "assert 'jsonschema.exceptions' not in sys.modules",
+            "import aqt.core.preregistration as pr",
+            "assert cf._TRIAL_SEED is pr.trial_seed",
+            "try:",
+            "    pr.Draft202012Validator({})",
+            "except cf.SeedError:",
+            "    pass",
+            "else:",
+            "    raise AssertionError('placeholder did not refuse')",
+            f"print(cf._TRIAL_SEED(protocol_hash={H!r}, "
+            f"hypothesis_hash={MANIFEST!r}, trial_index=7))",
+        ]
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", code], cwd=root, capture_output=True, text=True,
+        check=True,
+    )  # fmt: skip
+    assert done.stdout.strip() == preregistration.trial_seed(
+        protocol_hash=H, hypothesis_hash=MANIFEST, trial_index=7
+    )
+
+
+def test_the_module_imports_preregistration_only_in_load_line266() -> None:
     # aqt.core.preregistration imports jsonschema, absent from the pinned image
-    # (test_d19_deploy); the module must stay importable there (LG4-6)
+    # (test_d19_deploy): no top-level import, only load_line266's string (LG4-6)
     import ast
     from pathlib import Path
 
@@ -321,3 +380,11 @@ def test_the_module_does_not_import_preregistration() -> None:
     }
     names |= {n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
     assert not any("preregistration" in n for n in names)
+    holders = {
+        f.name
+        for f in ast.walk(tree)
+        if isinstance(f, ast.FunctionDef)
+        for c in ast.walk(f)
+        if isinstance(c, ast.Constant) and c.value == "aqt.core.preregistration"
+    }
+    assert holders == {"load_line266"}

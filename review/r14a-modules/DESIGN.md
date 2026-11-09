@@ -203,10 +203,10 @@ the sealing record.
 
 Verified against the governing records, never taken from the caller: the accepted post;
 the selected round of the bound quicknet chain (FP3), its BLS signature and randomness,
-verified **inside the module** with the pinned verifier library of
-`deploy/calibration/drand-verify` against the chain public key in the signed C2
-**[DESIGN; open: the library must be importable in the pinned image or the check runs
-as a verified subprocess, to settle in review]**; `family_seed_f` (R-7); every
+verified **inside the module** against the chain public key in the signed C2 by the
+module's own standard-library BLS check (`bls_verify`; route M, owner's choice,
+`DESIGN_SEED_VERIFIER.md` rev 3, which supersedes the earlier "pinned verifier library"
+wording here); `family_seed_f` (R-7); every
 `trial_seed_j` (R-13); each trial's `seed_l266` and `estimator_seed` under
 `L266_MOD_2_31`; the C-0 window and id; `g`. Failure: evaluation invalid, no gate runs.
 Every value and its source is recorded (§27).
@@ -356,7 +356,7 @@ reaching each statistic is exactly the contract's; the duplicated-code identity 
 
 ## 10. Still open (to settle in review or build)
 
-The drand verification library inside the pinned image (§5.1); the exact confirmation
+The drand verification inside the pinned image (§5.1) is settled by route M (`DESIGN_SEED_VERIFIER.md` rev 3); the exact confirmation
 partition access path and identity mechanism; the store interface names (§6.5).
 
 **Pre-signing build item (R14D3-S-2, R14D4-A-3):** the launch route. Every executed line
