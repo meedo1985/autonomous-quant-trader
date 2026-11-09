@@ -51,3 +51,17 @@ R14S6AR-S-1 partly closed.
 
 Validation: 373 passed (same suites); ruff format and check clean; `mypy src` clean;
 strict mypy on the module and the start test clean; lint-imports 7 kept.
+
+## Third re-check (SOL_CONFIRMATION_SLICE6A_RECHECK3_9C5D5DF.md, verdict FIX)
+
+Sol closed R14S6AR2-S-2 and found R14S6AR2-S-1 (and so R14S6AR-S-1) still partly closed.
+
+| ID | Sol | Decision | Repair |
+|---|---|---|---|
+| R14S6AR2-S-1 (rest) | BLOCKER | **Accepted, with Sol's correction.** The gate allowed listed names: a listed module imported before its verified turn, a reload, or a repository file loaded under another name could still run from disk. | The gate now refuses **every** finder lookup in the load window, whatever the name. Two facts make this safe. The verified modules never pass through the import system (`load_verified` executes their hashed bytes directly). And a real line-266 load on this engine adds only `aqt.core.paths` and `aqt.core.preregistration` (checked in a fresh process), so no legitimate lookup is refused. Fresh-process tests: a listed module imported early, a reload of `calibration.seeds`, and an import of a module outside aqt/calibration (`zipapp`) are each refused before any code runs, the marker is never written, and the gate is removed. The authenticated full load still succeeds. |
+| R14S6AR3-S-1 | NON-BLOCKING | **Accepted.** | The gate is installed inside the `try`. Test: a `sys.meta_path` whose `insert` raises after inserting leaves no gate behind. |
+
+Validation: 377 passed (same suites); ruff format and check clean; `mypy src` clean;
+strict mypy on the module and the start test clean; lint-imports 7 kept. This repair
+applies Sol's stated minimal correction and was not re-sent to Sol, after four rounds on
+6a. Another round is available on request.

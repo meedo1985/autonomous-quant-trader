@@ -563,3 +563,74 @@ def test_start_passes_the_signed_commit_sources_to_line_266(
     cf.start(**_start_inputs(tmp_path))
     assert asked == [(tmp_path, "e" * 40)]  # the signed engine_commit row
     assert got == [sentinel] and got[0] is sentinel
+
+
+# --- R14S6AR3: every finder lookup is refused during the load ---------------------
+
+
+@pytest.mark.parametrize(
+    ("body", "refused"),
+    [
+        # a listed module imported before its verified turn (probe_b is listed)
+        ("import calibration.c2_probe_b\n", "calibration.c2_probe_b"),
+        # a reload of an already-loaded engine module re-reads disk
+        (
+            "import importlib, calibration.seeds\n"
+            "importlib.reload(calibration.seeds)\n",
+            "calibration.seeds",
+        ),
+        # a module under a name outside aqt/calibration
+        ("import zipapp\n", "zipapp"),
+    ],
+    ids=["listed-early", "reload", "other-name"],
+)
+def test_any_import_during_the_authenticated_load_is_refused(
+    tmp_path: Path, body: str, refused: str
+) -> None:
+    marker = tmp_path / "marker"
+    probe_b = tmp_path / "c2_probe_b.py"
+    probe_b.write_text(f"open({str(marker)!r}, 'w').write('ran')\n")
+    probe_a = tmp_path / "c2_probe_a.py"
+    probe_a.write_text(body)
+    code = f"""
+import hashlib, pathlib, sys
+sys.path[:0] = [{str(ROOT)!r}, {str(ROOT / "src")!r}]
+import calibration
+from calibration import c2_confirmation as cf
+calibration.__path__.append({str(tmp_path)!r})
+def src(p):
+    p = pathlib.Path(p)
+    return (p, hashlib.sha256(p.read_bytes()).hexdigest())
+try:
+    cf.load_line266({{"calibration.c2_probe_a": src({str(probe_a)!r}),
+                      "calibration.c2_probe_b": src({str(probe_b)!r})}})
+    print("loaded")
+except cf.SeedError as e:
+    print("refused", e)
+print("gate gone", all(type(f).__name__ != "Gate" for f in sys.meta_path))
+"""
+    out = subprocess.run(
+        [sys.executable, "-I", "-c", code], capture_output=True, text=True, check=False
+    )
+    assert out.stdout.strip().splitlines() == [
+        f"refused line 266 imports unauthenticated {refused}",
+        "gate gone True",
+    ], out.stderr
+    assert not marker.exists()
+
+
+def test_an_interrupted_gate_install_leaves_no_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # R14S6AR3-S-1: the insertion is inside the try, so finally removes it
+    class Interrupting(list):  # type: ignore[type-arg]
+        def insert(self, i: Any, x: Any) -> None:
+            super().insert(i, x)
+            raise RuntimeError("interrupted after inserting")
+
+    meta = Interrupting(sys.meta_path)
+    monkeypatch.setattr(sys, "meta_path", meta)
+    monkeypatch.setattr(cf, "_TRIAL_SEED", None)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        cf.load_line266({})
+    assert all(type(f).__name__ != "Gate" for f in meta)
