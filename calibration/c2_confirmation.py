@@ -989,14 +989,20 @@ class Beacon:
 _TRIAL_SEED: Callable[..., str] | None = None
 
 
-def load_line266() -> None:
+def load_line266(sources: Mapping[str, tuple[Path, str]] | None = None) -> None:
     """Import line 266's frozen `trial_seed` on the qualified image (R-8). The
     caller runs this before any protected read, so R-14's byte check covers
     `preregistration.py` and its imports (SV2-S-3). That module imports
     `jsonschema` at top level for `_validate_against_schema` only, and the image
     lacks it: for this one import, inert placeholders stand in for its three
     names and refuse if ever used; they are removed afterwards. No other
-    jsonschema is ever loaded through here."""
+    jsonschema is ever loaded through here.
+
+    With `sources` (module name -> (path, SHA-256 of the engine commit's
+    blob), in load order; `start` passes them), each module not yet loaded
+    runs from exactly its hashed bytes (`load_verified`), so no unauthenticated
+    line-266 code executes (R14S6AR-S-1); any other `aqt`/`calibration` module
+    the import adds is refused."""
     global _TRIAL_SEED
     _TRIAL_SEED = None  # a failed reload must not leave an earlier one (R14SM-S-1)
     import importlib
@@ -1021,7 +1027,17 @@ def load_line266() -> None:
     try:
         if "aqt.core.preregistration" not in sys.modules:
             sys.modules.update({"jsonschema": root, "jsonschema.exceptions": exc})
+        before = set(sys.modules)
+        for name, (path, digest) in (sources or {}).items():
+            if name not in sys.modules:
+                load_verified(name, path, digest)
         module = importlib.import_module("aqt.core.preregistration")
+        added = {n for n in set(sys.modules) - before
+                 if n.split(".")[0] in ("aqt", "calibration")}  # fmt: skip
+        if sources is not None and added - set(sources):
+            raise SeedError(
+                f"line 266 loaded unauthenticated {sorted(added - set(sources))}"
+            )
     finally:
         for n in names:
             sys.modules.pop(n, None)
@@ -2577,15 +2593,42 @@ def verify_code(
 # cross-import; a test pins the copies equal). Readings ST-n (proposed):
 # - ST-1 `start` runs the chain over both module files as on disk, reads the
 #   signed values from the verified protocol bytes, loads line 266
-#   (`load_line266`), and only then runs the code check, so R-14's
-#   loaded-module inventory covers `aqt.core.preregistration` (R14S6A-S-1),
-#   then the engine and image checks. Any failure after the load clears the
-#   stored line-266 function. Nothing protected is read before all of it
-#   passes (R-14a items 2, 7; route M). Unlike the lockbox there is no
+#   (`load_line266`), executing each newly loaded line-266 module from bytes
+#   authenticated against the signed engine commit (R14S6AR-S-1), and only
+#   then runs the code check, so R-14's loaded-module inventory covers them
+#   (R14S6A-S-1), then the engine and image checks. Each attempt clears the
+#   stored line-266 function first; any refusal clears it and is final for
+#   the process (R14S6AR-S-2, S-3). Nothing protected is read before all of
+#   it passes (R-14a items 2, 7; route M). Unlike the lockbox there is no
 #   startup record.
 # - ST-2 The confirmation-specific signed values (the drand chain, z_crit,
 #   T_min, g, the classifier) are not read here; their row names are open
 #   (OD-4) and slice 6b reads them from the same verified bytes.
+
+
+# R14S6AR-S-1: the modules line 266 newly loads, in load order (verified at
+# the engine commit: `aqt.core.ledger` and `aqt.data.manifest` are already
+# loaded with this module); a start authenticates them before executing them
+LINE266_MODULES = (
+    ("aqt.core.paths", "src/aqt/core/paths.py"),
+    ("aqt.core.preregistration", "src/aqt/core/preregistration.py"),
+)
+_START_FAILED = False  # R14S6AR-S-2: a refused start is final for the process
+
+
+def line266_sources(root: Path, engine_commit: str) -> dict[str, tuple[Path, str]]:
+    """Each line-266 module's path and the SHA-256 of its blob at the signed
+    engine commit (git objects are content-addressed by the commit)."""
+    from calibration import mapping
+
+    out = {}
+    for name, rel in LINE266_MODULES:
+        try:
+            blob = mapping._git(root, "show", f"{engine_commit}:{rel}")
+        except Exception as e:
+            raise ChainError(f"{rel} is not readable at the engine commit") from e
+        out[name] = (root / rel, hashlib.sha256(blob).hexdigest())
+    return out
 
 
 @dataclass(frozen=True)
@@ -2617,23 +2660,31 @@ def start(
     """ST-1: DESIGN §4 before any protected-data read. Any failure raises
     ChainError (line 266 failing to load raises SeedError) and nothing is
     read. That the *running* bytes are these files is the launch route's to
-    establish (R14D3-S-2): this function cannot run before its own module."""
-    files = {row: (root / path).read_bytes() for row, path in MODULE_PATHS.items()}
-    log = verify_chain(
-        acceptance_record=acceptance_record,
-        post_raw_tx=post_raw_tx,
-        declaration=declaration,
-        protocol=protocol,
-        modules=files,
-    )
-    rows = {name: protocol_row(protocol, name) for name in SIGNED_ROWS}
-    global _TRIAL_SEED
+    establish (R14D3-S-2): this function cannot run before its own module.
+
+    R14S6AR-S-2, S-3: every attempt first clears the line-266 function; any
+    refusal is final for the process (a module loaded during it stays in
+    memory), so a retry needs a fresh process."""
+    global _TRIAL_SEED, _START_FAILED
+    _TRIAL_SEED = None
+    if _START_FAILED:
+        raise ChainError("a refused start is final: retry in a fresh process")
     try:
-        load_line266()
-    except Exception as e:
-        _TRIAL_SEED = None
-        raise SeedError(f"line 266 did not load: {type(e).__name__}") from None
-    try:  # the inventory now includes line 266's modules (R14S6A-S-1)
+        files = {row: (root / p).read_bytes() for row, p in MODULE_PATHS.items()}
+        log = verify_chain(
+            acceptance_record=acceptance_record,
+            post_raw_tx=post_raw_tx,
+            declaration=declaration,
+            protocol=protocol,
+            modules=files,
+        )
+        rows = {name: protocol_row(protocol, name) for name in SIGNED_ROWS}
+        sources = line266_sources(root, rows["engine_commit"])
+        try:
+            load_line266(sources)
+        except Exception as e:
+            raise SeedError(f"line 266 did not load: {type(e).__name__}") from None
+        # the inventory now includes line 266's modules (R14S6A-S-1)
         defn = verify_code(
             obj,
             rows["qualification_object_sha256"],
@@ -2645,6 +2696,7 @@ def start(
         if image_digest != rows["image_digest"]:
             raise ChainError("the running image is not the signed one")
     except BaseException:
+        _START_FAILED = True
         _TRIAL_SEED = None
         raise
     return Started(

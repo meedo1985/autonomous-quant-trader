@@ -18,3 +18,23 @@ Validation: 366 passed (`pytest tests/unit/test_c2_confirmation*.py
 tests/unit/test_c2_lockbox*.py tests/unit/test_d19_deploy.py`); ruff format and check
 clean; `mypy src` clean; strict mypy on the module and the start test clean; lint-imports
 7 kept. Sol re-check: one round.
+
+## Re-check (SOL_CONFIRMATION_SLICE6A_RECHECK_4FA758F.md, verdict FIX)
+
+Sol closed R14S6A-S-2; it found S-1 and S-3 only partly closed. S-3 remains the owner and
+pre-signing item LG6A-4.
+
+| ID | Sol | Decision | Repair |
+|---|---|---|---|
+| R14S6AR-S-1 | BLOCKER | **Accepted.** Line 266's modules were imported, and so executed, before any byte check. | `line266_sources(root, engine_commit)` takes the SHA-256 of each line-266 module's blob at the **signed** engine commit: `aqt.core.paths`, then `aqt.core.preregistration`, which are the only modules the import newly loads; the others are already loaded with this module. `load_line266(sources)` runs each not-yet-loaded one from exactly those bytes, through `load_verified`, and refuses if the import adds any other `aqt`/`calibration` module. The post-load inventory check is kept. Tests, in fresh processes: authenticated bytes load; with a wrong preregistration digest it **never enters `sys.modules`**, so it never executes; leaving `aqt.core.paths` out of the sources is refused as unauthenticated. `line266_sources` matches the git blobs at HEAD and refuses an unknown commit. |
+| R14S6AR-S-2 | BLOCKER | **Accepted, with Sol's first correction.** | Any refusal in `start` sets `_START_FAILED`; every later `start` in that process refuses with "retry in a fresh process". Test: refuse, then a valid start is still refused. |
+| R14S6AR-S-3 | NON-BLOCKING | **Accepted.** | `start` clears `_TRIAL_SEED` on entry. Test: one success, then a refused second attempt, leaves it None. |
+
+Residual, recorded: modules already loaded before `start` (`aqt.core.ledger`,
+`aqt.data.manifest`, and everything this module imports) are the launch route's concern
+(LG6A-2, R14D3-S-2), as for the lockbox. Whether import-time code could reach confirmation
+data depends on the open access mechanism (DESIGN §10). 6b obtains the read only after
+`start` returns.
+
+Validation: 371 passed (same suites); ruff format and check clean; `mypy src` clean;
+strict mypy on the module and the start test clean; lint-imports 7 kept.

@@ -19,6 +19,7 @@ from calibration import c2_lockbox as lb
 from tests.unit.test_c2_lockbox_worker import _start_inputs
 
 ROOT = Path(__file__).resolve().parents[2]
+REAL_SOURCES = cf.line266_sources  # before the autouse fixture patches it
 BEGIN = "# --- the start chain and the loader (DESIGN §4; R-14a item 2)"
 CODE = ("ChainError", "_varint", "parse_tx", "txid", "post_declaration_sha256",
         "check_acceptance", "protocol_row", "verify_chain", "load_verified",
@@ -64,6 +65,23 @@ def test_the_copies_do_not_import_each_other() -> None:
 # --- ST-1: start ------------------------------------------------------------------
 
 
+def _disk_sources(root: Path = ROOT) -> dict[str, tuple[Path, str]]:
+    """line266_sources' shape from this checkout's files (the tests' engine)."""
+    return {
+        name: (root / rel, hashlib.sha256((root / rel).read_bytes()).hexdigest())
+        for name, rel in cf.LINE266_MODULES
+    }
+
+
+@pytest.fixture(autouse=True)
+def _fresh_start_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    # each test is its own "process" for R14S6AR-S-2's final refusal; the
+    # synthetic roots have no git history, so line 266's sources are this
+    # checkout's files
+    monkeypatch.setattr(cf, "_START_FAILED", False)
+    monkeypatch.setattr(cf, "line266_sources", lambda root, commit: _disk_sources())
+
+
 @pytest.fixture
 def code_ok(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     seen: dict[str, Any] = {}
@@ -79,7 +97,7 @@ def code_ok(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 @pytest.fixture
 def line266(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     calls: list[str] = []
-    monkeypatch.setattr(cf, "load_line266", lambda: calls.append("loaded"))
+    monkeypatch.setattr(cf, "load_line266", lambda sources=None: calls.append("loaded"))
     return calls
 
 
@@ -200,11 +218,18 @@ def verify_code(*a):
     seen.append("aqt.core.preregistration" in sys.modules)
     return {{"engine_commit": "e" * 40}}
 cf.verify_code = verify_code
+R = pathlib.Path({str(ROOT)!r})
+cf.line266_sources = lambda root, commit: {{
+    n: (R / rel, hashlib.sha256((R / rel).read_bytes()).hexdigest())
+    for n, rel in cf.LINE266_MODULES}}
 cf.start(root=root, obj=root / "obj", acceptance_record=_acceptance(post),
          post_raw_tx=post, declaration=declaration, protocol=protocol,
          image_digest="sha256:" + "1" * 64)
 assert seen == [True], seen
 assert "jsonschema" not in sys.modules  # the placeholders are gone again
+# R14S6AR-S-1: line 266 ran from its authenticated bytes, by load_verified
+m = sys.modules["aqt.core.preregistration"]
+assert m.__file__ == str(R / "src/aqt/core/preregistration.py")
 print("ok")
 """
     out = subprocess.run(
@@ -216,7 +241,7 @@ print("ok")
 def test_line_266_failing_to_load_refuses_the_start(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code_ok: dict[str, Any]
 ) -> None:
-    def broken() -> None:
+    def broken(sources: object = None) -> None:
         raise ImportError("jsonschema placeholder")
 
     monkeypatch.setattr(cf, "load_line266", broken)
@@ -391,3 +416,91 @@ def test_verify_code_refuses_a_third_loaded_module(
     with pytest.raises(ValueError, match="the loaded calibration/c2_extra.py"):
         cf.verify_code(tmp_path, sha(manifest), ROOT, modules)
     assert screen.check_screen_code is not None
+
+
+# --- R14S6AR-S-1..3: authenticated line 266, a final refusal, a cleared seed ----
+
+
+def test_line266_sources_are_the_engine_commit_blobs() -> None:
+    from calibration import mapping
+
+    got = REAL_SOURCES(ROOT, "HEAD")
+    assert list(got) == ["aqt.core.paths", "aqt.core.preregistration"]
+    for name, rel in cf.LINE266_MODULES:
+        blob = mapping._git(ROOT, "show", f"HEAD:{rel}")
+        assert got[name] == (ROOT / rel, hashlib.sha256(blob).hexdigest())
+    with pytest.raises(cf.ChainError, match="not readable at the engine commit"):
+        REAL_SOURCES(ROOT, "0" * 40)
+
+
+def _line266_in_fresh_process(sources: str) -> str:
+    """load_line266 with the given sources expression in a fresh process; prints
+    the outcome and whether preregistration ever entered sys.modules."""
+    code = f"""
+import hashlib, pathlib, sys
+sys.path[:0] = [{str(ROOT)!r}, {str(ROOT / "src")!r}]
+from calibration import c2_confirmation as cf
+R = pathlib.Path({str(ROOT)!r})
+def h(rel):
+    return hashlib.sha256((R / rel).read_bytes()).hexdigest()
+assert "aqt.core.preregistration" not in sys.modules
+try:
+    cf.load_line266({sources})
+    print("loaded", "aqt.core.preregistration" in sys.modules)
+except cf.SeedError as e:
+    print("refused", "aqt.core.preregistration" in sys.modules, e)
+except cf.ChainError as e:
+    print("chain", "aqt.core.preregistration" in sys.modules, e)
+"""
+    out = subprocess.run(
+        [sys.executable, "-I", "-c", code], capture_output=True, text=True, check=False
+    )
+    assert out.stdout.strip(), out.stderr
+    return out.stdout.strip()
+
+
+PATHS = '"aqt.core.paths": (R / "src/aqt/core/paths.py", h("src/aqt/core/paths.py"))'
+PREREG = (
+    '"aqt.core.preregistration": (R / "src/aqt/core/preregistration.py", '
+    'h("src/aqt/core/preregistration.py"))'
+)
+
+
+def test_line_266_runs_only_from_authenticated_bytes() -> None:
+    assert _line266_in_fresh_process("{" + PATHS + ", " + PREREG + "}") == (
+        "loaded True"
+    )
+    # a preregistration whose bytes are not the engine's never executes
+    wrong = PREREG.replace('h("src/aqt/core/preregistration.py")', '"0" * 64')
+    got = _line266_in_fresh_process("{" + PATHS + ", " + wrong + "}")
+    assert got.startswith("chain False") and "is not the signed module" in got
+
+
+def test_an_unauthenticated_module_loaded_by_line_266_is_refused() -> None:
+    # without aqt.core.paths among the sources, the import system would load
+    # it from disk unauthenticated: refused
+    got = _line266_in_fresh_process("{" + PREREG + "}")
+    assert got.startswith("refused") and "['aqt.core.paths']" in got
+
+
+def test_a_refused_start_is_final_for_the_process(
+    tmp_path: Path, code_ok: dict[str, Any]
+) -> None:
+    inputs = _start_inputs(tmp_path)
+    with pytest.raises(cf.ChainError):
+        cf.start(**{**inputs, "acceptance_record": b"{}"})
+    with pytest.raises(cf.ChainError, match="retry in a fresh process"):
+        cf.start(**inputs)  # valid now, but the process is not fresh
+    assert cf._TRIAL_SEED is None
+
+
+def test_a_success_then_a_refusal_clears_the_seed(
+    tmp_path: Path, code_ok: dict[str, Any]
+) -> None:
+    # R14S6AR-S-3: the second attempt clears line 266 on entry
+    inputs = _start_inputs(tmp_path)
+    cf.start(**inputs)
+    assert cf._TRIAL_SEED is not None
+    with pytest.raises(cf.ChainError):
+        cf.start(**{**inputs, "acceptance_record": b"{}"})
+    assert cf._TRIAL_SEED is None
