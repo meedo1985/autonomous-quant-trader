@@ -945,3 +945,264 @@ def seeds_record(family_seed: str, trial_ids: list[str]) -> dict[str, str]:
     return {
         tid: sha({"family_seed": family_seed, "trial_id": tid}) for tid in trial_ids
     }
+
+
+# --- slice 4: seeds (DESIGN §5.1; DRAFT R-7, R-13, seed_disclosure; line 266) --
+
+POLICY = "L266_MOD_2_31"  # D-20 A1b, as the lockbox module's POLICY
+_HEX = frozenset("0123456789abcdef")
+
+
+class SeedError(CycleError):
+    """seed_disclosure / DESIGN §5.1: a seed cannot be verified; the evaluation
+    is invalid and no gate runs."""
+
+
+@dataclass(frozen=True)
+class Chain:
+    """The drand chain the signed C2 fixes (`seed_disclosure.beacon`), never a
+    caller's choice: the loader reads it from the signed bytes (slice 6)."""
+
+    public_key: str
+    genesis_time: int  # unix seconds of round 1
+    period: int  # seconds between rounds
+
+
+@dataclass(frozen=True)
+class Beacon:
+    """One drand output as published: round, randomness, signature (hex)."""
+
+    round: int
+    randomness: str
+    signature: str
+
+
+# The BLS check of a beacon signature against the chain key. shortcut: injected
+# because no BLS library is in the pinned image (DESIGN §10, still open); the
+# real verifier is chosen before C2 signing (slice 4b).
+Verifier = Callable[[str, Beacon], bool]
+
+# Protocol line 266, `aqt.core.preregistration.trial_seed` (R-8). shortcut:
+# injected because that module imports jsonschema, which the pinned image
+# lacks (test_d19_deploy), so importing it here would break the image run;
+# how the real run reaches it is decided with slice 4b (LG4-6).
+Line266 = Callable[..., str]
+
+
+def _hex(value: object, length: int | None = None) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) > 0
+        and len(value) % 2 == 0
+        and set(value) <= _HEX
+        and (length is None or len(value) == length)
+    )
+
+
+def beacon_round(capture_cdx: str, chain: Chain) -> int:
+    """seed_disclosure `round`: the first round whose scheduled time is at least
+    T + 24h, T the 14-digit UTC CDX timestamp; drand schedules round r at
+    genesis_time + (r - 1) * period."""
+    if not (
+        isinstance(capture_cdx, str)
+        and len(capture_cdx) == 14
+        and capture_cdx.isdigit()
+    ):
+        raise SeedError(f"capture timestamp {capture_cdx!r} is not 14 CDX digits")
+    if (
+        type(chain.genesis_time) is not int
+        or type(chain.period) is not int
+        or chain.period <= 0
+    ):
+        raise SeedError("chain genesis time and period must be integers, period > 0")
+    try:
+        t = datetime.strptime(capture_cdx, "%Y%m%d%H%M%S").replace(tzinfo=UTC)
+    except ValueError:
+        raise SeedError(
+            f"capture timestamp {capture_cdx!r} is not a UTC time"
+        ) from None
+    target = int(t.timestamp()) + 86_400
+    if target <= chain.genesis_time:
+        return 1
+    return 1 + -(-(target - chain.genesis_time) // chain.period)  # ceiling division
+
+
+def check_beacon(beacon: Beacon, round_: int, chain: Chain, verify: Verifier) -> None:
+    """seed_disclosure `verification`: the beacon is the fixed round, its
+    randomness is SHA-256 of its signature (drand's definition, checked here),
+    and its signature verifies against the chain key. Anything else, including
+    a verifier error, is a seed failure."""
+    if type(beacon.round) is not int or beacon.round != round_:
+        raise SeedError(
+            f"beacon round {beacon.round!r} is not the fixed round {round_}"
+        )
+    if not (
+        _hex(beacon.randomness, 64)
+        and _hex(beacon.signature)
+        and _hex(chain.public_key)
+    ):
+        raise SeedError(
+            "beacon randomness, signature or chain key is not lowercase hex"
+        )
+    if hashlib.sha256(bytes.fromhex(beacon.signature)).hexdigest() != beacon.randomness:
+        raise SeedError("beacon randomness is not SHA-256 of its signature")
+    try:
+        ok = verify(chain.public_key, beacon)
+    except Exception as e:  # any verifier failure is "no verifying output"
+        raise SeedError(f"beacon verification failed: {type(e).__name__}") from None
+    if ok is not True:
+        raise SeedError("beacon signature does not verify against the chain key")
+
+
+def annex_b_seed(
+    *,
+    protocol_hash: str,
+    family: str,
+    cycle_id: str,
+    window_id: str,
+    data_manifest_hash: str,
+    trials: list[dict[str, Any]],
+) -> str:
+    """Annex B §2.4: SHA-256 of the canonical JSON of these fields, `trials` in
+    declared trial-id order, each {trial_id, hypothesis_hash, configuration_hash}."""
+    keys = ("trial_id", "hypothesis_hash", "configuration_hash")
+    return sha(
+        {
+            "cycle_id": cycle_id,
+            "data_manifest_hash": data_manifest_hash,
+            "family_id": family,
+            "protocol_hash": protocol_hash,
+            "trials": [{k: t[k] for k in keys} for t in trials],
+            "window_id": window_id,
+        }
+    )
+
+
+def beacon_family_seed(annex_b: str, beacon: Beacon) -> str:
+    """R-7 (owner decision D20/D13, B2): family_seed_f =
+    SHA256(cj({annex_b_seed, beacon_randomness, round})); all three validated
+    before hashing."""
+    if not (_hex(annex_b, 64) and _hex(beacon.randomness, 64)):
+        raise SeedError("annex_b_seed and beacon_randomness must be 64 lowercase hex")
+    if type(beacon.round) is not int or beacon.round < 1:
+        raise SeedError("round must be a positive integer")
+    return sha(
+        {
+            "annex_b_seed": annex_b,
+            "beacon_randomness": beacon.randomness,
+            "round": beacon.round,
+        }
+    )
+
+
+_RECORD_FIELDS = frozenset(
+    {"trial_id", "hypothesis_hash", "configuration_hash", "trial_index"}
+)
+
+
+def _check_records(
+    family: str, trials: list[dict[str, Any]], records: list[dict[str, Any]]
+) -> None:
+    """Each declared trial has exactly one immutable C2 trial record, in the
+    declared order, whose configuration hash is the trial object's."""
+    if not all(isinstance(r, dict) and set(r) == _RECORD_FIELDS for r in records):
+        raise SeedError(f"{family}: trial record fields")
+    if [r["trial_id"] for r in records] != [t["trial_id"] for t in trials]:
+        raise SeedError(
+            f"{family}: trial records do not match the declared trials in order"
+        )
+    indices = [r["trial_index"] for r in records]
+    if any(type(i) is not int or i < 0 for i in indices) or len(set(indices)) != len(
+        indices
+    ):
+        raise SeedError(f"{family}: trial_index must be distinct non-negative integers")
+    for t, r in zip(trials, records, strict=True):
+        if not _hex(r["hypothesis_hash"], 64):
+            raise SeedError(f"{t['trial_id']}: hypothesis_hash is not 64 lowercase hex")
+        if r["configuration_hash"] != screen.trial_sha256(t):
+            raise SeedError(
+                f"{t['trial_id']}: configuration_hash is not the trial object's"
+            )
+
+
+def derive_seeds(
+    *,
+    declared: dict[str, list[dict[str, Any]]],
+    records: dict[str, list[dict[str, Any]]],
+    protocol_hash: str,
+    cycle_id: str,
+    window_id: str,
+    data_manifest_hash: str,
+    beacon: Beacon,
+    capture_cdx: str,
+    chain: Chain,
+    verify: Verifier,
+    line266: Line266,
+) -> dict[str, Any]:
+    """DESIGN §5.1, step 3: every seed of the evaluation, verified from the
+    governing records, with its provenance (Constitution §27). Raises
+    SeedError on any failure: the evaluation is invalid and no gate runs."""
+    if not (_hex(protocol_hash, 64) and _hex(data_manifest_hash, 64)):
+        raise SeedError("protocol_hash and data_manifest_hash must be 64 lowercase hex")
+    if set(records) != set(declared):
+        raise SeedError("trial records are not for exactly the declared families")
+    round_ = beacon_round(capture_cdx, chain)
+    check_beacon(beacon, round_, chain, verify)
+    families: dict[str, Any] = {}
+    for family, trials in declared.items():
+        recs = records[family]
+        _check_records(family, trials, recs)
+        annex_b = annex_b_seed(
+            protocol_hash=protocol_hash,
+            family=family,
+            cycle_id=cycle_id,
+            window_id=window_id,
+            data_manifest_hash=data_manifest_hash,
+            trials=recs,
+        )
+        f_seed = beacon_family_seed(annex_b, beacon)
+        trial_seeds = seeds_record(f_seed, [r["trial_id"] for r in recs])
+        per_trial: dict[str, Any] = {}
+        for r in recs:
+            try:  # protocol line 266, unchanged for the nominee's fit (R-13)
+                seed_l266 = line266(
+                    protocol_hash=protocol_hash,
+                    hypothesis_hash=r["hypothesis_hash"],
+                    trial_index=r["trial_index"],
+                )
+            except Exception as e:
+                raise SeedError(f"line-266 seed failed: {type(e).__name__}") from None
+            if not _hex(seed_l266, 64):
+                raise SeedError(
+                    f"{r['trial_id']}: line-266 seed is not 64 lowercase hex"
+                )
+            per_trial[r["trial_id"]] = {
+                "trial_index": r["trial_index"],
+                "trial_seed": trial_seeds[
+                    r["trial_id"]
+                ],  # R-13: G-1, G-11, G-14 streams
+                "seed_l266": seed_l266,
+                "estimator_seed_policy": POLICY,
+                "estimator_seed": screen.estimator_seed(seed_l266),  # 0 valid (D20L-44)
+            }
+        families[family] = {
+            "annex_b_seed": annex_b,
+            "family_seed": f_seed,
+            "trials": per_trial,
+        }
+    return {
+        "beacon": {
+            "chain_public_key": chain.public_key,
+            "capture_cdx": capture_cdx,
+            "round": beacon.round,
+            "randomness": beacon.randomness,
+            "signature": beacon.signature,
+        },
+        "inputs": {
+            "protocol_hash": protocol_hash,
+            "cycle_id": cycle_id,
+            "window_id": window_id,
+            "data_manifest_hash": data_manifest_hash,
+        },
+        "families": families,
+    }
