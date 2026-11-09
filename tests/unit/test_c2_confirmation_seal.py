@@ -136,6 +136,7 @@ def test_a_sealed_artifact_passes_the_lockbox_pre_read_checks() -> None:
         ("source", "window_id", 7),
         ("block", "value", "bad"),
         ("block", "value", cf.hexf(0.5)),  # a block length below 1
+        ("block", "value", cf.hexf(121.0)),  # longer than the n = 120 source
         ("block", "value", cf.hexf(float("inf"))),
         ("block", "raw", "bad"),
         ("block", "psi_sha256", "0" * 63),

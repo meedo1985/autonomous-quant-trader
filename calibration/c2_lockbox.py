@@ -647,7 +647,7 @@ def _check_shape(artifact: object) -> dict[str, Any]:
         and hex64(src["evaluation_record_sha256"])
         and hex64(blk["psi_sha256"])
         and math.isfinite(value)
-        and value >= 1
+        and 1 <= value <= src["n"]  # R14S5R-S-1: A4 requires 1 <= b <= n
         and (raw is None or math.isfinite(raw))
         and blk["clipping"] in (None, "LOWER", "UPPER"),
         "PREDICTION_ARTIFACT_INVALID",

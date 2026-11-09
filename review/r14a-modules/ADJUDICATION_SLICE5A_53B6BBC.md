@@ -21,3 +21,13 @@ Validation after the repairs (5a and 5b together): 327 passed
 tests/unit/test_d19_deploy.py`); ruff format and check are clean; `mypy src` is clean;
 strict mypy shows only the 10 pre-existing errors in `test_calibration_screen.py`;
 lint-imports reports 7 contracts kept. Sol re-check: one round, with 5b's.
+
+## Re-check (SOL_CONFIRMATION_SLICE5_RECHECK_775A3E4.md, verdict FIX)
+
+Sol closed R14S5-S-1, -2, -4 and -5, and R14S5B-S-1 and -3. It found R14S5-S-3 partly closed, and accepted R14S5B-S-2 as an open owner/S4 item (LG5B-7).
+
+| ID | Sol | Decision | Repair |
+|---|---|---|---|
+| R14S5R-S-1 | BLOCKER | **Accepted.** The pre-read check had no upper bound on `block.value`, while A4 requires `1 <= b <= n`. | `_check_shape` now requires `1 <= value <= source.n`. New negative test: `value = 121` with `n = 120`. The degenerate `raw = 0.0` stays accepted, as Sol confirmed. |
+
+Validation: 328 passed (same suites); ruff is clean; strict mypy is clean on `c2_lockbox.py`. Not re-sent to Sol: the change adds one bound, at the exact line Sol named. A further round is available on request.
