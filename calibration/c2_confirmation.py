@@ -17,6 +17,8 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import random
+import struct
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -40,7 +42,7 @@ from aqt.data.bars import BarSeries
 from aqt.features.columns import feature_columns
 from aqt.features.factory import FeatureFactoryError
 from calibration import dsr, gates, screen
-from calibration.seeds import sha
+from calibration.seeds import cj, sha
 
 PASS, FAIL, NA, UNAVAILABLE = "PASS", "FAIL", "N/A", "UNAVAILABLE"
 DD_LIMIT = 0.05  # C-0 drawdown condition (absolute)
@@ -1647,4 +1649,360 @@ def derive_seeds(
             "data_manifest_hash": data_manifest_hash,
         },
         "families": families,
+    }
+
+
+# --- slice 5a: sealing (DESIGN §5.3; Annex D §D-1.7, §D-3.5; A7) ----------
+# Q-D1 (DESIGN §5.5): the A4 generator below is the lockbox module's, copied
+# text for text because R-14a item 3 forbids importing it; a test requires
+# the two copies' source and reference vectors to be identical. Never edit
+# one copy alone.
+
+M_DAYS = 457
+ATTEMPTS = st.BOOTSTRAP_ATTEMPTS  # 2,000 (§D-1.4)
+QUANTILE = 0.05
+PURPOSE = "lockbox_prediction"
+ASSET = "BTCUSDT"
+COST = "1.0"
+SEED_SOURCE = "R13_TRIAL_SEED"
+
+
+class LockboxError(ValueError):
+    """A refused input or an unavailable computation; `code` says which."""
+
+    def __init__(self, code: str, detail: str = "") -> None:
+        super().__init__(f"{code}: {detail}" if detail else code)
+        self.code = code
+
+
+def hexf(x: float) -> str:
+    return struct.pack(">d", x).hex()
+
+
+def _time(t: datetime) -> str:
+    return t.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def window_id(w0: datetime, w1: datetime) -> str:
+    """The canonical `["<w0>","<w1>"]` (§D-3.2)."""
+    return json.dumps([_time(w0), _time(w1)], separators=(",", ":"))
+
+
+def seed_material(seed_hex: str, window: str, replicate: int) -> bytes:
+    """IMPLEMENTATION_CONVENTIONS l.84-94's layout with purpose
+    `lockbox_prediction` and `output_length` 457 (§D-3.4)."""
+    # ReplicateStream is not touched (§D-3.4); building one only reuses its
+    # identity checks (seed hex, convention hash, asset, cost, window).
+    st.ReplicateStream(seed_hex, st.CONVENTION_DOCUMENT_SHA256, ASSET, COST, window)
+    if isinstance(replicate, bool) or not 0 <= replicate < ATTEMPTS:
+        raise LockboxError("INVALID_ARGUMENT", "replicate index must be 0..1999")
+    return json.dumps(
+        [
+            st.SEED_DOMAIN,
+            seed_hex,
+            st.CONVENTION_DOCUMENT_SHA256,
+            PURPOSE,
+            ASSET,
+            COST,
+            window,
+            M_DAYS,
+            replicate,
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def replicate_indices(
+    seed_hex: str, window: str, n: int, block: float, replicate: int
+) -> tuple[int, ...]:
+    """457 indices over `[0, n)` in `bootstrap_indices`' draw order."""
+    if not 1 <= block <= n:
+        raise LockboxError("INVALID_ARGUMENT", "block must lie in [1, n]")
+    digest = hashlib.sha256(seed_material(seed_hex, window, replicate)).digest()
+    generator = random.Random(int.from_bytes(digest, "big"))
+    indices = [st._uniform_index(generator, n)]
+    for _ in range(1, M_DAYS):
+        indices.append(
+            st._uniform_index(generator, n)
+            if generator.random() < 1 / block
+            else (indices[-1] + 1) % n
+        )
+    return tuple(indices)
+
+
+@dataclass(frozen=True)
+class Forecast:
+    psi: tuple[float, ...]
+    block: st.BlockLength
+    indices: tuple[tuple[int, ...], ...]
+    replicates: tuple[float, ...]  # in replicate order r = 0..1999
+    q: float
+
+
+def forecast(d: Sequence[float], seed_hex: str, window: str) -> Forecast:
+    """ψ, b, the 2,000 replicates and q (§D-1.3, §D-1.4, §D-3.4), with
+    §D-1.6 items 1-4 as refusals."""
+    values = tuple(float(x) for x in d)
+    n = len(values)
+    if n < 16:
+        raise LockboxError("INSUFFICIENT_OBSERVATIONS", "source n < 16")
+    s = st.sharpe(values)
+    if s.reason is not None:
+        raise LockboxError(s.reason, "source E-DIFF")
+    try:
+        psi = st._influence(values, s)
+    except (ArithmeticError, ValueError) as e:
+        raise LockboxError("NONFINITE_RESULT", "psi") from e
+    block = st.block_length(psi)
+    if block.reason is not None or block.value is None:
+        raise LockboxError(block.reason or "NONFINITE_RESULT", "block length")
+    if not 1 <= block.value <= n:
+        raise LockboxError("NONFINITE_RESULT", "block length outside [1, n]")
+    indices = tuple(
+        replicate_indices(seed_hex, window, n, block.value, r) for r in range(ATTEMPTS)
+    )
+    replicates = []
+    for idx in indices:  # all attempts, in order; none dropped or replaced
+        t = st.sharpe([values[i] for i in idx]).scaled
+        if t is None or not math.isfinite(t):
+            raise LockboxError("NONFINITE_RESULT", "a replicate is unavailable")
+        replicates.append(t)
+    q = st.type_seven_quantile(replicates, QUANTILE)
+    if not math.isfinite(q):
+        raise LockboxError("NONFINITE_RESULT", "q")
+    return Forecast(psi, block, indices, tuple(replicates), q)
+
+
+def _floats_sha256(values: Sequence[float]) -> str:
+    return hashlib.sha256(b"".join(struct.pack(">d", x) for x in values)).hexdigest()
+
+
+PREDICTION_SCHEMA = "aqt.lockbox.prediction.v1"
+SEALING_SCHEMA = "aqt.lockbox.sealing.v1"
+STATUSES = ("a", "b", "c", "d")  # Annex D §D-1.7; (d) governs over (c)
+NOMINEE_FIELDS = frozenset(
+    {"trial_id", "configuration_hash", "hypothesis_hash", "protocol_hash",
+     "trial_index", "seed_l266", "estimator_seed_policy", "estimator_seed"}
+)  # fmt: skip
+CODE_FIELDS = frozenset(
+    {"lockbox_module_sha256", "confirmation_module_sha256", "engine_commit",
+     "screen_object_sha256"}
+)  # fmt: skip
+
+
+class SealError(CycleError):
+    """A status-(a) candidate could not be sealed; the family is status (d)."""
+
+
+def baseline_d(
+    trial: dict[str, Any],
+    path: np.ndarray,
+    w0: datetime,
+    window_hours: int,
+    estimator_seed: int,
+) -> tuple[float, ...]:
+    """A7 step 1 (Annex D §D-3.5; DESIGN §5.3): the nominee's 1x BTC baseline
+    pair over the C2 window from the confirmation path, with the registered
+    code and `estimator_seed`; both legs start flat at w0 (run_event_contract's
+    start, R-14d) and end at the path's derived terminal row (confirmation_path).
+    The legs are built as screen_gates' baseline run (cost 1.0, no delay, lag
+    0); d is the daily E-DIFF series, candidate minus benchmark, exactly as
+    st.paired_sharpe_statistics forms it (C-0)."""
+    screen.check_trial(trial)
+    if type(estimator_seed) is not int or not 0 <= estimator_seed < 2**31:
+        raise SealError("estimator_seed must be an int in [0, 2**31)")
+    warmup = trial["warmup_hours"]
+    if window_hours < 48 or window_hours % 24 or len(path) != warmup + window_hours + 1:
+        raise SealError("path length must be warmup + whole window days + 1 hour")
+    series = screen.path_series(path, 0, w0 - timedelta(hours=warmup))  # BTC
+    first, columns = feature_columns(series)
+    sigma = ewma_hourly_volatility_bps_series(hourly_log_returns_bps(series))
+    if trial["model"] is not None:
+        column = screen.model_column(
+            trial, series, first, columns, warmup, window_hours, 0,
+            model_seed=estimator_seed,
+        )  # fmt: skip
+        columns = {**columns, f"model:{trial['model']['id']}": tuple(column)}
+    closes = [b.close for b in series.bars]
+    signal = screen.load(trial["signal"], trial["signal_sha256"])
+    overlay = (
+        None
+        if trial["overlay"] is None
+        else screen.load(trial["overlay"], trial["overlay_sha256"])
+    )
+    candidate, _ = screen.leg_targets(
+        trial, signal, overlay, columns, first, closes, warmup, window_hours, 0
+    )
+    benchmark = screen.benchmark_targets(columns, first, warmup, window_hours)
+    c, b = (
+        screen.daily_returns(
+            run_event_contract(series, targets, warmup, sigma_bps=sigma)
+        )
+        for targets in (candidate, benchmark)
+    )
+    if len(c) != window_hours // 24 or len(b) != len(c):
+        raise SealError("DAYS_INCOMPLETE")
+    return tuple(x - y for x, y in zip(c, b, strict=True))
+
+
+def prediction_artifact(
+    *,
+    cycle_id: str,
+    family: str,
+    nominee: dict[str, Any],
+    window: str,
+    d: Sequence[float],
+    d_sha256: str,
+    evaluation_record_sha256: str,
+    family_seed: str,
+    code: dict[str, str],
+) -> dict[str, Any]:
+    """A7 steps 2-3 and the `aqt.lockbox.prediction.v1` schema (§D-3.5): d
+    must hash to the pre-look `d_sha256`; ψ, b, the 2,000 replicates and q by
+    the A4 generator above on the R-13 trial seed of the nominee."""
+    if set(nominee) != NOMINEE_FIELDS or set(code) != CODE_FIELDS:
+        raise SealError("nominee or code fields")
+    if _floats_sha256(d) != d_sha256:
+        raise SealError("d does not hash to the pre-look d_sha256")
+    seed_hex = sha({"family_seed": family_seed, "trial_id": nominee["trial_id"]})
+    f = forecast(d, seed_hex, window)
+    if f.block.value is None:  # forecast refuses this already; kept for types
+        raise SealError("block length")
+    return {
+        "cycle_id": cycle_id,
+        "family": family,
+        "nominee": dict(nominee),
+        "source": {
+            "window_id": window,
+            "n": len(d),
+            "d_sha256": d_sha256,
+            "evaluation_record_sha256": evaluation_record_sha256,
+        },
+        "block": {
+            "psi_sha256": _floats_sha256(f.psi),
+            "value": hexf(f.block.value),
+            "raw": None if f.block.raw is None else hexf(f.block.raw),
+            "clipping": f.block.clipping,
+        },
+        "stream": {
+            "seed_hex": seed_hex,
+            "seed_source": SEED_SOURCE,
+            "purpose": PURPOSE,
+            "asset": ASSET,
+            "cost": COST,
+            "m": M_DAYS,
+            "attempts": ATTEMPTS,
+        },
+        "replicates_sorted": [hexf(x) for x in sorted(f.replicates)],
+        "q": hexf(f.q),
+        "code": dict(code),
+    }
+
+
+def seal_family(
+    *,
+    family: str,
+    nomination: Nomination,
+    outcome: str | None,
+    cycle_id: str,
+    protocol_hash: str,
+    seeds: dict[str, Any],
+    record: dict[str, Any] | None,
+    trial: dict[str, Any] | None,
+    path: np.ndarray | None,
+    w0: datetime,
+    window_hours: int,
+    window: str,
+    d_sha256: str | None,
+    evaluation_record_sha256: str,
+    code: dict[str, str],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """One family's terminal pre-lockbox status (§D-1.7) and, for (a), its
+    sealed artifact. `outcome` is nominee_outcome's; `seeds` is derive_seeds'
+    record; `record` is the nominee's immutable C2 trial record. Any failure
+    while sealing an ELIGIBLE nominee gives (d) with its reason (§D-3.5)."""
+    fam_seeds = seeds["families"][family]
+    entry: dict[str, Any] = {
+        "status": "b",
+        "nominee_trial_id": nomination.nominee,
+        "reason": nomination.reason,
+        "family_seed": fam_seeds["family_seed"],
+        "trial_index": None,
+        "seed_l266": None,
+        "prediction_artifact_sha256": None,
+    }
+    if not nomination.available:
+        return entry, None
+    if outcome == "NO_RESULT":  # a gate UNAVAILABLE: (d), also over (c)
+        return {**entry, "status": "d", "reason": "GATE_UNAVAILABLE"}, None
+    if outcome == "FAILED":
+        return {**entry, "status": "c", "reason": "NOT_ELIGIBLE"}, None
+    if outcome != "PROCEEDS_TO_LOCKBOX":
+        raise CycleError(f"{family}: unknown nominee outcome {outcome!r}")
+    tid = nomination.nominee
+    try:
+        if (
+            trial is None
+            or record is None
+            or path is None
+            or d_sha256 is None
+            or tid is None
+            or trial["trial_id"] != tid
+            or record["trial_id"] != tid
+            or screen.trial_sha256(trial) != record["configuration_hash"]
+        ):
+            raise SealError("nominee, trial object and trial record do not agree")
+        if window != window_id(w0, w0 + timedelta(hours=window_hours)):
+            raise SealError("window id is not the C-0 window's")
+        t_seeds = fam_seeds["trials"][tid]
+        nominee = {
+            "trial_id": tid,
+            "configuration_hash": record["configuration_hash"],
+            "hypothesis_hash": record["hypothesis_hash"],
+            "protocol_hash": protocol_hash,
+            "trial_index": t_seeds["trial_index"],
+            "seed_l266": t_seeds["seed_l266"],
+            "estimator_seed_policy": t_seeds["estimator_seed_policy"],
+            "estimator_seed": t_seeds["estimator_seed"],
+        }
+        d = baseline_d(trial, path, w0, window_hours, t_seeds["estimator_seed"])
+        artifact = prediction_artifact(
+            cycle_id=cycle_id, family=family, nominee=nominee, window=window, d=d,
+            d_sha256=d_sha256, evaluation_record_sha256=evaluation_record_sha256,
+            family_seed=fam_seeds["family_seed"], code=code,
+        )  # fmt: skip
+    except Exception as e:  # any failure gives status (d) (§D-3.5)
+        reason = getattr(e, "code", None) or type(e).__name__
+        return {**entry, "status": "d", "reason": f"SEAL_FAILED:{reason}"}, None
+    return {
+        **entry,
+        "status": "a",
+        "reason": None,
+        "trial_index": nominee["trial_index"],
+        "seed_l266": nominee["seed_l266"],
+        "prediction_artifact_sha256": hashlib.sha256(cj(artifact)).hexdigest(),
+    }, artifact
+
+
+def sealing_record(
+    cycle_id: str,
+    evaluation_record_sha256: str,
+    round_: int,
+    entries: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """`aqt.lockbox.sealing.v1` [DESIGN layout]: every declared family's
+    status (a)-(d), written before any lockbox read; for (a) the artifact hash
+    and the seeds the lockbox request takes from here (R14L5-S-2, SV1-S-6)."""
+    if not entries or set(entries) - set(FAMILIES):
+        raise CycleError("a sealing record covers the declared families only")
+    if any(e["status"] not in STATUSES for e in entries.values()):
+        raise CycleError("status outside (a)-(d)")
+    return {
+        "schema": SEALING_SCHEMA,
+        "cycle_id": cycle_id,
+        "evaluation_record_sha256": evaluation_record_sha256,
+        "beacon_round": round_,
+        "families": {f: dict(entries[f]) for f in FAMILIES if f in entries},
     }
