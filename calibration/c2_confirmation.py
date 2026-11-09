@@ -1001,8 +1001,10 @@ def load_line266(sources: Mapping[str, tuple[Path, str]] | None = None) -> None:
     With `sources` (module name -> (path, SHA-256 of the engine commit's
     blob), in load order; `start` passes them), each module not yet loaded
     runs from exactly its hashed bytes (`load_verified`), so no unauthenticated
-    line-266 code executes (R14S6AR-S-1); any other `aqt`/`calibration` module
-    the import adds is refused."""
+    line-266 code executes (R14S6AR-S-1). While they run, an import gate at
+    the front of `sys.meta_path` refuses any other `aqt`/`calibration` module
+    that is not yet loaded, *before* the import system can execute it
+    (R14S6AR2-S-1); a final check refuses any such module that appeared."""
     global _TRIAL_SEED
     _TRIAL_SEED = None  # a failed reload must not leave an earlier one (R14SM-S-1)
     import importlib
@@ -1024,6 +1026,17 @@ def load_line266(sources: Mapping[str, tuple[Path, str]] | None = None) -> None:
     root.exceptions = exc  # type: ignore[attr-defined]
     names = ("jsonschema", "jsonschema.exceptions")
     saved = {n: sys.modules[n] for n in names if n in sys.modules}
+    allowed = set(sources or {})
+
+    class Gate:  # R14S6AR2-S-1: refuse before the import system executes
+        @staticmethod
+        def find_spec(name: str, *_: object) -> None:
+            if name.split(".")[0] in ("aqt", "calibration") and name not in allowed:
+                raise SeedError(f"line 266 imports unauthenticated {name}")
+
+    gate = Gate()
+    if sources is not None:
+        sys.meta_path.insert(0, gate)
     try:
         if "aqt.core.preregistration" not in sys.modules:
             sys.modules.update({"jsonschema": root, "jsonschema.exceptions": exc})
@@ -1039,6 +1052,8 @@ def load_line266(sources: Mapping[str, tuple[Path, str]] | None = None) -> None:
                 f"line 266 loaded unauthenticated {sorted(added - set(sources))}"
             )
     finally:
+        if gate in sys.meta_path:
+            sys.meta_path.remove(gate)
         for n in names:
             sys.modules.pop(n, None)
         sys.modules.update(saved)

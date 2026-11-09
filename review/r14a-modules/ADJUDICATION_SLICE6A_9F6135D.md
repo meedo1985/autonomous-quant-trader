@@ -38,3 +38,16 @@ data depends on the open access mechanism (DESIGN §10). 6b obtains the read onl
 
 Validation: 371 passed (same suites); ruff format and check clean; `mypy src` clean;
 strict mypy on the module and the start test clean; lint-imports 7 kept.
+
+## Second re-check (SOL_CONFIRMATION_SLICE6A_RECHECK2_EB00731.md, verdict FIX)
+
+Sol closed R14S6AR-S-2 and S-3, accepted the launch-route boundary (LG6A-2), and found
+R14S6AR-S-1 partly closed.
+
+| ID | Sol | Decision | Repair |
+|---|---|---|---|
+| R14S6AR2-S-1 | BLOCKER | **Accepted.** An `aqt`/`calibration` module imported *by* an authenticated line-266 module could execute from disk before the after-the-fact check refused it. | While line 266 loads, `load_line266(sources)` inserts an import gate at the front of `sys.meta_path`. Its `find_spec` raises `SeedError` for any `aqt`/`calibration` module that is not yet loaded and not in the authenticated sources, **before** the import system can execute it. The gate is removed in `finally`. The after-load check stays as a second line. Fresh-process test: an authenticated module imports a probe module whose top-level code writes a marker file; the import is refused, the marker file never exists, and the gate is gone afterwards. The earlier unauthenticated-`aqt.core.paths` test now shows refusal by the gate, with preregistration never left loaded. |
+| R14S6AR2-S-2 | NON-BLOCKING | **Accepted.** | Test: `start` asks `line266_sources` for `(root, the signed engine_commit row)`, and the very mapping returned reaches `load_line266` unchanged (identity checked). |
+
+Validation: 373 passed (same suites); ruff format and check clean; `mypy src` clean;
+strict mypy on the module and the start test clean; lint-imports 7 kept.

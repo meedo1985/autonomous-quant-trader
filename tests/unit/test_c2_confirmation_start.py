@@ -480,7 +480,7 @@ def test_an_unauthenticated_module_loaded_by_line_266_is_refused() -> None:
     # without aqt.core.paths among the sources, the import system would load
     # it from disk unauthenticated: refused
     got = _line266_in_fresh_process("{" + PREREG + "}")
-    assert got.startswith("refused") and "['aqt.core.paths']" in got
+    assert got.startswith("refused False") and "unauthenticated aqt.core.paths" in got
 
 
 def test_a_refused_start_is_final_for_the_process(
@@ -504,3 +504,62 @@ def test_a_success_then_a_refusal_clears_the_seed(
     with pytest.raises(cf.ChainError):
         cf.start(**{**inputs, "acceptance_record": b"{}"})
     assert cf._TRIAL_SEED is None
+
+
+# --- R14S6AR2-S-1, S-2: the import gate, and start's source wiring --------------
+
+
+def test_an_import_from_authenticated_code_is_refused_before_it_runs(
+    tmp_path: Path,
+) -> None:
+    # a signed module importing another engine module: the import gate refuses
+    # it before its top-level code runs (the marker file is never written)
+    marker = tmp_path / "marker"
+    probe_b = tmp_path / "c2_probe_b.py"
+    probe_b.write_text(f"open({str(marker)!r}, 'w').write('ran')\n")
+    probe_a = tmp_path / "c2_probe_a.py"
+    probe_a.write_text("import calibration.c2_probe_b\n")
+    code = f"""
+import hashlib, pathlib, sys
+sys.path[:0] = [{str(ROOT)!r}, {str(ROOT / "src")!r}]
+import calibration
+from calibration import c2_confirmation as cf
+calibration.__path__.append({str(tmp_path)!r})  # probe_b is findable on disk
+a = pathlib.Path({str(probe_a)!r})
+try:
+    cf.load_line266({{"calibration.c2_probe_a":
+                      (a, hashlib.sha256(a.read_bytes()).hexdigest())}})
+    print("loaded")
+except cf.SeedError as e:
+    print("refused", e)
+print("gate gone", all(type(f).__name__ != "Gate" for f in sys.meta_path))
+"""
+    out = subprocess.run(
+        [sys.executable, "-I", "-c", code], capture_output=True, text=True, check=False
+    )
+    lines = out.stdout.strip().splitlines()
+    assert lines == [
+        "refused line 266 imports unauthenticated calibration.c2_probe_b",
+        "gate gone True",
+    ], out.stderr
+    assert not marker.exists()
+
+
+def test_start_passes_the_signed_commit_sources_to_line_266(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code_ok: dict[str, Any]
+) -> None:
+    # R14S6AR2-S-2: the mapping built from the signed engine_commit is the one
+    # load_line266 receives, unchanged
+    sentinel: dict[str, tuple[Path, str]] = {"x": (tmp_path, "0" * 64)}
+    asked: list[tuple[Path, str]] = []
+    got: list[object] = []
+
+    def sources(root: Path, commit: str) -> dict[str, tuple[Path, str]]:
+        asked.append((root, commit))
+        return sentinel
+
+    monkeypatch.setattr(cf, "line266_sources", sources)
+    monkeypatch.setattr(cf, "load_line266", lambda s=None: got.append(s))
+    cf.start(**_start_inputs(tmp_path))
+    assert asked == [(tmp_path, "e" * 40)]  # the signed engine_commit row
+    assert got == [sentinel] and got[0] is sentinel
