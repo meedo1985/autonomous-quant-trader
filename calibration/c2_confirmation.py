@@ -1047,11 +1047,13 @@ def load_line266(sources: Mapping[str, tuple[Path, str]] | None = None) -> None:
         if "aqt.core.preregistration" not in sys.modules:
             sys.modules.update({"jsonschema": root, "jsonschema.exceptions": exc})
         before = set(sys.modules)
+        if sources is not None:
+            # R14S6-F-1, R14S6R-F-3: a preloaded line-266 module never had its hash
+            # checked, listed or not; start is the first act of a fresh process
+            for name in [n for n, _ in LINE266_MODULES] + list(sources):
+                if name in sys.modules:
+                    raise SeedError(f"line 266 module {name} was loaded before start")
         for name, (path, digest) in (sources or {}).items():
-            if name in sys.modules:
-                # R14S6-F-1: a preloaded listed module never had its hash checked;
-                # start is the first act of a fresh process, so none is preloaded
-                raise SeedError(f"line 266 module {name} was loaded before start")
             load_verified(name, path, digest)
         module = importlib.import_module("aqt.core.preregistration")
         added = {n for n in set(sys.modules) - before
@@ -2781,9 +2783,15 @@ def trial_path(
     """A trial's confirmation path: the last `warmup + window` hours of the
     checked read, which must end at w1, plus `confirmation_path`'s terminal
     row (the bar at w1 is never read)."""
-    whole = isinstance(warmup, int) and not isinstance(warmup, bool) and warmup >= 0
-    if (w0 - start) % HOUR or not whole:  # R14S6-F-6: refused, not floored
-        raise CycleError("C-T: w0 is not on the hour or the warm-up is not whole hours")
+
+    def hours(x: object, least: int) -> bool:
+        return isinstance(x, int) and not isinstance(x, bool) and x >= least
+
+    # R14S6-F-6, R14S6R-F-4: refused, not floored and not a later crash
+    if w0.utcoffset() is None or not (hours(warmup, 0) and hours(window_hours, 1)):
+        raise CycleError("C-T: w0 is naive or the warm-up or window is not whole hours")
+    if (w0 - start) % HOUR:
+        raise CycleError("C-T: w0 is not on the hour")
     offset = (w0 - timedelta(hours=warmup) - start) // HOUR
     if offset < 0 or offset + warmup + window_hours != len(rows):
         raise CycleError("C-T: the read does not cover this trial's warm-up and window")
@@ -2828,14 +2836,17 @@ def trial_result(
     try:
         d = baseline_d(trial, path, w0, window_hours, estimator_seed)
     except screen.RunUnavailable as e:
-        return {**out, "reason": e.reason}
+        rec = {**out, "reason": e.reason}
     except (EventContractError, CostModelError, FeatureFactoryError) as e:
-        return {**out, "reason": type(e).__name__}
+        rec = {**out, "reason": type(e).__name__}
     except SealError as e:
         if str(e) != "DAYS_INCOMPLETE":
             raise  # a caller's input error, not unavailability
-        return {**out, "reason": "DAYS_INCOMPLETE"}
-    return {**out, "d": [hexf(x) for x in d], "d_sha256": _floats_sha256(d)}
+        rec = {**out, "reason": "DAYS_INCOMPLETE"}
+    else:
+        rec = {**out, "d": [hexf(x) for x in d], "d_sha256": _floats_sha256(d)}
+    completed_entry(rec)  # R14S6R-F-5: never write a record the look would refuse
+    return rec
 
 
 def completed_entry(result: dict[str, Any]) -> tuple[str, list[datetime], list[float]]:
@@ -2859,13 +2870,14 @@ def completed_entry(result: dict[str, Any]) -> tuple[str, list[datetime], list[f
     try:
         days = [datetime.strptime(t, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
                 for t in raw_days]  # fmt: skip
-    except (TypeError, ValueError):
+        end = days[-1] + DAY
+    except (TypeError, ValueError, OverflowError):  # R14S6R-F-1: 9999-12-31
         raise CycleError("a pre-look day is not a UTC time") from None
     if [_time(t) for t in days] != raw_days or any(
         b - a != DAY for a, b in zip(days, days[1:], strict=False)
     ):
         raise CycleError("the pre-look days are not canonical consecutive days")
-    if result["window_id"] != window_id(days[0], days[-1] + DAY):
+    if result["window_id"] != window_id(days[0], end):
         raise CycleError("the pre-look window_id is not its days' window")
     d, digest, reason = result["d"], result["d_sha256"], result["reason"]
     if d is None:

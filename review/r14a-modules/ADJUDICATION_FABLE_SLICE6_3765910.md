@@ -30,3 +30,18 @@ This record proposes nothing for governance and activates nothing.
 | full suite at `7fd85f9` (`pytest --collect-only`: 2739 tests) | **2729 passed, 10 skipped, 0 failed**. Run in batches because two single runs were stopped for low memory: `tests/canaries tests/integration tests/oracles tests/reference` gave 262 passed. The c2 files gave 402 passed (above). The other 47 unit files, in alphabetical order, ran as 6/6/6/2/8/19 files and gave 184, 111, 164, 191 + 1 skipped, 704 + 9 skipped, and 711 passed. |
 
 Section 16: if `calibration/c2_confirmation.py` is a protected component, these repairs still need the different-model and owner PR review before merge. The branch is not merged.
+
+## Re-check adjudication (R14S6R-F-1..6)
+
+Re-check record: `review/r14a-modules/FABLE_RECHECK_SLICE6_7FD85F9.md` (`claude-fable-5-2`, ACCEPT WITH NOTES, committed `c42a52e`). It was adjudicated and repaired by Claude Opus 5.5 (`claude-opus-5-5`) on 2026-11-10.
+
+| ID | Decision | Change / reason |
+|---|---|---|
+| R14S6R-F-1 | repaired | In `completed_entry`, `days[-1] + DAY` is computed inside the `try`, and `OverflowError` is mapped to `CycleError` (case `last_day_overflows`). |
+| R14S6R-F-2 | repaired (tests) | Every malformed case now has `match=` naming its clause. Six cases were added: `null_d_hash_and_reason`, `upper_config_hash`, `repeated_day`, `empty_id`, `empty_days` and `last_day_overflows`. `d_length` re-makes the hash, so only the length is wrong. |
+| R14S6R-F-3 | repaired, in part | With `sources`, `load_line266` refuses if any `LINE266_MODULES` name, or any listed name, is already loaded, whether or not it is listed. A fresh-process test covers `{}` with `aqt.core.paths` preloaded. **Not repaired:** requiring `sources` to equal the listed set exactly. Extra names in `sources` are how the existing gate tests inject probe modules, and `start` always passes exactly `LINE266_MODULES` (not reachable through `start`). |
+| R14S6R-F-4 | repaired | `trial_path` refuses a naive `w0` and a `window_hours` that is not an int of at least 1 (bool refused). One older test now expects the new message for a float warm-up. |
+| R14S6R-F-5 | repaired | `trial_result` ends with a `completed_entry` self-check, so it never writes a record the look would refuse (test: empty `cycle_id`). |
+| R14S6R-F-6 | not repaired (note) | `start` reports a preloaded module only as `line 266 did not load: SeedError`. This is deliberate: `start` reports the type only, as for every line-266 failure. The fresh-process test proves the refusal. |
+
+Validation (2026-11-10): the c2 confirmation and lockbox files gave 411 passed. `ruff check` passed; `ruff format --check` reported 164 files already formatted. `mypy src` was clean. `mypy --strict --follow-imports=silent` on the 3 task files was clean. `lint-imports` kept 7 contracts and broke 0. The full suite was not rerun: only `calibration/c2_confirmation.py` and its two test files changed, and no other code imports that module (checked with grep; `c2_lockbox.py` only names its path, and the lockbox tests are among the 411).

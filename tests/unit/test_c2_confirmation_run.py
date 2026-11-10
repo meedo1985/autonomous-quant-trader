@@ -206,8 +206,21 @@ def _bad(got: dict[str, Any], case: str) -> Any:
         bad["note"] = "x"
     elif case == "window_mismatch":
         bad["window_id"] = cf.window_id(ts.W0 + H, ts.W0 + H + cf.DAY)
-    elif case == "d_length":
+    elif case == "d_length":  # hash re-made: only the length is wrong
         bad["d"] = bad["d"][:-1]
+        bad["d_sha256"] = cf._floats_sha256(cf.completed_entry(got)[2][:-1])
+    elif case == "null_d_hash_and_reason":  # only the stray hash is wrong
+        bad.update(d=None, reason="TRIAL_CODE_ERROR")
+    elif case == "upper_config_hash":
+        bad["configuration_hash"] = bad["configuration_hash"].upper()
+    elif case == "repeated_day":  # canonical strings, ends unchanged
+        bad["days"][1] = bad["days"][2]
+    elif case == "empty_id":
+        bad["cycle_id"] = ""
+    elif case == "empty_days":
+        bad["days"] = []
+    elif case == "last_day_overflows":
+        bad["days"] = ["9999-12-31T00:00:00Z"]
     elif case == "wrong_type":
         bad["d"] = "00"
     elif case == "not_a_dict":
@@ -215,16 +228,24 @@ def _bad(got: dict[str, Any], case: str) -> Any:
     return bad
 
 
-@pytest.mark.parametrize("case", [
-    "upper_hex", "spaced_hex", "short_hex", "loose_day", "nan", "null_d_with_hash",
-    "d_with_reason", "missing_field", "extra_field", "window_mismatch", "d_length",
-    "wrong_type", "not_a_dict",
+# R14S6R-F-2: each case names the clause that must refuse it
+@pytest.mark.parametrize(("case", "match"), [
+    ("upper_hex", "one canonical float64"), ("spaced_hex", "one canonical float64"),
+    ("short_hex", "one canonical float64"), ("loose_day", "canonical consecutive"),
+    ("nan", "not finite"), ("null_d_with_hash", "needs a reason"),
+    ("null_d_hash_and_reason", "needs a reason"), ("d_with_reason", "no reason"),
+    ("missing_field", "fields are not"), ("extra_field", "fields are not"),
+    ("window_mismatch", "window_id"), ("d_length", "one canonical float64"),
+    ("wrong_type", "no reason"), ("not_a_dict", "not a pre-look"),
+    ("upper_config_hash", "configuration_hash"), ("repeated_day", "consecutive"),
+    ("empty_id", "cycle_id"), ("empty_days", "non-empty list"),
+    ("last_day_overflows", "not a UTC time"),
 ])  # fmt: skip
 def test_a_malformed_pre_look_record_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, match: str
 ) -> None:
     got = _result(ts._screen_trial(tmp_path, monkeypatch))
-    with pytest.raises(cf.CycleError):
+    with pytest.raises(cf.CycleError, match=match):
         cf.completed_entry(_bad(got, case))
 
 
@@ -249,7 +270,7 @@ def test_a_w0_off_the_hour_is_refused_not_floored() -> None:
     _, _, rows, start = _read(4801)
     with pytest.raises(cf.CycleError, match="on the hour"):
         cf.trial_path(rows, start, ts.W0 + timedelta(minutes=30), 4000, ts.WINDOW_H)
-    with pytest.raises(cf.CycleError, match="on the hour"):
+    with pytest.raises(cf.CycleError, match="whole hours"):
         cf.trial_path(rows, start, ts.W0, 4000.0, ts.WINDOW_H)  # type: ignore[arg-type]
 
 
@@ -301,3 +322,21 @@ def test_cost_and_feature_errors_are_recorded_unavailable(
     got = _result(trial)
     assert (got["d"], got["reason"]) == (None, type(error).__name__)
     assert cf.completed_entry(got)[2] == []
+
+
+def test_trial_path_refuses_a_bad_window_or_a_naive_w0() -> None:
+    # R14S6R-F-4
+    _, _, rows, start = _read(4801)
+    for window in (-1, 0, True, 50.0):
+        with pytest.raises(cf.CycleError, match="whole hours"):
+            cf.trial_path(rows, start, ts.W0, 4000, window)  # type: ignore[arg-type]
+    with pytest.raises(cf.CycleError, match="naive"):
+        cf.trial_path(rows, start, ts.W0.replace(tzinfo=None), 4000, ts.WINDOW_H)
+
+
+def test_trial_result_never_writes_a_record_the_look_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R14S6R-F-5: an empty cycle id is refused when written, not at the look
+    with pytest.raises(cf.CycleError, match="cycle_id"):
+        _result(ts._screen_trial(tmp_path, monkeypatch), cycle_id="")

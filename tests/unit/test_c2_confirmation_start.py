@@ -488,6 +488,13 @@ def test_a_preloaded_line_266_module_is_refused_not_skipped() -> None:
     assert "aqt.core.paths was loaded before start" in got
 
 
+def test_a_preloaded_line_266_module_left_out_of_sources_is_refused() -> None:
+    # R14S6R-F-3: preloaded and not listed at all
+    got = _line266_in_fresh_process('(__import__("aqt.core.paths"), {})[1]')
+    assert got.startswith("refused False")
+    assert "aqt.core.paths was loaded before start" in got
+
+
 def test_an_unauthenticated_module_loaded_by_line_266_is_refused() -> None:
     # without aqt.core.paths among the sources, the import system would load
     # it from disk unauthenticated: refused
