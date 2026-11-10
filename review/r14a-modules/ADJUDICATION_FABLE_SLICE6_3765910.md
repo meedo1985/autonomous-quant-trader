@@ -27,6 +27,6 @@ This record proposes nothing for governance and activates nothing.
 | `mypy src` | no issues, 56 files |
 | `mypy --strict --follow-imports=silent calibration/c2_confirmation.py tests/unit/test_c2_confirmation_run.py tests/unit/test_c2_confirmation_start.py` | no issues, 3 files |
 | `lint-imports` | 7 kept, 0 broken |
-| full `pytest -q` (2718 tests) | run after this commit; result recorded separately |
+| full suite at `7fd85f9` (`pytest --collect-only`: 2739 tests) | **2729 passed, 10 skipped, 0 failed**. Run in batches because two single runs were stopped for low memory: `tests/canaries tests/integration tests/oracles tests/reference` gave 262 passed. The c2 files gave 402 passed (above). The other 47 unit files, in alphabetical order, ran as 6/6/6/2/8/19 files and gave 184, 111, 164, 191 + 1 skipped, 704 + 9 skipped, and 711 passed. |
 
 Section 16: if `calibration/c2_confirmation.py` is a protected component, these repairs still need the different-model and owner PR review before merge. The branch is not merged.
