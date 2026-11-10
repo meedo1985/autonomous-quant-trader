@@ -80,6 +80,8 @@ def _fresh_start_state(monkeypatch: pytest.MonkeyPatch) -> None:
     # checkout's files
     monkeypatch.setattr(cf, "_START_FAILED", False)
     monkeypatch.setattr(cf, "line266_sources", lambda root, commit: _disk_sources())
+    for name, _ in cf.LINE266_MODULES:  # fresh process: none loaded (R14S6-F-1)
+        monkeypatch.delitem(sys.modules, name, raising=False)
 
 
 @pytest.fixture
@@ -474,6 +476,16 @@ def test_line_266_runs_only_from_authenticated_bytes() -> None:
     wrong = PREREG.replace('h("src/aqt/core/preregistration.py")', '"0" * 64')
     got = _line266_in_fresh_process("{" + PATHS + ", " + wrong + "}")
     assert got.startswith("chain False") and "is not the signed module" in got
+
+
+def test_a_preloaded_line_266_module_is_refused_not_skipped() -> None:
+    # R14S6-F-1: aqt.core.paths imported from disk before start, then passed
+    # with a hash matching nothing: it must refuse, not skip the check
+    wrong_paths = PATHS.replace('h("src/aqt/core/paths.py")', '"0" * 64')
+    preload = '(__import__("aqt.core.paths"), {' + wrong_paths + ", " + PREREG + "})[1]"
+    got = _line266_in_fresh_process(preload)
+    assert got.startswith("refused False")
+    assert "aqt.core.paths was loaded before start" in got
 
 
 def test_an_unauthenticated_module_loaded_by_line_266_is_refused() -> None:

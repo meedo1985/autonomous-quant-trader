@@ -1000,9 +1000,10 @@ def load_line266(sources: Mapping[str, tuple[Path, str]] | None = None) -> None:
     jsonschema is ever loaded through here.
 
     With `sources` (module name -> (path, SHA-256 of the engine commit's
-    blob), in load order; `start` passes them), each module not yet loaded
-    runs from exactly its hashed bytes (`load_verified`), so no unauthenticated
-    line-266 code executes (R14S6AR-S-1). While they run, an import gate at
+    blob), in load order; `start` passes them), each module runs from
+    exactly its hashed bytes (`load_verified`), so no unauthenticated
+    line-266 code executes (R14S6AR-S-1); one already loaded is refused
+    (R14S6-F-1). While they run, an import gate at
     the front of `sys.meta_path` refuses every finder lookup, whatever the
     name (an unlisted module, a listed one imported before its verified turn,
     a reload), *before* the import system can execute anything
@@ -1047,8 +1048,11 @@ def load_line266(sources: Mapping[str, tuple[Path, str]] | None = None) -> None:
             sys.modules.update({"jsonschema": root, "jsonschema.exceptions": exc})
         before = set(sys.modules)
         for name, (path, digest) in (sources or {}).items():
-            if name not in sys.modules:
-                load_verified(name, path, digest)
+            if name in sys.modules:
+                # R14S6-F-1: a preloaded listed module never had its hash checked;
+                # start is the first act of a fresh process, so none is preloaded
+                raise SeedError(f"line 266 module {name} was loaded before start")
+            load_verified(name, path, digest)
         module = importlib.import_module("aqt.core.preregistration")
         added = {n for n in set(sys.modules) - before
                  if n.split(".")[0] in ("aqt", "calibration")}  # fmt: skip
@@ -2777,6 +2781,9 @@ def trial_path(
     """A trial's confirmation path: the last `warmup + window` hours of the
     checked read, which must end at w1, plus `confirmation_path`'s terminal
     row (the bar at w1 is never read)."""
+    whole = isinstance(warmup, int) and not isinstance(warmup, bool) and warmup >= 0
+    if (w0 - start) % HOUR or not whole:  # R14S6-F-6: refused, not floored
+        raise CycleError("C-T: w0 is not on the hour or the warm-up is not whole hours")
     offset = (w0 - timedelta(hours=warmup) - start) // HOUR
     if offset < 0 or offset + warmup + window_hours != len(rows):
         raise CycleError("C-T: the read does not cover this trial's warm-up and window")
@@ -2835,14 +2842,49 @@ def completed_entry(result: dict[str, Any]) -> tuple[str, list[datetime], list[f
     """`nominate`'s `completed[id]` from a pre-look record: (configuration hash,
     days, d). An unavailable run gives no values, which `nominate` reports as
     MISALIGNED_SERIES (U_ops); a `d` that does not hash to its `d_sha256`
-    is refused."""
-    if result.get("schema") != TRIAL_RESULT_SCHEMA:
+    is refused. R14S6-F-2: the decoding is exact, one byte form per record;
+    anything else is a CycleError."""
+    if not isinstance(result, dict) or result.get("schema") != TRIAL_RESULT_SCHEMA:
         raise CycleError("not a pre-look trial record")
-    days = [datetime.strptime(t, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-            for t in result["days"]]  # fmt: skip
-    if result["d"] is None:
+    if set(result) != _TRIAL_RESULT_KEYS:
+        raise CycleError("the pre-look record's fields are not the schema's")
+    for key in ("cycle_id", "trial_id", "family", "attempt_id"):
+        if not isinstance(result[key], str) or not result[key]:
+            raise CycleError(f"the pre-look {key} is not a non-empty string")
+    if not _hex(result["configuration_hash"], 64):
+        raise CycleError("the pre-look configuration_hash is not canonical hex")
+    raw_days = result["days"]
+    if not isinstance(raw_days, list) or not raw_days:
+        raise CycleError("the pre-look days are not a non-empty list")
+    try:
+        days = [datetime.strptime(t, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+                for t in raw_days]  # fmt: skip
+    except (TypeError, ValueError):
+        raise CycleError("a pre-look day is not a UTC time") from None
+    if [_time(t) for t in days] != raw_days or any(
+        b - a != DAY for a, b in zip(days, days[1:], strict=False)
+    ):
+        raise CycleError("the pre-look days are not canonical consecutive days")
+    if result["window_id"] != window_id(days[0], days[-1] + DAY):
+        raise CycleError("the pre-look window_id is not its days' window")
+    d, digest, reason = result["d"], result["d_sha256"], result["reason"]
+    if d is None:
+        if digest is not None or not isinstance(reason, str) or not reason:
+            raise CycleError("an unavailable run needs a reason and no d_sha256")
         return result["configuration_hash"], days, []
-    values = [struct.unpack(">d", bytes.fromhex(x))[0] for x in result["d"]]
-    if _floats_sha256(values) != result["d_sha256"]:
+    if reason is not None or not isinstance(d, list) or not _hex(digest, 64):
+        raise CycleError("a result needs d and d_sha256 and no reason")
+    if len(d) != len(days) or not all(_hex(x, 16) for x in d):
+        raise CycleError("the pre-look d is not one canonical float64 per day")
+    values = [struct.unpack(">d", bytes.fromhex(x))[0] for x in d]
+    if not all(math.isfinite(v) for v in values):
+        raise CycleError("the pre-look d is not finite")
+    if _floats_sha256(values) != digest:
         raise CycleError("the pre-look d does not hash to its d_sha256")
     return result["configuration_hash"], days, values
+
+
+_TRIAL_RESULT_KEYS = frozenset({
+    "schema", "cycle_id", "trial_id", "family", "configuration_hash", "attempt_id",
+    "window_id", "days", "d", "d_sha256", "reason",
+})  # fmt: skip
