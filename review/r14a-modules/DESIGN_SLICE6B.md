@@ -1,145 +1,235 @@
-# Slice 6b design: the confirmation evaluation run and the C2 evaluation record
+# Slice 6b design, rev 2: the confirmation evaluation run and the C2 evaluation record
 
-- Author: Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-09. A proposal, for Sol's design
-  review before the orchestration is built; it approves nothing and closes no owner item.
-- Scope: DESIGN §5.2 steps 2-8 and §7.2 (contract), after slice 6a's `start`. Every
-  building block exists already (slices 1-5): `check_declaration`, `check_eligibility`,
-  `check_screen_record`, `family_attempts`, `trial_states`, `look_allowed`, `derive_seeds`,
-  `baseline_d`, `nominate`, `family_gates`, `nominee_gates`, `nominee_outcome`, `cpcv_report`,
-  `seal_family`, `sealing_record`. 6b only binds their inputs to verified sources and writes
-  the record.
-- Items marked **[OWNER]** need the owner. They are bindings for the signed C2 or the S4
-  text, so this design can propose them but not settle them.
+- Author: Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-13. Rev 1 is `1e6e672` (reviewed:
+  `SOL_DESIGN_SLICE6B_1E6E672.md`, FIX, R14D6B-S-1..9; adjudicated in
+  `ADJUDICATION_DESIGN_SLICE6B_1E6E672.md`, all accepted). Rev 2 also takes in Fable's
+  R14S6-F-3, F-4 and F-5 (`FABLE_REVIEW_SLICE6_3765910.md`,
+  `ADJUDICATION_FABLE_SLICE6_3765910.md`).
+- Owner choice recorded: R14D6B-S-6 option **(b)** (recompute the per-trial columns with
+  `dsr`'s own frozen functions; no change to the protected `dsr.evaluate`). The owner
+  asked for rev 2 "with option (b)" (session of 2026-11-13).
+- A proposal for review before the orchestration is built. It approves nothing and closes
+  no owner item. Items marked **[OWNER]** are bindings for the signed C2 or the S4 text.
+- Scope: DESIGN §5.2 steps 2-8 and §7.2, after slice 6a's `start`. 6b part 1 (`cc197be`,
+  repaired through `b350264`: `check_confirmation_read`, `trial_path`, `trial_result`,
+  `completed_entry`) stays and is extended as below.
 
-## 1. Two entry points, each a fresh process after `start`
+Each section names the finding it answers. "Caller" means whoever invokes the entry point;
+rev 2's rule is that the caller supplies **handles to governing records, never values the
+module could read or verify from them** (R14D6B-S-1).
 
-The evaluation is not one call. Each trial is evaluated when its attempt runs (P18-1), and
-the look comes later (P18-2). Proposal **6B-1**:
+## 1. Two entry points, each a fresh process after `start` (6B-1, unchanged)
 
-- `evaluate_trial(started, inputs, trial_id, read)`: steps 2-4 for one trial. The output is
-  the trial's pre-look record (§4). The attempt record itself is `aqt.core.attempts`', not
-  this module's.
-- `evaluate_look(started, inputs, read, now)`: steps 2, 3 and 5-8. It refuses unless
-  `look_allowed` holds. The output is the C2 evaluation record, the prediction artifacts
-  and the sealing record.
+- `evaluate_trial(started, sources, trial_id, read)`: steps 2-4 for one trial; writes the
+  trial's pre-look record (§4) and its ledger entry (§3).
+- `evaluate_look(started, sources, read, bounds)`: steps 2, 3, 5-8; refuses unless
+  `look_allowed` holds; writes the evaluation record, the artifacts and the sealing record.
 
-Both run in a fresh process whose first act is `start` (6a, which is final on refusal).
-Both repeat steps 2-3 from the governing records, never from a previous call's output.
+Both start with `start` (6a, final on refusal) and repeat steps 2-3 from the governing
+records, never from an earlier call's output.
 
-## 2. Signed C2 values (step 2 and others) **[OWNER, OD-4]**
+## 2. What the module reads itself, and from where (R14D6B-S-1, S-4)
 
-They are read only from `Started.protocol` by `protocol_row`, each exactly once, with no
-caller defaults. Proposed row names **6B-2**:
+| Input | Rev 1 | Rev 2 source | Verified how |
+|---|---|---|---|
+| Signed C2 values | `protocol_row` | unchanged (§6 lists the rows) | `start` verified the bytes |
+| Declared trials and their configuration hashes | caller "trial records" | the verified declaration (`Started.declaration`), as the lockbox's `_check_declared` | `start` verified the declaration chain |
+| Attempt history (starts, outcomes) | caller entries | the attempt ledger file, read by the module | `verify_ledger(path).require_intact()`, then `read_entries` |
+| Pre-look entries and look records | caller | the same ledger (§3) | as above |
+| Ledger head | none | **anchored**: the head hash and entry count the module reads must extend an anchor it cannot forge | **[OWNER] A-1** below |
+| Data-manifest hash | caller | signed C2 row `data_manifest_sha256` if bound there, else the declaration's field | equality with the served bars (§5) |
+| `last_seen`, `embargo_days` | caller | declaration fields if present; otherwise store obligation | **[OWNER] A-2** |
+| `now` for the look | caller | the store's look record time (ledger entry), not the caller's clock | ledger order |
+| Beacon, capture CDX | caller | unchanged: `derive_seeds` verifies the beacon (BLS, 4a) and the chain hash (§7) | in-module |
+| D-19 bounds document | caller bytes | unchanged: bytes whose SHA-256 equals the signed row (§8) | hash |
+
+**A-1 [OWNER]: ledger anchor.** Options: (a) the store writes a signed or hash-committed
+*cycle record* at declaration time naming the ledger path and the then-head; the module
+requires the read chain to extend it, and requires that every entry after it belongs to
+this cycle or is irrelevant to it (`family_attempts` already filters); (b) the head is
+posted with the declaration (same posting route as the declaration). **Recommendation (a)**,
+because the declaration is posted before any attempt exists and the anchor must cover
+appends made later. Either way the module can only check extension; it cannot prove that
+no second ledger exists. That residual is a store obligation, written in a `Store`
+docstring as the lockbox does.
+
+**Order (S-4)** inside `evaluate_look`, every step before any `read`:
+1. `start` (6a);
+2. declaration (`check_declaration`), screen record (`check_screen_record`), eligibility
+   (`check_eligibility` with the signed `confirmation_start`, `confirmation_end`);
+3. seeds (`derive_seeds`; a failure here is read-free, R14D6B-S-8);
+4. ledger: `verify_ledger`, anchor check, then `family_attempts`, `trial_states`, the
+   pre-look entries (§3), the termination and look records;
+5. `look_allowed`;
+6. bounds document hash and its cell (§8);
+7. only now `read`, then the C-T and manifest checks (§5).
+
+`evaluate_trial` runs 1-4 (without the look records) and then reads.
+
+## 3. The pre-look record and its ledger entry (R14D6B-S-2, R14S6-F-3, F-4)
+
+**Record** `aqt.c2.trial_result.v2` (v1 fields plus the identity fields F-4 asks for):
+
+```
+{schema, cycle_id, trial_id, family, configuration_hash, attempt_id,
+ trial_index, seed_l266, estimator_seed,          # F-4 (1)
+ data_manifest_sha256,                            # F-4 (2), §5
+ protocol_hash, engine_commit,
+ confirmation_module_sha256, image_digest,        # F-4 (2), from Started
+ window_id, days, d, d_sha256, reason}
+```
+
+- `seed_l266`, `estimator_seed`, `trial_index` are the values `derive_seeds` and line 266
+  produced in this process (never caller integers). `estimator_seed` is what
+  `baseline_d` used.
+- `record_sha256 = SHA256(cj(record))` is **the** identity of the record (F-3 suggestion).
+  `d_sha256` stays as the hash of `d` alone, for A7 step 2.
+
+**Ledger entry.** `evaluate_trial` appends one entry with `record_type =
+"aqt.c2.trial_result_entry.v1"` and payload
+`{attempt_id, cycle_id, trial_id, configuration_hash, window_id, estimator_seed,
+data_manifest_sha256, record_sha256}`, using `aqt.core.ledger.append_entry` (frozen; it
+verifies the whole chain under the lock before appending). It must lie between the
+attempt's start entry and its outcome entry. The frozen `finish_attempt` has no result
+field, so the entry is its own record type.
+
+**At the look**, for every completed attempt (`trial_states` says completed):
+- exactly one such entry exists in `(start, end)` of that attempt, else `CycleError`;
+- its payload equals the record's own fields, its `record_sha256` equals
+  `SHA256(cj(record))` of the record the store hands over, and `completed_entry` passes;
+- its `configuration_hash` equals the declaration's for that trial, its `estimator_seed`
+  equals what `derive_seeds` gives for that trial now, its `data_manifest_sha256` equals
+  the cycle's, its `window_id` equals the eligibility window's;
+- every other trial's `d` therefore enters `dsr.evaluate` bound to its trial, seed, data
+  and window (closes the F-4 failure scenario).
+
+Test obligations: a record moved under another trial id is refused (F-3 reproduction);
+a wrong estimator seed, another manifest, a second entry, or an entry outside the
+attempt's span is refused; the part 1 test name stays honest (renamed in `7fd85f9`).
+
+## 4. Unavailable runs and their cause (R14S6-F-5) **[OWNER] A-3**
+
+Today `completed_entry` turns an unavailable run into empty values, and `nominate`
+reports `"<id>: MISALIGNED_SERIES"`, cause U_ops; the real reason stays only in the
+pre-look record. Proposal:
+- `nominate` carries the record's `reason` into its message: `"<id>: <reason>"`.
+- Cause by reason:
+  - **U_ops** (infrastructure, data or governance): `MISSING_DAY`, `DUPLICATED_DAY`,
+    `IRREGULAR_DAY`, `MISALIGNED_SERIES`, `SIGMA_UNBOUND`, `DAYS_INCOMPLETE`;
+  - **U_proc** (the registered trial's own deterministic failure on valid data):
+    `TRIAL_CODE_ERROR`, `OVERLAY_VIOLATION`, `EventContractError`, `CostModelError`,
+    `FeatureFactoryError`, and any other `RunUnavailable` reason not listed above.
+- Either way the family has no promotable trial (A_f fails); only the recorded cause
+  differs. This is the P18-7 precedence wording the owner must accept, or choose to keep
+  everything U_ops (today's behaviour, simpler, but it calls a trial's own bug
+  "infrastructure").
+
+**Recommendation:** the split above, because P18-7's own comment defines U_ops as
+infrastructure or governance.
+
+## 5. Reading and the data manifest (R14D6B-S-3)
+
+`read` returns `(btc, eth, manifest)`: the two `BarSeries` and the manifest it served
+under. Before any use the module:
+1. runs `check_confirmation_read` (C-T contract, part 1);
+2. recomputes the served bars' hash with the repository's bar-series encoding
+   (`aqt.data` `encode_bar_series` / `canonical_hash`, the same bytes the exploration
+   manifest uses) and requires the manifest to list exactly that hash;
+3. requires `SHA256(manifest)` to equal the cycle's `data_manifest_sha256` (§2).
+
+Consumer-boundary test: valid-shaped bars from another manifest are refused, and so is
+the right manifest with other bars. Who may call `read`, under which identity, stays a
+store and image obligation **[OWNER] A-4: manifest format and access path**.
+
+## 6. Signed C2 rows (6B-2, R14D6B-S-8, S-9) **[OWNER, OD-4]**
+
+Read only through `protocol_row`, each once, no defaults:
 
 | Row | Feeds |
 |---|---|
-| `drand_public_key`, `drand_genesis_time`, `drand_period`, `drand_scheme` | `Chain` (FP3) |
-| `confirmation_start`, `confirmation_end` | `check_eligibility` `c2_start`, `c2_end` (the signed `partitions.confirmation` values, restated as unique rows because `protocol_row` cannot address nested YAML keys) |
+| `drand_public_key`, `drand_genesis_time`, `drand_period`, `drand_scheme`, **`drand_chain_hash`** | `Chain`; the parameters must hash to `drand_chain_hash` (drand chain-info hash), S-8 |
+| `confirmation_start`, `confirmation_end` | `check_eligibility` (S-9: the S4 binding states them **only** as these unique rows, or requires them equal to the nested `partitions.confirmation` values when signing; the module has no YAML parser) |
 | `t_min`, `g_days` | `check_eligibility`, `nominee_gates` |
 | `z_crit` (decimal string) | `family_gates` G-9 |
-| `family_block_rule` (`largest` or `median`) | `nominate` |
-| `canonical_benchmark_sha256` | `family_gates` G-13 |
-| `classifier_bounds_sha256` | §6 |
+| `family_block_rule` | `nominate` |
+| `canonical_benchmark_sha256` | G-13 |
+| `classifier_bounds_sha256` | §8 |
+| `data_manifest_sha256` (if bound in C2; else declaration) | §2, §5 |
 
-The existing rows (`engine_commit`, `screen_object_sha256`, module hashes, `outpoint_F`,
-`image_digest`, `qualification_object_sha256`) are unchanged.
+The capture time for `derive_seeds` comes from its frozen capture record (the
+seed-disclosure capture source), never from the caller **[OWNER] A-5: capture-record
+source**.
 
-## 3. Reading confirmation data (steps 4, 6) **[OWNER, DESIGN §10]**
+## 7. Per-trial S, T, D, z at the look: option (b) (R14D6B-S-6)
 
-Proposal **6B-3**: the caller passes `read`, the confirmation partition's read gate, which
-returns `(btc, eth)` `BarSeries` over `[w0 − max warm-up, w1)`. `read` is called only
-after `start`, step 2 and step 3 have passed: no seed failure ever reads.
+`dsr.evaluate` returns the nominee's z, S0, block and the column lengths, not every
+column's S_j, D_j, z_j. Option (b): after `evaluate` returns available, the module
+recomputes with `dsr`'s own frozen functions and the same inputs:
+- `draws = [dsr.indices(family_seed, T, b, result.block) for b in range(BOOTSTRAP_ATTEMPTS)]`;
+- `s_star, s_null = dsr._replicates_v(x, draws)` (the numerics `evaluate` used);
+- `S_j = dsr._sharpe_exact(column j)`, `D_j = dsr._mean_var(s_star column j)[1]`,
+  `S0 = fsum(max(row) for row in s_null) / BOOTSTRAP_ATTEMPTS`, `z_j = (S_j - S0) / sqrt(D_j)`.
 
-Before any use, the module validates the §7.2 C-T contract:
-- symbols BTCUSDT and ETHUSDT;
-- contiguous hourly bars, ascending, each exactly once, both series on identical times;
-- exactly `[w0 − W, w1)`, with W the declared trials' largest warm-up;
-- finite, positive OHLC within the bar rules.
+Checks, each a `CycleError` on mismatch (never a silent difference):
+`S0 == result.s0` and `z[result.nominee] == result.z`, both bit for bit
+(`float.hex` equality). A test proves it on the existing DSR fixtures.
 
-Then each trial's rows are the last `warmup + window` hours, plus `confirmation_path`'s
-terminal row. Anything else refuses the evaluation, with no repair or fill. Who may call
-`read`, and under which identity, is the store's and the image's concern (DESIGN §10).
+Why (b): it leaves the protected `dsr.evaluate` untouched (no §16 review for that file),
+and the bit-for-bit check makes any drift loud. Cost: the bootstrap runs twice at the look
+(`BOOTSTRAP_ATTEMPTS` replicates over K columns); acceptable once per cycle.
 
-## 4. The per-trial pre-look record (step 4)
+DESIGN §5.2 step 4 is corrected: the pre-look record keeps `d` and `d_sha256`; S, T, D,
+z exist only at the look (D_j needs the family's draws).
 
-Proposal **6B-4**: `{schema: "aqt.c2.trial_result.v1", cycle_id, trial_id, family,
-configuration_hash, attempt_id, window_id, days: [ISO dates], d: [hexf], d_sha256}`.
+## 8. The supported-law classifier (R14D6B-S-5) **[OWNER] A-6: which document**
 
-- `d` is `baseline_d` (the BTC 1x pair at the trial's `estimator_seed`).
-- `d_sha256` is `_floats_sha256(d)`, big-endian float64, which closes LG5-3.
-- A run that raises `RunUnavailable` or `EventContractError` gives `d: null` with
-  `reason`. `nominate` then fails A_f (U_ops), as for an incomplete trial.
-- `nominate`'s `completed[id] = (configuration_hash, days, d)` is read from these records
-  and checked again against the declaration hashes. At the look, `seal_family` recomputes
-  `d` and checks it against this `d_sha256` (A7 step 2).
+The caller supplies the D-19 bounds document as bytes; its SHA-256 must equal the signed
+`classifier_bounds_sha256`. Then, before any read:
+- `pool = reduce.pooled(cells)[T]` for the window's T (a missing T refuses);
+- `upper, lower = reduce.for_k(pool, K_f)` (its `ValueError` refuses);
+- the document's own `z_crit` and T levels must equal the signed `z_crit` and include T;
+- `classifier = lambda x, lengths: classifier.within(diagnostics(x), upper, lower)`.
 
-## 5. The C2 evaluation record and `evaluation_record_sha256` (steps 7-8)
+`nominate` never runs without it (D-18 O18-2).
 
-Proposal **6B-5**: `aqt.c2.evaluation.v1` = `{schema, cycle_id, chain_log, signed{...},
-eligibility{w0, T}, seeds (derive_seeds' record), trials{id: pre-look record}, families{f:
-{states, A_f, reason, nominee, dsr{S, T, D, z, S0}, gates{G-n: {result, reason, values}},
-outcome, cpcv}}}`.
+## 9. Two records with a stated boundary (R14D6B-S-7) **[OWNER] A-7: S4 output contract**
 
-- Floats are hexf (§D-3.1a), recursively. A `Gate` is `{result, reason, values}`.
-- `evaluation_record_sha256 = SHA256(cj(record))` over this record. It is written **before**
-  sealing, and `seal_family` and `sealing_record` take that hash (LG5-2: the record of steps
-  1-6, so the hash is not circular).
-- The output is three objects: the evaluation record, the artifacts, and the sealing record
-  (DESIGN §5). The C-14 report sits under each nominee's family, labelled
-  `diagnostic_only`. Nothing reads it (test, LG5B-6).
+- **Evaluation record** `aqt.c2.evaluation.v1`: steps 1-6 only:
+  `{schema, cycle_id, chain_log, signed{rows used}, inputs{name: sha256},
+  eligibility{w0, T}, seeds, ledger{path, head_hash, entry_count, anchor},
+  trials{id: record_sha256}, families{f: {states, A_f, reason, cause, nominee,
+  dsr{block, S0, columns[{trial_id, S_j, D_j, z_j}], T}, gates{G-n: {result, reason,
+  values}}, outcome, cpcv (diagnostic_only)}}}`.
+  Floats are hexf, recursively. `evaluation_record_sha256 = SHA256(cj(record))`.
+- **Sealing record**: `seal_family` per declared family and `sealing_record(declared)`,
+  taking `evaluation_record_sha256`. Every status (a)-(d) and every sealing failure lives
+  only here. DESIGN §5.2 and §7.2 wording is reconciled to say so.
 
-## 6. The supported-law classifier (step 5) **[OWNER]**
+Nothing reads the C-14 CPCV report (test, LG5B-6).
 
-DRAFT §2.5: "The support classifier ... belongs to the D-19 preregistration that certifies
-`z_crit`". The frozen code is `calibration.classifier.within(diagnostics(x), upper,
-lower)`, with thresholds fit per cell `(K, T)` (`reduce.Bounds`).
+## 10. Failure (P18-7, R-14a item 7, 6B-8 unchanged in substance)
 
-Proposal **6B-6**: the caller supplies the D-19 bounds document as bytes. Its SHA-256 must
-equal the signed `classifier_bounds_sha256`. Then:
-- the cell is `(K_f, T)`, the family's trial count and the window's days;
-- `classifier = lambda x, lengths: within(diagnostics(x), upper, lower)`;
-- a missing cell refuses the evaluation, since `nominate` never runs without a classifier
-  (D-18 O18-2).
+A failure in §2 steps 2-6 is evaluation-invalid: `CycleError`, nothing read, no record.
+After the read, a family whose gates or sealing fail is recorded with its cause, never
+dropped. Any other exception aborts with no record; P18-1 crash accounting covers it.
 
-The bounds document's layout is the D-19 result's, to be bound with `z_crit` (A-B7).
+## 11. What 6b will not do (unchanged)
 
-## 7. Other inputs and what the module trusts
+No storage, no lockbox, no promotion, no lockbox data. It authenticates the store's
+records only by the checks above; the rest are written as store obligations.
 
-Inputs taken from governing records, as before:
-- the declaration (verified by the chain), and the screen record with its hash
-  (`check_screen_record`);
-- the attempt ledger entries (`family_attempts`);
-- the immutable trial records (P18-0);
-- the beacon and the capture CDX (`derive_seeds`);
-- `last_seen` and `embargo_days` (`check_eligibility`), which are recorded governance
-  facts the module cannot prove (its docstring already says so);
-- `now` and the termination and look records (`look_allowed`);
-- the data manifest hash.
+## Owner items from rev 2
 
-Proposal **6B-7**: every such input is a parameter of the entry point, gathered in one
-frozen `Inputs` value. The record logs the SHA-256 of each input object (Constitution §27),
-so a reviewer can trace each one to its source. How the store vouches for them is the store
-build's obligation, as for the lockbox (`Store` docstring there).
+| ID | Question | Recommendation |
+|---|---|---|
+| A-1 | Ledger anchor source | (a) a hash-committed cycle record at declaration time |
+| A-2 | `last_seen`, `embargo_days`: declaration field or store obligation | declaration field |
+| A-3 | Cause of a recorded-unavailable trial (R14S6-F-5) | split U_ops / U_proc as §4 |
+| A-4 | Manifest format and access path of `read` | the exploration-manifest format; access in the store build |
+| A-5 | Capture-record source for `derive_seeds` | the seed-disclosure capture record |
+| A-6 | Which D-19 bounds document | the one certified with `z_crit` (A-B7) |
+| A-7 | S4 two-record output contract | as §9 |
+| OD-4 | Signed row names | as §6 |
 
-## 8. Order and failure (P18-7, R-14a item 7)
-
-Proposal **6B-8**: inside `evaluate_look`:
-1. `start` (already done);
-2. declaration, screen record, eligibility, then seeds (any failure: evaluation invalid, a
-   `CycleError`, nothing read, no record);
-3. `look_allowed`;
-4. `read` and the C-T check;
-5. states, then `nominate` per family (`A_f`);
-6. for each nominee: `family_gates` plus `nominee_gates`, all computed (P18-7), then
-   `nominee_outcome`, then `cpcv_report`;
-7. the record, then its hash, then `seal_family` per declared family, then
-   `sealing_record(declared)`.
-
-A family whose gates or sealing fail is recorded with its cause, never dropped. An
-exception outside the defined unavailability paths aborts the call with no record. P18-1's
-crash accounting covers it.
-
-## 9. What 6b will not do
-
-It does not store records, run the lockbox, decide promotion, or read any lockbox data. It
-does not authenticate the store's records beyond their hashes (DESIGN §10, owner items).
+Next: an independent design review of rev 2, then the orchestration code
+(`evaluate_trial`, `evaluate_look`) in thin slices with tests.
