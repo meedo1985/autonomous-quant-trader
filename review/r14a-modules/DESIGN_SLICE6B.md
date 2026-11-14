@@ -1,4 +1,4 @@
-# Slice 6b design, rev 13: the confirmation evaluation run and the C2 evaluation record
+# Slice 6b design, rev 14: the confirmation evaluation run and the C2 evaluation record
 
 - Author: Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-14. History: rev 1 `1e6e672`
   (Sol FIX R14D6B-S-1..9); rev 2 `9d34615` (Fable FIX R14D6B2-F-1..19); rev 3 `5cd2a29`
@@ -15,7 +15,8 @@
   (Astra FIX R14D6B10-A-1, record `bc1fc66`, accepted). Rev 12 applies the two wording notes
   of the Astra ACCEPT WITH NOTES re-check of rev 11 (`812851f`). Rev 13 applies
   `ADJUDICATION_FINAL_DESIGN_SLICE6B_A116077.md` (final Fable FIX R14D6B12-F-1..4, record
-  `0142294`, all accepted).
+  `0142294`, all accepted). Rev 14 applies `ADJUDICATION_RECHECK_DESIGN_SLICE6B_523B1DC.md`
+  (Astra FIX R14D6B13-A-1, record `5299e65`, accepted).
 - A proposal for review before the orchestration is built. It approves nothing and closes
   no owner item. **[OWNER]** marks bindings for the signed C2 or the S4 text. Owner
   decisions recorded as direction still need the Constitution's process where they touch
@@ -207,8 +208,8 @@ attempt state) inside the same locked operation (R14D6B10 note), so no runner wr
 re-read and its append. The runner launches **one** `evaluate_trial` process per
 `attempt_id`; a process that ends without a result entry gets its crash outcome before
 anything else is started for that trial (R14D6B12-F-2). Residual: the module cannot see a
-second launch on the same `attempt_id`; because a trial's result is deterministic from its
-inputs, a hidden relaunch gives no choice of `d`, only an unrecorded crash (runner
+second launch on the same `attempt_id`; a hidden relaunch makes extra protected-data reads and
+bypasses crash and re-run accounting, though its deterministic result gives no choice of `d` (runner
 obligation, P18-1 wording row).
 
 **Entry rules** at the look:
@@ -265,7 +266,7 @@ the cycle: **one look per cycle, no second look** (P18-2).
 from `append_entry`'s lock), held by `evaluate_look` from step 4 through the step-7 append
 and by `evaluate_trial` around its final re-check and append; released in a `finally`.
 Order is always look lock → append lock. A dead process releases the OS lock; the sidecar
-file's existence is not itself a lock. A waiter **blocks** with no timeout (every locked
+file's existence is not itself a lock. A look-lock waiter **blocks** with no acquisition timeout (the append lock keeps its own timeout) (every locked
 section is short and a dead holder releases the lock; R14D6B12-F-4), so a finished
 `evaluate_trial` never loses its result to a lock timeout. A second concurrent look waits, then sees the look
 entry at step 4 and refuses without appending. Store obligation: every caller for a cycle
@@ -277,8 +278,8 @@ cycle means step 4 did not see the cycle's final ledger; the look stops with no 
 
 **Closing entry (FINAL-F-5).** `record_type = "aqt.c2.look_closing_entry.v1"`, payload
 `{cycle_id, evaluation_record_sha256, sealing_record_sha256}`, appended by `evaluate_look`
-as its last act, only after `persist` has returned for both records' exact bytes
-(R14D6B7-A-1). A closing entry therefore means both records were durably stored. A crash
+as its last act, only after `persist` has returned for both records' and every status (a) prediction artifact's exact bytes
+(R14D6B7-A-1). A closing entry therefore means both records and the predictions were durably stored. A crash
 after `persist` and before the closing entry leaves stored records but no closing entry:
 `LOOK_WITHOUT_RECORD`, no pick (conservative). A verifier treats a closing entry whose
 hashes match no stored record as a store failure.
@@ -428,14 +429,27 @@ sealing_bytes, artifacts{family: bytes})` returns only after every exact byte st
 durably written (fsync) and raises otherwise (R14D6B7-A-1, R14D6B12-F-1); and
 (R14D6B9-F-2) a stored evaluation or sealing record is released to anything, the lockbox
 `begin_read` included, only when the ledger holds this cycle's closing entry whose two
-hashes equal the stored bytes' hashes and no termination entry for the cycle; an artifact
-is released only under the same condition and only if its bytes hash to the stored sealing
-record's `prediction_artifact_sha256`; `persist` writes where nothing is released before
-that. The `aqt.c2.artifacts.v1` list the lockbox needs is written by the store build from
-the stored artifacts (not in 6b). No change to `c2_lockbox.py`, whose pinned `Store`
-docstring does not carry this rule, so the release tests are **required tests of the one
-store build that serves both modules** (R14D6B12-F-4): persisted records, no closing entry
-→ release refused; status (a), artifact missing or not matching → release refused.
+hashes equal the stored bytes' hashes and no termination entry for the cycle; a
+**prediction artifact** is released only under the same condition and only if its bytes
+hash to the stored sealing record's `prediction_artifact_sha256`; `persist` writes where
+nothing is released before that.
+
+**Two kinds of lockbox input (R14D6B13-A-1).** The prediction artifact (lockbox
+`artifact_bytes`, `c2_lockbox.py` l.759-792) is distinct from the **preregistered
+trial/code inventory** `aqt.c2.artifacts.v1` (kinds `trial`, `signal`, `overlay`;
+`ARTIFACT_KINDS` l.489, `_check_items` l.565-619). The store retains each declared trial
+object (the `sources.trial_objects` bytes 6b hash-checked) and its hash-bound signal and
+optional overlay source bytes, builds the nominee's inventory from those (not from
+predictions; not in 6b), and serves inventory and prediction together, both only under the
+closing-entry condition above. The `prediction_artifact_sha256` match applies to the
+prediction only; inventory items are checked by the lockbox's own hash and size checks.
+
+No change to `c2_lockbox.py`, whose pinned `Store` docstring does not carry these rules, so
+the release tests are **required tests of the one store build that serves both modules**
+(R14D6B12-F-4): persisted records, no closing entry → release refused; status (a),
+prediction missing or not matching → release refused; after closure, a full handoff passes
+the lockbox's `_check_items`, `_check_trial` and prediction checks; before closure it is
+refused.
 
 ## 13. Contract changes to reviewed code
 
@@ -460,7 +474,7 @@ store build that serves both modules** (R14D6B12-F-4): persisted records, no clo
 - `nominate`: §5 precedence (C-3 for breached families only), `failing`, `u_proc_results`,
   `u_proc_present` over all pre-look results, the order-breach reason.
 
-## Owner items after rev 13
+## Owner items after rev 14
 
 | ID | Item | Status |
 |---|---|---|
