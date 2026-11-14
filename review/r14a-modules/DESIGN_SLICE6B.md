@@ -86,7 +86,8 @@ capture; the SPEC's earlier-capture invalidation rule covers a wrong choice.
 3. capture-record checks (§2.1), then `derive_seeds` (failure is read-free, S-8);
 4. take the exclusive look lock (§4, A4-5); ledger: `read_entries`, anchor rules,
    termination check (§5.1), `family_attempts`, the result-entry rules of §3 (which set
-   each attempt's completion), then `trial_states` on the rewritten attempts;
+   each attempt's completion), then `trial_states` on the rewritten attempts of
+   unbreached families only (§3 rule 1);
 5. clock read; `look_allowed` (day 180 from `cycle_start`);
 6. classifier thresholds for each family's `(K_f, T)` (§8);
 7. append the look entry (§4) with `recorded_at_utc` = the step-5 value, release the look
@@ -135,7 +136,8 @@ outcome only for an attempt with no result entry (crash codes). No one writes a
    **U_ops**, reason `LEDGER_ORDER:<attempt_id>`; the breaching attempt does not take the
    family's re-run slot; the other family is unaffected. [OWNER] P18-1/P18-7 wording.
    A breached family is **not** passed to `trial_states`' admissibility checks: its full
-   attempt history is kept for the record, its states are reported as recorded, and no
+   attempt history is kept for the record, its states are reported with §3's derived
+   completion (never the raw outcome word), and no
    slot or attempt-count refusal for it can become a cycle-level `CycleError` (A5-3).
    Only unbreached families go through `trial_states` as today.
 2. *Identity breach*: for each result entry, **every** identity field is compared with what
