@@ -1,4 +1,4 @@
-# Slice 6b design, rev 14: the confirmation evaluation run and the C2 evaluation record
+# Slice 6b design, rev 15: the confirmation evaluation run and the C2 evaluation record
 
 - Author: Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-14. History: rev 1 `1e6e672`
   (Sol FIX R14D6B-S-1..9); rev 2 `9d34615` (Fable FIX R14D6B2-F-1..19); rev 3 `5cd2a29`
@@ -16,7 +16,8 @@
   of the Astra ACCEPT WITH NOTES re-check of rev 11 (`812851f`). Rev 13 applies
   `ADJUDICATION_FINAL_DESIGN_SLICE6B_A116077.md` (final Fable FIX R14D6B12-F-1..4, record
   `0142294`, all accepted). Rev 14 applies `ADJUDICATION_RECHECK_DESIGN_SLICE6B_523B1DC.md`
-  (Astra FIX R14D6B13-A-1, record `5299e65`, accepted).
+  (Astra FIX R14D6B13-A-1, record `5299e65`, accepted). Rev 15 applies the one wording note
+  of the Astra ACCEPT WITH NOTES re-check of rev 14 (`5012670`).
 - A proposal for review before the orchestration is built. It approves nothing and closes
   no owner item. **[OWNER]** marks bindings for the signed C2 or the S4 text. Owner
   decisions recorded as direction still need the Constitution's process where they touch
@@ -268,7 +269,7 @@ and by `evaluate_trial` around its final re-check and append; released in a `fin
 Order is always look lock → append lock. A dead process releases the OS lock; the sidecar
 file's existence is not itself a lock. A look-lock waiter **blocks** with no acquisition timeout (the append lock keeps its own timeout) (every locked
 section is short and a dead holder releases the lock; R14D6B12-F-4), so a finished
-`evaluate_trial` never loses its result to a lock timeout. A second concurrent look waits, then sees the look
+`evaluate_trial` never loses its result to a look-lock acquisition timeout. A second concurrent look waits, then sees the look
 entry at step 4 and refuses without appending. Store obligation: every caller for a cycle
 uses the same ledger path on one host.
 
@@ -474,7 +475,7 @@ refused.
 - `nominate`: §5 precedence (C-3 for breached families only), `failing`, `u_proc_results`,
   `u_proc_present` over all pre-look results, the order-breach reason.
 
-## Owner items after rev 14
+## Owner items after rev 15
 
 | ID | Item | Status |
 |---|---|---|
