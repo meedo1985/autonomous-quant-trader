@@ -1,4 +1,4 @@
-# Slice 6b design, rev 11: the confirmation evaluation run and the C2 evaluation record
+# Slice 6b design, rev 12: the confirmation evaluation run and the C2 evaluation record
 
 - Author: Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-14. History: rev 1 `1e6e672`
   (Sol FIX R14D6B-S-1..9); rev 2 `9d34615` (Fable FIX R14D6B2-F-1..19); rev 3 `5cd2a29`
@@ -12,7 +12,8 @@
   notes of the Astra ACCEPT WITH NOTES re-check of rev 8 (`2f4c5f3`). Rev 10 applies
   `ADJUDICATION_FINAL_DESIGN_SLICE6B_9CA4DE5.md` (final Fable FIX R14D6B9-F-1..6, record
   `9cc082d`, all accepted). Rev 11 applies `ADJUDICATION_RECHECK_DESIGN_SLICE6B_99FBAC3.md`
-  (Astra FIX R14D6B10-A-1, record `bc1fc66`, accepted).
+  (Astra FIX R14D6B10-A-1, record `bc1fc66`, accepted). Rev 12 applies the two wording notes
+  of the Astra ACCEPT WITH NOTES re-check of rev 11 (`812851f`).
 - A proposal for review before the orchestration is built. It approves nothing and closes
   no owner item. **[OWNER]** marks bindings for the signed C2 or the S4 text. Owner
   decisions recorded as direction still need the Constitution's process where they touch
@@ -92,7 +93,7 @@ store; that is a store obligation in the `Store` docstring.
   capture can precede `headers[5]` time minus two hours; refusing it would be permanent
   (the SPEC fixes the earliest capture). The evaluation record logs a diagnostic
   `capture_before_tip_window` (true when `timestamp` < `headers[5]` time − 2 h); it
-  refuses nothing. A hard floor would need an accepted clock-bound rule
+  refuses nothing and never feeds the seeds, nomination, pick eligibility or any gate. A hard floor would need an accepted clock-bound rule
   (**[OWNER]**, S4/SPEC wording), not an invented tolerance. That the capture is genuine and
   earliest stays the store and verifier obligation (§2.1).
 - *Unbreached U_proc→U_ops route (R14D6B9-F-6).* In an unbreached family, leaving a sibling
@@ -353,7 +354,7 @@ for s in ("upper", "lower"))` exactly as `scripts/d19_heldout.py:188-191`, then
 lower)`. No re-pooling, no caller bytes, no extra row. `nominate` never runs without it.
 
 **Chosen reading:** a missing `T=<T>` key or a `for_k` error refuses the whole look before
-any read (both families, no record). Because `T` and each `K_f` are known at declaration,
+any protected-data read (both families, no record). Because `T` and each `K_f` are known at declaration,
 the store's declaration builder must check both have thresholds before posting (Store
 docstring).
 
@@ -387,7 +388,7 @@ Both are passed to `persist` and returned; the closing entry (§4), appended aft
 
 ## 11. Failure (P18-7, R-14a item 7)
 
-- Before the look entry (§2 steps 1-6): `CycleError`, nothing read, nothing written. A
+- Before the look entry (§2 steps 1-6): `CycleError`, no protected data read, nothing written. A
   pre-pick termination is the store's termination entry (§5.1), not an evaluation record.
 - After the look entry: a family whose gates, order rule or sealing fail is recorded with
   its cause, never dropped. Any other abort leaves the look entry without a closing entry:
@@ -429,7 +430,7 @@ release refused.
 - `nominate`: §5 precedence (C-3 for breached families only), `failing`, `u_proc_results`,
   `u_proc_present` over all pre-look results, the order-breach reason.
 
-## Owner items after rev 11
+## Owner items after rev 12
 
 | ID | Item | Status |
 |---|---|---|
