@@ -1,4 +1,4 @@
-# Slice 6b design, rev 15: the confirmation evaluation run and the C2 evaluation record
+# Slice 6b design, rev 16: the confirmation evaluation run and the C2 evaluation record
 
 - Author: Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-14. History: rev 1 `1e6e672`
   (Sol FIX R14D6B-S-1..9); rev 2 `9d34615` (Fable FIX R14D6B2-F-1..19); rev 3 `5cd2a29`
@@ -17,7 +17,9 @@
   `ADJUDICATION_FINAL_DESIGN_SLICE6B_A116077.md` (final Fable FIX R14D6B12-F-1..4, record
   `0142294`, all accepted). Rev 14 applies `ADJUDICATION_RECHECK_DESIGN_SLICE6B_523B1DC.md`
   (Astra FIX R14D6B13-A-1, record `5299e65`, accepted). Rev 15 applies the one wording note
-  of the Astra ACCEPT WITH NOTES re-check of rev 14 (`5012670`).
+  of the Astra ACCEPT WITH NOTES re-check of rev 14 (`5012670`). Rev 16 applies
+  `ADJUDICATION_FINAL_DESIGN_SLICE6B_159B915.md` (final Fable FIX R14D6B15-F-1..4, record
+  `8ed4480`, all accepted).
 - A proposal for review before the orchestration is built. It approves nothing and closes
   no owner item. **[OWNER]** marks bindings for the signed C2 or the S4 text. Owner
   decisions recorded as direction still need the Constitution's process where they touch
@@ -59,14 +61,29 @@ height `h`); `headers` (six 80-byte headers); `beacon`; `capture_record` (bytes)
 declaration's `screen_record_sha256`; `check_screen_record`'s `object_sha256` is the same
 `protocol_row(..., "qualification_object_sha256")` value as §2); and `trial_objects`
 (`{trial_id: trial}`; each must satisfy `screen.trial_sha256(trial) ==` the declaration's
-`configuration_hash` for that trial before use) (R14D6B12-F-3). `evaluate_trial` uses them
-only as steps 2-4 need.
+`configuration_hash` for that trial before use) (R14D6B12-F-3); and `code_files`
+(`{sha256: bytes}`, every declared trial's signal and optional overlay source, R14D6B15-F-1).
+The module installs `code_files` into a fresh empty directory as the lockbox's
+`_install_trial_code` does (`c2_lockbox.py` l.1355-1369), each file's SHA-256 checked
+before it is written, and places that directory **last** on the import path with
+`screen._extend_path` (engine first; S7R-R1), so a trial file cannot shadow an engine
+module. `evaluate_trial` uses these only as steps 2-4 need.
 
-**Declaration layout [DESIGN layout, to be bound in the S4 text]** (R14D6B12-F-3), a
-superset of the lockbox's `_check_declared` layout: top-level `cycle_id`; `trials`, a list
-of `{family, trial_id, hypothesis_hash, configuration_hash, trial_index}`;
-`data_manifest_sha256`; `last_seen`; `embargo_days`; `ledger_anchor{head_hash,
-entry_count}`; `screen_record_sha256`. Unknown or missing keys → `CycleError`.
+**Declaration layout [DESIGN layout, to be bound in the S4 text]** — see the owner table
+row "Declaration layout".
+
+(R14D6B12-F-3), a superset of the lockbox's `_check_declared` layout: top-level
+`cycle_id`; `trials`, a list of `{family, trial_id, hypothesis_hash, configuration_hash,
+trial_index}`; `data_manifest_sha256`; `last_seen`; `embargo_days`; `ledger_anchor{head_hash,
+entry_count}`; `screen_record_sha256`. Parse rules, each a `CycleError` (R14D6B15-F-2):
+unknown or missing keys; `trial_index` not an `int`; more than `MAX_TRIALS` (20) trials in
+total or a `trial_id` repeated across families (one screen record covers the whole
+declaration); a repeated `(hypothesis_hash, trial_index)` pair; a trial object whose own
+`trial_id` or `family` differs from its entry. `check_screen_record` takes all declared
+trial objects, both families, **in the declaration's `trials` list order** (the order
+`screen.trial_set_sha256` hashes, `screen.py` l.495-502). The declaration builder checks the
+same rules before posting (Store docstring), since a posted declaration that breaks one is
+refused and the cycle is spent.
 
 ## 2. Sources
 
@@ -146,7 +163,12 @@ earlier-capture invalidation rule covers a wrong choice.
 **Order** inside `evaluate_look`, all before any protected-data read:
 1. `start`;
 2. `headers_check`; `check_declaration`, `check_screen_record`, `check_eligibility` (signed
-   `confirmation_start`, `confirmation_end`);
+   `confirmation_start`, `confirmation_end`); install `code_files` and load **every**
+   declared trial's signal and overlay with `screen.load` (hash before execute, as
+   `run_screen` l.1971-1974); missing or wrong code → read-free `CycleError`, nothing
+   written, never a post-look abort or a status (d) seal (R14D6B15-F-1). `evaluate_trial`
+   does the same for its trial before its read. Test: one declared trial's code absent or
+   altered → no look entry, no read;
 3. capture-record checks (§2.1), then `derive_seeds` (failure is read-free, S-8);
 4. take the exclusive look lock (§4); ledger: `read_entries`, anchor rules, termination
    and look checks (§5.1), well-formed look/closing/termination payloads (malformed →
@@ -263,7 +285,9 @@ uses the step-5 clock value, so a premature call is refused **before** any entry
 written. `look_allowed` and `evaluate_look` refuse when a look entry already exists for
 the cycle: **one look per cycle, no second look** (P18-2).
 
-**Look lock.** An exclusive OS file lock on its own sidecar (`<ledger>.look.lock`, distinct
+**Look lock.** An exclusive OS file lock, taken by the module's own copy of the ledger's
+non-blocking `_try_lock` (`ledger.py` l.314-360) in a loop with no deadline, so the wait is
+the same on both platforms (R14D6B15-F-4), on its own sidecar (`<ledger>.look.lock`, distinct
 from `append_entry`'s lock), held by `evaluate_look` from step 4 through the step-7 append
 and by `evaluate_trial` around its final re-check and append; released in a `finally`.
 Order is always look lock → append lock. A dead process releases the OS lock; the sidecar
@@ -439,8 +463,10 @@ nothing is released before that.
 `artifact_bytes`, `c2_lockbox.py` l.759-792) is distinct from the **preregistered
 trial/code inventory** `aqt.c2.artifacts.v1` (kinds `trial`, `signal`, `overlay`;
 `ARTIFACT_KINDS` l.489, `_check_items` l.565-619). The store retains each declared trial
-object (the `sources.trial_objects` bytes 6b hash-checked) and its hash-bound signal and
-optional overlay source bytes, builds the nominee's inventory from those (not from
+object (the `sources.trial_objects` 6b hash-checked, kept as JSON; the lockbox parses the
+trial item and re-derives its configuration hash, l.603-605, so any JSON serialization
+passes) and its signal and optional overlay source bytes (the same hash-checked
+`sources.code_files`, R14D6B15-F-1), builds the nominee's inventory from those (not from
 predictions; not in 6b), and serves inventory and prediction together, both only under the
 closing-entry condition above. The `prediction_artifact_sha256` match applies to the
 prediction only; inventory items are checked by the lockbox's own hash and size checks.
@@ -475,7 +501,7 @@ refused.
 - `nominate`: §5 precedence (C-3 for breached families only), `failing`, `u_proc_results`,
   `u_proc_present` over all pre-look results, the order-breach reason.
 
-## Owner items after rev 15
+## Owner items after rev 16
 
 | ID | Item | Status |
 |---|---|---|
@@ -484,12 +510,14 @@ refused.
 | A-4 | Composite manifest + whole partitions served by `read` | recommendation as §6 |
 | A-7 | Two-record output contract; U_ops reason list | recommendation as §10, §5 |
 | OD-4 | Row names and parse rules | recommendation as §7 |
-| B-1 | Capture record offline checks; record genuine/earliest is a store obligation; a true `capture_before_tip_window` is a point the verifier must clear; an optional hard capture floor needs an accepted clock-bound rule | decided as direction; hard floor **[OWNER] open**; **S4/SPEC wording** |
+| B-1 | Capture record offline checks; record genuine/earliest is a store obligation | decided as direction; **S4/SPEC wording** |
+| — | A true `capture_before_tip_window` is a point the verifier must clear (from review R14D6B12-F-4, not the owner); an optional hard capture floor needs an accepted clock-bound rule | design proposal, **to confirm**; hard floor **[OWNER] open**; **S4/SPEC wording** |
+| — | Declaration layout and parse rules (§1) | recommendation; **S4 wording** |
 | B-2, C-1 | Day 0 = block time; six headers as a separate caller handle (extends the one-header selection) | decided as direction; **S4 wording** |
 | B-3 | `LOOK_WITHOUT_RECORD`; read as "no closing entry", covering evaluation without sealing and records stored with no closing entry (never released, §12) | decided; the "no closing entry" reading **to confirm**; how such a cycle is counted **[OWNER]**; **P18-2/P18-7 wording** |
 | B-4, C-2 | Order breach fails only that family; look does not wait for it; `evaluate_trial` refuses for it | decided as direction; **P18-1/P18-2/P18-7 wording** |
 | C-3 | Breached family with any pre-look U_proc result counts as U_proc (unbreached families keep rev 6 precedence); `u_proc_present` recorded | decided as direction; **P18-7 wording** |
-| — | No result entry before the first outcome = crash whatever the outcome says (changes who may get the P18-1 slot) | design proposal; **P18-1 wording, to confirm** |
+| — | No result entry before the first outcome = crash whatever the outcome says (changes who may get the P18-1 slot); one `evaluate_trial` launch per attempt is a runner promise the module cannot see (§3 residual), so P18-1's crash and re-run count rests on it | design proposal; **P18-1 wording, to confirm** |
 | B-5 | `DAYS_INCOMPLETE` U_proc | decided |
 | A-3, F-8 | split by reason; record only frozen output | decided |
 | A-5, A-6 | capture hash in declaration; separate thresholds | withdrawn |
