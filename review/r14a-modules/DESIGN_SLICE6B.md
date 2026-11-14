@@ -1,4 +1,7 @@
-# Slice 6b design, rev 5: the confirmation evaluation run and the C2 evaluation record
+# Slice 6b design, rev 6: the confirmation evaluation run and the C2 evaluation record
+
+- Rev 6 (2026-11-14) applies the Astra re-check of rev 5 (R14D6B5-A-1..4, record `659fda4`,
+  adjudication `ADJUDICATION_RECHECK_DESIGN_SLICE6B_24BA994.md`, all accepted).
 
 - Author: Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-14. History: rev 1 `1e6e672`
   (Sol FIX R14D6B-S-1..9); rev 2 `9d34615` (Fable FIX R14D6B2-F-1..19); rev 3 `5cd2a29`
@@ -40,7 +43,7 @@ repeats steps 2-3 from the governing records.
 | Declared trials, configuration hashes | `Started.declaration` (as lockbox `_check_declared`) | `start` verified the chain |
 | `data_manifest_sha256`, `last_seen`, `embargo_days`, ledger anchor `{head_hash, entry_count}` | **the declaration only** (one source each) **[OWNER] A-1, A-2** | declaration verified by `start` |
 | Ledger path | caller handle (F3-11: a path is a property of one machine) | the ledger must extend the declared anchor |
-| `cycle_start` (P18-2 day 0), `tip_block_hash` | **header time of the block that includes the post** (owner B-2). The acceptance record gains `headers`: the six 80-byte headers of heights `h..h+5` (hex). `start` requires `hash(headers[0]) == block_hash` (hash = `SHA256d(header)` byte-reversed), each header's previous-hash field (bytes 4-35) to equal the hash of the header before it, reads day 0 from `headers[0]` (bytes 68-71, little-endian, UTC seconds) and sets `tip_block_hash = hash(headers[5])` (A4-1) | `start` (6a change, §13) |
+| `cycle_start` (P18-2 day 0), `tip_block_hash` | **header time of the block that includes the post** (owner B-2). The acceptance record gains `headers`: the six 80-byte headers of heights `h..h+5` (hex). `start` requires `hash(headers[0]) == block_hash` (display form: `SHA256d(header)[::-1].hex()`, also used for the tip and the capture body), and on decoded bytes `headers[i][4:36] == SHA256d(headers[i-1])` in internal byte order, not reversed (A5-1), reads day 0 from `headers[0]` (bytes 68-71, little-endian, UTC seconds) and sets `tip_block_hash = hash(headers[5])` (A4-1) | `start` (6a change, §13) |
 | Attempt starts and outcomes, result entries, look entry, termination entries | the attempt ledger | `read_entries` (it verifies the chain) + extension of the anchor + every entry of this cycle after the anchor |
 | `now` for the look | one module clock read before step 5, truncated to whole seconds, also passed as `recorded_at_utc` of the look entry (F3-3) | **recorded, not verified**: it is the appender's clock |
 | Beacon | caller handle | `derive_seeds` (BLS, 4a) and `drand_chain_hash` (§7) |
@@ -131,6 +134,10 @@ outcome only for an attempt with no result entry (crash codes). No one writes a
    instead of raising (contract change, §13). The family is recorded failed, cause
    **U_ops**, reason `LEDGER_ORDER:<attempt_id>`; the breaching attempt does not take the
    family's re-run slot; the other family is unaffected. [OWNER] P18-1/P18-7 wording.
+   A breached family is **not** passed to `trial_states`' admissibility checks: its full
+   attempt history is kept for the record, its states are reported as recorded, and no
+   slot or attempt-count refusal for it can become a cycle-level `CycleError` (A5-3).
+   Only unbreached families go through `trial_states` as today.
 2. *Identity breach*: for each result entry, **every** identity field is compared with what
    the module derives now: `cycle_id`, `trial_id`, `family`, `configuration_hash` (the
    declaration's), `attempt_id`, `trial_index`, `seed_l266`, `estimator_seed`,
@@ -138,7 +145,11 @@ outcome only for an attempt with no result entry (crash codes). No one writes a
    malformed entry or a mismatch is not an honest sequence: `CycleError`, no read, nothing
    written; the cycle ends by the store's termination entry (§5.1). Then `completed_entry`
    decodes `d` exactly. Well-formed `days` that differ from the window's days are **not**
-   an identity breach: that family is U_ops `MISALIGNED_SERIES` (§5, A4-4).
+   an identity breach: that family is U_ops `MISALIGNED_SERIES` (§5, A4-4). To make this
+   reachable, `completed_entry` changes (A5-2): `window_id` is checked against the
+   governing window (identity), the day list is checked for form only (canonical UTC,
+   consecutive, non-empty; malformed → `CycleError`), and its check that `window_id` equals
+   the days' own window is removed; the `d`/`d_sha256` integrity checks stay.
 3. A result entry after the look entry is ignored by that look (the trial was `running` at
    the look and is U_ops by §5); it stays in the ledger as a recorded late result (F3-13).
 4. `evaluate_trial` refuses when its attempt already has a result entry or an outcome, or
@@ -147,8 +158,8 @@ outcome only for an attempt with no result entry (crash codes). No one writes a
 Tests: honest sequences (unavailable run; outcome racing the result entry; crash after the
 entry; A writes its result and dies with no outcome while B crashes → A completed, B has
 the slot and may re-run) give the stated states and never a `CycleError`; an order breach,
-including a double outcome, gives that family U_ops `LEDGER_ORDER` and leaves the other
-family; shifted `days` give U_ops `MISALIGNED_SERIES`; a moved record, wrong seed, other
+including a double outcome and a duplicate crash outcome written after a legitimate
+re-run (A5-3), gives that family U_ops `LEDGER_ORDER` and leaves the other family; shifted `days` give U_ops `MISALIGNED_SERIES`; a moved record, wrong seed, other
 manifest, other `window_id` each refuse.
 
 ## 4. The look entry (F3-3, F3-4)
@@ -159,8 +170,10 @@ uses the step-5 clock value, so a premature call is refused **before** any entry
 written. `look_allowed` and `evaluate_look` refuse when a look entry already exists for
 the cycle: **one look per cycle, no second look** (P18-2).
 
-**Look lock (A4-5).** `evaluate_look` holds an exclusive OS file lock next to the ledger
-from step 4 through the step-7 append. A second concurrent caller waits, then sees the
+**Look lock (A4-5, A5-4).** `evaluate_look` holds an exclusive OS file lock on its own
+sidecar (`<ledger>.look.lock`, distinct from `append_entry`'s lock) from step 4 through the
+step-7 append, released in a `finally`. Order is always look lock → append lock. A dead
+process releases the OS lock; the sidecar file's existence is not itself a lock. A second concurrent caller waits, then sees the
 look entry at step 4 and refuses without appending, so it neither consumes a look nor
 terminates the winning one. Store obligation: every look of a cycle uses the same ledger
 path on one host.
@@ -301,7 +314,9 @@ No storage, no lockbox, no promotion, no lockbox data. Store obligations are wri
 - `family_attempts`: reports a second outcome (and §3's other order breaches) per family
   instead of raising `CycleError` (A4-3).
 - `trial_states`: takes attempts already rewritten by §3's completion rule (`outcome` and
-  `end`, A4-2).
+  `end`, A4-2); called only for families without an order breach (A5-3).
+- `completed_entry`: `window_id` against the governing window; days checked for form
+  only (A5-2).
 - `look_allowed`: `looked` from the look entry, `terminated` from termination entries,
   `now` from the step-5 clock read.
 - `TRIAL_RESULT_SCHEMA` v2 and `_TRIAL_RESULT_KEYS` as §3.
