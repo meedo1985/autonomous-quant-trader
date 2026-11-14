@@ -1,4 +1,4 @@
-# Slice 6b design, rev 12: the confirmation evaluation run and the C2 evaluation record
+# Slice 6b design, rev 13: the confirmation evaluation run and the C2 evaluation record
 
 - Author: Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-14. History: rev 1 `1e6e672`
   (Sol FIX R14D6B-S-1..9); rev 2 `9d34615` (Fable FIX R14D6B2-F-1..19); rev 3 `5cd2a29`
@@ -13,7 +13,9 @@
   `ADJUDICATION_FINAL_DESIGN_SLICE6B_9CA4DE5.md` (final Fable FIX R14D6B9-F-1..6, record
   `9cc082d`, all accepted). Rev 11 applies `ADJUDICATION_RECHECK_DESIGN_SLICE6B_99FBAC3.md`
   (Astra FIX R14D6B10-A-1, record `bc1fc66`, accepted). Rev 12 applies the two wording notes
-  of the Astra ACCEPT WITH NOTES re-check of rev 11 (`812851f`).
+  of the Astra ACCEPT WITH NOTES re-check of rev 11 (`812851f`). Rev 13 applies
+  `ADJUDICATION_FINAL_DESIGN_SLICE6B_A116077.md` (final Fable FIX R14D6B12-F-1..4, record
+  `0142294`, all accepted).
 - A proposal for review before the orchestration is built. It approves nothing and closes
   no owner item. **[OWNER]** marks bindings for the signed C2 or the S4 text. Owner
   decisions recorded as direction still need the Constitution's process where they touch
@@ -40,26 +42,36 @@ record it reads and verifies itself (R14D6B-S-1).
   no outcome); appends the attempt's result entry under the look lock (§3 rule 4). It
   writes no outcome.
 - `evaluate_look(started, sources, read, persist)`: steps 2-8; appends the look entry (§4)
-  before any protected-data read; builds the evaluation and sealing records, hands their exact bytes to
-  the caller's `persist` (R14D6B7-A-1; §12), and only after `persist` returns appends the
-  closing entry (§4) as its last act. It also returns both records.
+  before any protected-data read; builds the evaluation and sealing records and, for each
+  status (a) family, the sealed prediction artifact `seal_family` returns; hands their exact
+  bytes to the caller's `persist` (R14D6B7-A-1, R14D6B12-F-1; §12), and only after `persist`
+  returns appends the closing entry (§4) as its last act. It also returns all of them.
 
 Each runs in a fresh process that first calls `start` (6a, final on refusal) and passes
 the `Started` it returned; it repeats steps 2-3 from the governing records (R14D6B9-F-5).
 
 `sources` (R14D6B9-F-5) holds exactly: `ledger_path`; `acceptance_record` (bytes; must hash
 to `started.chain_log["acceptance_record_sha256"]` before use, then gives `block_hash` and
-height `h`); `headers` (six 80-byte headers); `beacon`; `capture_record` (bytes); and
-`object_dir` (the qualification object). `evaluate_trial` uses `ledger_path`,
-`acceptance_record`, `headers`, `beacon`, `capture_record` (for the seeds) and `object_dir`
+height `h`); `headers` (six 80-byte headers); `beacon`; `capture_record` (bytes);
+`object_dir` (the qualification object); `screen_record` (bytes; must hash to the
+declaration's `screen_record_sha256`; `check_screen_record`'s `object_sha256` is the same
+`protocol_row(..., "qualification_object_sha256")` value as §2); and `trial_objects`
+(`{trial_id: trial}`; each must satisfy `screen.trial_sha256(trial) ==` the declaration's
+`configuration_hash` for that trial before use) (R14D6B12-F-3). `evaluate_trial` uses them
 only as steps 2-4 need.
+
+**Declaration layout [DESIGN layout, to be bound in the S4 text]** (R14D6B12-F-3), a
+superset of the lockbox's `_check_declared` layout: top-level `cycle_id`; `trials`, a list
+of `{family, trial_id, hypothesis_hash, configuration_hash, trial_index}`;
+`data_manifest_sha256`; `last_seen`; `embargo_days`; `ledger_anchor{head_hash,
+entry_count}`; `screen_record_sha256`. Unknown or missing keys → `CycleError`.
 
 ## 2. Sources
 
 | Input | Source | Check |
 |---|---|---|
 | Signed C2 rows | `protocol_row` (§7) | `start` verified the bytes |
-| Declared trials, configuration hashes | `Started.declaration` (as lockbox `_check_declared`) | `start` verified the chain |
+| Declared trials, configuration hashes | `Started.declaration` (layout §1); trial objects from `sources.trial_objects`, each hash-checked | `start` verified the chain |
 | `data_manifest_sha256`, `last_seen`, `embargo_days`, ledger anchor `{head_hash, entry_count}` | **the declaration only** (one source each) **[OWNER] A-1, A-2** | declaration verified by `start` |
 | Ledger path | caller handle (a path is a property of one machine) | the ledger must extend the declared anchor |
 | `cycle_start` (P18-2 day 0), `tip_block_hash` | **header time of the block that includes the post** (owner B-2, C-1). The six 80-byte headers of heights `h..h+5` are a **separate caller handle** (owner C-1); the acceptance record and the pinned chain code are unchanged. The module requires `hash(headers[0]) == acceptance["block_hash"]` (display form `SHA256d(header)[::-1].hex()`, also used for the tip and the capture body) and, on decoded bytes, `headers[i][4:36] == SHA256d(headers[i-1])` in internal byte order; reads day 0 from `headers[0]` bytes 68-71 (little-endian, UTC seconds); sets `tip_block_hash = hash(headers[5])`; logs `headers_sha256` = SHA-256 of the 480 concatenated header bytes | 6b `headers_check`, after `start` |
@@ -94,7 +106,9 @@ store; that is a store obligation in the `Store` docstring.
   (the SPEC fixes the earliest capture). The evaluation record logs a diagnostic
   `capture_before_tip_window` (true when `timestamp` < `headers[5]` time − 2 h); it
   refuses nothing and never feeds the seeds, nomination, pick eligibility or any gate. A hard floor would need an accepted clock-bound rule
-  (**[OWNER]**, S4/SPEC wording), not an invented tolerance. That the capture is genuine and
+  (**[OWNER]**, S4/SPEC wording), not an invented tolerance. A true value is a point the
+  verifier must clear against the archive (SPEC §4 record) before the cycle's result is relied
+  on (R14D6B12-F-4). That the capture is genuine and
   earliest stays the store and verifier obligation (§2.1).
 - *Unbreached U_proc→U_ops route (R14D6B9-F-6).* In an unbreached family, leaving a sibling
   trial unfinished at day 180 makes the family U_ops even after a U_proc result (§5 rule
@@ -167,8 +181,10 @@ Appended with `aqt.core.ledger.append_entry`. An unavailable run writes `d: null
 reason; it is still a result entry.
 
 **Attempt binding (FINAL-F-6).** A result entry's `attempt_id` must be a start of this
-cycle, after the anchor and before the entry, whose `(hypothesis_hash, trial_index)` maps
-to the entry's `trial_id`; otherwise `CycleError`. Outcomes are matched to starts of this
+cycle, of the confirmation partition and of the entry's family (as `family_attempts`
+counts them, l.757-760; R14D6B12-F-3), after the anchor and before the entry, whose
+`(hypothesis_hash, trial_index)` maps to the entry's `trial_id`; otherwise `CycleError`.
+`evaluate_trial` applies the same rule to its `attempt_id` before any protected-data read. Outcomes are matched to starts of this
 cycle only; duplicate outcomes of other cycles are ignored; an outcome with no start is a
 `CycleError` (as `finish_attempt` cannot write one).
 
@@ -188,7 +204,12 @@ outcome only for an attempt with no result entry (crash codes). No one writes a
 lock around **every** start and outcome write (look lock, then append lock; R14D6B9-F-3),
 and makes its eligibility checks for that write (no look, closing or termination entry;
 attempt state) inside the same locked operation (R14D6B10 note), so no runner write lands inside a look's steps 4-7 or between `evaluate_trial`'s locked
-re-read and its append.
+re-read and its append. The runner launches **one** `evaluate_trial` process per
+`attempt_id`; a process that ends without a result entry gets its crash outcome before
+anything else is started for that trial (R14D6B12-F-2). Residual: the module cannot see a
+second launch on the same `attempt_id`; because a trial's result is deterministic from its
+inputs, a hidden relaunch gives no choice of `d`, only an unrecorded crash (runner
+obligation, P18-1 wording row).
 
 **Entry rules** at the look:
 1. *Order breach* (owner B-4): a result entry after its attempt's outcome, a second result
@@ -244,7 +265,9 @@ the cycle: **one look per cycle, no second look** (P18-2).
 from `append_entry`'s lock), held by `evaluate_look` from step 4 through the step-7 append
 and by `evaluate_trial` around its final re-check and append; released in a `finally`.
 Order is always look lock → append lock. A dead process releases the OS lock; the sidecar
-file's existence is not itself a lock. A second concurrent look waits, then sees the look
+file's existence is not itself a lock. A waiter **blocks** with no timeout (every locked
+section is short and a dead holder releases the lock; R14D6B12-F-4), so a finished
+`evaluate_trial` never loses its result to a lock timeout. A second concurrent look waits, then sees the look
 entry at step 4 and refuses without appending. Store obligation: every caller for a cycle
 uses the same ledger path on one host.
 
@@ -383,8 +406,10 @@ nominee's z exists only at the look.
   taking `evaluation_record_sha256`; every status (a)-(d) and sealing failure lives only
   here.
 
-Both are passed to `persist` and returned; the closing entry (§4), appended after
-`persist` returns, binds their hashes in the ledger.
+Both, with each status (a) family's prediction artifact bytes `cj(artifact)`, are passed to
+`persist` and returned; the closing entry (§4), appended after `persist` returns, binds the
+two record hashes in the ledger; each artifact is bound by the sealing record's
+`prediction_artifact_sha256` (R14D6B12-F-1).
 
 ## 11. Failure (P18-7, R-14a item 7)
 
@@ -399,13 +424,18 @@ Both are passed to `persist` and returned; the closing entry (§4), appended aft
 No storage of its own (the module calls the caller's `persist` and appends ledger entries
 only), no lockbox, no promotion, no lockbox data. Store obligations are written in a
 `Store` docstring, as the lockbox does, including: `persist(evaluation_bytes,
-sealing_bytes)` returns only after both exact byte strings are durably written (fsync)
-and raises otherwise (R14D6B7-A-1); and (R14D6B9-F-2) a stored evaluation or sealing record
-is released to anything, the lockbox `begin_read` included, only when the ledger holds
-this cycle's closing entry whose two hashes equal the stored bytes' hashes and no
-termination entry for the cycle; `persist` writes where nothing is released before that.
-No change to `c2_lockbox.py`. Store-build test: persisted records, no closing entry →
-release refused.
+sealing_bytes, artifacts{family: bytes})` returns only after every exact byte string is
+durably written (fsync) and raises otherwise (R14D6B7-A-1, R14D6B12-F-1); and
+(R14D6B9-F-2) a stored evaluation or sealing record is released to anything, the lockbox
+`begin_read` included, only when the ledger holds this cycle's closing entry whose two
+hashes equal the stored bytes' hashes and no termination entry for the cycle; an artifact
+is released only under the same condition and only if its bytes hash to the stored sealing
+record's `prediction_artifact_sha256`; `persist` writes where nothing is released before
+that. The `aqt.c2.artifacts.v1` list the lockbox needs is written by the store build from
+the stored artifacts (not in 6b). No change to `c2_lockbox.py`, whose pinned `Store`
+docstring does not carry this rule, so the release tests are **required tests of the one
+store build that serves both modules** (R14D6B12-F-4): persisted records, no closing entry
+→ release refused; status (a), artifact missing or not matching → release refused.
 
 ## 13. Contract changes to reviewed code
 
@@ -430,7 +460,7 @@ release refused.
 - `nominate`: §5 precedence (C-3 for breached families only), `failing`, `u_proc_results`,
   `u_proc_present` over all pre-look results, the order-breach reason.
 
-## Owner items after rev 12
+## Owner items after rev 13
 
 | ID | Item | Status |
 |---|---|---|
@@ -439,7 +469,7 @@ release refused.
 | A-4 | Composite manifest + whole partitions served by `read` | recommendation as §6 |
 | A-7 | Two-record output contract; U_ops reason list | recommendation as §10, §5 |
 | OD-4 | Row names and parse rules | recommendation as §7 |
-| B-1 | Capture record offline checks; record genuine/earliest is a store obligation | decided as direction; **S4/SPEC wording** |
+| B-1 | Capture record offline checks; record genuine/earliest is a store obligation; a true `capture_before_tip_window` is a point the verifier must clear; an optional hard capture floor needs an accepted clock-bound rule | decided as direction; hard floor **[OWNER] open**; **S4/SPEC wording** |
 | B-2, C-1 | Day 0 = block time; six headers as a separate caller handle (extends the one-header selection) | decided as direction; **S4 wording** |
 | B-3 | `LOOK_WITHOUT_RECORD`; read as "no closing entry", covering evaluation without sealing and records stored with no closing entry (never released, §12) | decided; the "no closing entry" reading **to confirm**; how such a cycle is counted **[OWNER]**; **P18-2/P18-7 wording** |
 | B-4, C-2 | Order breach fails only that family; look does not wait for it; `evaluate_trial` refuses for it | decided as direction; **P18-1/P18-2/P18-7 wording** |
