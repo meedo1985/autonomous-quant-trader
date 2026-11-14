@@ -12,6 +12,7 @@
 | B-2 | R14D6B3-F-2 day 0 | "Block time (Recommended)": day 0 = header time of the block containing the post; acceptance record gains the 80-byte header, checked to hash to `block_hash`. |
 | B-4 | R14D6B3-F-5 runner breaches | "Record family U_ops (Recommended)": the family is recorded failed with a U_ops reason naming the attempt; the cycle continues. Touches P18-1/P18-7 wording. |
 | B-5 | R14D6B3-F-8 `DAYS_INCOMPLETE` | "U_proc (Recommended)": stays U_proc; `U_OPS_REASONS` unchanged. |
+| B-3 | R14D6B3-F-4 aborted look | Owner message 2026-11-14: "use LOOK_WITHOUT_RECORD for B-3". Termination kind `LOOK_WITHOUT_RECORD` as design rev 4 §4. |
 
-Not asked: B-3 (fixed outcome label for a look entry without an evaluation record). Rev 4
-carries an AI-proposed label marked `[OWNER]`.
+B-3 was decided after rev 4 (`9f45303`) was committed; rev 4's `[OWNER] B-3` marker is
+updated in the next revision.
