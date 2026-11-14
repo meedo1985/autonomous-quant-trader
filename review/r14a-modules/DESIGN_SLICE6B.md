@@ -1,4 +1,4 @@
-# Slice 6b design, rev 7: the confirmation evaluation run and the C2 evaluation record
+# Slice 6b design, rev 8: the confirmation evaluation run and the C2 evaluation record
 
 - Author: Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-14. History: rev 1 `1e6e672`
   (Sol FIX R14D6B-S-1..9); rev 2 `9d34615` (Fable FIX R14D6B2-F-1..19); rev 3 `5cd2a29`
@@ -7,7 +7,8 @@
   Fable FIX R14D6B-FINAL-F-1..9, record `97ff99d`). Rev 7 applies
   `ADJUDICATION_FINAL_DESIGN_SLICE6B_4B6E6E0.md` (all accepted) and the owner's decisions in
   `OWNER_DECISIONS_DESIGN_SLICE6B_REV6.md` (C-1..C-3), on top of `..._REV3.md` (B-1..B-5)
-  and `..._REV2.md`.
+  and `..._REV2.md`. Rev 8 applies `ADJUDICATION_RECHECK_DESIGN_SLICE6B_E2DDCB4.md`
+  (Astra FIX R14D6B7-A-1..3, record `7c29af4`, all accepted).
 - A proposal for review before the orchestration is built. It approves nothing and closes
   no owner item. **[OWNER]** marks bindings for the signed C2 or the S4 text. Owner
   decisions recorded as direction still need the Constitution's process where they touch
@@ -30,9 +31,10 @@ record it reads and verifies itself (R14D6B-S-1).
 
 - `evaluate_trial(started, sources, trial_id, read)`: steps 2-4 for one attempt; appends
   the attempt's result entry under the look lock (§3 rule 4). It writes no outcome.
-- `evaluate_look(started, sources, read)`: steps 2-8; appends the look entry (§4) before
-  any read; **returns** the evaluation and sealing records (the store persists them; §12)
-  and, as its last act, appends the closing entry (§4).
+- `evaluate_look(started, sources, read, persist)`: steps 2-8; appends the look entry (§4)
+  before any read; builds the evaluation and sealing records, hands their exact bytes to
+  the caller's `persist` (R14D6B7-A-1; §12), and only after `persist` returns appends the
+  closing entry (§4) as its last act. It also returns both records.
 
 Each runs in a fresh process whose first act is `start` (6a, final on refusal), and
 repeats steps 2-3 from the governing records.
@@ -45,12 +47,12 @@ repeats steps 2-3 from the governing records.
 | Declared trials, configuration hashes | `Started.declaration` (as lockbox `_check_declared`) | `start` verified the chain |
 | `data_manifest_sha256`, `last_seen`, `embargo_days`, ledger anchor `{head_hash, entry_count}` | **the declaration only** (one source each) **[OWNER] A-1, A-2** | declaration verified by `start` |
 | Ledger path | caller handle (a path is a property of one machine) | the ledger must extend the declared anchor |
-| `cycle_start` (P18-2 day 0), `tip_block_hash` | **header time of the block that includes the post** (owner B-2, C-1). The six 80-byte headers of heights `h..h+5` are a **separate caller handle** (owner C-1); the acceptance record and the pinned chain code are unchanged. The module requires `hash(headers[0]) == acceptance["block_hash"]` (display form `SHA256d(header)[::-1].hex()`, also used for the tip and the capture body) and, on decoded bytes, `headers[i][4:36] == SHA256d(headers[i-1])` in internal byte order; reads day 0 from `headers[0]` bytes 68-71 (little-endian, UTC seconds); sets `tip_block_hash = hash(headers[5])`; logs `headers_sha256` | 6b `headers_check`, after `start` |
+| `cycle_start` (P18-2 day 0), `tip_block_hash` | **header time of the block that includes the post** (owner B-2, C-1). The six 80-byte headers of heights `h..h+5` are a **separate caller handle** (owner C-1); the acceptance record and the pinned chain code are unchanged. The module requires `hash(headers[0]) == acceptance["block_hash"]` (display form `SHA256d(header)[::-1].hex()`, also used for the tip and the capture body) and, on decoded bytes, `headers[i][4:36] == SHA256d(headers[i-1])` in internal byte order; reads day 0 from `headers[0]` bytes 68-71 (little-endian, UTC seconds); sets `tip_block_hash = hash(headers[5])`; logs `headers_sha256` = SHA-256 of the 480 concatenated header bytes | 6b `headers_check`, after `start` |
 | Attempt starts and outcomes, result entries, look, closing and termination entries | the attempt ledger | `read_entries` (it verifies the chain) + extension of the anchor + every entry of this cycle after the anchor |
 | `now` for the look | one module clock read before step 5, truncated to whole seconds, also passed as `recorded_at_utc` of the look entry | **recorded, not verified**; floor: refused if before `cycle_start` or before the last ledger entry's `recorded_at_utc` (FINAL-F-9) |
 | Beacon | caller handle | `derive_seeds` (BLS, 4a) and `drand_chain_hash` (§7) |
 | Capture record (fixes `T` and the beacon round) | caller bytes (owner B-1) | schema and offline checks, §2.1 |
-| Classifier thresholds | `final_thresholds` of the qualification object | 6b `qualification_report` reads the object directory (caller handle), requires `sha(manifest.json) == Started.screen_object_sha256` and every file digest as `verify_code` does (l.2592-2600), then takes the report from `qobj.read`; `verify_code` is unchanged (C-1) |
+| Classifier thresholds | `final_thresholds` of the qualification object | 6b `qualification_report` reads the object directory (caller handle), requires `sha(json.loads(manifest.json)) == Started.screen_object_sha256` (canonical JSON, as `verify_code` l.2592-2594) and each file's raw-byte SHA-256 equal to its manifest digest as `verify_code` does (l.2592-2600), then takes the report from `qobj.read`; `verify_code` is unchanged (C-1) |
 | Bars | `read` gate | §6 |
 
 **A-1 (restated).** The declaration carries the ledger head at declaration time. The
@@ -80,8 +82,8 @@ already hashed into the post, **cannot** bind it. **[DESIGN schema]**
 `{schema, url, timestamp, status, digest, body, acceptance_record_sha256}`. The module
 checks, offline:
 1. `url` is exactly one of the two qualifying URLs for height `h+5`; `timestamp` is 14
-   digits; `status == "200"`; `T` is `timestamp`;
-2. `body` equals `tip_block_hash` exactly (no trailing newline allowed unless the
+   digits; `status == "200"`; the capture time is `timestamp` (it fixes `w0` and hence the window length `T`, `check_eligibility`);
+2. `body`, decoded as ASCII, equals `tip_block_hash` exactly (no trailing newline allowed unless the
    known-answer test shows the endpoint returns one);
 3. `body` hashes to `digest` (CDX digest: base32 SHA-1 of the payload). **[VERIFY]** the
    digest form with a known capture before signing;
@@ -157,7 +159,8 @@ outcome only for an attempt with no result entry (crash codes). No one writes a
    `LEDGER_ORDER:<attempt_id>`; cause per §5 (owner C-3). It is not passed to
    `trial_states`; its full attempt history is kept for the record and its states are
    (FINAL-F-2): per trial, last attempt derived-completed → `completed`; last attempt with
-   no result entry and no outcome → `running`; anything else → `final`; no re-run slot. No
+   no result entry and no outcome → `running`; no attempt → `unstarted`; anything else →
+   `final`; no re-run slot. No
    slot or attempt-count refusal for it can become a cycle-level `CycleError`. The look
    does not wait for a breached family (owner C-2). [OWNER] P18-1/P18-2/P18-7 wording.
 2. *Identity breach*: for each result entry, **every** identity field is compared with what
@@ -212,7 +215,11 @@ cycle means step 4 did not see the cycle's final ledger; the look stops with no 
 
 **Closing entry (FINAL-F-5).** `record_type = "aqt.c2.look_closing_entry.v1"`, payload
 `{cycle_id, evaluation_record_sha256, sealing_record_sha256}`, appended by `evaluate_look`
-as its last act, after both records are built. A finished look is therefore a ledger fact.
+as its last act, only after `persist` has returned for both records' exact bytes
+(R14D6B7-A-1). A closing entry therefore means both records were durably stored. A crash
+after `persist` and before the closing entry leaves stored records but no closing entry:
+`LOOK_WITHOUT_RECORD`, no pick (conservative). A verifier treats a closing entry whose
+hashes match no stored record as a store failure.
 
 **A look entry without a closing entry** (intervening entry, or any abort after the look
 entry, including between the evaluation and the sealing record) ends the research phase of
@@ -227,18 +234,27 @@ after the evaluation record leaves no closing entry.
 
 - `completed_entry` returns `(configuration_hash, days, d, reason)`.
 - `nominate` examines **all** trials of the family before coding, with this precedence:
-  1. any failing trial whose recorded reason is **not** in `U_OPS_REASONS` → **U_proc**,
-     even if the family also has an order breach (owner C-3: a breach cannot move a
-     procedure failure out of `U_proc^R`);
-  2. else any trial not completed (state `running`, `unstarted`, `rerun`, `undetermined`,
-     `final`), an order breach, or well-formed `days` that differ from the window's
-     (`MISALIGNED_SERIES`) → **U_ops** (P18-7 infrastructure first; DESIGN l.110:
-     unfinished at day 180 is U_ops);
-  3. else any failing trial whose reason is in `U_OPS_REASONS` → **U_ops**.
+  1. **order-breached family only** (owner C-3, R14D6B7-A-3): if `u_proc_present` →
+     **U_proc**, else **U_ops** (a breach cannot move a procedure failure out of
+     `U_proc^R`);
+  2. otherwise (unbreached), unchanged from rev 6: any trial not completed (state
+     `running`, `unstarted`, `rerun`, `undetermined`, `final`) or well-formed `days` that
+     differ from the window's (`MISALIGNED_SERIES`) → **U_ops** (P18-7 infrastructure
+     first; DESIGN l.110: unfinished at day 180 is U_ops);
+  3. else any failing trial whose reason is in `U_OPS_REASONS` → **U_ops**;
+  4. else any failing trial → **U_proc**.
+  **`u_proc_present`** (R14D6B7-A-2) is computed **before** any state or result
+  collapsing: the OR, over **every** identity-valid result entry of the family before the
+  look entry (duplicate, superseded and post-outcome ones included), of "an unavailable
+  result whose reason is not in `U_OPS_REASONS`". The family record keeps each such
+  result as `{attempt_id, result_entry_hash, reason}` in `u_proc_results`.
   Its message lists every failing trial as `"<id>: <reason or state>"`. The family record
-  also carries structured fields `failing{id: reason or state}` and `u_proc_present`
-  (FINAL-F-3), so a verifier can count either way. **[OWNER] C-3 changes P18-7's
-  "infrastructure first" ordering for this case; S4 wording needed.**
+  also carries `failing{id: reason or state}` (last attempt), `u_proc_results` and
+  `u_proc_present`, so a verifier can count either way. Tests: a `DAYS_INCOMPLETE` result
+  followed by a duplicate result (breach) → U_proc; a superseded attempt's U_proc result →
+  U_proc; an unbreached family with one running trial and one `DAYS_INCOMPLETE` → U_ops
+  (as rev 6). **[OWNER] C-3 changes P18-7's "infrastructure first" ordering for breached
+  families only; S4 wording needed.**
 - `U_OPS_REASONS` is **unchanged** (owner B-5): `DAYS_INCOMPLETE` stays U_proc. The reason
   list itself remains `[DESIGN: list for review]` and an S4 contract item (A-7).
 - The configuration-hash mismatch is a `CycleError` at §3 rule 2; `nominate` keeps its own
@@ -327,7 +343,8 @@ nominee's z exists only at the look.
   taking `evaluation_record_sha256`; every status (a)-(d) and sealing failure lives only
   here.
 
-Both are returned to the caller; the closing entry (§4) binds their hashes in the ledger.
+Both are passed to `persist` and returned; the closing entry (§4), appended after
+`persist` returns, binds their hashes in the ledger.
 
 ## 11. Failure (P18-7, R-14a item 7)
 
@@ -339,9 +356,11 @@ Both are returned to the caller; the closing entry (§4) binds their hashes in t
 
 ## 12. Not in 6b
 
-No storage (the module returns records and appends ledger entries only), no lockbox, no
-promotion, no lockbox data. Store obligations are written in a `Store` docstring, as the
-lockbox does.
+No storage of its own (the module calls the caller's `persist` and appends ledger entries
+only), no lockbox, no promotion, no lockbox data. Store obligations are written in a
+`Store` docstring, as the lockbox does, including: `persist(evaluation_bytes,
+sealing_bytes)` returns only after both exact byte strings are durably written (fsync)
+and raises otherwise (R14D6B7-A-1).
 
 ## 13. Contract changes to reviewed code
 
@@ -358,9 +377,10 @@ lockbox does.
 - `look_allowed`: `looked` from the look entry, `terminated` from termination entries,
   `now` from the step-5 clock read with its floor; breached families not waited for.
 - `TRIAL_RESULT_SCHEMA` v2 and `_TRIAL_RESULT_KEYS` as §3.
-- `nominate`: §5 precedence (C-3), `failing`, `u_proc_present`, the order-breach reason.
+- `nominate`: §5 precedence (C-3 for breached families only), `failing`, `u_proc_results`,
+  `u_proc_present` over all pre-look results, the order-breach reason.
 
-## Owner items after rev 7
+## Owner items after rev 8
 
 | ID | Item | Status |
 |---|---|---|
@@ -373,7 +393,7 @@ lockbox does.
 | B-2, C-1 | Day 0 = block time; six headers as a separate caller handle (extends the one-header selection) | decided as direction; **S4 wording** |
 | B-3 | `LOOK_WITHOUT_RECORD`; read as "no closing entry", covering evaluation without sealing | decided; the "no closing entry" reading **to confirm**; **P18-2/P18-7 wording** |
 | B-4, C-2 | Order breach fails only that family; look does not wait for it; `evaluate_trial` refuses for it | decided as direction; **P18-1/P18-2/P18-7 wording** |
-| C-3 | Breach plus a U_proc reason counts as U_proc; `u_proc_present` recorded | decided as direction; **P18-7 wording** |
+| C-3 | Breached family with any pre-look U_proc result counts as U_proc (unbreached families keep rev 6 precedence); `u_proc_present` recorded | decided as direction; **P18-7 wording** |
 | — | No result entry before the first outcome = crash whatever the outcome says (changes who may get the P18-1 slot) | design proposal; **P18-1 wording, to confirm** |
 | B-5 | `DAYS_INCOMPLETE` U_proc | decided |
 | A-3, F-8 | split by reason; record only frozen output | decided |
