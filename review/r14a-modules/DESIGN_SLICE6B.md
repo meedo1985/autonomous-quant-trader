@@ -1,4 +1,4 @@
-# Slice 6b design, rev 8: the confirmation evaluation run and the C2 evaluation record
+# Slice 6b design, rev 9: the confirmation evaluation run and the C2 evaluation record
 
 - Author: Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-14. History: rev 1 `1e6e672`
   (Sol FIX R14D6B-S-1..9); rev 2 `9d34615` (Fable FIX R14D6B2-F-1..19); rev 3 `5cd2a29`
@@ -8,7 +8,8 @@
   `ADJUDICATION_FINAL_DESIGN_SLICE6B_4B6E6E0.md` (all accepted) and the owner's decisions in
   `OWNER_DECISIONS_DESIGN_SLICE6B_REV6.md` (C-1..C-3), on top of `..._REV3.md` (B-1..B-5)
   and `..._REV2.md`. Rev 8 applies `ADJUDICATION_RECHECK_DESIGN_SLICE6B_E2DDCB4.md`
-  (Astra FIX R14D6B7-A-1..3, record `7c29af4`, all accepted).
+  (Astra FIX R14D6B7-A-1..3, record `7c29af4`, all accepted). Rev 9 applies the three wording
+  notes of the Astra ACCEPT WITH NOTES re-check of rev 8 (`2f4c5f3`).
 - A proposal for review before the orchestration is built. It approves nothing and closes
   no owner item. **[OWNER]** marks bindings for the signed C2 or the S4 text. Owner
   decisions recorded as direction still need the Constitution's process where they touch
@@ -51,7 +52,7 @@ repeats steps 2-3 from the governing records.
 | Attempt starts and outcomes, result entries, look, closing and termination entries | the attempt ledger | `read_entries` (it verifies the chain) + extension of the anchor + every entry of this cycle after the anchor |
 | `now` for the look | one module clock read before step 5, truncated to whole seconds, also passed as `recorded_at_utc` of the look entry | **recorded, not verified**; floor: refused if before `cycle_start` or before the last ledger entry's `recorded_at_utc` (FINAL-F-9) |
 | Beacon | caller handle | `derive_seeds` (BLS, 4a) and `drand_chain_hash` (§7) |
-| Capture record (fixes `T` and the beacon round) | caller bytes (owner B-1) | schema and offline checks, §2.1 |
+| Capture record (fixes the O-6a SPEC §5 capture time `T` and the beacon round) | caller bytes (owner B-1) | schema and offline checks, §2.1 |
 | Classifier thresholds | `final_thresholds` of the qualification object | 6b `qualification_report` reads the object directory (caller handle), requires `sha(json.loads(manifest.json)) == Started.screen_object_sha256` (canonical JSON, as `verify_code` l.2592-2594) and each file's raw-byte SHA-256 equal to its manifest digest as `verify_code` does (l.2592-2600), then takes the report from `qobj.read`; `verify_code` is unchanged (C-1) |
 | Bars | `read` gate | §6 |
 
@@ -82,8 +83,8 @@ already hashed into the post, **cannot** bind it. **[DESIGN schema]**
 `{schema, url, timestamp, status, digest, body, acceptance_record_sha256}`. The module
 checks, offline:
 1. `url` is exactly one of the two qualifying URLs for height `h+5`; `timestamp` is 14
-   digits; `status == "200"`; the capture time is `timestamp` (it fixes `w0` and hence the window length `T`, `check_eligibility`);
-2. `body`, decoded as ASCII, equals `tip_block_hash` exactly (no trailing newline allowed unless the
+   digits; `status == "200"`; the SPEC §5 capture time `T` is `timestamp` (it fixes the beacon round only; `w0` and the window length `T` of §8 come from the signed `c2_start`/`c2_end`, `check_eligibility`);
+2. `body` is a string; its ASCII-encoded bytes are hashed for item 3, and it equals `tip_block_hash` exactly (no trailing newline allowed unless the
    known-answer test shows the endpoint returns one);
 3. `body` hashes to `digest` (CDX digest: base32 SHA-1 of the payload). **[VERIFY]** the
    digest form with a known capture before signing;
@@ -336,7 +337,7 @@ nominee's z exists only at the look.
   `{schema, cycle_id, chain_log, signed{rows used}, declaration_sha256, headers_sha256,
   capture_record_sha256, eligibility{w0, T, cycle_start}, seeds, ledger{anchor, head_hash,
   entry_count, look_entry_hash}, trials{id: record_sha256}, families{f: {states, A_f,
-  reason, cause, failing, u_proc_present, nominee, dsr{V, task12, decision, differs},
+  reason, cause, failing, u_proc_results, u_proc_present, nominee, dsr{V, task12, decision, differs},
   gates{G-n: {result, reason, values}}, outcome, cpcv (diagnostic_only)}}}`. Floats hexf.
   `evaluation_record_sha256 = SHA256(cj(record))`.
 - **Sealing record**: `seal_family` per declared family and `sealing_record(declared)`,
@@ -380,7 +381,7 @@ and raises otherwise (R14D6B7-A-1).
 - `nominate`: §5 precedence (C-3 for breached families only), `failing`, `u_proc_results`,
   `u_proc_present` over all pre-look results, the order-breach reason.
 
-## Owner items after rev 8
+## Owner items after rev 9
 
 | ID | Item | Status |
 |---|---|---|
