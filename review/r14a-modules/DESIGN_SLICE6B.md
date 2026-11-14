@@ -1,4 +1,4 @@
-# Slice 6b design, rev 10: the confirmation evaluation run and the C2 evaluation record
+# Slice 6b design, rev 11: the confirmation evaluation run and the C2 evaluation record
 
 - Author: Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-14. History: rev 1 `1e6e672`
   (Sol FIX R14D6B-S-1..9); rev 2 `9d34615` (Fable FIX R14D6B2-F-1..19); rev 3 `5cd2a29`
@@ -11,7 +11,8 @@
   (Astra FIX R14D6B7-A-1..3, record `7c29af4`, all accepted). Rev 9 applies the three wording
   notes of the Astra ACCEPT WITH NOTES re-check of rev 8 (`2f4c5f3`). Rev 10 applies
   `ADJUDICATION_FINAL_DESIGN_SLICE6B_9CA4DE5.md` (final Fable FIX R14D6B9-F-1..6, record
-  `9cc082d`, all accepted).
+  `9cc082d`, all accepted). Rev 11 applies `ADJUDICATION_RECHECK_DESIGN_SLICE6B_99FBAC3.md`
+  (Astra FIX R14D6B10-A-1, record `bc1fc66`, accepted).
 - A proposal for review before the orchestration is built. It approves nothing and closes
   no owner item. **[OWNER]** marks bindings for the signed C2 or the S4 text. Owner
   decisions recorded as direction still need the Constitution's process where they touch
@@ -33,12 +34,12 @@ record it reads and verifies itself (R14D6B-S-1).
 ## 1. Entry points (6B-1)
 
 - `evaluate_trial(started, sources, trial_id, attempt_id, read)`: steps 2-4 for one
-  attempt; the caller names the attempt, and before any read the module requires it to
+  attempt; the caller names the attempt, and before any protected-data read the module requires it to
   satisfy the attempt-binding rule (§3) for `trial_id` and to be `running` (no result entry,
   no outcome); appends the attempt's result entry under the look lock (§3 rule 4). It
   writes no outcome.
 - `evaluate_look(started, sources, read, persist)`: steps 2-8; appends the look entry (§4)
-  before any read; builds the evaluation and sealing records, hands their exact bytes to
+  before any protected-data read; builds the evaluation and sealing records, hands their exact bytes to
   the caller's `persist` (R14D6B7-A-1; §12), and only after `persist` returns appends the
   closing entry (§4) as its last act. It also returns both records.
 
@@ -86,10 +87,14 @@ store; that is a store obligation in the `Store` docstring.
   that G-9 and G-10 use. Same trust as the fork residual, a different act.
 - *Clock.* A clock set forward still opens the look early; that only fails families with
   unfinished trials (U_ops).
-- *Capture time floor (R14D6B9-F-6).* The capture check refuses a `timestamp` earlier than
-  the header time of `headers[5]` minus two hours (a block cannot be accepted more than two
-  hours before its header time). That the capture is genuine and earliest stays the store
-  and verifier obligation (§2.1).
+- *Capture time (R14D6B9-F-6, R14D6B10-A-1).* No offline floor is enforced. Bitcoin's
+  two-hour future rule is checked against each node's own clock, so a genuine earliest
+  capture can precede `headers[5]` time minus two hours; refusing it would be permanent
+  (the SPEC fixes the earliest capture). The evaluation record logs a diagnostic
+  `capture_before_tip_window` (true when `timestamp` < `headers[5]` time − 2 h); it
+  refuses nothing. A hard floor would need an accepted clock-bound rule
+  (**[OWNER]**, S4/SPEC wording), not an invented tolerance. That the capture is genuine and
+  earliest stays the store and verifier obligation (§2.1).
 - *Unbreached U_proc→U_ops route (R14D6B9-F-6).* In an unbreached family, leaving a sibling
   trial unfinished at day 180 makes the family U_ops even after a U_proc result (§5 rule
   2, as decided). `u_proc_present` is recorded for every family, so this stays countable.
@@ -121,7 +126,7 @@ It logs `capture_record_sha256`. **Residual** (store and verifier obligation, ne
 R14L2-S-2): that the record is genuine and is the earliest qualifying capture; the SPEC's
 earlier-capture invalidation rule covers a wrong choice.
 
-**Order** inside `evaluate_look`, all before any read:
+**Order** inside `evaluate_look`, all before any protected-data read:
 1. `start`;
 2. `headers_check`; `check_declaration`, `check_screen_record`, `check_eligibility` (signed
    `confirmation_start`, `confirmation_end`);
@@ -180,7 +185,8 @@ rewrites each attempt before calling `trial_states` (§13):
 outcome only for an attempt with no result entry (crash codes). No one writes a
 `completed` outcome for an attempt with a result entry. The runner takes the cycle's look
 lock around **every** start and outcome write (look lock, then append lock; R14D6B9-F-3),
-so no runner write lands inside a look's steps 4-7 or between `evaluate_trial`'s locked
+and makes its eligibility checks for that write (no look, closing or termination entry;
+attempt state) inside the same locked operation (R14D6B10 note), so no runner write lands inside a look's steps 4-7 or between `evaluate_trial`'s locked
 re-read and its append.
 
 **Entry rules** at the look:
@@ -208,7 +214,7 @@ re-read and its append.
    `d`/`d_sha256` integrity kept.
 3. A result entry after the look entry is ignored by that look (the trial was `running`
    at the look); it stays in the ledger as a recorded late result.
-4. `evaluate_trial` refuses, before any read, when its attempt already has a result entry
+4. `evaluate_trial` refuses, before any protected-data read, when its attempt already has a result entry
    or an outcome, when a look, closing or termination entry exists for the cycle, or when
    its family has an order breach (C-2). After its read it takes the look lock, re-reads
    the ledger, refuses without appending if any of these now holds, appends, and releases
@@ -228,7 +234,7 @@ a double `evaluate_trial` launch gives one entry.
 ## 4. The look entry and the closing entry
 
 `record_type = "aqt.c2.look_entry.v1"`, payload `{cycle_id, families, ledger_head_before,
-now, confirmation_module_sha256}`, appended at §2 step 7, before any read. `look_allowed`
+now, confirmation_module_sha256}`, appended at §2 step 7, before any protected-data read. `look_allowed`
 uses the step-5 clock value, so a premature call is refused **before** any entry is
 written. `look_allowed` and `evaluate_look` refuse when a look entry already exists for
 the cycle: **one look per cycle, no second look** (P18-2).
@@ -367,7 +373,7 @@ nominee's z exists only at the look.
 
 - **Evaluation record** `aqt.c2.evaluation.v1`, built after steps 1-8:
   `{schema, cycle_id, chain_log, signed{rows used}, declaration_sha256, headers_sha256,
-  capture_record_sha256, eligibility{w0, T, cycle_start}, seeds, ledger{anchor, head_hash,
+  capture_record_sha256, capture_before_tip_window, eligibility{w0, T, cycle_start}, seeds, ledger{anchor, head_hash,
   entry_count, look_entry_hash}, trials{id: record_sha256}, families{f: {states, A_f,
   reason, cause, failing, u_proc_results, u_proc_present, nominee, dsr{V, task12, decision, differs},
   gates{G-n: {result, reason, values}}, outcome, cpcv (diagnostic_only)}}}`. Floats hexf.
@@ -423,7 +429,7 @@ release refused.
 - `nominate`: §5 precedence (C-3 for breached families only), `failing`, `u_proc_results`,
   `u_proc_present` over all pre-look results, the order-breach reason.
 
-## Owner items after rev 10
+## Owner items after rev 11
 
 | ID | Item | Status |
 |---|---|---|
