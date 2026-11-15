@@ -4,8 +4,11 @@ closing and termination entries, `look_allowed` and its clock floor
 
 from __future__ import annotations
 
+import dataclasses
+import subprocess
+import sys
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +20,7 @@ from calibration import c2_confirmation as cf
 
 P = "a" * 64  # the signed protocol hash
 T0 = datetime(2026, 3, 1, tzinfo=UTC)  # day 0
+HOUR = timedelta(hours=1)
 
 
 def decl(count: int = 0, head: str = GENESIS_HASH, cycle: str = "c1") -> cf.Declaration:
@@ -84,7 +88,7 @@ def test_the_ledger_must_extend_the_declared_anchor(tmp_path: Path) -> None:
             led.cycle(d)
 
 
-@pytest.mark.parametrize("kind", ["start", "result", "look", "termination"])
+@pytest.mark.parametrize("kind", ["start", "result", "look", "closing", "termination"])
 def test_an_entry_of_this_cycle_before_the_anchor_is_refused(
     tmp_path: Path, kind: str
 ) -> None:
@@ -95,6 +99,8 @@ def test_an_entry_of_this_cycle_before_the_anchor_is_refused(
         led.add(cf.RESULT_ENTRY, {"cycle_id": "c1"})
     elif kind == "look":
         led.look()
+    elif kind == "closing":
+        led.close()
     else:
         led.terminate()
     led.start("attempt-a1")
@@ -103,12 +109,16 @@ def test_an_entry_of_this_cycle_before_the_anchor_is_refused(
 
 
 def test_an_outcome_of_this_cycle_before_the_anchor_is_refused(tmp_path: Path) -> None:
+    """B3-A-3: only the outcome precedes the anchor; its start lies after it
+    (a hash-valid ledger `finish_attempt` itself would not write)."""
     led = Led(tmp_path)
-    led.start("attempt-x0", cycle="c0")
-    attempts.finish_attempt(led.path, attempt_id="attempt-x0", outcome="completed")
-    assert led.cycle(decl(2, led.entries()[1].entry_hash)).look is None
-    with pytest.raises(cf.CycleError, match="precedes the anchor"):
-        led.cycle(decl(2, led.entries()[1].entry_hash, cycle="c0"))
+    led.add(attempts.ATTEMPT_OUTCOME_RECORD_TYPE,
+            {"attempt_id": "attempt-a0", "outcome": "completed"})  # fmt: skip
+    led.start("attempt-a0")
+    anchor = decl(1, led.entries()[0].entry_hash)
+    with pytest.raises(cf.CycleError, match="entry 0 of this cycle precedes"):
+        led.cycle(anchor)
+    assert led.cycle(dataclasses.replace(anchor, cycle_id="c0")).look is None
 
 
 def test_every_start_of_this_cycle_carries_the_signed_protocol_hash(
@@ -119,6 +129,20 @@ def test_every_start_of_this_cycle_carries_the_signed_protocol_hash(
     led.start("attempt-a0")
     assert led.cycle().look is None
     led.start("attempt-a1", protocol="b" * 64)
+    with pytest.raises(cf.CycleError, match="protocol hash"):
+        led.cycle()
+
+
+@pytest.mark.parametrize("family,partition", [("vol", "confirmation"),
+                                              ("trend", "exploration")])  # fmt: skip
+def test_the_protocol_hash_holds_in_every_family_and_partition(
+    tmp_path: Path, family: str, partition: str
+) -> None:
+    led = Led(tmp_path)
+    attempts.start_attempt(led.path, attempt_id="attempt-a0", family=family,
+                           cycle="c1", partition=partition, hypothesis_hash=P,
+                           protocol_hash="b" * 64, trial_index=0,
+                           symbols=["BTCUSDT"])  # fmt: skip
     with pytest.raises(cf.CycleError, match="protocol hash"):
         led.cycle()
 
@@ -162,13 +186,49 @@ def test_a_second_look_or_a_stray_closing_is_refused(
 @pytest.mark.parametrize(
     "over",
     [{"now": ""}, {"families": "trend"}, {"families": [1]}, {"extra": "x"},
-     {"ledger_head_before": 5}],
+     {"ledger_head_before": 5}, {"now": "not-a-time"}, {"now": "2026-3-01T00:00:00Z"},
+     {"ledger_head_before": "not-a-hash"},
+     {"confirmation_module_sha256": "A" * 64}],
 )  # fmt: skip
 def test_a_malformed_look_entry_is_refused(
     tmp_path: Path, over: dict[str, Any]
 ) -> None:
     led = Led(tmp_path)
     led.look(**over)
+    with pytest.raises(cf.CycleError, match="well-formed"):
+        led.cycle()
+
+
+def test_a_closing_entry_with_malformed_hashes_is_refused(tmp_path: Path) -> None:
+    led = Led(tmp_path)
+    led.look()
+    led.add(cf.CLOSING_ENTRY, cf.closing_entry("c1", "bad", "3" * 64))
+    with pytest.raises(cf.CycleError, match="well-formed"):
+        led.cycle()
+
+
+_BAD_IDS: list[Any] = ["missing", None, "", ["c1"]]
+
+
+@pytest.mark.parametrize("kind", ["look", "closing", "termination"])
+@pytest.mark.parametrize("bad", _BAD_IDS)
+def test_a_control_entry_without_a_cycle_id_cannot_vanish(
+    tmp_path: Path, kind: str, bad: Any
+) -> None:
+    """B3-A-1: the form is checked before the cycle filter."""
+    led = Led(tmp_path)
+    payload = {
+        "look": cf.look_entry("c1", ["trend"], "1" * 64, T0, "9" * 64),
+        "closing": cf.closing_entry("c1", "2" * 64, "3" * 64),
+        "termination": {"cycle_id": "c1", "kind": "k", "reason": "r"},
+    }[kind]
+    rtype = {"look": cf.LOOK_ENTRY, "closing": cf.CLOSING_ENTRY,
+             "termination": cf.TERMINATION_ENTRY}[kind]  # fmt: skip
+    if bad == "missing":
+        del payload["cycle_id"]
+    else:
+        payload["cycle_id"] = bad
+    led.add(rtype, payload)
     with pytest.raises(cf.CycleError, match="well-formed"):
         led.cycle()
 
@@ -212,6 +272,9 @@ def test_the_look_clock_floor(tmp_path: Path) -> None:
             cf.look_allowed(done, cyc, T0, now)
     with pytest.raises(cf.CycleError, match="whole UTC seconds"):
         cf.look_allowed(done, cyc, T0, T0 + timedelta(days=3, microseconds=5))
+    for bad in (datetime(2026, 3, 5), datetime(2026, 3, 5, tzinfo=timezone(HOUR))):
+        with pytest.raises(cf.CycleError, match="whole UTC seconds"):  # naive, +01:00
+            cf.look_allowed(done, cyc, T0, bad)
     with pytest.raises(cf.CycleError, match="before day 0"):  # empty ledger, early
         cf.look_allowed(
             done, Led(tmp_path / "e").cycle(), T0, T0 - timedelta(seconds=1)
@@ -274,3 +337,37 @@ def test_a_leftover_sidecar_file_is_not_a_lock(tmp_path: Path) -> None:
     (tmp_path / "ledger.jsonl.look.lock").write_bytes(b"stale")
     with cf.look_lock(path):
         pass
+
+
+def test_day_180_minus_one_second_still_waits(tmp_path: Path) -> None:
+    cyc = Led(tmp_path).cycle()
+    running = {"trend": fam({"t0": "running"})}
+    day180 = T0 + timedelta(days=180)
+    assert not cf.look_allowed(running, cyc, T0, day180 - timedelta(seconds=1))
+    assert cf.look_allowed(running, cyc, T0, day180)
+
+
+def test_a_dead_holder_releases_the_look_lock(tmp_path: Path) -> None:
+    """B3-A review note: the OS releases a killed process's lock."""
+    path = tmp_path / "ledger.jsonl"
+    code = (
+        "import sys, time\n"
+        "from calibration import c2_confirmation as cf\n"
+        "with cf.look_lock(sys.argv[1]):\n"
+        "    print('held', flush=True)\n"
+        "    time.sleep(600)\n"
+    )
+    proc = subprocess.Popen([sys.executable, "-c", code, str(path)],
+                            stdout=subprocess.PIPE, text=True,
+                            cwd=Path(cf.__file__).parents[1])  # fmt: skip
+    try:
+        assert proc.stdout is not None and proc.stdout.readline().strip() == "held"
+        got = threading.Event()
+        waiter = _waiter(path, got)
+        assert not got.wait(1.0)  # another process holds it
+        proc.kill()
+        proc.wait(30)
+        assert got.wait(30)
+        waiter.join(5)
+    finally:
+        proc.kill()

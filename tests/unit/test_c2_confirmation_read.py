@@ -44,7 +44,7 @@ def _manifest(
 
 
 def world(
-    cycle: str = "c1", protocol: str = P
+    cycle: str = "c1", protocol: str = P, expl_hi: datetime = SPLIT
 ) -> tuple[Any, dict[Any, Any], np.ndarray]:
     """A composite over exploration [first, SPLIT), confirmation [SPLIT, END),
     a sealed lockbox; the served whole partitions; the rows of the cut."""
@@ -54,7 +54,7 @@ def world(
     parts: list[Any] = []
     for s, sym in enumerate(SYMBOLS):
         for part, lo, hi, chunk in (
-            ("exploration", first, SPLIT, rows[:k]),
+            ("exploration", first, expl_hi, rows[:k]),
             ("confirmation", SPLIT, END, rows[k:]),
         ):
             series = screen.path_series(chunk, s, lo)
@@ -151,3 +151,38 @@ def test_a_series_served_under_another_symbol_is_refused() -> None:
     }
     with pytest.raises(cf.CycleError, match="not its manifest"):
         read(comp, swapped)
+
+
+def test_served_insertion_order_does_not_matter() -> None:
+    comp, served, rows = world()
+    reversed_ = dict(reversed(list(served.items())))
+    np.testing.assert_array_equal(read(comp, reversed_), rows)
+
+
+def test_a_truncated_partition_is_refused() -> None:
+    comp, served, _ = world()
+    key = ("exploration", "ETHUSDT")
+    short = dataclasses.replace(served[key], bars=served[key].bars[1:])
+    with pytest.raises(cf.CycleError, match="not its manifest"):
+        read(comp, {**served, key: short})
+
+
+def test_changed_bars_before_the_cut_are_still_refused() -> None:
+    """Bars outside the cut are not used, but the whole partition must be the
+    declared one."""
+    comp, served, _ = world()
+    key = ("exploration", "BTCUSDT")
+    rows, first = _rows()
+    k = (SPLIT - first) // H
+    changed = rows[:k].copy()
+    changed[0] *= 1.01  # the first held bar, before w0 - W
+    other = screen.path_series(changed, 0, first)
+    with pytest.raises(cf.CycleError, match="not its manifest"):
+        read(comp, {**served, key: other})
+
+
+def test_overlapping_partition_windows_are_refused() -> None:
+    """B3-R-7 (Astra correction): windows overlapping outside the cut."""
+    comp, served, _ = world(expl_hi=SPLIT + 5 * H)  # bars stop at SPLIT
+    with pytest.raises(cf.CycleError, match="overlap"):
+        read(comp, served)

@@ -3494,13 +3494,38 @@ def of_cycle(entry: Any, cycle: str, ours: frozenset[str]) -> bool:
     return False
 
 
+def _control_ok(record_type: str, p: Mapping[str, Any]) -> bool:
+    """B3-A-1, B3-A-2: a look, closing or termination entry's exact form."""
+    if set(p) != _CYCLE_ENTRY_KEYS[record_type]:
+        return False
+    if not (isinstance(p["cycle_id"], str) and p["cycle_id"]):
+        return False
+    if record_type == TERMINATION_ENTRY:
+        return all(isinstance(p[k], str) and p[k] for k in ("kind", "reason"))
+    if record_type == CLOSING_ENTRY:
+        return _hex(p["evaluation_record_sha256"], 64) and _hex(
+            p["sealing_record_sha256"], 64
+        )
+    fams = p["families"]
+    try:
+        _strict_time(p["now"], _STAMP)
+    except ValueError:
+        return False
+    return (
+        isinstance(fams, list)
+        and all(isinstance(f, str) and f for f in fams)
+        and _hex(p["ledger_head_before"], 64)
+        and _hex(p["confirmation_module_sha256"], 64)
+    )
+
+
 def cycle_ledger(entries: Sequence[Any], decl: Declaration,
                  protocol_hash: str) -> CycleLedger:  # fmt: skip
     """§2 A-1, §3, §4, §5.1 on the read ledger, read-free. The ledger must
     extend the declared anchor `{head_hash, entry_count}`; every entry of
     the cycle lies after it; every start of the cycle carries the signed
     protocol hash `start` verified; look, closing and termination entries
-    of the cycle have their exact keys; at most one look, at most one
+    of any cycle have their exact form (B3-A-1); at most one look, at most one
     closing entry and only after the look. Each failure is a CycleError."""
     count, cycle = decl.anchor_entry_count, decl.cycle_id
     if len(entries) < count:
@@ -3514,21 +3539,14 @@ def cycle_ledger(entries: Sequence[Any], decl: Declaration,
     ours = frozenset(p["attempt_id"] for p in starts)
     found: dict[str, list[int]] = {t: [] for t in _CYCLE_ENTRY_KEYS}
     for i, e in enumerate(entries):
+        # B3-A-1: forms first, whatever the cycle, so none escapes the filter
+        if e.record_type in found and not _control_ok(e.record_type, e.payload):
+            raise CycleError(f"ledger entry {i} is not a well-formed {e.record_type}")
         if not of_cycle(e, cycle, ours):
             continue
         if i < count:
             raise CycleError(f"ledger entry {i} of this cycle precedes the anchor")
         if e.record_type in found:
-            p = e.payload
-            fams = p.get("families", [])
-            if set(p) != _CYCLE_ENTRY_KEYS[e.record_type] or not (
-                all(isinstance(p[k], str) and p[k] for k in p if k != "families")
-                and isinstance(fams, list)
-                and all(isinstance(f, str) for f in fams)
-            ):
-                raise CycleError(
-                    f"ledger entry {i} is not a well-formed {e.record_type}"
-                )  # noqa: E501
             found[e.record_type].append(i)
     looks, closings = found[LOOK_ENTRY], found[CLOSING_ENTRY]
     if len(looks) > 1 or len(closings) > 1:
@@ -3673,6 +3691,10 @@ def check_read(
     for symbol in SYMBOLS:
         keys = sorted((k for k in served if k[1] == symbol),
                       key=lambda k: entries[k].window_start_utc)  # fmt: skip
+        windows = [(entries[k].window_start_utc, entries[k].window_end_exclusive_utc)
+                   for k in keys]  # fmt: skip
+        if any(a[1] > b[0] for a, b in zip(windows, windows[1:], strict=False)):
+            raise CycleError(f"the served {symbol} partitions overlap")  # B3-R-7
         bars = [b for k in keys for b in served[k].bars if start <= b.open_time < end]
         try:
             cut.append(BarSeries(symbol=symbol, bars=tuple(bars)))
