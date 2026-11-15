@@ -6,11 +6,13 @@ import base64
 import hashlib
 import json
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 from calibration import c2_confirmation as c
-from calibration.seeds import cj
+from calibration.seeds import cj, sha
 
 # Bitcoin mainnet headers of heights 0..6 (public; fetched 2026-11-15 from
 # blockstream.info and self-verifying: the links and the genesis hash below must hold)
@@ -196,3 +198,79 @@ def test_capture_record_must_be_canonical_with_exact_fields() -> None:
         c.check_capture_record(cj({**json.loads(record), "extra": 1}), _tip(), ACC)
     with pytest.raises(c.CycleError, match="not JSON"):
         c.check_capture_record(b"{", _tip(), ACC)
+
+
+# --- qualification re-read and classifier thresholds (§2, §8) ------------------------
+
+
+def _row(digest: str) -> bytes:
+    return f'qualification_object_sha256: "{digest}"\n'.encode()
+
+
+def _object(tmp_path: Path, files: dict[str, bytes]) -> str:
+    for name, data in files.items():
+        (tmp_path / name).write_bytes(data)
+    manifest = {k: hashlib.sha256(v).hexdigest() for k, v in files.items()}
+    (tmp_path / "manifest.json").write_bytes(json.dumps(manifest).encode())
+    return sha(manifest)
+
+
+def test_qualification_report_reads_the_signed_object(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from calibration import qobj
+
+    digest = _object(tmp_path, {"choices.json": b"{}", "definition.json": b"{}"})
+    seen: list[dict[str, bytes]] = []
+
+    def read(f: dict[str, bytes]) -> tuple[dict[str, int], dict[str, Any]]:
+        seen.append(f)
+        return {"r": 1}, {}
+
+    monkeypatch.setattr(qobj, "read", read)
+    protocol = _row(digest)
+    assert c.qualification_report(tmp_path, protocol) == {"r": 1}
+    assert seen == [{"choices.json": b"{}", "definition.json": b"{}"}]
+    with pytest.raises(c.CycleError, match="not the signed one"):
+        c.qualification_report(tmp_path, _row("0" * 64))
+    other = f'screen_object_sha256: "{digest}"\n'.encode()  # R14D6B9-F-1: not this row
+    with pytest.raises(c.ChainError, match="qualification_object_sha256"):
+        c.qualification_report(tmp_path, other)
+    (tmp_path / "choices.json").write_bytes(b"{ }")
+    with pytest.raises(c.CycleError, match="choices.json does not match"):
+        c.qualification_report(tmp_path, protocol)
+
+
+def test_qualification_report_turns_a_read_refusal_into_a_cycle_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from calibration import qobj
+
+    digest = _object(tmp_path, {"choices.json": b"{}"})
+
+    def refuse(f: dict[str, bytes]) -> Any:
+        raise ValueError("not a qualification run")
+
+    monkeypatch.setattr(qobj, "read", refuse)
+    with pytest.raises(c.CycleError, match="not a qualification run"):
+        c.qualification_report(tmp_path, _row(digest))
+
+
+def test_classifier_bounds_pools_like_d19_heldout() -> None:
+    from calibration import classifier, reduce
+
+    names_up = sorted(classifier.UPPER)
+    names_lo = sorted(classifier.LOWER)
+    frozen = {
+        "upper": {"K": "4", "T": "900", **{n: "1.5" for n in names_up}},
+        "lower": {"K": "4", "T": "900", **{n: "-1.5" for n in names_lo}},
+    }
+    report = {"final_thresholds": {"T=900": frozen}}
+    pool = tuple({n: float(v) for n, v in frozen[s].items()} for s in frozen)
+    expected = reduce.for_k(pool, 3)  # type: ignore[arg-type]
+    assert c.classifier_bounds(report, 900, 3) == expected
+    with pytest.raises(c.CycleError, match="T=901"):
+        c.classifier_bounds(report, 901, 3)
+    frozen["upper"] = {"K": "4", "T": "900"}  # its tails missing
+    with pytest.raises(c.CycleError, match="classifier thresholds"):
+        c.classifier_bounds(report, 900, 3)

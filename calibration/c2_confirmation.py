@@ -3035,3 +3035,46 @@ def check_capture_record(record: bytes, headers: Headers,
         record_sha256=hashlib.sha256(record).hexdigest(),
         before_tip_window=when < headers.tip_time - TIP_WINDOW,
     )
+
+
+def qualification_report(obj: Path, protocol: bytes) -> dict[str, Any]:
+    """§2 classifier row: re-read the qualification object as `verify_code`
+    does (canonical manifest hash, each file's raw-byte SHA-256), against the
+    signed `qualification_object_sha256` row (not `screen_object_sha256`,
+    R14D6B9-F-1), and return the report `qobj.read` takes from it. Read-free."""
+    from calibration import qobj
+
+    manifest = json.loads((obj / "manifest.json").read_bytes())
+    if sha(manifest) != protocol_row(protocol, "qualification_object_sha256"):
+        raise CycleError("the qualification object is not the signed one")
+    files = {}
+    for name, digest in manifest.items():
+        data = (obj / name).read_bytes()
+        if hashlib.sha256(data).hexdigest() != digest:
+            raise CycleError(f"{name} does not match the object's manifest")
+        files[name] = data
+    try:
+        report, _ = qobj.read(files)
+    except ValueError as e:
+        raise CycleError(f"qualification object: {e}") from e
+    return report
+
+
+def classifier_bounds(report: dict[str, Any], t_days: int,
+                      k: int) -> tuple[dict[str, float], dict[str, float]]:  # fmt: skip
+    """§8: the frozen thresholds for (K_f, T), pooled exactly as
+    `scripts/d19_heldout.py` l.188-191. A missing `T=<T>` or a `for_k` error
+    refuses the whole look before any read (chosen reading)."""
+    from calibration import reduce
+
+    try:
+        frozen = report["final_thresholds"][f"T={t_days}"]
+    except KeyError:
+        raise CycleError(f"no frozen thresholds for T={t_days}") from None
+    pool = tuple(
+        {n: float(v) for n, v in frozen[s].items()} for s in ("upper", "lower")
+    )
+    try:
+        return reduce.for_k(pool, k)  # type: ignore[arg-type]
+    except ValueError as e:
+        raise CycleError(f"classifier thresholds: {e}") from e
