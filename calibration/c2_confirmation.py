@@ -25,6 +25,7 @@ import random
 import re
 import struct
 import sys
+import tempfile
 import time
 import types
 import zlib
@@ -3813,3 +3814,149 @@ def signed_c2(protocol: bytes) -> Signed:
         canonical_benchmark_sha256=r["canonical_benchmark_sha256"],
         rows=types.MappingProxyType(r),
     )
+
+
+# --- Slice 6b build B4b: the read-free steps 2-3 of both entry points (§1, §2) ----
+
+SOURCE_KEYS = frozenset(
+    {"ledger_path", "acceptance_record", "headers", "beacon", "capture_record",
+     "object_dir", "screen_record", "trial_objects", "code_files"}
+)  # fmt: skip
+
+
+def install_code(
+    trials: Sequence[dict[str, Any]], code_files: Mapping[str, bytes]
+) -> Path:
+    """§1 (R14D6B15-F-1): `code_files` `{sha256: bytes}` holds exactly every
+    declared trial's signal and optional overlay source. Each is hash-checked
+    before it is written, as `<module>.py`, into a fresh empty directory
+    placed last on the import path (`screen._extend_path`, engine first;
+    S7R-R1), as the lockbox's `_install_trial_code` does; then every trial's
+    code is loaded with `screen.load` (hash before execute). Missing, extra
+    or wrong code is a read-free CycleError."""
+    refs = [
+        (t["trial_id"], ref, digest)
+        for t in trials
+        for ref, digest in (
+            (t["signal"], t["signal_sha256"]),
+            (t["overlay"], t["overlay_sha256"]),
+        )  # fmt: skip
+        if ref is not None
+    ]
+    if not isinstance(code_files, Mapping) or set(code_files) != {
+        d for _, _, d in refs
+    }:
+        raise CycleError("the code files are not exactly the declared trials' code")
+    code_dir = Path(tempfile.mkdtemp(prefix="aqt-c2-code-"))
+    written: dict[str, str] = {}
+    for tid, ref, digest in refs:
+        data = code_files[digest]
+        if not isinstance(data, bytes) or hashlib.sha256(data).hexdigest() != digest:
+            raise CycleError(
+                f"{tid}: code for {ref} does not hash to its declared sha256"
+            )
+        name = f"{ref.split(':')[0]}.py"
+        if written.setdefault(name, digest) != digest:
+            raise CycleError(f"{tid}: {name} is declared with two different sources")
+        (code_dir / name).write_bytes(data)
+    screen._extend_path(*screen._paths(code_dir))
+    importlib.invalidate_caches()
+    for tid, ref, digest in refs:
+        try:
+            screen.load(ref, digest)
+        except Exception as e:  # trial code runs here: any failure is a refusal
+            raise CycleError(
+                f"{tid}: {ref} does not load: {type(e).__name__}: {e}"
+            ) from None
+    return code_dir
+
+
+@dataclass(frozen=True)
+class Inputs:
+    """What steps 2-3 verified, read-free (§2 order, steps 2-3)."""
+
+    started: Started
+    decl: Declaration
+    signed: Signed
+    headers: Headers
+    capture: Capture
+    w0: datetime
+    t_days: int
+    seeds: dict[str, Any]
+    code_dir: Path
+
+    @property
+    def window_id(self) -> str:
+        return window_id(self.w0, self.w0 + self.t_days * DAY)
+
+    @property
+    def trial_of(self) -> dict[tuple[str, int], str]:
+        """A start's (hypothesis_hash, trial_index) -> its declared trial."""
+        return {(e["hypothesis_hash"], e["trial_index"]): e["trial_id"]
+                for e in self.decl.entries}  # fmt: skip
+
+    def expected(self, trial_id: str) -> dict[str, Any]:
+        """§3 rule 2: every identity field of `trial_id`'s result entry, as
+        the module derives it now."""
+        e = next(e for e in self.decl.entries if e["trial_id"] == trial_id)
+        seeds = self.seeds["families"][e["family"]]["trials"][trial_id]
+        return {
+            "cycle_id": self.decl.cycle_id,
+            "trial_id": trial_id,
+            "family": e["family"],
+            "configuration_hash": e["configuration_hash"],
+            "window_id": self.window_id,
+            **result_identity(self.started, seeds, self.decl.data_manifest_sha256),
+        }
+
+
+def prepare(started: Started, sources: Mapping[str, Any]) -> Inputs:
+    """§2 steps 2-3 for both entry points, after `start`, before any
+    protected-data read: `sources` has exactly SOURCE_KEYS; `headers_check`;
+    the signed rows (§7); `parse_declaration`, `check_eligibility`,
+    `check_declaration`, `check_screen_record` (against the signed
+    `qualification_object_sha256`); the code install and load of every
+    declared trial; the capture record (§2.1); `derive_seeds`. Any failure is
+    a CycleError (SeedError for the seeds); nothing is read or written."""
+    if not isinstance(sources, Mapping) or set(sources) != SOURCE_KEYS:
+        raise CycleError("the sources are not exactly the §1 handles")
+    acceptance_sha256 = started.chain_log["acceptance_record_sha256"]
+    headers = headers_check(sources["acceptance_record"], acceptance_sha256,
+                            sources["headers"])  # fmt: skip
+    signed = signed_c2(started.protocol)
+    decl = parse_declaration(started.declaration, sources["trial_objects"])
+    w0, t_days = check_eligibility(
+        c2_start=signed.confirmation_start,
+        c2_end=signed.confirmation_end,
+        t_min=signed.t_min,
+        last_seen=decl.last_seen,
+        embargo_days=decl.embargo_days,
+        g_days=signed.g_days,
+    )
+    check_declaration(decl.declared, eligible=True)  # check_eligibility passed
+    try:
+        object_sha256 = protocol_row(started.protocol, "qualification_object_sha256")
+    except ChainError as e:
+        raise CycleError(str(e)) from None
+    check_screen_record(sources["screen_record"], decl.screen_record_sha256,
+                        decl.trials, object_sha256)  # fmt: skip
+    code_dir = install_code(decl.trials, sources["code_files"])
+    capture = check_capture_record(
+        sources["capture_record"], headers, acceptance_sha256
+    )
+    records = {
+        f: [{k: e[k] for k in _RECORD_FIELDS} for e in decl.entries if e["family"] == f]
+        for f in decl.declared
+    }
+    seeds = derive_seeds(
+        declared=decl.declared,
+        records=records,
+        protocol_hash=started.protocol_hash,
+        cycle_id=decl.cycle_id,
+        window_id=window_id(w0, w0 + t_days * DAY),
+        data_manifest_hash=decl.data_manifest_sha256,
+        beacon=sources["beacon"],
+        capture_cdx=capture.timestamp,
+        chain=signed.chain,
+    )
+    return Inputs(started, decl, signed, headers, capture, w0, t_days, seeds, code_dir)
