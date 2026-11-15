@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import json
 from datetime import UTC, datetime
@@ -393,3 +394,163 @@ def test_parse_declaration_value_forms(change: dict[str, Any], match: str) -> No
     raw, objs = _decl(**change)
     with pytest.raises(c.CycleError, match=match):
         c.parse_declaration(raw, objs)
+
+
+# --- Astra B1-A-1..3 repairs ----------------------------------------------------
+
+
+@pytest.mark.parametrize("change", [{"url": []}, {"url": {"a": 1}}, {"url": None}])
+def test_capture_wrong_typed_url_is_a_cycle_error(change: dict[str, object]) -> None:
+    with pytest.raises(c.CycleError, match="qualifying URL"):  # B1-A-1
+        c.check_capture_record(_capture(**change), _tip(), ACC)
+
+
+@pytest.mark.parametrize("ts_", [
+    "２０26" + "0905161311",  # full-width digits  # noqa: RUF001
+    "2026095161311 ",  # 14 chars, a space
+])  # fmt: skip
+def test_capture_timestamp_must_be_exact_ascii_digits(ts_: str) -> None:
+    with pytest.raises(c.CycleError, match="14 CDX digits"):  # B1-A-2
+        c.check_capture_record(_capture(timestamp=ts_), _tip(), ACC)
+
+
+def test_capture_gzip_variants_fail_against_the_archived_digest() -> None:
+    """B1-A-3: bytes that still decode to the tip hash but are not the
+    archived bytes fail the digest (it stays the archive's)."""
+    variants = [
+        gzip.compress(GENESIS.encode()),  # recompressed
+        KNOWN_PAYLOAD + gzip.compress(b""),  # an appended empty member
+        KNOWN_PAYLOAD + b"\x00" * 4,  # zero padding
+    ]
+    for v in variants:
+        assert gzip.decompress(v) == GENESIS.encode()
+        with pytest.raises(c.CycleError, match="CDX digest"):
+            c.check_capture_record(_capture(payload=base64.b64encode(v).decode()),
+                                   _tip(), ACC)  # fmt: skip
+
+
+def test_capture_extra_decoded_content_is_refused() -> None:
+    v = KNOWN_PAYLOAD + gzip.compress(b"\n")
+    digest = base64.b32encode(hashlib.sha1(v).digest()).decode()
+    with pytest.raises(c.CycleError, match="decoded payload"):
+        c.check_capture_record(
+            _capture(payload=base64.b64encode(v).decode(), digest=digest), _tip(), ACC
+        )
+
+
+def test_capture_non_canonical_base64_pad_bits_are_refused() -> None:
+    raw = GENESIS.encode()[:1]  # one byte: "0" -> canonical "MA=="
+    digest = base64.b32encode(hashlib.sha1(raw).digest()).decode()
+    assert base64.b64decode("MB==", validate=True) == raw  # same byte, other pad bits
+    with pytest.raises(c.CycleError, match="canonical base64"):
+        record = _capture(payload="MB==", digest=digest, content_encoding="identity")
+        c.check_capture_record(record, _tip(), ACC)
+
+
+def test_qualification_report_missing_or_malformed_object_is_a_cycle_error(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(c.CycleError, match="FileNotFoundError"):  # B1-A-1
+        c.qualification_report(tmp_path / "absent", _row("0" * 64))
+    (tmp_path / "manifest.json").write_bytes(b"not json")
+    with pytest.raises(c.CycleError, match="qualification object"):
+        c.qualification_report(tmp_path, _row("0" * 64))
+    (tmp_path / "manifest.json").write_bytes(b"[1]")
+    with pytest.raises(c.CycleError, match="not the signed one"):
+        c.qualification_report(tmp_path, _row("0" * 64))
+    digest = _object(tmp_path, {"gone.json": b"{}"})
+    (tmp_path / "gone.json").unlink()
+    with pytest.raises(c.CycleError, match="FileNotFoundError"):
+        c.qualification_report(tmp_path, _row(digest))
+
+
+def _frozen() -> dict[str, dict[str, str]]:
+    from calibration import classifier
+
+    return {
+        "upper": {"K": "4", "T": "900", **dict.fromkeys(classifier.UPPER, "1.5")},
+        "lower": {"K": "4", "T": "900", **dict.fromkeys(classifier.LOWER, "-1.5")},
+    }
+
+
+@pytest.mark.parametrize("damage", ["no_T", "bad_value", "no_lower", "not_a_map"])
+def test_classifier_bounds_malformed_thresholds_are_cycle_errors(damage: str) -> None:
+    frozen: Any = _frozen()  # B1-A-1
+    if damage == "no_T":
+        del frozen["upper"]["T"]
+    elif damage == "bad_value":
+        frozen["upper"]["K"] = "x"
+    elif damage == "no_lower":
+        del frozen["lower"]
+    else:
+        frozen["upper"] = ["K"]
+    with pytest.raises(c.CycleError, match="classifier thresholds"):
+        c.classifier_bounds({"final_thresholds": {"T=900": frozen}}, 900, 3)
+
+
+def test_classifier_bounds_k1_is_reduce_for_k() -> None:
+    from calibration import reduce
+
+    frozen = _frozen()
+    pool = tuple({n: float(v) for n, v in frozen[s].items()} for s in frozen)
+    expected = reduce.for_k(pool, 1)  # type: ignore[arg-type]
+    report = {"final_thresholds": {"T=900": frozen}}
+    assert c.classifier_bounds(report, 900, 1) == expected
+
+
+@pytest.mark.parametrize("field", ["trial_id", "hypothesis_hash", "family",
+                                   "configuration_hash"])  # fmt: skip
+def test_parse_declaration_wrong_typed_entry_fields(field: str) -> None:
+    raw, objs = _decl()  # B1-A-1
+    e = _entries(raw)
+    bad, _ = _decl(trials=[{**e[0], field: []}, *e[1:]])
+    with pytest.raises(c.CycleError, match="wrong form"):
+        c.parse_declaration(bad, objs)
+
+
+@pytest.mark.parametrize("last_seen", [
+    "2024-1-1T0:0:0Z", "２０24-01-01T00:00:00Z", "2024-01-01T00:00:00z",  # noqa: RUF001
+])  # fmt: skip
+def test_parse_declaration_last_seen_exact_form(last_seen: str) -> None:
+    raw, objs = _decl(last_seen=last_seen)  # B1-A-2
+    with pytest.raises(c.CycleError, match="last_seen"):
+        c.parse_declaration(raw, objs)
+
+
+def test_parse_declaration_follows_declaration_order_not_the_map_order() -> None:
+    raw, objs = _decl()  # B1-A-3: the object map in reverse insertion order
+    got = c.parse_declaration(raw, dict(reversed(list(objs.items()))))
+    assert [t["trial_id"] for t in got.trials] == ["tr1", "vo1", "tr2"]
+    assert [t["trial_id"] for t in got.declared["trend"]] == ["tr1", "tr2"]
+
+
+def test_parse_declaration_max_trials_counts_both_families() -> None:
+    import test_calibration_screen as ts
+
+    from calibration import screen
+
+    objs = {f"{f[0]}{i}": ts._trial(trial_id=f"{f[0]}{i}", family=f)
+            for f, n in (("trend", 11), ("vol", 10)) for i in range(n)}  # fmt: skip
+    entries = [{"family": o["family"], "trial_id": i, "hypothesis_hash": "ab" * 32,
+                "configuration_hash": screen.trial_sha256(o), "trial_index": n}
+               for n, (i, o) in enumerate(objs.items())]  # fmt: skip
+    bad, _ = _decl(trials=entries)  # B1-A-3: 11 + 10, each family under 20
+    with pytest.raises(c.CycleError, match="21 declared trials"):
+        c.parse_declaration(bad, objs)
+    ok, _ = _decl(trials=entries[:20])
+    assert len(c.parse_declaration(ok, dict(list(objs.items())[:20])).trials) == 20
+
+
+def test_parse_declaration_own_trial_id_mismatch_with_matching_hash() -> None:
+    """B1-A-3: the object hashes to the entry, but names another trial_id."""
+    import test_calibration_screen as ts
+
+    from calibration import screen
+
+    raw, objs = _decl()
+    e = _entries(raw)
+    other = ts._trial(trial_id="trZ", family="trend")
+    moved = {**e[2], "configuration_hash": screen.trial_sha256(other)}
+    bad, _ = _decl(trials=[e[0], e[1], moved])
+    with pytest.raises(c.CycleError, match="names another trial"):
+        c.parse_declaration(bad, {**objs, "tr2": other})

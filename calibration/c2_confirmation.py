@@ -2994,13 +2994,11 @@ def check_capture_record(record: bytes, headers: Headers,
     if r["schema"] != CAPTURE_SCHEMA:
         raise CycleError(f"capture schema {r['schema']!r} is not {CAPTURE_SCHEMA}")
     urls = {f"{host}/api/block-height/{headers.height + 5}" for host in CAPTURE_HOSTS}
-    if r["url"] not in urls:
+    if not isinstance(r["url"], str) or r["url"] not in urls:  # B1-A-1
         raise CycleError(f"capture url {r['url']!r} is not a qualifying URL")
     t = r["timestamp"]
     try:
-        if not (isinstance(t, str) and len(t) == 14 and t.isdigit()):
-            raise ValueError
-        when = datetime.strptime(t, "%Y%m%d%H%M%S").replace(tzinfo=UTC)
+        when = _strict_time(t, "%Y%m%d%H%M%S")  # B1-A-2
     except ValueError:
         raise CycleError(f"capture timestamp {t!r} is not 14 CDX digits") from None
     if r["status"] != "200":
@@ -3044,19 +3042,22 @@ def qualification_report(obj: Path, protocol: bytes) -> dict[str, Any]:
     R14D6B9-F-1), and return the report `qobj.read` takes from it. Read-free."""
     from calibration import qobj
 
-    manifest = json.loads((obj / "manifest.json").read_bytes())
-    if sha(manifest) != protocol_row(protocol, "qualification_object_sha256"):
-        raise CycleError("the qualification object is not the signed one")
+    signed = protocol_row(protocol, "qualification_object_sha256")
     files = {}
-    for name, digest in manifest.items():
-        data = (obj / name).read_bytes()
-        if hashlib.sha256(data).hexdigest() != digest:
-            raise CycleError(f"{name} does not match the object's manifest")
-        files[name] = data
-    try:
+    try:  # B1-A-1: a missing or malformed object is a refusal, not a crash
+        manifest = json.loads((obj / "manifest.json").read_bytes())
+        if not isinstance(manifest, dict) or sha(manifest) != signed:
+            raise CycleError("the qualification object is not the signed one")
+        for name, digest in manifest.items():
+            data = (obj / name).read_bytes()
+            if hashlib.sha256(data).hexdigest() != digest:
+                raise CycleError(f"{name} does not match the object's manifest")
+            files[name] = data
         report, _ = qobj.read(files)
-    except ValueError as e:
-        raise CycleError(f"qualification object: {e}") from e
+    except CycleError:
+        raise
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
+        raise CycleError(f"qualification object: {type(e).__name__}: {e}") from e
     return report
 
 
@@ -3071,13 +3072,13 @@ def classifier_bounds(report: dict[str, Any], t_days: int,
         frozen = report["final_thresholds"][f"T={t_days}"]
     except KeyError:
         raise CycleError(f"no frozen thresholds for T={t_days}") from None
-    pool = tuple(
-        {n: float(v) for n, v in frozen[s].items()} for s in ("upper", "lower")
-    )
-    try:
+    try:  # B1-A-1: any malformed threshold set refuses, whatever its fault
+        pool = tuple(
+            {n: float(v) for n, v in frozen[s].items()} for s in ("upper", "lower")
+        )
         return reduce.for_k(pool, k)  # type: ignore[arg-type]
-    except ValueError as e:
-        raise CycleError(f"classifier thresholds: {e}") from e
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
+        raise CycleError(f"classifier thresholds: {type(e).__name__}: {e}") from e
 
 
 # [DESIGN layout, to be bound in the S4 text] (§1). `protocol_hash` is not in
@@ -3113,6 +3114,17 @@ def _int(x: object) -> bool:
     return type(x) is int and x >= 0
 
 
+def _strict_time(text: object, fmt: str) -> datetime:
+    """B1-A-2: exactly one ASCII text form per instant (strptime alone accepts
+    unpadded fields and Unicode digits). ValueError otherwise."""
+    if not isinstance(text, str) or not text.isascii():
+        raise ValueError(text)
+    value = datetime.strptime(text, fmt)
+    if value.strftime(fmt) != text:
+        raise ValueError(text)
+    return value.replace(tzinfo=UTC)
+
+
 def parse_declaration(
     declaration: bytes, trial_objects: Mapping[str, dict[str, Any]]
 ) -> Declaration:
@@ -3136,6 +3148,13 @@ def parse_declaration(
         raise CycleError(f"{len(entries)} declared trials; 1 to {MAX_DECLARED} allowed")
     if any(type(e["trial_index"]) is not int for e in entries):
         raise CycleError("a trial_index is not an int")
+    if not all(  # B1-A-1: forms before any set or map use
+        isinstance(e["trial_id"], str) and e["trial_id"]
+        and isinstance(e["family"], str)
+        and _hex(e["hypothesis_hash"], 64) and _hex(e["configuration_hash"], 64)
+        for e in entries
+    ):  # fmt: skip
+        raise CycleError("a declared trial's id, family or hashes have the wrong form")
     ids = [e["trial_id"] for e in entries]
     if len(set(ids)) != len(ids):
         raise CycleError("a trial_id is declared twice")
@@ -3163,9 +3182,7 @@ def parse_declaration(
     if not (_int(d["embargo_days"]) and _int(anchor["entry_count"])):
         raise CycleError("embargo_days and entry_count must be non-negative ints")
     try:
-        if not isinstance(d["last_seen"], str):
-            raise ValueError
-        last_seen = datetime.strptime(d["last_seen"], "%Y-%m-%dT%H:%M:%SZ")
+        last_seen = _strict_time(d["last_seen"], "%Y-%m-%dT%H:%M:%SZ")  # B1-A-2
     except ValueError:
         raise CycleError("last_seen is not YYYY-MM-DDTHH:MM:SSZ") from None
     if not isinstance(d["cycle_id"], str) or not d["cycle_id"]:
@@ -3176,7 +3193,7 @@ def parse_declaration(
         declared=declared,
         trials=[trial_objects[i] for i in ids],
         data_manifest_sha256=d["data_manifest_sha256"],
-        last_seen=last_seen.replace(tzinfo=UTC),
+        last_seen=last_seen,
         embargo_days=d["embargo_days"],
         anchor_head_hash=anchor["head_hash"],
         anchor_entry_count=anchor["entry_count"],
