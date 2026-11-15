@@ -49,6 +49,7 @@ from aqt.backtest.event_contract import (
     run_event_contract,
 )
 from aqt.core.ledger import GENESIS_HASH
+from aqt.data import manifest as dm
 from aqt.data.bars import BarSeries
 from aqt.features.columns import feature_columns
 from aqt.features.factory import FeatureFactoryError
@@ -3615,3 +3616,68 @@ def look_lock(ledger_path: Path | str) -> Iterator[None]:
             _look_unlock(fd)
     finally:
         os.close(fd)
+
+
+# --- Slice 6b build B3c: reading and the data manifest (§6, owner A-4) -------------
+
+READ_PARTITIONS = (dm.PROTOCOL_PARTITIONS[0], dm.PROTOCOL_PARTITIONS[1])
+
+
+def check_read(
+    composite: Any,
+    served: Mapping[tuple[str, str], BarSeries],
+    *,
+    decl: Declaration,
+    protocol_hash: str,
+    start: datetime,
+    end: datetime,
+) -> np.ndarray:
+    """§6: `read` serves the cycle's composite manifest and whole BTC and ETH
+    partitions `{(partition, symbol): BarSeries}` (confirmation, and
+    exploration where a warm-up reaches back into it). The composite must
+    verify, hash to the declaration's `data_manifest_sha256` and name this
+    cycle and the signed protocol hash; each served series is checked
+    against its own partition manifest from the composite (no separately
+    served manifest); then the module cuts `[start, end)` = `[w0 - W, w1)`
+    itself and runs `check_confirmation_read` (C-T). Bars before the cut are
+    not used. Any failure is a CycleError."""
+    if not isinstance(composite, dm.CompositeManifest):
+        raise CycleError("the served manifest is not a composite manifest")
+    try:
+        dm.verify_composite_manifest(composite)
+    except dm.ManifestError as e:
+        raise CycleError(f"the composite manifest does not verify: {e}") from None
+    if composite.manifest_sha256 != decl.data_manifest_sha256:
+        raise CycleError("the composite manifest is not the declared one")
+    if (
+        composite.cycle_id != decl.cycle_id
+        or composite.protocol_sha256 != protocol_hash
+    ):
+        raise CycleError("the composite manifest is for another cycle or protocol")
+    entries = {(e.partition, e.symbol): e for e in composite.partitions}
+    for key, series in served.items():
+        entry = entries.get(key)
+        if (
+            key[0] not in READ_PARTITIONS
+            or key[1] not in SYMBOLS
+            or not isinstance(entry, dm.PartitionManifest)
+        ):
+            raise CycleError(f"served partition {key} is not a readable one")
+        try:
+            dm.verify_partition_manifest(entry, series=series)
+        except (dm.ManifestError, AttributeError, TypeError) as e:
+            raise CycleError(
+                f"served partition {key} is not its manifest's: {e}"
+            ) from None
+    cut = []
+    for symbol in SYMBOLS:
+        keys = sorted((k for k in served if k[1] == symbol),
+                      key=lambda k: entries[k].window_start_utc)  # fmt: skip
+        bars = [b for k in keys for b in served[k].bars if start <= b.open_time < end]
+        try:
+            cut.append(BarSeries(symbol=symbol, bars=tuple(bars)))
+        except ValueError as e:
+            raise CycleError(
+                f"C-T: the {symbol} cut is not a bar series: {e}"
+            ) from None
+    return check_confirmation_read(cut[0], cut[1], start, end)
