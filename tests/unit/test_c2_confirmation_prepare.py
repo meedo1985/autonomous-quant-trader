@@ -63,7 +63,7 @@ class World:
             "trial_set_sha256": screen.trial_set_sha256(trials),
             "qualification_object_sha256": object_sha256, "outcome": "SCREEN_AVAILABLE",
         })  # fmt: skip
-        self.decl = {
+        self.decl: dict[str, Any] = {
             "protocol_hash": P,
             "cycle_id": "C2-0001",
             "trials": [
