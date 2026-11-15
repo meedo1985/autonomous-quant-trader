@@ -92,6 +92,16 @@ def _record(trial: dict[str, Any]) -> dict[str, Any]:
             "configuration_hash": screen.trial_sha256(trial)}  # fmt: skip
 
 
+# §3 identity fields as `result_identity` gives them (synthetic values)
+IDENTITY: dict[str, Any] = {
+    "trial_index": 0, "seed_l266": "5" * 64, "estimator_seed": 0,
+    "data_manifest_sha256": "6" * 64, "protocol_hash": "7" * 64,
+    "engine_commit": "8" * 40, "confirmation_module_sha256": "9" * 64,
+    "image_digest": "sha256:" + "a" * 64,
+}  # fmt: skip
+WINDOW = (ts.W0, ts.WINDOW_H // 24)  # the governing (w0, T)
+
+
 def _result(trial: dict[str, Any], **over: Any) -> dict[str, Any]:
     args: dict[str, Any] = {
         "cycle_id": "C2",
@@ -101,7 +111,7 @@ def _result(trial: dict[str, Any], **over: Any) -> dict[str, Any]:
         "path": ts._screen_path(),
         "w0": ts.W0,
         "window_hours": ts.WINDOW_H,
-        "estimator_seed": 0,
+        "identity": IDENTITY,
     }
     return cf.trial_result(**{**args, **over})
 
@@ -112,7 +122,8 @@ def test_the_pre_look_record_is_the_baseline_e_diff_and_its_hash(
     trial = ts._screen_trial(tmp_path, monkeypatch)
     got = _result(trial)
     d = cf.baseline_d(trial, ts._screen_path(), ts.W0, ts.WINDOW_H, 0)
-    assert got["schema"] == "aqt.c2.trial_result.v1"
+    assert got["schema"] == "aqt.c2.trial_result.v2"
+    assert {k: got[k] for k in cf.IDENTITY_KEYS} == IDENTITY
     assert got["d"] == [cf.hexf(x) for x in d]
     assert got["d_sha256"] == cf._floats_sha256(d)  # LG5-3, A7 step 2
     assert got["window_id"] == cf.window_id(ts.W0, ts.W0 + timedelta(hours=ts.WINDOW_H))
@@ -120,8 +131,8 @@ def test_the_pre_look_record_is_the_baseline_e_diff_and_its_hash(
     assert (got["reason"], got["configuration_hash"]) == (None, _record(trial)[
         "configuration_hash"])  # fmt: skip
     # nominate's input, decoded and re-checked
-    h, days, values = cf.completed_entry(got)
-    assert h == got["configuration_hash"]
+    h, days, values, reason = cf.completed_entry(got, WINDOW)
+    assert (h, reason) == (got["configuration_hash"], None)
     assert days == [ts.W0 + k * cf.DAY for k in range(30)]
     assert tuple(values) == d
 
@@ -155,7 +166,7 @@ def test_an_unavailable_run_is_recorded_not_dropped(
     monkeypatch.setattr(cf, "baseline_d", failing)
     got = _result(trial)
     assert (got["d"], got["d_sha256"], got["reason"]) == (None, None, reason)
-    assert cf.completed_entry(got)[2] == []  # nominate: MISALIGNED_SERIES, U_ops
+    assert cf.completed_entry(got, WINDOW)[2:] == ([], reason)  # §5: by reason
 
 
 def test_a_caller_input_error_is_not_unavailability(
@@ -163,7 +174,7 @@ def test_a_caller_input_error_is_not_unavailability(
 ) -> None:
     trial = ts._screen_trial(tmp_path, monkeypatch)
     with pytest.raises(cf.SealError, match="estimator_seed"):
-        _result(trial, estimator_seed=-1)
+        _result(trial, identity={**IDENTITY, "estimator_seed": -1})
 
 
 def test_a_d_that_does_not_match_its_own_hash_is_refused(
@@ -174,9 +185,9 @@ def test_a_d_that_does_not_match_its_own_hash_is_refused(
     got = _result(ts._screen_trial(tmp_path, monkeypatch))
     got["d"][0] = cf.hexf(1.0)
     with pytest.raises(cf.CycleError, match="d_sha256"):
-        cf.completed_entry(got)
+        cf.completed_entry(got, WINDOW)
     with pytest.raises(cf.CycleError, match="pre-look"):
-        cf.completed_entry({**got, "schema": "other"})
+        cf.completed_entry({**got, "schema": "other"}, WINDOW)
 
 
 # --- R14S6-F-2: completed_entry decodes exactly -------------------------------------
@@ -195,7 +206,7 @@ def _bad(got: dict[str, Any], case: str) -> Any:
     elif case == "nan":
         bad["d"][0] = cf.hexf(float("nan"))
         bad["d_sha256"] = cf._floats_sha256([float("nan"), *(
-            cf.completed_entry(got)[2][1:])])  # fmt: skip
+            cf.completed_entry(got, WINDOW)[2][1:])])  # fmt: skip
     elif case == "null_d_with_hash":
         bad.update(d=None, reason=None)
     elif case == "d_with_reason":
@@ -208,7 +219,7 @@ def _bad(got: dict[str, Any], case: str) -> Any:
         bad["window_id"] = cf.window_id(ts.W0 + H, ts.W0 + H + cf.DAY)
     elif case == "d_length":  # hash re-made: only the length is wrong
         bad["d"] = bad["d"][:-1]
-        bad["d_sha256"] = cf._floats_sha256(cf.completed_entry(got)[2][:-1])
+        bad["d_sha256"] = cf._floats_sha256(cf.completed_entry(got, WINDOW)[2][:-1])
     elif case == "null_d_hash_and_reason":  # only the stray hash is wrong
         bad.update(d=None, reason="TRIAL_CODE_ERROR")
     elif case == "upper_config_hash":
@@ -246,7 +257,7 @@ def test_a_malformed_pre_look_record_is_refused(
 ) -> None:
     got = _result(ts._screen_trial(tmp_path, monkeypatch))
     with pytest.raises(cf.CycleError, match=match):
-        cf.completed_entry(_bad(got, case))
+        cf.completed_entry(_bad(got, case), WINDOW)
 
 
 def test_an_unavailable_run_without_a_reason_is_refused(
@@ -260,7 +271,7 @@ def test_an_unavailable_run_without_a_reason_is_refused(
     monkeypatch.setattr(cf, "baseline_d", failing)
     got = _result(trial)
     with pytest.raises(cf.CycleError, match="reason"):
-        cf.completed_entry({**got, "reason": ""})
+        cf.completed_entry({**got, "reason": ""}, WINDOW)
 
 
 # --- R14S6-F-6, F-7: trial_path and the read contract's untested branches -----------
@@ -321,7 +332,7 @@ def test_cost_and_feature_errors_are_recorded_unavailable(
     monkeypatch.setattr(cf, "baseline_d", failing)
     got = _result(trial)
     assert (got["d"], got["reason"]) == (None, type(error).__name__)
-    assert cf.completed_entry(got)[2] == []
+    assert cf.completed_entry(got, WINDOW)[2:] == ([], type(error).__name__)
 
 
 def test_trial_path_refuses_a_bad_window_or_a_naive_w0() -> None:
@@ -340,3 +351,63 @@ def test_trial_result_never_writes_a_record_the_look_refuses(
     # R14S6R-F-5: an empty cycle id is refused when written, not at the look
     with pytest.raises(cf.CycleError, match="cycle_id"):
         _result(ts._screen_trial(tmp_path, monkeypatch), cycle_id="")
+
+
+# --- DESIGN_SLICE6B §3, §13: result entry v2 and completed_entry against the window --
+
+
+def test_result_identity_takes_this_processs_own_values() -> None:
+    started = cf.Started(
+        protocol_hash="7" * 64, lockbox_module_sha256="b" * 64,
+        confirmation_module_sha256="9" * 64, engine_commit="8" * 40,
+        screen_object_sha256="c" * 64, image_digest="sha256:" + "a" * 64,
+        protocol=b"", declaration=b"", declaration_sha256="d" * 64, chain_log={},
+    )  # fmt: skip
+    seeds = {"trial_index": 0, "trial_seed": "x", "seed_l266": "5" * 64,
+             "estimator_seed_policy": cf.POLICY, "estimator_seed": 0}  # fmt: skip
+    assert cf.result_identity(started, seeds, "6" * 64) == IDENTITY
+
+
+@pytest.mark.parametrize(("key", "value"), [
+    ("trial_index", "0"), ("trial_index", True), ("seed_l266", "5" * 63),
+    ("estimator_seed", 2**31), ("estimator_seed", -1), ("estimator_seed", 0.0),
+    ("data_manifest_sha256", "6" * 63), ("protocol_hash", "G" * 64),
+    ("confirmation_module_sha256", None), ("engine_commit", "8" * 64),
+    ("image_digest", ""), ("image_digest", 1),
+])  # fmt: skip
+def test_malformed_identity_fields_are_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str, value: Any
+) -> None:
+    got = _result(ts._screen_trial(tmp_path, monkeypatch))
+    with pytest.raises(cf.CycleError, match="identity fields"):
+        cf.completed_entry({**got, key: value}, WINDOW)
+
+
+def test_trial_result_needs_exactly_the_identity_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trial = ts._screen_trial(tmp_path, monkeypatch)
+    short = {k: v for k, v in IDENTITY.items() if k != "image_digest"}
+    with pytest.raises(cf.CycleError, match="identity fields"):
+        _result(trial, identity=short)
+
+
+def test_window_id_is_checked_against_the_governing_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    got = _result(ts._screen_trial(tmp_path, monkeypatch))
+    with pytest.raises(cf.CycleError, match="governing window"):
+        cf.completed_entry(got, (ts.W0 + cf.DAY, WINDOW[1]))
+    with pytest.raises(cf.CycleError, match="governing window"):
+        cf.completed_entry(got, (ts.W0, WINDOW[1] + 1))
+
+
+def test_well_formed_shifted_days_pass_for_nominate_to_judge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§3 rule 2: days differing from the window are MISALIGNED_SERIES at
+    `nominate`, not a refusal; their window_id is still the governing one."""
+    got = _result(ts._screen_trial(tmp_path, monkeypatch))
+    shifted = [cf._time(ts.W0 + (k + 1) * cf.DAY) for k in range(len(got["days"]))]
+    _, days, values, _ = cf.completed_entry({**got, "days": shifted}, WINDOW)
+    assert days[0] == ts.W0 + cf.DAY and len(values) == len(days)

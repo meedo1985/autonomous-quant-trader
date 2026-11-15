@@ -2748,7 +2748,12 @@ def start(
 # parts that do not depend on the open bindings (signed row names, the
 # classifier bounds, the store).
 
-TRIAL_RESULT_SCHEMA = "aqt.c2.trial_result.v1"
+TRIAL_RESULT_SCHEMA = "aqt.c2.trial_result.v2"  # DESIGN_SLICE6B §3
+# §3: the identity fields a result entry carries besides cycle, trial, family,
+# configuration hash and window; the look re-derives and compares every one
+IDENTITY_KEYS = ("trial_index", "seed_l266", "estimator_seed", "data_manifest_sha256",
+                 "protocol_hash", "engine_commit", "confirmation_module_sha256",
+                 "image_digest")  # fmt: skip
 HOUR = timedelta(hours=1)
 
 
@@ -2801,6 +2806,25 @@ def trial_path(
     return screen.confirmation_path(rows[offset:])
 
 
+def result_identity(started: Started, seeds: Mapping[str, Any],
+                    data_manifest_sha256: str) -> dict[str, Any]:  # fmt: skip
+    """§3: a result entry's identity fields, from this process's own values:
+    `derive_seeds`' per-trial record (trial_index, line-266 seed, estimator
+    seed), the declaration's manifest hash and the four code-identity fields
+    `start` verified. `trial_result` writes them; the look derives them again
+    and compares (§3 rule 2)."""
+    return {
+        "trial_index": seeds["trial_index"],
+        "seed_l266": seeds["seed_l266"],
+        "estimator_seed": seeds["estimator_seed"],
+        "data_manifest_sha256": data_manifest_sha256,
+        "protocol_hash": started.protocol_hash,
+        "engine_commit": started.engine_commit,
+        "confirmation_module_sha256": started.confirmation_module_sha256,
+        "image_digest": started.image_digest,
+    }
+
+
 def trial_result(
     *,
     cycle_id: str,
@@ -2810,14 +2834,18 @@ def trial_result(
     path: np.ndarray,
     w0: datetime,
     window_hours: int,
-    estimator_seed: int,
+    identity: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """6B-4, DESIGN §5.2 step 4: the trial's pre-look record. `d` is the
-    BTC 1x baseline pair's daily E-DIFF (`baseline_d`, the series the DSR test
-    and A7 step 2 use); `d_sha256` its big-endian float64 hash (LG5-3). A run
+    """6B-4, DESIGN §5.2 step 4: the trial's pre-look record, schema v2
+    (DESIGN_SLICE6B §3), the payload of one ledger entry. `d` is the BTC 1x
+    baseline pair's daily E-DIFF (`baseline_d`, the series the DSR test and
+    A7 step 2 use); `d_sha256` its big-endian float64 hash (LG5-3).
+    `identity` is `result_identity`'s; its estimator seed fits the run. A run
     that is technically unavailable is recorded with `d: null` and its reason
-    (A_f then fails, U_ops); a trial that does not match its immutable record
+    (still a result entry); a trial that does not match its immutable record
     is refused."""
+    if set(identity) != set(IDENTITY_KEYS):
+        raise CycleError("the identity fields are not the schema's")
     if trial["trial_id"] != record["trial_id"] or (
         screen.trial_sha256(trial) != record["configuration_hash"]
     ):
@@ -2830,6 +2858,7 @@ def trial_result(
         "family": trial["family"],
         "configuration_hash": record["configuration_hash"],
         "attempt_id": attempt_id,
+        **identity,
         "window_id": window_id(w0, w1),
         "days": [_time(w0 + k * DAY) for k in range(window_hours // 24)],
         "d": None,
@@ -2837,7 +2866,7 @@ def trial_result(
         "reason": None,
     }
     try:
-        d = baseline_d(trial, path, w0, window_hours, estimator_seed)
+        d = baseline_d(trial, path, w0, window_hours, identity["estimator_seed"])
     except screen.RunUnavailable as e:
         rec = {**out, "reason": e.reason}
     except (EventContractError, CostModelError, FeatureFactoryError) as e:
@@ -2848,16 +2877,23 @@ def trial_result(
         rec = {**out, "reason": "DAYS_INCOMPLETE"}
     else:
         rec = {**out, "d": [hexf(x) for x in d], "d_sha256": _floats_sha256(d)}
-    completed_entry(rec)  # R14S6R-F-5: never write a record the look would refuse
+    # R14S6R-F-5: never write a record the look would refuse
+    completed_entry(rec, (w0, window_hours // 24))
     return rec
 
 
-def completed_entry(result: dict[str, Any]) -> tuple[str, list[datetime], list[float]]:
+def completed_entry(
+    result: dict[str, Any], window: tuple[datetime, int]
+) -> tuple[str, list[datetime], list[float], str | None]:
     """`nominate`'s `completed[id]` from a pre-look record: (configuration hash,
-    days, d). An unavailable run gives no values, which `nominate` reports as
-    MISALIGNED_SERIES (U_ops); a `d` that does not hash to its `d_sha256`
-    is refused. R14S6-F-2: the decoding is exact, one byte form per record;
-    anything else is a CycleError."""
+    days, d, reason). `window` is the governing (w0, T) of `check_eligibility`;
+    `window_id` must be its id (DESIGN_SLICE6B §3 rule 2). Days are checked for
+    form only (canonical UTC, consecutive, non-empty): well-formed days that
+    differ from the window's are `nominate`'s MISALIGNED_SERIES (U_ops), not a
+    refusal. An unavailable run gives no values and its reason; a `d` that
+    does not hash to its `d_sha256` is refused. R14S6-F-2: the decoding is
+    exact, one byte form per record; anything else is a CycleError. The
+    identity fields are checked for form here and for value at the look."""
     if not isinstance(result, dict) or result.get("schema") != TRIAL_RESULT_SCHEMA:
         raise CycleError("not a pre-look trial record")
     if set(result) != _TRIAL_RESULT_KEYS:
@@ -2867,6 +2903,17 @@ def completed_entry(result: dict[str, Any]) -> tuple[str, list[datetime], list[f
             raise CycleError(f"the pre-look {key} is not a non-empty string")
     if not _hex(result["configuration_hash"], 64):
         raise CycleError("the pre-look configuration_hash is not canonical hex")
+    seed = result["estimator_seed"]
+    if not (
+        type(result["trial_index"]) is int
+        and _hex(result["seed_l266"], 64)
+        and type(seed) is int and 0 <= seed < 2**31
+        and all(_hex(result[k], 64) for k in (
+            "data_manifest_sha256", "protocol_hash", "confirmation_module_sha256"))
+        and _hex(result["engine_commit"], 40)
+        and isinstance(result["image_digest"], str) and result["image_digest"]
+    ):  # fmt: skip
+        raise CycleError("the pre-look identity fields are not canonical")
     raw_days = result["days"]
     if not isinstance(raw_days, list) or not raw_days:
         raise CycleError("the pre-look days are not a non-empty list")
@@ -2880,13 +2927,15 @@ def completed_entry(result: dict[str, Any]) -> tuple[str, list[datetime], list[f
         b - a != DAY for a, b in zip(days, days[1:], strict=False)
     ):
         raise CycleError("the pre-look days are not canonical consecutive days")
-    if result["window_id"] != window_id(days[0], end):
-        raise CycleError("the pre-look window_id is not its days' window")
+    del end  # R14S6R-F-1's overflow check only; days are checked for form
+    w0, t_days = window
+    if result["window_id"] != window_id(w0, w0 + t_days * DAY):
+        raise CycleError("the pre-look window_id is not the governing window")
     d, digest, reason = result["d"], result["d_sha256"], result["reason"]
     if d is None:
         if digest is not None or not isinstance(reason, str) or not reason:
             raise CycleError("an unavailable run needs a reason and no d_sha256")
-        return result["configuration_hash"], days, []
+        return result["configuration_hash"], days, [], reason
     if reason is not None or not isinstance(d, list) or not _hex(digest, 64):
         raise CycleError("a result needs d and d_sha256 and no reason")
     if len(d) != len(days) or not all(_hex(x, 16) for x in d):
@@ -2896,12 +2945,12 @@ def completed_entry(result: dict[str, Any]) -> tuple[str, list[datetime], list[f
         raise CycleError("the pre-look d is not finite")
     if _floats_sha256(values) != digest:
         raise CycleError("the pre-look d does not hash to its d_sha256")
-    return result["configuration_hash"], days, values
+    return result["configuration_hash"], days, values, None
 
 
 _TRIAL_RESULT_KEYS = frozenset({
     "schema", "cycle_id", "trial_id", "family", "configuration_hash", "attempt_id",
-    "window_id", "days", "d", "d_sha256", "reason",
+    *IDENTITY_KEYS, "window_id", "days", "d", "d_sha256", "reason",
 })  # fmt: skip
 
 
