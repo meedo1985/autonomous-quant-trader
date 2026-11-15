@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 from datetime import UTC, datetime
 
 import pytest
@@ -80,3 +82,117 @@ def test_headers_check_link_uses_internal_byte_order() -> None:
     flipped[4:36] = flipped[4:36][::-1]
     with pytest.raises(c.CycleError, match=r"headers\[1\]"):
         c.headers_check(record, digest, [MAINNET[0], bytes(flipped), *MAINNET[2:6]])
+
+
+# --- capture record (§2.1, schema v2 per VERIFY_CAPTURE_DIGEST_2026-11-15.md) --------
+
+# Internet Archive capture of https://blockstream.info/api/block-height/0 at
+# 20260905161311: the exact 69 gzip bytes of its `id_` fetch and its CDX digest
+KNOWN_PAYLOAD = bytes.fromhex(
+    "1f8b080000000000040335c1c901c0200804c096387485725602fd97e02b33223fcd0f882c89"
+    "cd56ec70edf43573e0ec051a517aecfae88530aa0df300854028b040000000"
+)
+KNOWN_DIGEST = "NNVZIO5QLFHVIRULV75YOBX7EKNQDJMI"
+TIP_TIME = datetime(2026, 9, 5, 17, 0, tzinfo=UTC)
+ACC = "a" * 64
+
+
+def _tip(height: int = -5, tip: str = GENESIS) -> c.Headers:
+    """Headers whose h+5 is block 0, the known capture's height."""
+    return c.Headers(height=height, cycle_start=TIP_TIME, tip_block_hash=tip,
+                     tip_time=TIP_TIME, headers_sha256="0" * 64)  # fmt: skip
+
+
+def _capture(**change: object) -> bytes:
+    r = {
+        "schema": c.CAPTURE_SCHEMA,
+        "url": "https://blockstream.info/api/block-height/0",
+        "timestamp": "20260905161311",
+        "status": "200",
+        "digest": KNOWN_DIGEST,
+        "payload": base64.b64encode(KNOWN_PAYLOAD).decode(),
+        "content_encoding": "gzip",
+        "body": GENESIS,
+        "acceptance_record_sha256": ACC,
+        **change,
+    }
+    return cj(r)
+
+
+def test_capture_known_answer_real_archive_capture() -> None:
+    record = _capture()
+    got = c.check_capture_record(record, _tip(), ACC)
+    assert got.timestamp == "20260905161311"
+    assert got.record_sha256 == hashlib.sha256(record).hexdigest()
+    assert got.before_tip_window is False  # 16:13 is within 2 h before 17:00
+
+
+def test_capture_before_tip_window_is_a_diagnostic_not_a_refusal() -> None:
+    late_tip = c.Headers(height=-5, cycle_start=TIP_TIME, tip_block_hash=GENESIS,
+                         tip_time=datetime(2026, 9, 5, 18, 14, tzinfo=UTC),
+                         headers_sha256="0" * 64)  # fmt: skip
+    assert c.check_capture_record(_capture(), late_tip, ACC).before_tip_window is True
+
+
+def test_capture_mempool_url_and_identity_encoding_pass() -> None:
+    raw = GENESIS.encode()
+    digest = base64.b32encode(hashlib.sha1(raw).digest()).decode()
+    record = _capture(url="https://mempool.space/api/block-height/0",
+                      content_encoding="identity", digest=digest,
+                      payload=base64.b64encode(raw).decode())  # fmt: skip
+    assert c.check_capture_record(record, _tip(), ACC).timestamp == "20260905161311"
+
+
+def test_capture_digest_of_the_body_alone_is_refused() -> None:
+    """Rev 16 item 3 as written (digest of the body) must not pass for gzip."""
+    body_digest = base64.b32encode(hashlib.sha1(GENESIS.encode()).digest()).decode()
+    with pytest.raises(c.CycleError, match="CDX digest"):
+        c.check_capture_record(_capture(digest=body_digest), _tip(), ACC)
+
+
+@pytest.mark.parametrize(("change", "match"), [
+    ({"url": "https://blockstream.info/api/block-height/1"}, "qualifying URL"),
+    ({"url": "http://blockstream.info/api/block-height/0"}, "qualifying URL"),
+    ({"url": "https://web.archive.org/web/20260905161311/https://blockstream.info/api/block-height/0"},
+     "qualifying URL"),
+    ({"timestamp": "2026090516131"}, "14 CDX digits"),
+    ({"timestamp": "20261305161311"}, "14 CDX digits"),
+    ({"timestamp": 20260905161311}, "14 CDX digits"),
+    ({"status": 200}, "status"),
+    ({"status": "302"}, "status"),
+    ({"payload": "not base64!"}, "base64"),
+    ({"payload": base64.b64encode(KNOWN_PAYLOAD).decode() + "\n"}, "base64"),
+    ({"content_encoding": "br"}, "not supported"),
+    ({"content_encoding": "identity"}, "decoded payload"),
+    ({"body": GENESIS + "\n"}, "decoded payload"),
+    ({"body": None}, "decoded payload"),
+    ({"acceptance_record_sha256": "b" * 64}, "another acceptance record"),
+    ({"schema": "aqt.c2.capture_record.v1"}, "schema"),
+])  # fmt: skip
+def test_capture_refusals(change: dict[str, object], match: str) -> None:
+    with pytest.raises(c.CycleError, match=match):
+        c.check_capture_record(_capture(**change), _tip(), ACC)
+
+
+def test_capture_body_must_be_the_tip_hash() -> None:
+    with pytest.raises(c.CycleError, match="tip block hash"):
+        c.check_capture_record(_capture(), _tip(tip=BLOCK5), ACC)
+
+
+def test_capture_corrupt_gzip_is_refused() -> None:
+    bad = KNOWN_PAYLOAD[:-6] + b"\x00" * 6  # crc/length broken
+    digest = base64.b32encode(hashlib.sha1(bad).digest()).decode()
+    with pytest.raises(c.CycleError, match="gzip"):
+        c.check_capture_record(
+            _capture(payload=base64.b64encode(bad).decode(), digest=digest), _tip(), ACC
+        )
+
+
+def test_capture_record_must_be_canonical_with_exact_fields() -> None:
+    record = _capture()
+    with pytest.raises(c.CycleError, match="canonical schema"):
+        c.check_capture_record(record + b" ", _tip(), ACC)
+    with pytest.raises(c.CycleError, match="canonical schema"):
+        c.check_capture_record(cj({**json.loads(record), "extra": 1}), _tip(), ACC)
+    with pytest.raises(c.CycleError, match="not JSON"):
+        c.check_capture_record(b"{", _tip(), ACC)

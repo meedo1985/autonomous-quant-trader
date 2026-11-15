@@ -14,6 +14,8 @@ Item 4: frozen functions are called, not re-implemented.
 
 from __future__ import annotations
 
+import base64
+import gzip
 import hashlib
 import importlib.util
 import json
@@ -22,6 +24,7 @@ import random
 import struct
 import sys
 import types
+import zlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -2952,4 +2955,83 @@ def headers_check(acceptance_record: bytes, acceptance_sha256: str,
         tip_block_hash=_sha256d(headers[-1])[::-1].hex(),
         tip_time=when(headers[-1]),
         headers_sha256=hashlib.sha256(b"".join(headers)).hexdigest(),
+    )
+
+
+CAPTURE_SCHEMA = "aqt.c2.capture_record.v2"  # v2: VERIFY_CAPTURE_DIGEST_2026-11-15.md
+CAPTURE_FIELDS = frozenset(
+    {"schema", "url", "timestamp", "status", "digest", "payload", "content_encoding",
+     "body", "acceptance_record_sha256"}
+)  # fmt: skip
+CAPTURE_HOSTS = ("https://mempool.space", "https://blockstream.info")  # O-6a SPEC §5
+TIP_WINDOW = timedelta(hours=2)  # Bitcoin's future-time rule (§2 capture residual)
+
+
+@dataclass(frozen=True)
+class Capture:
+    """What `check_capture_record` verified (DESIGN_SLICE6B §2.1)."""
+
+    timestamp: str  # SPEC §5 capture time T (14-digit CDX), fixes the beacon round
+    record_sha256: str
+    before_tip_window: bool  # diagnostic only; refuses nothing, feeds nothing
+
+
+def check_capture_record(record: bytes, headers: Headers,
+                         acceptance_sha256: str) -> Capture:  # fmt: skip
+    """O-6a SPEC §5 capture, offline: a qualifying URL for h+5, status 200, the
+    exact `id_` payload whose base32 SHA-1 is the CDX digest (the digest covers
+    the stored, possibly gzip, bytes: VERIFY_CAPTURE_DIGEST_2026-11-15.md), that
+    payload decoding to `body`, and `body` exactly the tip hash. That the record
+    is genuine and the earliest capture is the store's and verifier's
+    obligation. Read-free."""
+    try:
+        r = json.loads(record)
+        canonical = cj(r)
+    except ValueError as e:
+        raise CycleError("the capture record is not JSON") from e
+    if canonical != record or not isinstance(r, dict) or set(r) != CAPTURE_FIELDS:
+        raise CycleError("the capture record is not the canonical schema")
+    if r["schema"] != CAPTURE_SCHEMA:
+        raise CycleError(f"capture schema {r['schema']!r} is not {CAPTURE_SCHEMA}")
+    urls = {f"{host}/api/block-height/{headers.height + 5}" for host in CAPTURE_HOSTS}
+    if r["url"] not in urls:
+        raise CycleError(f"capture url {r['url']!r} is not a qualifying URL")
+    t = r["timestamp"]
+    try:
+        if not (isinstance(t, str) and len(t) == 14 and t.isdigit()):
+            raise ValueError
+        when = datetime.strptime(t, "%Y%m%d%H%M%S").replace(tzinfo=UTC)
+    except ValueError:
+        raise CycleError(f"capture timestamp {t!r} is not 14 CDX digits") from None
+    if r["status"] != "200":
+        raise CycleError(f"capture status {r['status']!r} is not '200'")
+    try:
+        payload = base64.b64decode(r["payload"], validate=True)
+    except (TypeError, ValueError):
+        raise CycleError("capture payload is not base64") from None
+    if base64.b64encode(payload).decode() != r["payload"]:
+        raise CycleError("capture payload is not canonical base64")
+    if base64.b32encode(hashlib.sha1(payload).digest()).decode() != r["digest"]:
+        raise CycleError("capture payload does not hash to the CDX digest")
+    encoding = r["content_encoding"]
+    try:
+        if encoding == "identity":
+            decoded = payload
+        elif encoding == "gzip":
+            decoded = gzip.decompress(payload)
+        else:
+            raise CycleError(f"capture content_encoding {encoding!r} is not supported")
+    except (OSError, EOFError, zlib.error):
+        raise CycleError("capture payload does not decode as gzip") from None
+    body = r["body"]
+    if not isinstance(body, str) or not body.isascii() or body.encode() != decoded:
+        raise CycleError("capture body is not the decoded payload")
+    if body != headers.tip_block_hash:
+        raise CycleError("capture body is not the tip block hash")
+    if r["acceptance_record_sha256"] != acceptance_sha256:
+        raise CycleError("capture record names another acceptance record")
+    return Capture(
+        timestamp=t,
+        record_sha256=hashlib.sha256(record).hexdigest(),
+        before_tip_window=when < headers.tip_time - TIP_WINDOW,
     )
