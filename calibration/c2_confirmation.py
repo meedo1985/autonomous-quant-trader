@@ -4146,3 +4146,120 @@ def open_look(inputs: Inputs, sources: Mapping[str, Any]) -> Look:
             "an entry of this cycle came before the look entry: the look stops"
         )
     return Look(cycle, families, now, entry.entry_hash, bounds, report)
+
+
+# --- Slice 6b build B5b: the read, the nomination and the gates (§2 step 8, §5, §8) --
+
+# [DESIGN reading B5B-D-1] G-13's benchmark hash: the canonical benchmark
+# specification the running engine carries (S4 DRAFT_WORDING §1a, v1.1 file)
+BENCHMARK_SPEC = "specs/CANONICAL_BENCHMARKS_v1.1.md"
+
+
+def benchmark_spec_sha256(root: Path | None = None) -> str | None:
+    """SHA-256 of the engine's canonical benchmark specification (G-13,
+    R-10), from the module's own checkout; None when the file is absent."""
+    base = Path(__file__).resolve().parents[1] if root is None else root
+    try:
+        return hashlib.sha256((base / BENCHMARK_SPEC).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def within_law(
+    bounds: tuple[dict[str, float], dict[str, float]],
+) -> Callable[[np.ndarray, list[float]], bool]:
+    """§8: the supported-law check `nominate` passes to `dsr.evaluate`."""
+    from calibration import classifier
+
+    upper, lower = bounds
+    return lambda x, lengths: classifier.within(classifier.diagnostics(x), upper, lower)
+
+
+@dataclass(frozen=True)
+class FamilyEvaluation:
+    """One family at the look: nomination, and for a nominee every gate."""
+
+    nomination: Nomination
+    gates: dict[str, Gate]  # empty when no nominee
+    outcome: str | None  # nominee_outcome, None when no nominee
+    path: np.ndarray | None  # the nominee's confirmation path
+    cpcv: dict[str, Any] | None  # C-14, diagnostic only
+    completed: dict[str, tuple[str, list[Any], list[float], str | None]]
+
+
+def completed_results(inputs: Inputs, family: FamilyLedger) -> dict[str, Any]:
+    """`nominate`'s `completed`: for each trial whose state is `completed`,
+    `completed_entry` of the result entry of its last derived-completed
+    attempt (§3, §5)."""
+    by_position = {r["position"]: r["payload"] for r in family.results}
+    out = {}
+    for a in family.attempts:  # ledger order: a later attempt replaces
+        if a["completed"] and family.states.get(a["trial_id"]) == "completed":
+            out[a["trial_id"]] = completed_entry(
+                by_position[a["end"]], (inputs.w0, inputs.t_days)
+            )
+    return out
+
+
+def evaluate_families(
+    inputs: Inputs, look: Look, read: Callable[[], Any]
+) -> dict[str, FamilyEvaluation]:
+    """§2 step 8 onward, after the look entry: per declared family
+    `nominate` (states and result entries from the look's ledger, the
+    family seed, the signed `family_block_rule`, the classifier bounds); for
+    a nominee its path from one `read` (§6, the trial's own warm-up cut),
+    `nominee_gates`, `family_gates` (signed `z_crit`, G-13 against the signed
+    `canonical_benchmark_sha256`), `nominee_outcome` and the C-14 report.
+    `read` is called once, and only when some family has a nominee. A
+    failure here is an abort after the look entry (§11)."""
+    decl, signed = inputs.decl, inputs.signed
+    hours = inputs.t_days * 24
+    benchmark = benchmark_spec_sha256()
+    served: tuple[Any, Any] | None = None
+    out: dict[str, FamilyEvaluation] = {}
+    for f, trials in decl.declared.items():
+        fam = look.families[f]
+        completed = completed_results(inputs, fam)
+        hashes = {e["trial_id"]: e["configuration_hash"]
+                  for e in decl.entries if e["family"] == f}  # fmt: skip
+        fseeds = inputs.seeds["families"][f]
+        nom = nominate(f, fam.states, (inputs.w0, inputs.t_days), completed, hashes,
+                       fseeds["family_seed"], signed.family_block_rule,
+                       within_law(look.bounds[f]), breach=fam.breach_reason,
+                       results=fam.results)  # fmt: skip
+        if not nom.available or nom.nominee is None:
+            out[f] = FamilyEvaluation(nom, {}, None, None, None, completed)
+            continue
+        if served is None:
+            got = read()
+            if not (isinstance(got, tuple) and len(got) == 2):
+                raise CycleError("read did not serve (composite, partitions)")
+            served = got
+        trial = next(t for t in trials if t["trial_id"] == nom.nominee)
+        warmup = trial["warmup_hours"]
+        start = inputs.w0 - warmup * HOUR
+        rows = check_read(served[0], served[1], decl=decl,
+                          protocol_hash=inputs.started.protocol_hash, start=start,
+                          end=inputs.w0 + hours * HOUR)  # fmt: skip
+        path = trial_path(rows, start, inputs.w0, warmup, hours)
+        tseeds = fseeds["trials"][nom.nominee]
+        gates_ = nominee_gates(
+            trial,
+            path,
+            inputs.w0,
+            hours,
+            tseeds["trial_seed"],
+            inputs.window_id,
+            signed.g_days,
+            tseeds["estimator_seed"],
+        )
+        fgates = family_gates(nom, signed.z_crit, benchmark or "",
+                              signed.canonical_benchmark_sha256)  # fmt: skip
+        if benchmark is None:
+            fgates["G-13"] = _unavailable("BENCHMARK_SPEC_MISSING")
+        gates_ = {**gates_, **fgates}
+        cpcv = cpcv_report(trial, path, inputs.w0, hours, tseeds["estimator_seed"],
+                           gates_["G-12"])  # fmt: skip
+        out[f] = FamilyEvaluation(nom, gates_, nominee_outcome(gates_), path, cpcv,
+                                  completed)  # fmt: skip
+    return out
