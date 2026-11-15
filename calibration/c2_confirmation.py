@@ -4299,6 +4299,16 @@ def _plain(x: Any) -> Any:
     raise CycleError(f"no record form for {type(x).__name__}")
 
 
+def gate_cause(gates_: Mapping[str, Gate]) -> str | None:
+    """P18-7 for a nominee whose gates leave it without a result (B5BC-A-1):
+    U_ops if any UNAVAILABLE gate's cause is U_ops (infrastructure first),
+    else U_proc; None when no gate is UNAVAILABLE."""
+    causes = {cause_code(g) for g in gates_.values()} - {None}
+    if not causes:
+        return None
+    return "U_ops" if "U_ops" in causes else "U_proc"
+
+
 def _dsr(result: dsr.FamilyResult) -> dict[str, Any]:
     out: dict[str, Any] = _plain(dataclasses.asdict(result))
     return out
@@ -4322,9 +4332,11 @@ def evaluation_record(
         g9_t12 = g9(nom.task12.z, signed.z_crit).result
         fams[f] = {
             "states": dict(look.families[f].states),
+            "breaches": _plain(look.families[f].breaches),  # B5BC-A-2: all of them
+            "attempts": _plain(look.families[f].attempts),
             "A_f": nom.available,
             "reason": nom.reason,
-            "cause": nom.cause,
+            "cause": nom.cause if not nom.available else gate_cause(ev.gates),
             "failing": dict(nom.failing),
             "u_proc_results": [dict(r) for r in nom.u_proc_results],
             "u_proc_present": nom.u_proc_present,
@@ -4340,7 +4352,12 @@ def evaluation_record(
                 != (nom.task12.nominee, nom.task12.reason, g9_t12),
             },
             "gates": {
-                g: {"result": x.result, "reason": x.reason, "values": _plain(x.values)}
+                g: {
+                    "result": x.result,
+                    "reason": x.reason,
+                    "cause": cause_code(x),
+                    "values": _plain(x.values),
+                }
                 for g, x in sorted(ev.gates.items())
             },
             "outcome": ev.outcome,

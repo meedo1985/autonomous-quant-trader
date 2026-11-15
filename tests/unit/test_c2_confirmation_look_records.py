@@ -25,6 +25,8 @@ EVAL_KEYS = {"schema", "cycle_id", "chain_log", "signed", "declaration_sha256",
              "eligibility", "seeds", "ledger", "trials", "families"}  # fmt: skip
 FAMILY_KEYS = {
     "states",
+    "breaches",
+    "attempts",
     "A_f",
     "reason",
     "cause",
@@ -98,6 +100,7 @@ def test_the_evaluation_record_has_the_schemas_fields(w: tf.World) -> None:
     assert rec["trials"] == want
     trend = rec["families"]["trend"]
     assert trend["gates"]["G-1"] == {"result": "PASS", "reason": None,
+        "cause": None,
                                      "values": {"x": cf.hexf(0.5), "n": 3}}  # fmt: skip
     assert trend["dsr"]["V"]["z"] == cf.hexf(2.5)
     assert trend["dsr"]["V"]["columns"] == [[cf.hexf(2.0), False]]
@@ -247,5 +250,84 @@ def test_an_abort_after_the_look_persists_nothing_and_closes_nothing(
 
     monkeypatch.setattr(cf, "evaluate_families", abort)
     with pytest.raises(cf.CycleError, match="C-T"):
+        s.run()
+    assert s.persisted == [] and s.closings() == []
+
+
+@pytest.mark.parametrize(
+    ("reasons", "cause"),
+    [
+        (["DAYS_INCOMPLETE"], "U_proc"),  # procedure only
+        (["SIGMA_UNBOUND"], "U_ops"),  # infrastructure only
+        (["DAYS_INCOMPLETE", "SIGMA_UNBOUND"], "U_ops"),  # mixed: infrastructure first
+        ([], None),  # no gate unavailable
+    ],
+)
+def test_a_nominee_without_a_result_records_its_gate_cause(
+    w: tf.World, reasons: list[str], cause: str | None
+) -> None:
+    """B5BC-A-1: P18-7 for gate unavailability, per gate and for the family."""
+    ev = evaluations()
+    gates = dict(ev["trend"].gates)
+    for g, why in zip(("G-2", "G-5"), reasons, strict=False):
+        gates[g] = cf._unavailable(why)
+    outcome = cf.nominee_outcome(gates)
+    ev["trend"] = dataclasses.replace(ev["trend"], gates=gates, outcome=outcome)
+    trend = cf.evaluation_record(inputs(), w.look(), ev)["families"]["trend"]
+    assert trend["cause"] == cause
+    assert trend["outcome"] == ("NO_RESULT" if reasons else "PROCEEDS_TO_LOCKBOX")
+    for g, why in zip(("G-2", "G-5"), reasons, strict=False):
+        assert trend["gates"][g]["cause"] == (
+            "U_ops" if why == "SIGMA_UNBOUND" else "U_proc"
+        )
+    assert trend["gates"]["G-1"]["cause"] is None
+
+
+def test_the_record_keeps_every_breach_and_the_attempt_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B5BC-A-2: two breached attempts, both recorded with kind and position."""
+    w = tf.World(tmp_path, monkeypatch)
+    for aid, idx in (("attempt-a0", 0), ("attempt-a1", 1)):
+        w.start(aid, idx)
+        w.out(aid)
+        w.out(aid)
+    w.start("attempt-b0", 2, family="vol")
+    w.result("v0", "attempt-b0")
+    look = w.look()
+    ev = evaluations(trend=None)
+    trend = cf.evaluation_record(inputs(), look, ev)["families"]["trend"]
+    assert [(b["attempt_id"], b["kind"]) for b in trend["breaches"]] == [
+        ("attempt-a0", "second outcome"), ("attempt-a1", "second outcome")]  # fmt: skip
+    assert trend["breaches"] == cf._plain(look.families["trend"].breaches)
+    assert [a["attempt_id"] for a in trend["attempts"]] == ["attempt-a0", "attempt-a1"]
+    assert trend["attempts"] == cf._plain(look.families["trend"].attempts)
+
+
+@pytest.mark.parametrize(
+    ("change", "differs"),
+    [({}, False), ({"nominee": 0}, True), ({"reason": "UNSUPPORTED_LAW"}, True)],
+)
+def test_differs_sees_a_nominee_or_reason_change(
+    w: tf.World, change: dict[str, Any], differs: bool
+) -> None:
+    ev = evaluations()
+    nom = ev["trend"].nomination
+    nom = dataclasses.replace(nom, task12=dataclasses.replace(nom.task12, **change))
+    ev["trend"] = dataclasses.replace(ev["trend"], nomination=nom)
+    rec = cf.evaluation_record(inputs(), w.look(), ev)
+    assert rec["families"]["trend"]["dsr"]["differs"] is differs
+
+
+def test_a_sealing_failure_after_the_record_persists_and_closes_nothing(
+    w: tf.World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    s = Steps(w, monkeypatch)
+
+    def fail(*a: Any) -> None:
+        raise cf.CycleError("a sealing record covers exactly the declared families")
+
+    monkeypatch.setattr(cf, "seal_families", fail)
+    with pytest.raises(cf.CycleError, match="sealing record"):
         s.run()
     assert s.persisted == [] and s.closings() == []

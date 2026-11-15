@@ -246,3 +246,19 @@ def test_an_earlier_completed_attempt_is_not_used_when_the_last_runs(w: World) -
     fam = w.look().families["trend"]
     assert fam.states["t0"] == "running"
     assert cf.completed_results(inputs(), fam) == {}
+
+
+def test_each_nominee_is_cut_with_its_own_warm_up(
+    w: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    w.finish_all()
+    inp = inputs()
+    trials = [{**t, "warmup_hours": 10 if t["family"] == "trend" else 30}
+              for t in inp.decl.trials]  # fmt: skip
+    declared: dict[str, list[dict[str, Any]]] = {}
+    for t in trials:
+        declared.setdefault(t["family"], []).append(t)
+    decl = dataclasses.replace(inp.decl, trials=trials, declared=declared)
+    cf.evaluate_families(dataclasses.replace(inp, decl=decl), w.look(), w.read)
+    starts = sorted(kw["start"] for _, kw in w.calls["check_read"])
+    assert starts == [tt.W0 - 30 * cf.HOUR, tt.W0 - 10 * cf.HOUR] and w.reads == 1

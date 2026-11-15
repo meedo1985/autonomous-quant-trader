@@ -360,25 +360,80 @@ def test_one_failed_split_makes_its_path_and_the_summaries_unavailable(
 # --- role: nothing reads the report ---------------------------------------------
 
 
+def _call_name(node: object) -> str | None:
+    return getattr(getattr(node, "func", None), "id", None)
+
+
+def c14_violations(tree: ast.AST, module: str) -> list[str]:
+    """B5BC-A-3: every use of the C-14 report other than producing it
+    (`c14 = cpcv_report(...)` in `evaluate_families`), storing it (the
+    `FamilyEvaluation` field and constructor argument) and serialising it in
+    `evaluation_record` (`ev.cpcv is None`, `_plain(ev.cpcv)`)."""
+    parents = {c: n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
+
+    def scope(node: ast.AST) -> str | None:
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, ast.FunctionDef | ast.ClassDef):
+                return node.name
+        return None
+
+    bad = []
+    for node in ast.walk(tree):
+        name = getattr(node, "id", None) or getattr(node, "attr", None)
+        if name not in ("cpcv_report", "cpcv", "c14"):
+            continue
+        if isinstance(node, ast.FunctionDef):
+            continue
+        par, where = parents.get(node), scope(node)
+        ok = module == "c2_confirmation.py" and (
+            (name == "cpcv_report" and where == "evaluate_families"
+             and isinstance(par, ast.Call) and par.func is node
+             and isinstance(parents.get(par), ast.Assign))
+            or (name == "c14" and where == "evaluate_families" and (
+                (isinstance(par, ast.Assign) and par.targets == [node]
+                 and _call_name(par.value) == "cpcv_report")
+                or (_call_name(par) == "FamilyEvaluation"
+                    and node in getattr(par, "args", []))))
+            or (name == "cpcv" and where == "FamilyEvaluation"
+                and isinstance(par, ast.AnnAssign))
+            or (name == "cpcv" and where == "evaluation_record" and (
+                _call_name(par) == "_plain"
+                or (isinstance(par, ast.Compare) and isinstance(par.ops[0], ast.Is)
+                    and isinstance(par.comparators[0], ast.Constant)
+                    and par.comparators[0].value is None)))
+        )  # fmt: skip
+        if not ok:
+            bad.append(f"{module}:{getattr(node, 'lineno', '?')} {where}.{name}")
+    return bad
+
+
 def test_no_code_path_reads_the_report() -> None:
     # C-14 (5): no gate, screen, mapping, DSR test, nomination or promotion
-    # reads it; slice 6 only writes it to the record
-    # B5B-R-4: the one producer call is slice 6b's `evaluate_families`; the
-    # one reader of its result (`FamilyEvaluation.cpcv`) is `evaluation_record`
-    allowed = {("c2_confirmation.py", "evaluate_families", "cpcv_report"),
-               ("c2_confirmation.py", "FamilyEvaluation", "cpcv"),
-               ("c2_confirmation.py", "evaluation_record", "cpcv")}  # fmt: skip
-    users = set()
+    # reads it; slice 6 only computes it and writes it to the record
+    bad = []
     for f in [*ROOT.joinpath("calibration").rglob("*.py"),
               *ROOT.joinpath("src").rglob("*.py")]:  # fmt: skip
-        tree = ast.parse(f.read_text(encoding="utf-8"))
-        scopes = [(n.name, n) for n in ast.walk(tree)
-                  if isinstance(n, ast.FunctionDef | ast.ClassDef)]  # fmt: skip
-        for node in ast.walk(tree):
-            name = getattr(node, "id", None) or getattr(node, "attr", None)
-            if name not in ("cpcv_report", "cpcv"):
-                continue
-            inner = [s for s, n in scopes if node in ast.walk(n) and n is not node]
-            users.add((f.name, inner[-1] if inner else None, name))
-    assert sorted(users - allowed) == []
-    assert ("c2_confirmation.py", "evaluate_families", "cpcv_report") in users
+        bad += c14_violations(ast.parse(f.read_text(encoding="utf-8")), f.name)
+    assert bad == []
+    source = (ROOT / "calibration" / "c2_confirmation.py").read_text(encoding="utf-8")
+    assert "c14 = cpcv_report(" in source  # the one producer is still there
+
+
+def test_a_gate_reading_the_report_is_caught() -> None:
+    """Astra's counterexample: a gate decided from the diagnostic."""
+    source = (ROOT / "calibration" / "c2_confirmation.py").read_text(encoding="utf-8")
+    anchor = "        out[f] = FamilyEvaluation(nom, gates_, nominee_outcome(gates_)"
+    assert source.count(anchor) == 1
+    bad_line = (
+        '        if c14.get("status") != "COMPUTED":\n'
+        '            gates_["G-9"] = Gate(FAIL)\n'
+    )
+    mutated = source.replace(anchor, bad_line + anchor)
+    assert c14_violations(ast.parse(mutated), "c2_confirmation.py")
+    reader = "    return evaluation, sealing, artifacts\n"
+    assert source.count(reader) == 1
+    extra = "    _ = [e.cpcv for e in families.values()]\n"
+    mutated = source.replace(reader, extra + reader)
+    assert c14_violations(ast.parse(mutated), "c2_confirmation.py")
+    assert c14_violations(ast.parse("x = cf.cpcv_report\n"), "anything.py")
