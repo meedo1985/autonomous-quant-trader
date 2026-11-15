@@ -4060,3 +4060,89 @@ def evaluate_trial(
         trial_may_run(inputs, read_entries(path), trial_id, attempt_id)
         append_entry(path, record_type=RESULT_ENTRY, payload=payload)
     return payload
+
+
+# --- Slice 6b build B5a: opening the look (§2 steps 4-7, §4, §8) ------------------
+
+
+def _now() -> datetime:
+    """The module's one clock read for the look (§2 step 5)."""
+    return datetime.now(UTC)
+
+
+@dataclass(frozen=True)
+class Look:
+    """What steps 4-7 established; the look entry is in the ledger."""
+
+    ledger: CycleLedger  # as read at step 4, before the look entry
+    families: dict[str, FamilyLedger]
+    now: datetime  # the step-5 clock, also the look entry's `now`
+    entry_hash: str  # the look entry's
+    bounds: dict[
+        str, tuple[dict[str, float], dict[str, float]]
+    ]  # family -> (upper, lower)
+    report: dict[str, Any]  # the qualification report (§2 classifier row)
+
+
+def open_look(inputs: Inputs, sources: Mapping[str, Any]) -> Look:
+    """§2 steps 4-7 of `evaluate_look`, after `prepare`: the qualification
+    report re-read from `object_dir`, whose `z_crit` and `family_block_rule`
+    must equal the signed rows as strings (§7); then under the look lock: the
+    ledger read, `cycle_ledger`, `family_ledger` for every declared family,
+    one clock read truncated to whole seconds, `look_allowed` (§13), the
+    classifier bounds for each family's (K_f, T) (§8), and the look entry
+    appended with `recorded_at_utc` = that clock. After the lock is released
+    the ledger is read again: an entry of this cycle between the step-4 head
+    and the look entry stops the look (§4 intervening entries); the look
+    entry then stands without a closing entry. Every refusal before the
+    append writes nothing."""
+    decl, started, signed = inputs.decl, inputs.started, inputs.signed
+    report = qualification_report(sources["object_dir"], started.protocol)
+    if report.get("z_crit") != signed.z_crit:
+        raise CycleError("the signed z_crit is not the qualification object's")
+    if report.get("family_block_rule") != signed.family_block_rule:
+        raise CycleError(
+            "the signed family_block_rule is not the qualification object's"
+        )
+    path = sources["ledger_path"]
+    with look_lock(path):
+        entries = read_entries(path)
+        cycle = cycle_ledger(entries, decl, started.protocol_hash)
+        families = {
+            f: family_ledger(
+                cycle.pre_look,
+                family=f,
+                cycle=decl.cycle_id,
+                trial_of=inputs.trial_of,
+                trial_ids=[t["trial_id"] for t in trials],
+                expected=inputs.expected,
+                window=(inputs.w0, inputs.t_days),
+            )
+            for f, trials in decl.declared.items()
+        }
+        now = _now().replace(microsecond=0)
+        if not look_allowed(families, cycle, inputs.headers.cycle_start, now):
+            raise CycleError(
+                "the look is not allowed yet: a trial is unfinished before day 180"
+            )
+        bounds = {
+            f: classifier_bounds(report, inputs.t_days, len(trials))
+            for f, trials in decl.declared.items()
+        }
+        payload = look_entry(decl.cycle_id, list(decl.declared), cycle.head_hash, now,
+                             started.confirmation_module_sha256)  # fmt: skip
+        entry = append_entry(path, record_type=LOOK_ENTRY, payload=payload,
+                             recorded_at_utc=now)  # fmt: skip
+    after = read_entries(path)
+    pos = next(
+        (i for i, e in enumerate(after) if e.entry_hash == entry.entry_hash), None
+    )
+    if pos is None or cycle_ledger(after, decl, started.protocol_hash).look != pos:
+        raise CycleError("the look entry is not the cycle's one look in the ledger")
+    ours = frozenset(p["attempt_id"] for p in attempts.recorded_attempts(after)
+                     if p["cycle"] == decl.cycle_id)  # fmt: skip
+    if any(of_cycle(e, decl.cycle_id, ours) for e in after[len(entries) : pos]):
+        raise CycleError(
+            "an entry of this cycle came before the look entry: the look stops"
+        )
+    return Look(cycle, families, now, entry.entry_hash, bounds, report)
