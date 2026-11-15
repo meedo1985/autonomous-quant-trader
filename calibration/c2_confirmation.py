@@ -2900,3 +2900,56 @@ _TRIAL_RESULT_KEYS = frozenset({
     "schema", "cycle_id", "trial_id", "family", "configuration_hash", "attempt_id",
     "window_id", "days", "d", "d_sha256", "reason",
 })  # fmt: skip
+
+
+# --- Slice 6b part 2: read-free input checks (DESIGN_SLICE6B rev 16 §2, §2.1)
+
+HEADER_COUNT = 6  # heights h..h+5: the post's block and five on top (owner B-2, C-1)
+
+
+def _sha256d(raw: bytes) -> bytes:
+    return hashlib.sha256(hashlib.sha256(raw).digest()).digest()
+
+
+@dataclass(frozen=True)
+class Headers:
+    """What `headers_check` verified (DESIGN_SLICE6B §2)."""
+
+    height: int  # h, the acceptance record's height of the post's block
+    cycle_start: datetime  # P18-2 day 0: header time of the post's block
+    tip_block_hash: str  # display hash of the block at h+5
+    tip_time: datetime  # header time at h+5 (for capture_before_tip_window)
+    headers_sha256: str  # SHA-256 of the 480 concatenated header bytes
+
+
+def headers_check(acceptance_record: bytes, acceptance_sha256: str,
+                  headers: Sequence[bytes]) -> Headers:  # fmt: skip
+    """Six 80-byte headers of heights h..h+5, a caller handle separate from the
+    acceptance record (owner C-1). The record must hash to the value `start`
+    logged; headers[0] must be its block; each header must name the previous
+    one's SHA256d (internal byte order). Day 0 is headers[0] bytes 68-71
+    (little-endian UTC seconds). That the headers are on the main chain with
+    valid work stays the verifier's obligation (§2 residual). Read-free."""
+    if hashlib.sha256(acceptance_record).hexdigest() != acceptance_sha256:
+        raise CycleError("the acceptance record is not the one start verified")
+    acceptance = json.loads(acceptance_record)
+    if len(headers) != HEADER_COUNT or any(
+        not isinstance(h, bytes) or len(h) != 80 for h in headers
+    ):
+        raise CycleError(f"need exactly {HEADER_COUNT} headers of 80 bytes")
+    if _sha256d(headers[0])[::-1].hex() != acceptance["block_hash"]:
+        raise CycleError("headers[0] is not the block that includes the post")
+    for i in range(1, HEADER_COUNT):
+        if headers[i][4:36] != _sha256d(headers[i - 1]):
+            raise CycleError(f"headers[{i}] does not follow headers[{i - 1}]")
+
+    def when(h: bytes) -> datetime:
+        return datetime.fromtimestamp(int.from_bytes(h[68:72], "little"), UTC)
+
+    return Headers(
+        height=acceptance["height"],
+        cycle_start=when(headers[0]),
+        tip_block_hash=_sha256d(headers[-1])[::-1].hex(),
+        tip_time=when(headers[-1]),
+        headers_sha256=hashlib.sha256(b"".join(headers)).hexdigest(),
+    )
