@@ -45,6 +45,7 @@ from aqt.backtest.event_contract import (
     EventResult,
     run_event_contract,
 )
+from aqt.core.ledger import GENESIS_HASH
 from aqt.data.bars import BarSeries
 from aqt.features.columns import feature_columns
 from aqt.features.factory import FeatureFactoryError
@@ -843,16 +844,30 @@ def trial_states(family_attempts_: list[dict[str, Any]],
     return states
 
 
-def look_allowed(states: dict[str, str], cycle_start: datetime, now: datetime,
-                 terminated: bool, looked: bool) -> bool:  # fmt: skip
+def look_allowed(families: Mapping[str, Any], ledger: Any, cycle_start: datetime,
+                 now: datetime) -> bool:  # fmt: skip
     """P18-2: one shared look, at the earlier of every declared trial finished
-    (completed, or final) or day 180; never after a protocol-revision or
-    invalidation record (no pick), never twice."""
-    if terminated:
+    (completed, or final) or day 180; never after a termination entry (no
+    pick), never twice (DESIGN_SLICE6B §4, §5.1, §13). `families` maps each
+    declared family to its `FamilyLedger`, `ledger` is the `CycleLedger`;
+    an order-breached family is not waited for (owner C-2). `now` is the
+    step-5 clock read in whole UTC seconds; it is refused before
+    `cycle_start` or before the last ledger entry's `recorded_at_utc`
+    (FINAL-F-9)."""
+    if ledger.terminations:
         raise CycleError("cycle ended before the pick: no pick, no promotion")
-    if looked:
+    if ledger.look is not None:
         raise CycleError("the cycle's one look has already run")
-    done = all(s in ("completed", "final") for s in states.values())
+    if now.utcoffset() != timedelta(0) or now.microsecond:
+        raise CycleError("the look clock is not whole UTC seconds")
+    last = ledger.entries[-1].recorded_at_utc if ledger.entries else None
+    if now < cycle_start or (last is not None and now < _strict_time(last, _STAMP)):
+        raise CycleError("the look clock is before day 0 or the last ledger entry")
+    done = all(
+        s in ("completed", "final")
+        for fl in families.values() if not fl.breaches
+        for s in fl.states.values()
+    )  # fmt: skip
     return done or now >= cycle_start + timedelta(days=LOOK_DAYS)
 
 
@@ -3425,3 +3440,116 @@ def family_ledger(
     else:
         states = trial_states(rewritten, trial_ids)
     return FamilyLedger(rewritten, breaches, results, states)
+
+
+# --- Slice 6b build B3a: cycle ledger, look and termination entries (§2, §4, §5.1)
+
+LOOK_ENTRY = "aqt.c2.look_entry.v1"  # §4
+CLOSING_ENTRY = "aqt.c2.look_closing_entry.v1"  # §4, FINAL-F-5
+TERMINATION_ENTRY = "aqt.c2.termination_entry.v1"  # §5.1
+_CYCLE_ENTRY_KEYS = {
+    LOOK_ENTRY: frozenset({"cycle_id", "families", "ledger_head_before", "now",
+                           "confirmation_module_sha256"}),
+    CLOSING_ENTRY: frozenset({"cycle_id", "evaluation_record_sha256",
+                              "sealing_record_sha256"}),
+    TERMINATION_ENTRY: frozenset({"cycle_id", "kind", "reason"}),
+}  # fmt: skip
+_STAMP = "%Y-%m-%dT%H:%M:%SZ"  # the ledger envelope's recorded_at_utc form
+
+
+@dataclass(frozen=True)
+class CycleLedger:
+    """The ledger as read (`read_entries` verified the chain), checked for
+    one cycle; positions are ledger positions."""
+
+    entries: tuple[Any, ...]
+    look: int | None  # this cycle's look entry
+    closing: int | None  # this cycle's closing entry
+    terminations: list[int]  # this cycle's termination entries
+
+    @property
+    def pre_look(self) -> tuple[Any, ...]:
+        """§3 rule 3: the ledger a look evaluates (before its look entry)."""
+        return self.entries if self.look is None else self.entries[: self.look]
+
+    @property
+    def head_hash(self) -> str:
+        return self.entries[-1].entry_hash if self.entries else GENESIS_HASH
+
+
+def of_cycle(entry: Any, cycle: str, ours: frozenset[str]) -> bool:
+    """An entry belongs to the cycle: a start naming it, an outcome of one of
+    its starts (`ours`; an outcome has no cycle field, FINAL-F-6), or a
+    result, look, closing or termination entry naming it."""
+    if entry.record_type == attempts.ATTEMPT_STARTED_RECORD_TYPE:
+        return bool(entry.payload.get("cycle") == cycle)
+    if entry.record_type == attempts.ATTEMPT_OUTCOME_RECORD_TYPE:
+        return entry.payload.get("attempt_id") in ours
+    if entry.record_type == RESULT_ENTRY or entry.record_type in _CYCLE_ENTRY_KEYS:
+        return bool(entry.payload.get("cycle_id") == cycle)
+    return False
+
+
+def cycle_ledger(entries: Sequence[Any], decl: Declaration,
+                 protocol_hash: str) -> CycleLedger:  # fmt: skip
+    """§2 A-1, §3, §4, §5.1 on the read ledger, read-free. The ledger must
+    extend the declared anchor `{head_hash, entry_count}`; every entry of
+    the cycle lies after it; every start of the cycle carries the signed
+    protocol hash `start` verified; look, closing and termination entries
+    of the cycle have their exact keys; at most one look, at most one
+    closing entry and only after the look. Each failure is a CycleError."""
+    count, cycle = decl.anchor_entry_count, decl.cycle_id
+    if len(entries) < count:
+        raise CycleError("the ledger does not extend the declared anchor")
+    head = entries[count - 1].entry_hash if count else GENESIS_HASH
+    if head != decl.anchor_head_hash:
+        raise CycleError("the ledger does not extend the declared anchor")
+    starts = [p for p in attempts.recorded_attempts(entries) if p["cycle"] == cycle]
+    if any(p["protocol_hash"] != protocol_hash for p in starts):
+        raise CycleError("a start of this cycle carries another protocol hash")
+    ours = frozenset(p["attempt_id"] for p in starts)
+    found: dict[str, list[int]] = {t: [] for t in _CYCLE_ENTRY_KEYS}
+    for i, e in enumerate(entries):
+        if not of_cycle(e, cycle, ours):
+            continue
+        if i < count:
+            raise CycleError(f"ledger entry {i} of this cycle precedes the anchor")
+        if e.record_type in found:
+            p = e.payload
+            fams = p.get("families", [])
+            if set(p) != _CYCLE_ENTRY_KEYS[e.record_type] or not (
+                all(isinstance(p[k], str) and p[k] for k in p if k != "families")
+                and isinstance(fams, list)
+                and all(isinstance(f, str) for f in fams)
+            ):
+                raise CycleError(
+                    f"ledger entry {i} is not a well-formed {e.record_type}"
+                )  # noqa: E501
+            found[e.record_type].append(i)
+    looks, closings = found[LOOK_ENTRY], found[CLOSING_ENTRY]
+    if len(looks) > 1 or len(closings) > 1:
+        raise CycleError("the cycle has a second look or closing entry")
+    if closings and (not looks or closings[0] < looks[0]):
+        raise CycleError("the cycle's closing entry has no look before it")
+    return CycleLedger(
+        entries=tuple(entries),
+        look=looks[0] if looks else None,
+        closing=closings[0] if closings else None,
+        terminations=found[TERMINATION_ENTRY],
+    )
+
+
+def look_entry(cycle: str, families: Sequence[str], head_before: str, now: datetime,
+               confirmation_module_sha256: str) -> dict[str, Any]:  # fmt: skip
+    """§4: the look entry's payload; `families` the declared families,
+    `head_before` the ledger head step 4 read, `now` the step-5 clock."""
+    return {"cycle_id": cycle, "families": sorted(families),
+            "ledger_head_before": head_before, "now": _time(now),
+            "confirmation_module_sha256": confirmation_module_sha256}  # fmt: skip
+
+
+def closing_entry(cycle: str, evaluation_record_sha256: str,
+                  sealing_record_sha256: str) -> dict[str, Any]:  # fmt: skip
+    """§4 FINAL-F-5: the closing entry's payload, appended last."""
+    return {"cycle_id": cycle, "evaluation_record_sha256": evaluation_record_sha256,
+            "sealing_record_sha256": sealing_record_sha256}  # fmt: skip

@@ -182,8 +182,8 @@ def test_slot_is_undetermined_while_an_earlier_attempt_has_no_outcome() -> None:
     with pytest.raises(cf.CycleError, match="not permitted"):  # no re-run yet
         cf.trial_states([t1, t2, {**_a("t2"), "start": 3, "end": 4}], ["t1", "t2"])
     # R14C4-S-1: the look still comes at day 180 and the family is U_ops
-    assert not cf.look_allowed(states, W0, W0 + timedelta(days=179), False, False)
-    assert cf.look_allowed(states, W0, W0 + timedelta(days=180), False, False)
+    assert not _look(states, W0, W0 + timedelta(days=179), False, False)
+    assert _look(states, W0, W0 + timedelta(days=180), False, False)
     completed, hashes = _family(2)
     hashes = {"t1": hashes["t000"], "t2": hashes["t001"]}
     n = cf.nominate("trend", states, WIN, {}, hashes, FAMILY_SEED, "largest", always,
@@ -250,22 +250,29 @@ def test_family_attempts_come_from_the_durable_ledger(tmp_path: Any) -> None:
         )
 
 
+def _look(states: dict[str, str], start: datetime, now: datetime,
+          terminated: bool, looked: bool) -> bool:  # fmt: skip
+    """The pre-B3 call shape over one unbreached family and an empty ledger."""
+    fl = cf.FamilyLedger(attempts=[], breaches=[], results=[], states=states)
+    led = cf.CycleLedger(entries=(), look=0 if looked else None, closing=None,
+                         terminations=[0] if terminated else [])  # fmt: skip
+    return cf.look_allowed({"trend": fl}, led, start, now)
+
+
 # --- P18-2 one look ----------------------------------------------------------------
 
 
 def test_look_trigger() -> None:
     start = W0
     states = {"a": "completed", "b": "final"}
-    assert cf.look_allowed(states, start, start + timedelta(days=1), False, False)
+    assert _look(states, start, start + timedelta(days=1), False, False)
     running = {"a": "completed", "b": "running"}
-    assert not cf.look_allowed(
-        running, start, start + timedelta(days=179), False, False
-    )
-    assert cf.look_allowed(running, start, start + timedelta(days=180), False, False)
+    assert not _look(running, start, start + timedelta(days=179), False, False)
+    assert _look(running, start, start + timedelta(days=180), False, False)
     with pytest.raises(cf.CycleError, match="no pick"):
-        cf.look_allowed(states, start, start, True, False)
+        _look(states, start, start, True, False)
     with pytest.raises(cf.CycleError, match="already"):
-        cf.look_allowed(states, start, start, False, True)
+        _look(states, start, start, False, True)
 
 
 # --- P18-3, P18-4, A-V1 nomination ---------------------------------------------------
