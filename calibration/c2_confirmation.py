@@ -750,13 +750,21 @@ def family_attempts(
     attempt never started anywhere in the ledger is a CycleError (as
     `finish_attempt` cannot write one)."""
     attempts.attempt_counts(entries, family=family, cycle=cycle)
-    started = attempts.started_attempt_ids(entries)
+    every = attempts.started_attempt_ids(entries)
+    seen: set[str] = set()
     outcomes: dict[str, list[tuple[int, dict[str, Any]]]] = {}
     for i, e in enumerate(entries):
-        if e.record_type == attempts.ATTEMPT_OUTCOME_RECORD_TYPE:
+        if e.record_type == attempts.ATTEMPT_STARTED_RECORD_TYPE:
             aid = e.payload["attempt_id"]
-            if aid not in started:
+            if aid in seen:  # B2-A-3: never collapse two starts into one
+                raise CycleError(f"attempt {aid} is started twice")
+            seen.add(aid)
+        elif e.record_type == attempts.ATTEMPT_OUTCOME_RECORD_TYPE:
+            aid = e.payload["attempt_id"]
+            if aid not in every:
                 raise CycleError(f"outcome for attempt {aid} that never started")
+            if aid not in seen:  # B2-A-2: it cannot take a slot before its start
+                raise CycleError(f"outcome for attempt {aid} before its start")
             outcomes.setdefault(aid, []).append((i, e.payload))
     out = []
     for i, e in enumerate(entries):
@@ -923,11 +931,12 @@ def nominate(
             failing[tid], infrastructure = states[tid], True
         elif completed[tid][0] != declared_hashes[tid]:  # defence (§5)
             failing[tid], infrastructure = "configuration hash mismatch", True
+        elif list(completed[tid][1]) != expected or (  # B2-A-4: before the reason
+            completed[tid][3] is None and len(completed[tid][2]) != len(expected)
+        ):
+            failing[tid], infrastructure = "MISALIGNED_SERIES", True
         elif completed[tid][3] is not None:
             failing[tid] = str(completed[tid][3])
-        elif (list(completed[tid][1]) != expected
-              or len(completed[tid][2]) != len(expected)):  # fmt: skip
-            failing[tid], infrastructure = "MISALIGNED_SERIES", True
     if breach or failing:
         if breach:
             cause = "U_proc" if u_proc_results else "U_ops"
@@ -3346,12 +3355,18 @@ def family_ledger(
     `trial_states`'."""
     starts = {a["attempt_id"]: a for a in family_attempts(
         entries, family=family, cycle=cycle, trial_of=trial_of)}  # fmt: skip
+    ours = {p["attempt_id"] for p in attempts.recorded_attempts(entries)
+            if p["cycle"] == cycle}  # fmt: skip
     results: list[dict[str, Any]] = []
     for i, e in enumerate(entries):
         if e.record_type != RESULT_ENTRY:
             continue
         payload = e.payload
-        if not isinstance(payload, dict) or payload.get("cycle_id") != cycle:
+        if not isinstance(payload, dict):
+            raise CycleError(f"result entry {i} is not a record")
+        if payload.get("cycle_id") != cycle:
+            if payload.get("attempt_id") in ours:  # B2-A-1: not dropped unseen
+                raise CycleError(f"result entry {i} names another cycle")
             continue  # another cycle's result
         completed_entry(payload, window)  # exact form, or CycleError
         if payload["family"] not in FAMILIES:
@@ -3385,12 +3400,12 @@ def family_ledger(
         if done:
             row = {"outcome": attempts.OUTCOME_COMPLETED, "reason_code": None,
                    "end": res[0]}  # fmt: skip
-        elif not res and outs:
+        elif outs and not any(r < outs[0] for r in res):  # B2-A-5, B2-R-4
             row = {"outcome": attempts.OUTCOME_FAILED, "reason_code": CRASH,
                    "end": outs[0]}  # fmt: skip
         elif not res:
             row = {"outcome": None, "reason_code": None, "end": None}
-        else:  # a breached attempt: kept for the record, no derived outcome
+        else:  # two results before any outcome: no derived outcome
             row = {"outcome": "breach", "reason_code": None, "end": None}
         rewritten.append({"trial_id": a["trial_id"], "attempt_id": aid,
                           "start": a["start"], "completed": done, **row})  # fmt: skip

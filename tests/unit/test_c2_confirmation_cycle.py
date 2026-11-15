@@ -297,8 +297,16 @@ def always(x: np.ndarray, lengths: list[float]) -> bool:
 def test_nominee_is_the_best_trial_and_both_numerics_reported() -> None:
     completed, hashes = _family()
     n = cf.nominate(
-        "trend", _done(hashes), WIN, completed, hashes, FAMILY_SEED, "largest", always,
-        breach=None, results=[]
+        "trend",
+        _done(hashes),
+        WIN,
+        completed,
+        hashes,
+        FAMILY_SEED,
+        "largest",
+        always,
+        breach=None,
+        results=[],
     )
     assert (n.available, n.nominee) == (True, "t001")
     assert n.z == n.v.z and n.task12.reason is None  # A-V1: V governs, Task 12 reported
@@ -310,8 +318,16 @@ def test_tie_goes_to_the_lowest_declared_id_whatever_the_given_order() -> None:
     completed["t000"] = ("h0", DAYS, completed["t001"][2], None)  # ties t001 exactly
     states = {"t002": "completed", "t001": "completed", "t000": "completed"}
     n = cf.nominate(
-        "trend", states, WIN, completed, hashes, FAMILY_SEED, "largest", always,
-        breach=None, results=[]
+        "trend",
+        states,
+        WIN,
+        completed,
+        hashes,
+        FAMILY_SEED,
+        "largest",
+        always,
+        breach=None,
+        results=[],
     )
     assert n.nominee == "t000"
 
@@ -323,8 +339,16 @@ def test_unfinished_mismatched_or_misaligned_trial_fails_the_family_as_u_ops() -
 
     def run(states: dict[str, str], comp: Completed) -> cf.Nomination:
         return cf.nominate(
-            "trend", states, WIN, comp, hashes, FAMILY_SEED, "largest", always,
-            breach=None, results=[]
+            "trend",
+            states,
+            WIN,
+            comp,
+            hashes,
+            FAMILY_SEED,
+            "largest",
+            always,
+            breach=None,
+            results=[],
         )
 
     missing = {k: v for k, v in completed.items() if k != "t002"}
@@ -365,14 +389,29 @@ def test_classifier_is_required_and_can_refuse() -> None:
     completed, hashes = _family()
     with pytest.raises(cf.CycleError, match="classifier"):
         cf.nominate(
-            "trend", _done(hashes), WIN, completed, hashes, FAMILY_SEED, "largest",
+            "trend",
+            _done(hashes),
+            WIN,
+            completed,
+            hashes,
+            FAMILY_SEED,
+            "largest",
             None,
-            breach=None, results=[]
+            breach=None,
+            results=[],
         )
     refuse = lambda x, lengths: False  # noqa: E731
     n = cf.nominate(
-        "trend", _done(hashes), WIN, completed, hashes, FAMILY_SEED, "largest", refuse,
-        breach=None, results=[]
+        "trend",
+        _done(hashes),
+        WIN,
+        completed,
+        hashes,
+        FAMILY_SEED,
+        "largest",
+        refuse,
+        breach=None,
+        results=[],
     )
     assert (n.available, n.reason, n.cause) == (False, "UNSUPPORTED_LAW", "U_proc")
 
@@ -380,8 +419,16 @@ def test_classifier_is_required_and_can_refuse() -> None:
 def test_family_gates_use_the_nomination_matrix() -> None:
     completed, hashes = _family()
     n = cf.nominate(
-        "trend", _done(hashes), WIN, completed, hashes, FAMILY_SEED, "largest", always,
-        breach=None, results=[]
+        "trend",
+        _done(hashes),
+        WIN,
+        completed,
+        hashes,
+        FAMILY_SEED,
+        "largest",
+        always,
+        breach=None,
+        results=[],
     )
     g = cf.family_gates(n, "1.0", "a" * 64, "a" * 64)
     assert g["G-10"].result == cf.NA  # 3 trials < 20: frozen N/A

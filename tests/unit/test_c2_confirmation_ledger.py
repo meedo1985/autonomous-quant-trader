@@ -403,3 +403,174 @@ def test_unbreached_shifted_days_are_misaligned_u_ops(tmp_path: Path) -> None:
     led.result("t1", "attempt-a1", reason="DAYS_INCOMPLETE")
     n = _nominate(led.ledger())
     assert n.cause == "U_ops" and n.failing["t0"] == "MISALIGNED_SERIES"
+
+
+# --- Astra B2-A-1..6 repairs and the missing cases it named -------------------------
+
+
+def _raw_start_payload(led: Led, aid: str) -> dict[str, Any]:
+    return next(
+        e.payload
+        for e in read_entries(led.path)
+        if e.record_type == attempts.ATTEMPT_STARTED_RECORD_TYPE
+        and e.payload["attempt_id"] == aid
+    )
+
+
+def test_result_for_this_cycles_start_under_another_cycle_id_refuses(
+    tmp_path: Path,
+) -> None:
+    led = Led(tmp_path)  # B2-A-1
+    led.start("attempt-a0", 0)
+    led.result("t0", "attempt-a0", reason="DAYS_INCOMPLETE", cycle_id="c0")
+    led.out("attempt-a0")
+    led.start("attempt-a1", 0)
+    led.result("t0", "attempt-a1")
+    with pytest.raises(cf.CycleError, match="names another cycle"):
+        led.ledger()
+
+
+def test_outcome_before_its_start_refuses(tmp_path: Path) -> None:
+    led = Led(tmp_path)  # B2-A-2: it must not take the re-run slot
+    append_entry(
+        led.path,
+        record_type=attempts.ATTEMPT_OUTCOME_RECORD_TYPE,
+        payload={"attempt_id": "attempt-b0", "outcome": "failed", "reason_code": CRASH},
+    )
+    led.start("attempt-a0", 0)
+    led.out("attempt-a0")
+    led.start("attempt-b0", 1)
+    with pytest.raises(cf.CycleError, match="before its start"):
+        led.ledger()
+
+
+@pytest.mark.parametrize("change", [{}, {"trial_index": 1}, {"cycle": "c0"}])
+def test_a_start_id_used_twice_refuses(tmp_path: Path, change: dict[str, Any]) -> None:
+    led = Led(tmp_path)  # B2-A-3: identical or conflicting reuse
+    led.start("attempt-a0", 0)
+    payload = {**_raw_start_payload(led, "attempt-a0"), **change}
+    append_entry(
+        led.path, record_type=attempts.ATTEMPT_STARTED_RECORD_TYPE, payload=payload
+    )
+    led.result("t0", "attempt-a0")
+    with pytest.raises(cf.CycleError, match="started twice"):
+        led.ledger()
+
+
+def test_shifted_days_with_an_unavailable_reason_is_misaligned_u_ops(
+    tmp_path: Path,
+) -> None:
+    led = Led(tmp_path)  # B2-A-4: rule 2 before the reason, in the same result
+    led.start("attempt-a0", 0)
+    shifted = [cf._time(W0 + cf.DAY), cf._time(W0 + 2 * cf.DAY)]
+    led.result("t0", "attempt-a0", reason="DAYS_INCOMPLETE", days=shifted)
+    led.start("attempt-a1", 1)
+    led.result("t1", "attempt-a1")
+    n = _nominate(led.ledger())
+    assert (n.cause, n.failing) == ("U_ops", {"t0": "MISALIGNED_SERIES"})
+
+
+def test_result_after_the_outcome_keeps_the_crash_rewrite(tmp_path: Path) -> None:
+    led = Led(tmp_path)  # B2-A-5, B2-R-4
+    led.start("attempt-a0", 0)
+    led.out("attempt-a0")  # position 1
+    led.result("t0", "attempt-a0")
+    got = led.ledger()
+    a = got.attempts[0]
+    assert (a["outcome"], a["reason_code"], a["end"]) == ("failed", CRASH, 1)
+    assert got.breaches[0]["kind"] == "result after outcome"
+    assert got.states["t0"] == "final"
+
+
+def test_superseded_u_proc_result_is_recorded_after_a_later_success(
+    tmp_path: Path,
+) -> None:
+    led = Led(tmp_path)  # B2-A-6
+    led.start("attempt-a0", 0)
+    led.result("t0", "attempt-a0", reason="TRIAL_CODE_ERROR")  # U_proc, superseded
+    led.result("t0", "attempt-a0", reason="TRIAL_CODE_ERROR")  # breach
+    led.start("attempt-a1", 0)  # a later attempt (allowed: the family is breached)
+    led.result("t0", "attempt-a1")
+    led.start("attempt-b0", 1)
+    led.out("attempt-b0")
+    led.result("t1", "attempt-b0", reason="TRIAL_CODE_ERROR")  # post-outcome U_proc
+    got = led.ledger()
+    assert got.states == {"t0": "completed", "t1": "final"}
+    n = _nominate(got)
+    assert (n.cause, n.reason) == ("U_proc", "LEDGER_ORDER:attempt-a0")
+    entries = read_entries(led.path)
+    hashes = [e.entry_hash for e in entries if e.record_type == cf.RESULT_ENTRY]
+    assert n.u_proc_results == [
+        {
+            "attempt_id": "attempt-a0",
+            "result_entry_hash": hashes[0],
+            "reason": "TRIAL_CODE_ERROR",
+        },
+        {
+            "attempt_id": "attempt-a0",
+            "result_entry_hash": hashes[1],
+            "reason": "TRIAL_CODE_ERROR",
+        },
+        {
+            "attempt_id": "attempt-b0",
+            "result_entry_hash": hashes[3],
+            "reason": "TRIAL_CODE_ERROR",
+        },
+    ]
+
+
+@pytest.mark.parametrize("field", ["protocol_hash", "engine_commit",
+                                   "confirmation_module_sha256"])  # fmt: skip
+def test_valid_but_wrong_code_identity_refuses(tmp_path: Path, field: str) -> None:
+    led = Led(tmp_path)
+    led.start("attempt-a0", 0)
+    wrong = "0" * (40 if field == "engine_commit" else 64)
+    led.result("t0", "attempt-a0", **{field: wrong})
+    with pytest.raises(cf.CycleError, match="derived identity"):
+        led.ledger()
+
+
+def test_result_bound_to_a_foreign_cycle_or_exploration_start_refuses(
+    tmp_path: Path,
+) -> None:
+    led = Led(tmp_path)
+    led.start("attempt-x0", 0, cycle="c0")
+    led.result("t0", "attempt-x0")  # this cycle's result, a start of another cycle
+    with pytest.raises(cf.CycleError, match="not bound"):
+        led.ledger()
+    led2 = Led(tmp_path / "e")
+    (tmp_path / "e").mkdir()
+    attempts.start_attempt(led2.path, attempt_id="attempt-e0", family="trend",
+                           cycle="c1", partition="exploration", hypothesis_hash=H,
+                           protocol_hash=H, trial_index=0,
+                           symbols=["BTCUSDT"])  # fmt: skip
+    led2.result("t0", "attempt-e0")
+    with pytest.raises(cf.CycleError, match="not bound"):
+        led2.ledger()
+
+
+@pytest.mark.parametrize(("word", "code"), [("completed", None), ("failed", CRASH),
+                                            ("failed", "X"),
+                                            ("aborted", CRASH)])  # fmt: skip
+def test_any_outcome_word_may_follow_a_result(
+    tmp_path: Path, word: str, code: str | None
+) -> None:
+    led = Led(tmp_path)
+    led.start("attempt-a0", 0)
+    led.result("t0", "attempt-a0")
+    led.out("attempt-a0", outcome=word, reason=code)
+    got = led.ledger()
+    assert got.breaches == [] and got.states["t0"] == "completed"
+
+
+def test_breach_order_follows_the_ledger_not_the_starts(tmp_path: Path) -> None:
+    led = Led(tmp_path)
+    led.start("attempt-a0", 0)  # started first, breaches second
+    led.start("attempt-b0", 1)
+    led.out("attempt-b0")
+    led.out("attempt-b0")  # b0's breach first in the ledger
+    led.result("t0", "attempt-a0")
+    led.result("t0", "attempt-a0")
+    got = led.ledger()
+    assert [b["attempt_id"] for b in got.breaches] == ["attempt-b0", "attempt-a0"]
+    assert got.breach_reason == "LEDGER_ORDER:attempt-b0"
