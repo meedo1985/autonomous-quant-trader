@@ -186,7 +186,8 @@ def test_slot_is_undetermined_while_an_earlier_attempt_has_no_outcome() -> None:
     assert cf.look_allowed(states, W0, W0 + timedelta(days=180), False, False)
     completed, hashes = _family(2)
     hashes = {"t1": hashes["t000"], "t2": hashes["t001"]}
-    n = cf.nominate("trend", states, WIN, {}, hashes, FAMILY_SEED, "largest", always)
+    n = cf.nominate("trend", states, WIN, {}, hashes, FAMILY_SEED, "largest", always,
+                    breach=None, results=[])  # fmt: skip
     assert (n.available, n.cause) == (False, "U_ops")
     later = {**_a("t1", None), "start": 3, "end": None}  # started after the record
     assert cf.trial_states([t2, later], ["t1", "t2"]) == {
@@ -270,7 +271,7 @@ def test_look_trigger() -> None:
 # --- P18-3, P18-4, A-V1 nomination ---------------------------------------------------
 
 
-Completed = dict[str, tuple[str, list[Any], list[float]]]
+Completed = dict[str, tuple[str, list[Any], list[float], Any]]  # reason last
 DAYS = [W0 + timedelta(days=i) for i in range(400)]
 WIN = (W0, 400)  # check_eligibility's (w0, T)
 
@@ -280,7 +281,7 @@ def _family(k: int = 3, t: int = 400) -> tuple[Completed, dict[str, str]]:
     cols = rng.normal(0.0005, 0.01, (t, k))
     cols[:, 1] += 0.002  # t001 clearly best
     completed = {
-        f"t{j:03d}": (f"h{j}", DAYS[:t], cols[:, j].tolist()) for j in range(k)
+        f"t{j:03d}": (f"h{j}", DAYS[:t], cols[:, j].tolist(), None) for j in range(k)
     }
     return completed, {tid: c[0] for tid, c in completed.items()}
 
@@ -296,7 +297,8 @@ def always(x: np.ndarray, lengths: list[float]) -> bool:
 def test_nominee_is_the_best_trial_and_both_numerics_reported() -> None:
     completed, hashes = _family()
     n = cf.nominate(
-        "trend", _done(hashes), WIN, completed, hashes, FAMILY_SEED, "largest", always
+        "trend", _done(hashes), WIN, completed, hashes, FAMILY_SEED, "largest", always,
+        breach=None, results=[]
     )
     assert (n.available, n.nominee) == (True, "t001")
     assert n.z == n.v.z and n.task12.reason is None  # A-V1: V governs, Task 12 reported
@@ -305,10 +307,11 @@ def test_nominee_is_the_best_trial_and_both_numerics_reported() -> None:
 
 def test_tie_goes_to_the_lowest_declared_id_whatever_the_given_order() -> None:
     completed, hashes = _family()
-    completed["t000"] = ("h0", DAYS, completed["t001"][2])  # t000 ties t001 exactly
+    completed["t000"] = ("h0", DAYS, completed["t001"][2], None)  # ties t001 exactly
     states = {"t002": "completed", "t001": "completed", "t000": "completed"}
     n = cf.nominate(
-        "trend", states, WIN, completed, hashes, FAMILY_SEED, "largest", always
+        "trend", states, WIN, completed, hashes, FAMILY_SEED, "largest", always,
+        breach=None, results=[]
     )
     assert n.nominee == "t000"
 
@@ -320,33 +323,36 @@ def test_unfinished_mismatched_or_misaligned_trial_fails_the_family_as_u_ops() -
 
     def run(states: dict[str, str], comp: Completed) -> cf.Nomination:
         return cf.nominate(
-            "trend", states, WIN, comp, hashes, FAMILY_SEED, "largest", always
+            "trend", states, WIN, comp, hashes, FAMILY_SEED, "largest", always,
+            breach=None, results=[]
         )
 
     missing = {k: v for k, v in completed.items() if k != "t002"}
     n = run({**_done(hashes), "t002": "final"}, missing)
-    assert (n.available, n.cause) == (False, "U_ops") and "no completed" in str(
-        n.reason
-    )
+    assert (n.available, n.cause) == (False, "U_ops") and n.reason == "t002: final"
     n = run({**_done(hashes), "t002": "unstarted"}, missing)
     assert (n.available, n.cause) == (False, "U_ops")
-    n = run(_done(hashes), {**completed, "t002": ("other", DAYS, completed["t002"][2])})
+    other_hash = ("other", DAYS, completed["t002"][2], None)
+    n = run(_done(hashes), {**completed, "t002": other_hash})
     assert (n.cause, n.reason) == ("U_ops", "t002: configuration hash mismatch")
     shifted = [d + timedelta(days=1) for d in DAYS]
-    n = run(_done(hashes), {**completed, "t002": ("h2", shifted, completed["t002"][2])})
+    t2 = completed["t002"][2]
+    n = run(_done(hashes), {**completed, "t002": ("h2", shifted, t2, None)})
     assert n.cause == "U_ops" and "MISALIGNED_SERIES" in str(n.reason)
     rev = list(reversed(DAYS))
-    n = run(_done(hashes), {**completed, "t002": ("h2", rev, completed["t002"][2])})
+    n = run(_done(hashes), {**completed, "t002": ("h2", rev, t2, None)})
     assert n.cause == "U_ops" and "MISALIGNED_SERIES" in str(n.reason)
     # R14C2-S-3: identical across trials but not the window's days
-    other = {t: (c[0], list(range(1, 401)), c[2]) for t, c in completed.items()}
+    other = {t: (c[0], list(range(1, 401)), c[2], None) for t, c in completed.items()}
     n = run(_done(hashes), other)
     assert n.cause == "U_ops" and "MISALIGNED_SERIES" in str(n.reason)
     # R14C3-S-3: every trial on the same valid UTC days, shifted one day
-    late = {t: (c[0], [d + cf.DAY for d in DAYS], c[2]) for t, c in completed.items()}
+    late = {
+        t: (c[0], [d + cf.DAY for d in DAYS], c[2], None) for t, c in completed.items()
+    }
     n = run(_done(hashes), late)
     assert n.cause == "U_ops" and "MISALIGNED_SERIES" in str(n.reason)
-    short = {t: (c[0], DAYS[:399], c[2][:399]) for t, c in completed.items()}
+    short = {t: (c[0], DAYS[:399], c[2][:399], None) for t, c in completed.items()}
     n = run(_done(hashes), short)
     assert n.cause == "U_ops" and "MISALIGNED_SERIES" in str(n.reason)
     with pytest.raises(cf.CycleError, match="without a completed attempt"):
@@ -359,11 +365,14 @@ def test_classifier_is_required_and_can_refuse() -> None:
     completed, hashes = _family()
     with pytest.raises(cf.CycleError, match="classifier"):
         cf.nominate(
-            "trend", _done(hashes), WIN, completed, hashes, FAMILY_SEED, "largest", None
+            "trend", _done(hashes), WIN, completed, hashes, FAMILY_SEED, "largest",
+            None,
+            breach=None, results=[]
         )
     refuse = lambda x, lengths: False  # noqa: E731
     n = cf.nominate(
-        "trend", _done(hashes), WIN, completed, hashes, FAMILY_SEED, "largest", refuse
+        "trend", _done(hashes), WIN, completed, hashes, FAMILY_SEED, "largest", refuse,
+        breach=None, results=[]
     )
     assert (n.available, n.reason, n.cause) == (False, "UNSUPPORTED_LAW", "U_proc")
 
@@ -371,7 +380,8 @@ def test_classifier_is_required_and_can_refuse() -> None:
 def test_family_gates_use_the_nomination_matrix() -> None:
     completed, hashes = _family()
     n = cf.nominate(
-        "trend", _done(hashes), WIN, completed, hashes, FAMILY_SEED, "largest", always
+        "trend", _done(hashes), WIN, completed, hashes, FAMILY_SEED, "largest", always,
+        breach=None, results=[]
     )
     g = cf.family_gates(n, "1.0", "a" * 64, "a" * 64)
     assert g["G-10"].result == cf.NA  # 3 trials < 20: frozen N/A

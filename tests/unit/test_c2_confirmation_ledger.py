@@ -300,3 +300,106 @@ def test_outcome_without_any_start_is_a_cycle_error(tmp_path: Path) -> None:
                  payload={"attempt_id": "ghost", "outcome": "failed"})  # fmt: skip
     with pytest.raises(cf.CycleError, match="never started"):
         led.ledger()
+
+
+# --- B2c: nominate's §5 precedence from the ledger (owner C-3, B-5) ------------------
+
+
+def _always(x: Any, lengths: list[float]) -> bool:
+    return True
+
+
+def _nominate(got: cf.FamilyLedger) -> cf.Nomination:
+    completed = {}
+    for a in got.attempts:  # the last completed attempt's result per trial
+        if a["completed"]:
+            r = next(r for r in got.results if r["attempt_id"] == a["attempt_id"])
+            completed[a["trial_id"]] = cf.completed_entry(r["payload"], WINDOW)
+    done = {t: c for t, c in completed.items() if got.states[t] == "completed"}
+    return cf.nominate("trend", got.states, WINDOW, done, CONFIG, "f" * 64, "largest",
+                       _always, breach=got.breach_reason,
+                       results=got.results)  # fmt: skip
+
+
+def test_days_incomplete_then_a_duplicate_result_is_u_proc(tmp_path: Path) -> None:
+    led = Led(tmp_path)
+    led.start("attempt-a0", 0)
+    led.result("t0", "attempt-a0", reason="DAYS_INCOMPLETE")
+    led.result("t0", "attempt-a0", reason="DAYS_INCOMPLETE")  # breach
+    led.start("attempt-a1", 1)
+    led.result("t1", "attempt-a1")
+    n = _nominate(led.ledger())
+    assert (n.available, n.cause, n.reason) == (
+        False,
+        "U_proc",
+        "LEDGER_ORDER:attempt-a0",
+    )
+    assert n.u_proc_present and [r["reason"] for r in n.u_proc_results] == [
+        "DAYS_INCOMPLETE", "DAYS_INCOMPLETE"]  # fmt: skip
+    assert n.failing == {"t0": "final"}
+
+
+def test_breached_family_with_a_superseded_u_proc_result_is_u_proc(
+    tmp_path: Path,
+) -> None:
+    led = Led(tmp_path)
+    led.start("attempt-a0", 0)
+    led.out("attempt-a0")  # crash: t0 gets the slot
+    led.start("attempt-a1", 0)  # re-run
+    led.result("t0", "attempt-a1", reason="TRIAL_CODE_ERROR")
+    led.out("attempt-a1")  # outcome after the result: fine
+    led.out("attempt-a1")  # second outcome: breach
+    led.start("attempt-b0", 1)
+    led.result("t1", "attempt-b0")
+    n = _nominate(led.ledger())
+    assert (n.cause, n.reason) == ("U_proc", "LEDGER_ORDER:attempt-a1")
+
+
+def test_breached_family_without_u_proc_results_is_u_ops(tmp_path: Path) -> None:
+    led = Led(tmp_path)
+    led.start("attempt-a0", 0)
+    led.result("t0", "attempt-a0", reason="MISSING_DAY")  # a U_ops reason
+    led.result("t0", "attempt-a0", reason="MISSING_DAY")
+    n = _nominate(led.ledger())
+    assert (n.cause, n.u_proc_present) == ("U_ops", False)
+
+
+def test_unbreached_running_trial_beats_days_incomplete(tmp_path: Path) -> None:
+    led = Led(tmp_path)
+    led.start("attempt-a0", 0)  # still running at the look
+    led.start("attempt-a1", 1)
+    led.result("t1", "attempt-a1", reason="DAYS_INCOMPLETE")
+    n = _nominate(led.ledger())
+    assert (n.cause, n.u_proc_present) == ("U_ops", True)  # rule 2 first (rev 6)
+    assert n.reason == "t0: running; t1: DAYS_INCOMPLETE"
+    assert n.failing == {"t0": "running", "t1": "DAYS_INCOMPLETE"}
+
+
+def test_unbreached_u_ops_reason_beats_u_proc_reason(tmp_path: Path) -> None:
+    led = Led(tmp_path)
+    led.start("attempt-a0", 0)
+    led.result("t0", "attempt-a0", reason="SIGMA_UNBOUND")
+    led.start("attempt-a1", 1)
+    led.result("t1", "attempt-a1", reason="DAYS_INCOMPLETE")
+    assert _nominate(led.ledger()).cause == "U_ops"  # rule 3
+
+
+def test_unbreached_days_incomplete_alone_is_u_proc(tmp_path: Path) -> None:
+    led = Led(tmp_path)
+    led.start("attempt-a0", 0)
+    led.result("t0", "attempt-a0")
+    led.start("attempt-a1", 1)
+    led.result("t1", "attempt-a1", reason="DAYS_INCOMPLETE")
+    n = _nominate(led.ledger())
+    assert (n.cause, n.reason) == ("U_proc", "t1: DAYS_INCOMPLETE")  # rule 4, B-5
+
+
+def test_unbreached_shifted_days_are_misaligned_u_ops(tmp_path: Path) -> None:
+    led = Led(tmp_path)
+    led.start("attempt-a0", 0)
+    led.result("t0", "attempt-a0",
+               days=[cf._time(W0 + cf.DAY), cf._time(W0 + 2 * cf.DAY)])  # fmt: skip
+    led.start("attempt-a1", 1)
+    led.result("t1", "attempt-a1", reason="DAYS_INCOMPLETE")
+    n = _nominate(led.ledger())
+    assert n.cause == "U_ops" and n.failing["t0"] == "MISALIGNED_SERIES"

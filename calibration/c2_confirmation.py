@@ -860,21 +860,37 @@ class Nomination:
     v: dsr.FamilyResult
     x: np.ndarray | None = None  # T x K, columns in ascending trial-id order
     cause: str | None = None  # P18-7 when A_f fails: U_ops or U_proc
+    # DESIGN_SLICE6B §5: per failing trial its reason or state (last attempt);
+    # every U_proc result before the look; whether there is any
+    failing: dict[str, str] = field(default_factory=dict)
+    u_proc_results: list[dict[str, Any]] = field(default_factory=list)
+    u_proc_present: bool = False
 
 
 def nominate(
     family: str,
     states: dict[str, str],
     window: tuple[datetime, int],
-    completed: dict[str, tuple[str, list[Any], list[float]]],
+    completed: dict[str, tuple[str, list[Any], list[float], str | None]],
     declared_hashes: dict[str, str],
     family_seed: str,
     rule: str,
     classifier: Callable[[np.ndarray, list[float]], bool] | None,
+    *,
+    breach: str | None,
+    results: Sequence[Mapping[str, Any]],
 ) -> Nomination:
     """`states` is `trial_states` over the durable attempt records, one entry
     per declared trial; `completed[id] = (configuration hash, days, daily BTC
-    E-DIFF values)` for each trial whose state is `completed` (R14C-S-4).
+    E-DIFF values, reason)` (`completed_entry`) for each trial whose state is
+    `completed` (R14C-S-4). DESIGN_SLICE6B §5: `breach` is the family's
+    `FamilyLedger.breach_reason` and `results` every result entry of the
+    family before the look (`FamilyLedger.results`). All trials are examined
+    first; then, in order: (1) a breached family is U_proc if any pre-look
+    result is a U_proc one (`u_proc_present`), else U_ops (owner C-3);
+    unbreached: (2) a trial not completed, a hash mismatch or a day index
+    other than the window's is U_ops; (3) a failing reason in
+    U_OPS_REASONS is U_ops; (4) any other failing reason is U_proc.
     `window` is check_eligibility's (w0, T): every day index must be exactly
     the T complete UTC days from w0 (Annex B §2.1; R14C2-S-3).
     A_f fails on any trial not completed, a hash mismatch or a day index
@@ -894,24 +910,45 @@ def nominate(
     trial_ids = sorted(states)
     expected = [window[0] + i * DAY for i in range(window[1])]
     empty = dsr.FamilyResult("NOT_EVALUATED")
-
-    def ops(reason: str) -> Nomination:
-        return Nomination(False, reason, None, None, empty, empty, cause="U_ops")
-
+    u_proc_results = [  # R14D6B7-A-2: before any collapsing, duplicates included
+        {"attempt_id": r["attempt_id"], "result_entry_hash": r["entry_hash"],
+         "reason": r["payload"]["reason"]}
+        for r in results
+        if r["payload"]["d"] is None and r["payload"]["reason"] not in U_OPS_REASONS
+    ]  # fmt: skip
+    failing: dict[str, str] = {}
+    infrastructure = False  # rule 2
     for tid in trial_ids:
         if states[tid] != "completed" or tid not in completed:
-            return ops(f"{tid}: no completed evaluation ({states[tid]})")
-        if completed[tid][0] != declared_hashes[tid]:
-            return ops(f"{tid}: configuration hash mismatch")
-        days, values = completed[tid][1], completed[tid][2]
-        if list(days) != expected or len(values) != len(expected):
-            return ops(f"{tid}: MISALIGNED_SERIES")
+            failing[tid], infrastructure = states[tid], True
+        elif completed[tid][0] != declared_hashes[tid]:  # defence (§5)
+            failing[tid], infrastructure = "configuration hash mismatch", True
+        elif completed[tid][3] is not None:
+            failing[tid] = str(completed[tid][3])
+        elif (list(completed[tid][1]) != expected
+              or len(completed[tid][2]) != len(expected)):  # fmt: skip
+            failing[tid], infrastructure = "MISALIGNED_SERIES", True
+    if breach or failing:
+        if breach:
+            cause = "U_proc" if u_proc_results else "U_ops"
+        elif infrastructure or any(r in U_OPS_REASONS for r in failing.values()):
+            cause = "U_ops"
+        else:
+            cause = "U_proc"
+        message = "; ".join(f"{tid}: {why}" for tid, why in failing.items())
+        return Nomination(False, breach or message, None, None, empty, empty,
+                          cause=cause, failing=failing, u_proc_results=u_proc_results,
+                          u_proc_present=bool(u_proc_results))  # fmt: skip
     x = np.array([completed[tid][2] for tid in trial_ids], dtype=float).T
     v = dsr.evaluate(x, family_seed, rule, numerics="v", classifier=classifier)
     t12 = dsr.evaluate(x, family_seed, rule, numerics="task12", classifier=classifier)
     if v.reason is not None or v.nominee is None:
-        return Nomination(False, v.reason, None, None, t12, v, x, cause="U_proc")
-    return Nomination(True, None, trial_ids[v.nominee], v.z, t12, v, x)
+        return Nomination(False, v.reason, None, None, t12, v, x, cause="U_proc",
+                          u_proc_results=u_proc_results,
+                          u_proc_present=bool(u_proc_results))  # fmt: skip
+    return Nomination(True, None, trial_ids[v.nominee], v.z, t12, v, x,
+                      u_proc_results=u_proc_results,
+                      u_proc_present=bool(u_proc_results))  # fmt: skip
 
 
 def family_gates(nomination: Nomination, z_crit: str, benchmark_sha256: str,
