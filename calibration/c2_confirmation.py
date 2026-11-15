@@ -22,6 +22,7 @@ import json
 import math
 import os
 import random
+import re
 import struct
 import sys
 import time
@@ -53,7 +54,7 @@ from aqt.data import manifest as dm
 from aqt.data.bars import BarSeries
 from aqt.features.columns import feature_columns
 from aqt.features.factory import FeatureFactoryError
-from calibration import dsr, gates, screen
+from calibration import choices, dsr, gates, screen
 from calibration.seeds import cj, sha
 from calibration.semi import SYMBOLS
 
@@ -3703,3 +3704,112 @@ def check_read(
                 f"C-T: the {symbol} cut is not a bar series: {e}"
             ) from None
     return check_confirmation_read(cut[0], cut[1], start, end)
+
+
+# --- Slice 6b build B4a: the signed C2 rows (§7, OD-4) -----------------------------
+
+# §7 rows, each read once through `protocol_row`. `drand_group_hash` and
+# `drand_beacon_id` are not in rev 16's list: drand's chain hash covers them
+# (R14D6B2-F-12; deviation B4-D-1 in BUILD_NOTES_SLICE6B_B4.md)
+C2_ROWS = (
+    "drand_public_key", "drand_genesis_time", "drand_period", "drand_group_hash",
+    "drand_beacon_id", "drand_chain_hash", "drand_scheme", "confirmation_start",
+    "confirmation_end", "t_min", "g_days", "z_crit", "family_block_rule",
+    "canonical_benchmark_sha256",
+)  # fmt: skip
+_NAT = re.compile(r"0|[1-9][0-9]*")
+_DECIMAL = re.compile(r"(0|[1-9][0-9]*)(\.[0-9]+)?")  # z_crit as `choices` writes it
+_BEACON_ID = re.compile(r"[a-z0-9_-]+")
+
+
+@dataclass(frozen=True)
+class Signed:
+    """The §7 rows, parsed exactly; `rows` keeps the strings for the record."""
+
+    chain: Chain
+    chain_hash: str
+    confirmation_start: datetime
+    confirmation_end: datetime
+    t_min: int
+    g_days: int
+    z_crit: str  # compared as a decimal string with the qualification object's
+    family_block_rule: str
+    canonical_benchmark_sha256: str
+    rows: Mapping[str, str]
+
+
+def drand_chain_hash(public_key: str, period: int, genesis_time: int,
+                     group_hash: str, beacon_id: str) -> str:  # fmt: skip
+    """drand's chain-info hash: SHA-256 of the period (uint32 big-endian), the
+    genesis time (int64 big-endian), the public key bytes, the group hash
+    bytes and, unless the beacon id is "default", its ASCII bytes. Pinned by
+    the known answers of quicknet, the default chain and evmnet (FP3
+    chain-info files of 2026-10-25, `origin/freeze-sheet`)."""
+    h = hashlib.sha256(struct.pack(">Iq", period, genesis_time))
+    h.update(bytes.fromhex(public_key) + bytes.fromhex(group_hash))
+    if beacon_id != "default":
+        h.update(beacon_id.encode("ascii"))
+    return h.hexdigest()
+
+
+def signed_c2(protocol: bytes) -> Signed:
+    """§7: every row once, no default, one exact form per type: integers
+    `[0-9]+` without sign or leading zero, times `YYYY-MM-DDTHH:MM:SSZ`, hashes
+    64 lower-case hex, decimals as strings, enumerations by exact
+    membership. The drand rows must hash to `drand_chain_hash` and the scheme
+    must be SCHEME. `start` verified the bytes. Each failure is a CycleError;
+    read-free."""
+    try:
+        r = {name: protocol_row(protocol, name) for name in C2_ROWS}
+    except ChainError as e:
+        raise CycleError(str(e)) from None
+
+    def nat(name: str, least: int = 0, below: int = 2**63) -> int:
+        if not _NAT.fullmatch(r[name]) or not least <= int(r[name]) < below:
+            raise CycleError(f"{name} row is not an integer in [{least}, {below})")
+        return int(r[name])
+
+    def when(name: str) -> datetime:
+        try:
+            return _strict_time(r[name], _STAMP)
+        except ValueError:
+            raise CycleError(f"{name} row is not YYYY-MM-DDTHH:MM:SSZ") from None
+
+    for name, n in (
+        ("drand_public_key", 96),
+        ("drand_group_hash", 32),
+        ("drand_chain_hash", 32),
+        ("canonical_benchmark_sha256", 32),
+    ):
+        if not _hex(r[name], 2 * n):  # fmt: skip
+            raise CycleError(f"{name} row is not {2 * n} lower-case hex")
+    if not _BEACON_ID.fullmatch(r["drand_beacon_id"]):
+        raise CycleError("drand_beacon_id row is not a beacon id")
+    if r["drand_scheme"] != SCHEME:
+        raise CycleError(f"drand_scheme row is not {SCHEME}")
+    if not _DECIMAL.fullmatch(r["z_crit"]):
+        raise CycleError("z_crit row is not a decimal string")
+    if r["family_block_rule"] not in choices.RULES:
+        raise CycleError(f"family_block_rule row is not one of {choices.RULES}")
+    chain = Chain(
+        public_key=r["drand_public_key"],
+        genesis_time=nat("drand_genesis_time"),
+        period=nat("drand_period", 1, 2**32),
+        scheme=r["drand_scheme"],
+    )
+    got = drand_chain_hash(chain.public_key, chain.period, chain.genesis_time,
+                           r["drand_group_hash"], r["drand_beacon_id"])  # fmt: skip
+    if got != r["drand_chain_hash"]:
+        raise CycleError("the drand rows do not hash to drand_chain_hash")
+    return Signed(
+        chain=chain,
+        chain_hash=got,
+        confirmation_start=when("confirmation_start"),
+        confirmation_end=when("confirmation_end"),
+        t_min=nat("t_min"),
+        g_days=nat("g_days"),
+        z_crit=r["z_crit"],
+        family_block_rule=r["family_block_rule"],
+        canonical_benchmark_sha256=r["canonical_benchmark_sha256"],
+        rows=types.MappingProxyType(r),
+    )
