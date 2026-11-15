@@ -63,8 +63,10 @@ the running check, the look/termination check, or the lock itself each fails 2-6
   outcome). The check looks at the look and termination entries; a closing entry implies
   a look (`cycle_ledger`).
 - **B4-R-10** A refusal from `run_trial` (code mismatch in `trial_result`, C-T, manifest)
-  propagates; nothing is appended; the runner then writes the crash outcome (§3 runner
-  rule). A broken ledger chain raises `read_entries`' `LedgerError`, not `CycleError`.
+  propagates; nothing is appended. The runner may then write a crash outcome only through
+  its own eligibility checks under the look lock (§3 runner rule: no look, closing or
+  termination entry, and the attempt still has no result entry) (corrected per Astra
+  B4-A-3). A broken ledger chain raises `read_entries`' `LedgerError`, not `CycleError`.
 - **B4-R-11** The result entry's `recorded_at_utc` is `append_entry`'s clock; nothing
   reads it for the trial.
 

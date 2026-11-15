@@ -121,3 +121,39 @@ def test_a_repeated_row_is_refused() -> None:
     raw = protocol() + b'\n  g_days: "30"'
     with pytest.raises(cf.CycleError, match="g_days is not exactly one row"):
         cf.signed_c2(raw)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [b'\n  t_min:\t"366"', b'\n  "t_min": "366"', b"\n  t_min : 366",
+     b"\n  # t_min: 366", b'\n  other: "t_min"'],
+)  # fmt: skip
+def test_a_second_spelling_of_a_row_is_refused(extra: bytes) -> None:
+    """B4-A-1: `protocol_row` reads only the canonical spelling."""
+    with pytest.raises(cf.CycleError, match="t_min occurs in more than"):
+        cf.signed_c2(protocol() + extra)
+
+
+def test_a_row_name_inside_a_longer_name_is_not_a_second_spelling() -> None:
+    cf.signed_c2(protocol() + b'\n  old_t_min_note: "x"\n  g_days_x: "1"')
+
+
+def test_an_oversized_integer_is_a_cycle_error() -> None:
+    """B4-A-2: before Python's integer-conversion limit."""
+    with pytest.raises(cf.CycleError, match="t_min row is not an integer"):
+        cf.signed_c2(protocol(t_min="9" * 4301))
+    with pytest.raises(cf.CycleError, match="t_min row is not an integer"):
+        cf.signed_c2(protocol(t_min="1" * 20))
+
+
+def test_each_row_is_read_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+    real = cf.protocol_row
+
+    def spy(raw: bytes, name: str) -> str:
+        seen.append(name)
+        return real(raw, name)
+
+    monkeypatch.setattr(cf, "protocol_row", spy)
+    cf.signed_c2(protocol())
+    assert sorted(seen) == sorted(cf.C2_ROWS)

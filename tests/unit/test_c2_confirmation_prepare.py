@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import itertools
 import sys
+import tempfile
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -229,3 +230,72 @@ def test_a_malformed_signed_row_is_refused(calls: dict[str, Any]) -> None:
     w = World()
     w.rows = {"z_crit": "nan"}
     _refused(w, calls, "z_crit row")
+
+
+OVERLAY = b"def o(row, params, state, target):\n    return target\n"
+
+
+def test_an_overlay_is_installed_and_required(calls: dict[str, Any]) -> None:
+    w = World()
+    digest = hashlib.sha256(OVERLAY).hexdigest()
+    w.objs["tr1"].update(overlay=f"{_module()}:o", overlay_sha256=digest)
+    w.seal()
+    _refused(w, calls, "not exactly the declared")  # overlay code missing
+    got = cf.prepare(w.started(), w.sources(code_files={**w.code, digest: OVERLAY}))
+    name = w.objs["tr1"]["overlay"].split(":")[0] + ".py"
+    assert (got.code_dir / name).read_bytes() == OVERLAY
+
+
+def test_trial_code_cannot_shadow_an_engine_module(calls: dict[str, Any]) -> None:
+    """The code directory is last: `numpy` resolves to the installed package,
+    whose source is not the declared one."""
+    w = World()
+    for o in w.objs.values():
+        o["signal"] = "numpy:s"
+    w.seal()
+    _refused(w, calls, "does not load: TrialError: numpy is not the declared source")
+
+
+def test_refused_code_bytes_are_never_written(
+    calls: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    w = World()
+    digest = next(iter(w.code))
+    target = tmp_path / "code"
+    target.mkdir()
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda prefix: str(target))
+    _refused(w, calls, "does not hash", code_files={digest: SIGNAL + b"\n"})
+    assert list(target.iterdir()) == []
+
+
+def test_a_failed_header_check_stops_before_every_later_step(
+    calls: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(*a: Any) -> None:
+        raise cf.CycleError("headers refused")
+
+    made: list[str] = []
+    monkeypatch.setattr(cf, "headers_check", refuse)
+    monkeypatch.setattr(cf, "signed_c2", lambda p: made.append("signed"))
+    monkeypatch.setattr(cf, "install_code", lambda *a: made.append("code"))
+    w = World()
+    with pytest.raises(cf.CycleError, match="headers refused"):
+        cf.prepare(w.started(), w.sources())
+    assert made == [] and calls == {}
+
+
+def test_evaluate_trial_with_a_refused_prepare_never_reads(
+    calls: dict[str, Any], tmp_path: Path
+) -> None:
+    """The real `prepare` in front of `evaluate_trial`: wrong code refuses
+    before the ledger is even opened and before any protected-data read."""
+    w = World()
+    digest = next(iter(w.code))
+
+    def read() -> None:
+        raise AssertionError("protected data was read")
+
+    src = w.sources(code_files={digest: SIGNAL + b"\n"}, ledger_path=tmp_path / "l")
+    with pytest.raises(cf.CycleError, match="does not hash"):
+        cf.evaluate_trial(w.started(), src, "tr1", "attempt-a0", read)
+    assert not (tmp_path / "l").exists()

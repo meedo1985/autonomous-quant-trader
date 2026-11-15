@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import dataclasses
 import threading
-import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -249,17 +248,18 @@ def test_a_double_launch_gives_one_entry_and_one_refusal(w: World) -> None:
 
 def test_the_append_waits_for_the_look_lock(w: World) -> None:
     w.start("attempt-a0", 0)
-    done = threading.Event()
+    read_done, done = threading.Event(), threading.Event()
+    w.during = read_done.set
+
+    def launch() -> None:
+        w.evaluate("t0", "attempt-a0")
+        done.set()
+
     with cf.look_lock(w.path):
-
-        def launch() -> None:
-            w.evaluate("t0", "attempt-a0")
-            done.set()
-
         t = threading.Thread(target=launch)
         t.start()
-        time.sleep(0.3)
-        assert w.reads == 1 and not done.is_set() and w.results() == []
+        assert read_done.wait(timeout=10)  # past the read, now at the lock
+        assert not done.wait(timeout=0.3) and w.results() == []
     t.join(timeout=10)
     assert done.is_set() and len(w.results()) == 1
 

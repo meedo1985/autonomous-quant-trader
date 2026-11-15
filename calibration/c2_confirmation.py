@@ -3761,12 +3761,18 @@ def signed_c2(protocol: bytes) -> Signed:
     must be SCHEME. `start` verified the bytes. Each failure is a CycleError;
     read-free."""
     try:
+        lines = protocol.decode("utf-8").splitlines()
         r = {name: protocol_row(protocol, name) for name in C2_ROWS}
-    except ChainError as e:
+    except (ChainError, UnicodeDecodeError) as e:
         raise CycleError(str(e)) from None
+    for name in C2_ROWS:  # B4-A-1: no second spelling of a row beside the one read
+        token = re.compile(rf"(?<![A-Za-z0-9_]){name}(?![A-Za-z0-9_])")
+        if sum(bool(token.search(line)) for line in lines) != 1:
+            raise CycleError(f"{name} occurs in more than its one canonical row")
 
     def nat(name: str, least: int = 0, below: int = 2**63) -> int:
-        if not _NAT.fullmatch(r[name]) or not least <= int(r[name]) < below:
+        text = r[name]  # B4-A-2: at most 19 digits before int()
+        if len(text) > 19 or not _NAT.fullmatch(text) or not least <= int(text) < below:
             raise CycleError(f"{name} row is not an integer in [{least}, {below})")
         return int(r[name])
 
