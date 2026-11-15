@@ -31,3 +31,11 @@ Not repaired: B5BC-O-1 (owner decision, above).
 - `mypy` on the module and the changed test files: clean apart from the 10 pre-existing
   errors in the imported `test_calibration_screen.py`.
 - `lint-imports`: 7 kept, 0 broken.
+
+## Owner decision (2026-11-15)
+
+The owner, in chat on 2026-11-15, accepted B5BC-O-1: "yes accept B5BC-O-1".
+`BENCHMARK_SPEC_MISSING` is added to `U_OPS_REASONS` (G-13 without its specification is
+U_ops). Applied with a test (`test_a_missing_benchmark_spec_is_infrastructure`); 593
+confirmation tests pass. The reason list itself remains an S4 contract item (A-7).
+Recorded by Claude Opus 5.5; this is the owner's decision, not an AI approval.

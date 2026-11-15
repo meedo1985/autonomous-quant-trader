@@ -646,9 +646,11 @@ V1_CONFIRMATION_END = datetime(2025, 5, 31, 23, 59, 59, tzinfo=UTC)
 CRASH = "CRASH_NO_ARTIFACT"  # P18-1: ended without writing any result artifact
 NOT_COMPLETED = (attempts.OUTCOME_FAILED, attempts.OUTCOME_ABORTED)
 # P18-7: reasons that are infrastructure or governance (U_ops); every other
-# unavailability is a procedure no-result (U_proc) [DESIGN: list for review]
+# unavailability is a procedure no-result (U_proc) [DESIGN: list for review];
+# BENCHMARK_SPEC_MISSING added by owner decision B5BC-O-1 (2026-11-15)
 U_OPS_REASONS = frozenset({"MISSING_DAY", "DUPLICATED_DAY", "IRREGULAR_DAY",
-                           "MISALIGNED_SERIES", "SIGMA_UNBOUND"})  # fmt: skip
+                           "MISALIGNED_SERIES", "SIGMA_UNBOUND",
+                           "BENCHMARK_SPEC_MISSING"})  # fmt: skip
 
 
 class CycleError(ValueError):

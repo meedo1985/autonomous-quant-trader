@@ -331,3 +331,12 @@ def test_a_sealing_failure_after_the_record_persists_and_closes_nothing(
     with pytest.raises(cf.CycleError, match="sealing record"):
         s.run()
     assert s.persisted == [] and s.closings() == []
+
+
+def test_a_missing_benchmark_spec_is_infrastructure(w: tf.World) -> None:
+    """Owner decision B5BC-O-1: G-13 without its specification is U_ops."""
+    ev = evaluations()
+    gates = {**ev["trend"].gates, "G-13": cf._unavailable("BENCHMARK_SPEC_MISSING")}
+    ev["trend"] = dataclasses.replace(ev["trend"], gates=gates, outcome="NO_RESULT")
+    trend = cf.evaluation_record(inputs(), w.look(), ev)["families"]["trend"]
+    assert trend["gates"]["G-13"]["cause"] == "U_ops" and trend["cause"] == "U_ops"
