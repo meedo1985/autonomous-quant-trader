@@ -363,12 +363,22 @@ def test_one_failed_split_makes_its_path_and_the_summaries_unavailable(
 def test_no_code_path_reads_the_report() -> None:
     # C-14 (5): no gate, screen, mapping, DSR test, nomination or promotion
     # reads it; slice 6 only writes it to the record
-    users = []
+    # B5B-R-4: the one producer call is slice 6b's `evaluate_families`; the
+    # one reader of its result (`FamilyEvaluation.cpcv`) is `evaluation_record`
+    allowed = {("c2_confirmation.py", "evaluate_families", "cpcv_report"),
+               ("c2_confirmation.py", "FamilyEvaluation", "cpcv"),
+               ("c2_confirmation.py", "evaluation_record", "cpcv")}  # fmt: skip
+    users = set()
     for f in [*ROOT.joinpath("calibration").rglob("*.py"),
               *ROOT.joinpath("src").rglob("*.py")]:  # fmt: skip
         tree = ast.parse(f.read_text(encoding="utf-8"))
+        scopes = [(n.name, n) for n in ast.walk(tree)
+                  if isinstance(n, ast.FunctionDef | ast.ClassDef)]  # fmt: skip
         for node in ast.walk(tree):
             name = getattr(node, "id", None) or getattr(node, "attr", None)
-            if name == "cpcv_report":  # any reference other than its def
-                users.append(f.name)
-    assert users == []
+            if name not in ("cpcv_report", "cpcv"):
+                continue
+            inner = [s for s, n in scopes if node in ast.walk(n) and n is not node]
+            users.add((f.name, inner[-1] if inner else None, name))
+    assert sorted(users - allowed) == []
+    assert ("c2_confirmation.py", "evaluate_families", "cpcv_report") in users

@@ -193,16 +193,28 @@ def test_an_intervening_entry_of_another_cycle_is_allowed(
     assert len(w.looks()) == 1
 
 
-def test_two_concurrent_looks_give_one_entry_and_one_refusal(w: World) -> None:
+def test_a_second_look_waits_at_the_lock_then_refuses(
+    w: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B5A-A-2: the first opener is held inside the locked section; the
+    second cannot read the ledger until it is released, then refuses."""
     w.finish_all()
-    both = threading.Barrier(2)
-    real = w.inputs
+    inside, release = threading.Event(), threading.Event()
+    reads: list[int] = []
+    real_read = read_entries
 
-    def inputs() -> cf.Inputs:
-        both.wait(timeout=10)  # both reach the lock together
-        return real()
+    def counting_read(path: Any) -> Any:
+        reads.append(1)
+        return real_read(path)
 
-    w.inputs = inputs  # type: ignore[method-assign]
+    def bounds(report: Any, t_days: int, k: int) -> Any:
+        if not inside.is_set():
+            inside.set()
+            assert release.wait(timeout=10)
+        return BOUNDS
+
+    monkeypatch.setattr(cf, "read_entries", counting_read)
+    monkeypatch.setattr(cf, "classifier_bounds", bounds)
     outcome: list[str] = []
 
     def look() -> None:
@@ -212,10 +224,104 @@ def test_two_concurrent_looks_give_one_entry_and_one_refusal(w: World) -> None:
         except cf.CycleError as e:
             outcome.append(str(e))
 
-    threads = [threading.Thread(target=look) for _ in range(2)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=30)
-    assert sorted(outcome) == ["look", "the cycle's one look has already run"]
+    first = threading.Thread(target=look)
+    first.start()
+    assert inside.wait(timeout=10)  # first holds the look lock
+    second = threading.Thread(target=look)
+    second.start()
+    second.join(timeout=0.5)
+    assert second.is_alive() and len(reads) == 1  # blocked before its ledger read
+    release.set()
+    first.join(timeout=10)
+    second.join(timeout=10)
+    assert outcome == ["look", "the cycle's one look has already run"]
     assert len(w.looks()) == 1
+
+
+def test_a_result_naming_our_attempt_under_another_cycle_stops_the_look(
+    w: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B5A-A-1: attributed by its attempt, whatever cycle it claims."""
+    w.start("attempt-a0", 0)
+    w.day0 = w.now - timedelta(days=cf.LOOK_DAYS)
+    stray = {**tt.payload("t0", "attempt-a0"), "cycle_id": "c0"}
+    _slip_in(
+        w,
+        monkeypatch,
+        lambda: append_entry(w.path, record_type=cf.RESULT_ENTRY, payload=stray),
+    )
+    with pytest.raises(cf.CycleError, match="came before the look entry"):
+        w.open()
+    assert len(w.looks()) == 1
+
+
+def test_an_outcome_of_another_cycles_attempt_may_intervene(
+    w: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    w.finish_all()
+    w.start("attempt-z0", 0, cycle="c0")
+    _slip_in(w, monkeypatch, lambda: w.out("attempt-z0"))
+    w.open()
+    assert len(w.looks()) == 1
+
+
+def test_a_late_result_after_the_look_entry_is_not_intervening(
+    w: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    w.start("attempt-a0", 0)
+    w.day0 = w.now - timedelta(days=cf.LOOK_DAYS)
+    real = append_entry
+
+    def append(path: Any, **kw: Any) -> Any:
+        entry = real(path, **kw)
+        if kw["record_type"] == cf.LOOK_ENTRY:
+            w.result("t0", "attempt-a0")  # lands after the look entry
+        return entry
+
+    monkeypatch.setattr(cf, "append_entry", append)
+    got = w.open()
+    assert got.families["trend"].states["t0"] == "running"
+
+
+def test_the_clock_is_read_once(w: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    w.finish_all()
+    reads: list[datetime] = []
+
+    def clock() -> datetime:
+        reads.append(w.now)
+        return w.now
+
+    monkeypatch.setattr(cf, "_now", clock)
+    w.open()
+    assert len(reads) == 1
+
+
+def test_bounds_are_per_family_from_the_verified_report(
+    w: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    w.finish_all()
+    seen: list[Any] = []
+
+    def bounds(report: Any, t_days: int, k: int) -> Any:
+        seen.append(report)
+        return ({"k": float(k)}, {"k": 0.0})
+
+    monkeypatch.setattr(cf, "classifier_bounds", bounds)
+    got = w.open()
+    assert got.bounds == {"trend": ({"k": 2.0}, {"k": 0.0}),
+                          "vol": ({"k": 1.0}, {"k": 0.0})}  # fmt: skip
+    assert all(r is w.report for r in seen)
+
+
+def test_a_second_familys_classifier_refusal_writes_nothing(
+    w: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    w.finish_all()
+
+    def bounds(report: Any, t_days: int, k: int) -> Any:
+        if k == 1:  # vol, after trend's bounds succeeded
+            raise cf.CycleError("classifier thresholds: KeyError")
+        return BOUNDS
+
+    monkeypatch.setattr(cf, "classifier_bounds", bounds)
+    w.refused("classifier thresholds")

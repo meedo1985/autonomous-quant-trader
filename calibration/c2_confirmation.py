@@ -3486,13 +3486,18 @@ class CycleLedger:
 
 def of_cycle(entry: Any, cycle: str, ours: frozenset[str]) -> bool:
     """An entry belongs to the cycle: a start naming it, an outcome of one of
-    its starts (`ours`; an outcome has no cycle field, FINAL-F-6), or a
-    result, look, closing or termination entry naming it."""
+    its starts (`ours`; an outcome has no cycle field, FINAL-F-6), a result
+    entry naming it or naming one of its attempts (whatever cycle it claims,
+    as `family_ledger` refuses it), or a look, closing or termination entry
+    naming it."""
     if entry.record_type == attempts.ATTEMPT_STARTED_RECORD_TYPE:
         return bool(entry.payload.get("cycle") == cycle)
     if entry.record_type == attempts.ATTEMPT_OUTCOME_RECORD_TYPE:
         return entry.payload.get("attempt_id") in ours
-    if entry.record_type == RESULT_ENTRY or entry.record_type in _CYCLE_ENTRY_KEYS:
+    if entry.record_type == RESULT_ENTRY:  # B5A-A-1: also one naming our attempt
+        p = entry.payload
+        return bool(p.get("cycle_id") == cycle or p.get("attempt_id") in ours)
+    if entry.record_type in _CYCLE_ENTRY_KEYS:
         return bool(entry.payload.get("cycle_id") == cycle)
     return False
 
@@ -4264,9 +4269,9 @@ def evaluate_families(
         if benchmark is None:
             fgates["G-13"] = _unavailable("BENCHMARK_SPEC_MISSING")
         gates_ = {**gates_, **fgates}
-        cpcv = cpcv_report(trial, path, inputs.w0, hours, tseeds["estimator_seed"],
+        c14 = cpcv_report(trial, path, inputs.w0, hours, tseeds["estimator_seed"],
                            gates_["G-12"])  # fmt: skip
-        out[f] = FamilyEvaluation(nom, gates_, nominee_outcome(gates_), path, cpcv,
+        out[f] = FamilyEvaluation(nom, gates_, nominee_outcome(gates_), path, c14,
                                   completed)  # fmt: skip
     return out
 

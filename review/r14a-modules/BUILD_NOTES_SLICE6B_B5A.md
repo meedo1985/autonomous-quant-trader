@@ -41,3 +41,5 @@ check, the `z_crit` check, the truncation, the lock, or `look_allowed` each fail
   only here.
 - **B5A-R-6** The step-4 `Look.ledger` is the pre-look ledger B5b evaluates; the re-read is
   used only for the intervening check.
+  (Clarified per Astra: the re-read also validates the cycle structure with `cycle_ledger`
+  and that the appended entry is the cycle's one look.)
