@@ -4,6 +4,7 @@ closing and termination entries, `look_allowed` and its clock floor
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -231,3 +232,45 @@ def test_a_breached_family_is_not_waited_for(tmp_path: Path) -> None:
     assert cf.look_allowed(
         {"trend": fam({"t0": "running"})}, cyc, T0, T0 + timedelta(days=180)
     )
+
+
+# --- the look lock (§4) -------------------------------------------------------------
+
+
+def _waiter(path: Path, got: threading.Event) -> threading.Thread:
+    def run() -> None:
+        with cf.look_lock(path):
+            got.set()
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    return t
+
+
+def test_the_look_lock_blocks_a_second_holder_until_released(tmp_path: Path) -> None:
+    path = tmp_path / "ledger.jsonl"
+    got = threading.Event()
+    with cf.look_lock(path):
+        assert (tmp_path / "ledger.jsonl.look.lock").is_file()
+        waiter = _waiter(path, got)
+        assert not got.wait(0.3)  # blocked, no deadline
+        # the append lock is a different sidecar: appends still work inside
+        append_entry(path, record_type="aqt.other.v1", payload={"x": 1})
+    assert got.wait(5)
+    waiter.join(5)
+
+
+def test_the_look_lock_is_released_on_an_exception(tmp_path: Path) -> None:
+    path = tmp_path / "ledger.jsonl"
+    with pytest.raises(RuntimeError), cf.look_lock(path):
+        raise RuntimeError("abort inside the locked section")
+    got = threading.Event()
+    _waiter(path, got).join(5)
+    assert got.is_set()
+
+
+def test_a_leftover_sidecar_file_is_not_a_lock(tmp_path: Path) -> None:
+    path = tmp_path / "ledger.jsonl"
+    (tmp_path / "ledger.jsonl.look.lock").write_bytes(b"stale")
+    with cf.look_lock(path):
+        pass

@@ -20,12 +20,15 @@ import hashlib
 import importlib.util
 import json
 import math
+import os
 import random
 import struct
 import sys
+import time
 import types
 import zlib
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -3553,3 +3556,62 @@ def closing_entry(cycle: str, evaluation_record_sha256: str,
     """§4 FINAL-F-5: the closing entry's payload, appended last."""
     return {"cycle_id": cycle, "evaluation_record_sha256": evaluation_record_sha256,
             "sealing_record_sha256": sealing_record_sha256}  # fmt: skip
+
+
+# --- Slice 6b build B3b: the look lock (§4) ---------------------------------------
+
+LOOK_LOCK_SUFFIX = ".look.lock"  # distinct from `append_entry`'s ".lock"
+_LOOK_POLL_SECONDS = 0.01
+
+# §4 (R14D6B15-F-4): the module's own copy of `ledger._try_lock` / `_unlock`
+# (`ledger.py` l.311-336), so the wait is the same on both platforms
+if sys.platform == "win32":  # pragma: no cover - exercised on Windows only
+    import msvcrt
+
+    def _try_look_lock(fd: int) -> bool:
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+
+    def _look_unlock(fd: int) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+else:  # pragma: no cover - exercised on POSIX only
+    import fcntl
+
+    def _try_look_lock(fd: int) -> bool:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False
+        return True
+
+    def _look_unlock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+@contextmanager
+def look_lock(ledger_path: Path | str) -> Iterator[None]:
+    """§4: the cycle's look lock, an exclusive OS lock on
+    `<ledger>.look.lock`. A waiter blocks with no deadline (every locked
+    section is short and a dead holder's lock is released by the OS); the
+    sidecar file's existence is not itself a lock. Always taken before the
+    append lock; released in a `finally`."""
+    path = Path(ledger_path)
+    fd = os.open(path.with_name(path.name + LOOK_LOCK_SUFFIX), os.O_CREAT | os.O_RDWR,
+                 0o644)  # fmt: skip
+    try:
+        while True:
+            os.lseek(fd, 0, os.SEEK_SET)
+            if _try_look_lock(fd):
+                break
+            time.sleep(_LOOK_POLL_SECONDS)
+        try:
+            yield
+        finally:
+            _look_unlock(fd)
+    finally:
+        os.close(fd)
