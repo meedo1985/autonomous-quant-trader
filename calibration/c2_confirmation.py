@@ -3078,3 +3078,107 @@ def classifier_bounds(report: dict[str, Any], t_days: int,
         return reduce.for_k(pool, k)  # type: ignore[arg-type]
     except ValueError as e:
         raise CycleError(f"classifier thresholds: {e}") from e
+
+
+# [DESIGN layout, to be bound in the S4 text] (§1). `protocol_hash` is not in
+# rev 16's list but every declaration carries it (`verify_chain` reads it);
+# BUILD_NOTES_SLICE6B_B1.md records the gap for the B1 review
+DECLARATION_FIELDS = frozenset(
+    {"protocol_hash", "cycle_id", "trials", "data_manifest_sha256", "last_seen",
+     "embargo_days", "ledger_anchor", "screen_record_sha256"}
+)  # fmt: skip
+DECLARED_TRIAL_FIELDS = frozenset(
+    {"family", "trial_id", "hypothesis_hash", "configuration_hash", "trial_index"}
+)
+ANCHOR_FIELDS = frozenset({"head_hash", "entry_count"})
+
+
+@dataclass(frozen=True)
+class Declaration:
+    """The parsed declaration (§1, §2: one source for each value)."""
+
+    cycle_id: str
+    entries: list[dict[str, Any]]  # the `trials` list, in declaration order
+    declared: dict[str, list[dict[str, Any]]]  # family -> trial objects, that order
+    trials: list[dict[str, Any]]  # every trial object, declaration order
+    data_manifest_sha256: str
+    last_seen: datetime
+    embargo_days: int
+    anchor_head_hash: str
+    anchor_entry_count: int
+    screen_record_sha256: str
+
+
+def _int(x: object) -> bool:
+    return type(x) is int and x >= 0
+
+
+def parse_declaration(
+    declaration: bytes, trial_objects: Mapping[str, dict[str, Any]]
+) -> Declaration:
+    """§1 parse rules, each a CycleError: exact keys (top level, each trial
+    entry, the anchor); `trial_index` an int; at most MAX_TRIALS trials in all;
+    no `trial_id` repeated across families; no repeated (hypothesis_hash,
+    trial_index); exactly one trial object per entry, hashing to its
+    configuration_hash, with the entry's own trial_id and family. `start`
+    verified the bytes. Read-free."""
+    d = json.loads(declaration)
+    if not isinstance(d, dict) or set(d) != DECLARATION_FIELDS:
+        raise CycleError("the declaration's keys are not the layout's")
+    entries, anchor = d["trials"], d["ledger_anchor"]
+    if not isinstance(entries, list) or not all(
+        isinstance(e, dict) and set(e) == DECLARED_TRIAL_FIELDS for e in entries
+    ):
+        raise CycleError("a declared trial's keys are not the layout's")
+    if not isinstance(anchor, dict) or set(anchor) != ANCHOR_FIELDS:
+        raise CycleError("the ledger anchor's keys are not the layout's")
+    if not entries or len(entries) > MAX_DECLARED:
+        raise CycleError(f"{len(entries)} declared trials; 1 to {MAX_DECLARED} allowed")
+    if any(type(e["trial_index"]) is not int for e in entries):
+        raise CycleError("a trial_index is not an int")
+    ids = [e["trial_id"] for e in entries]
+    if len(set(ids)) != len(ids):
+        raise CycleError("a trial_id is declared twice")
+    pairs = [(e["hypothesis_hash"], e["trial_index"]) for e in entries]
+    if len(set(pairs)) != len(pairs):
+        raise CycleError("a (hypothesis_hash, trial_index) pair is declared twice")
+    if set(trial_objects) != set(ids):
+        raise CycleError("the trial objects are not exactly the declared trials")
+    declared: dict[str, list[dict[str, Any]]] = {}
+    for e in entries:
+        trial = trial_objects[e["trial_id"]]
+        try:
+            digest = screen.trial_sha256(trial)
+        except ValueError as err:
+            raise CycleError(f"{e['trial_id']}: {err}") from err
+        if digest != e["configuration_hash"]:
+            raise CycleError(f"{e['trial_id']}: trial object is not the declared one")
+        if trial["trial_id"] != e["trial_id"] or trial["family"] != e["family"]:
+            raise CycleError(f"{e['trial_id']}: trial object names another trial")
+        declared.setdefault(e["family"], []).append(trial)
+    hashes = (d["protocol_hash"], d["data_manifest_sha256"], d["screen_record_sha256"],
+              anchor["head_hash"])  # fmt: skip
+    if not all(_hex(h, 64) for h in hashes):
+        raise CycleError("a declared hash is not 64 lower-case hex")
+    if not (_int(d["embargo_days"]) and _int(anchor["entry_count"])):
+        raise CycleError("embargo_days and entry_count must be non-negative ints")
+    try:
+        if not isinstance(d["last_seen"], str):
+            raise ValueError
+        last_seen = datetime.strptime(d["last_seen"], "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        raise CycleError("last_seen is not YYYY-MM-DDTHH:MM:SSZ") from None
+    if not isinstance(d["cycle_id"], str) or not d["cycle_id"]:
+        raise CycleError("cycle_id is not a non-empty string")
+    return Declaration(
+        cycle_id=d["cycle_id"],
+        entries=entries,
+        declared=declared,
+        trials=[trial_objects[i] for i in ids],
+        data_manifest_sha256=d["data_manifest_sha256"],
+        last_seen=last_seen.replace(tzinfo=UTC),
+        embargo_days=d["embargo_days"],
+        anchor_head_hash=anchor["head_hash"],
+        anchor_entry_count=anchor["entry_count"],
+        screen_record_sha256=d["screen_record_sha256"],
+    )

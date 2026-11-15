@@ -274,3 +274,122 @@ def test_classifier_bounds_pools_like_d19_heldout() -> None:
     frozen["upper"] = {"K": "4", "T": "900"}  # its tails missing
     with pytest.raises(c.CycleError, match="classifier thresholds"):
         c.classifier_bounds(report, 900, 3)
+
+
+# --- declaration layout (§1) ----------------------------------------------------------
+
+
+def _decl(**change: Any) -> tuple[bytes, dict[str, dict[str, Any]]]:
+    import test_calibration_screen as ts  # the screen tests' trial fixture
+
+    from calibration import screen
+
+    objs = {
+        "tr1": ts._trial(trial_id="tr1", family="trend"),
+        "vo1": ts._trial(trial_id="vo1", family="vol"),
+        "tr2": ts._trial(trial_id="tr2", family="trend"),
+    }
+    entries = [
+        {"family": o["family"], "trial_id": i, "hypothesis_hash": "ab" * 32,
+         "configuration_hash": screen.trial_sha256(o), "trial_index": n}
+        for n, (i, o) in enumerate(objs.items())
+    ]  # fmt: skip
+    d = {
+        "protocol_hash": "1" * 64,
+        "cycle_id": "C2-0001",
+        "trials": entries,
+        "data_manifest_sha256": "2" * 64,
+        "last_seen": "2024-01-01T00:00:00Z",
+        "embargo_days": 30,
+        "ledger_anchor": {"head_hash": "3" * 64, "entry_count": 7},
+        "screen_record_sha256": "4" * 64,
+        **change,
+    }
+    return cj(d), objs
+
+
+def test_parse_declaration_reads_every_field_in_declaration_order() -> None:
+    raw, objs = _decl()
+    got = c.parse_declaration(raw, objs)
+    assert got.cycle_id == "C2-0001"
+    assert [t["trial_id"] for t in got.trials] == ["tr1", "vo1", "tr2"]
+    assert {f: [t["trial_id"] for t in ts] for f, ts in got.declared.items()} == {
+        "trend": ["tr1", "tr2"], "vol": ["vo1"]}  # fmt: skip
+    assert got.last_seen == datetime(2024, 1, 1, tzinfo=UTC)
+    assert (got.embargo_days, got.anchor_head_hash, got.anchor_entry_count) == (
+        30, "3" * 64, 7)  # fmt: skip
+    assert got.data_manifest_sha256 == "2" * 64 and got.screen_record_sha256 == "4" * 64
+
+
+def test_parse_declaration_refuses_unknown_or_missing_keys() -> None:
+    raw, objs = _decl()
+    d = json.loads(raw)
+    missing = {k: v for k, v in d.items() if k != "protocol_hash"}
+    for bad in ({**d, "extra": 1}, missing):
+        with pytest.raises(c.CycleError, match="declaration's keys"):
+            c.parse_declaration(cj(bad), objs)
+    d2 = json.loads(raw)
+    d2["trials"][0]["extra"] = 1
+    with pytest.raises(c.CycleError, match="declared trial's keys"):
+        c.parse_declaration(cj(d2), objs)
+    with pytest.raises(c.CycleError, match="anchor's keys"):
+        c.parse_declaration(cj({**d, "ledger_anchor": {"head_hash": "3" * 64}}), objs)
+
+
+def _entries(raw: bytes) -> list[dict[str, Any]]:
+    return list(json.loads(raw)["trials"])
+
+
+def test_parse_declaration_trial_rules() -> None:
+    raw, objs = _decl()
+    e = _entries(raw)
+    cases: list[tuple[list[dict[str, Any]], str]] = [
+        ([{**e[0], "trial_index": "0"}, *e[1:]], "not an int"),
+        ([{**e[0], "trial_index": True}, *e[1:]], "not an int"),
+        ([e[0], e[1], {**e[2], "trial_id": "tr1"}], "declared twice"),
+        ([e[0], e[1], {**e[2], "trial_index": 0}], r"\(hypothesis_hash, trial_index\)"),
+        ([], "1 to 20"),
+        ([e[0], e[1], {**e[2], "configuration_hash": e[0]["configuration_hash"]}],
+         "not the declared one"),
+        ([e[0], e[1], {**e[2], "family": "vol"}], "names another trial"),
+    ]  # fmt: skip
+    for trials, match in cases:
+        bad, _ = _decl(trials=trials)
+        with pytest.raises(c.CycleError, match=match):
+            c.parse_declaration(bad, objs)
+
+
+def test_parse_declaration_refuses_more_than_max_trials_in_all() -> None:
+    raw, objs = _decl()
+    e = _entries(raw)
+    many = [{**e[0], "trial_id": f"x{i}", "trial_index": i + 10} for i in range(21)]
+    bad, _ = _decl(trials=many)
+    with pytest.raises(c.CycleError, match="21 declared trials"):
+        c.parse_declaration(bad, objs)
+
+
+def test_parse_declaration_needs_exactly_the_declared_trial_objects() -> None:
+    raw, objs = _decl()
+    with pytest.raises(c.CycleError, match="exactly the declared trials"):
+        c.parse_declaration(raw, {k: v for k, v in objs.items() if k != "vo1"})
+    with pytest.raises(c.CycleError, match="exactly the declared trials"):
+        c.parse_declaration(raw, {**objs, "extra": objs["vo1"]})
+    swapped = {**objs, "tr2": {**objs["tr2"], "trial_id": "trX"}}
+    with pytest.raises(c.CycleError, match="tr2"):
+        c.parse_declaration(raw, swapped)  # its hash changes: not the declared one
+
+
+@pytest.mark.parametrize(("change", "match"), [
+    ({"protocol_hash": "1" * 63}, "64 lower-case hex"),
+    ({"data_manifest_sha256": "A" * 64}, "64 lower-case hex"),
+    ({"embargo_days": -1}, "non-negative ints"),
+    ({"embargo_days": 30.0}, "non-negative ints"),
+    ({"ledger_anchor": {"head_hash": "3" * 64, "entry_count": "7"}}, "non-negative"),
+    ({"last_seen": "2024-01-01 00:00:00"}, "last_seen"),
+    ({"last_seen": 1704067200}, "last_seen"),
+    ({"cycle_id": ""}, "cycle_id"),
+])  # fmt: skip
+def test_parse_declaration_value_forms(change: dict[str, Any], match: str) -> None:
+    raw, objs = _decl(**change)
+    with pytest.raises(c.CycleError, match=match):
+        c.parse_declaration(raw, objs)
