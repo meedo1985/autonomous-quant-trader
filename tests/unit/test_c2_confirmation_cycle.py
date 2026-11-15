@@ -234,10 +234,13 @@ def test_family_attempts_come_from_the_durable_ledger(tmp_path: Any) -> None:
     entries = read_entries(led)
     got = cf.family_attempts(entries, family="trend", cycle="c1", trial_of=trial_of)
     assert got == [
-        {**_a("t000", "failed", CRASH), "start": 0, "end": 3},
-        {**_a("t001", None), "start": 4, "end": None},
-        {**_a("t000"), "start": 5, "end": 6},
-    ]
+        {**_a("t000", "failed", CRASH), "start": 0, "end": 3,
+         "attempt_id": "attempt-a1", "outcomes": [3]},
+        {**_a("t001", None), "start": 4, "end": None,
+         "attempt_id": "attempt-a2", "outcomes": []},
+        {**_a("t000"), "start": 5, "end": 6, "attempt_id": "attempt-a3",
+         "outcomes": [6]},
+    ]  # fmt: skip
     assert cf.trial_states(got, ["t000", "t001"]) == {
         "t000": "completed", "t001": "running"}  # fmt: skip
     with pytest.raises(cf.CycleError, match="undeclared"):

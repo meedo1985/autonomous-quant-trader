@@ -742,16 +742,22 @@ def family_attempts(
     validated first (`attempt_counts` fails closed); `trial_of` maps a start's
     (hypothesis_hash, trial_index) to its declared trial id [DESIGN: until the
     S4 record layout binds it]. `start` and `end` are the ledger positions of
-    the start and outcome records (R14C2-S-1); `outcome` and `end` are None
-    while no outcome is recorded."""
+    the start and first outcome records (R14C2-S-1); `outcome` and `end` are
+    None while no outcome is recorded. DESIGN_SLICE6B §13: each attempt also
+    carries its `attempt_id` and `outcomes`, every outcome position; a second
+    outcome is reported there (an order breach, §3 rule 1), not raised.
+    Outcomes are matched to starts of this cycle only; an outcome whose
+    attempt never started anywhere in the ledger is a CycleError (as
+    `finish_attempt` cannot write one)."""
     attempts.attempt_counts(entries, family=family, cycle=cycle)
-    outcomes: dict[str, tuple[int, dict[str, Any]]] = {}
+    started = attempts.started_attempt_ids(entries)
+    outcomes: dict[str, list[tuple[int, dict[str, Any]]]] = {}
     for i, e in enumerate(entries):
         if e.record_type == attempts.ATTEMPT_OUTCOME_RECORD_TYPE:
             aid = e.payload["attempt_id"]
-            if aid in outcomes:
-                raise CycleError(f"attempt {aid} has two outcome records")
-            outcomes[aid] = (i, e.payload)
+            if aid not in started:
+                raise CycleError(f"outcome for attempt {aid} that never started")
+            outcomes.setdefault(aid, []).append((i, e.payload))
     out = []
     for i, e in enumerate(entries):
         if e.record_type != attempts.ATTEMPT_STARTED_RECORD_TYPE:
@@ -764,10 +770,12 @@ def family_attempts(
         key = (p["hypothesis_hash"], p["trial_index"])
         if key not in trial_of:
             raise CycleError(f"attempt {p['attempt_id']} is for an undeclared trial")
-        end, o = outcomes.get(p["attempt_id"], (None, {}))
-        out.append({"trial_id": trial_of[key], "outcome": o.get("outcome"),
-                    "reason_code": o.get("reason_code"), "start": i,
-                    "end": end})  # fmt: skip
+        mine = outcomes.get(p["attempt_id"], [])
+        end, o = mine[0] if mine else (None, {})
+        out.append({"trial_id": trial_of[key], "attempt_id": p["attempt_id"],
+                    "outcome": o.get("outcome"), "reason_code": o.get("reason_code"),
+                    "start": i, "end": end,
+                    "outcomes": [j for j, _ in mine]})  # fmt: skip
     return out
 
 
@@ -3248,3 +3256,120 @@ def parse_declaration(
         anchor_entry_count=anchor["entry_count"],
         screen_record_sha256=d["screen_record_sha256"],
     )
+
+
+# --- Slice 6b build B2b: the result entries and attempt completion (§3) ----------
+
+RESULT_ENTRY = "aqt.c2.trial_result_entry.v1"  # §3: the v2 record is its payload
+
+
+@dataclass(frozen=True)
+class FamilyLedger:
+    """One family's ledger at the look, or before `evaluate_trial`'s read."""
+
+    attempts: list[dict[str, Any]]  # §3 rewritten (completed / crash / running)
+    breaches: list[dict[str, Any]]  # {attempt_id, kind, position}, ledger order
+    results: list[dict[str, Any]]  # every result entry: {attempt_id, position,
+    #                                entry_hash, payload}, ledger order
+    states: dict[str, str]
+
+    @property
+    def breach_reason(self) -> str | None:
+        """§3 rule 1: the first breaching attempt in ledger order."""
+        if not self.breaches:
+            return None
+        return f"LEDGER_ORDER:{self.breaches[0]['attempt_id']}"
+
+
+def family_ledger(
+    entries: Sequence[Any],
+    *,
+    family: str,
+    cycle: str,
+    trial_of: dict[tuple[str, int], str],
+    trial_ids: list[str],
+    expected: Callable[[str], Mapping[str, Any]],
+    window: tuple[datetime, int],
+) -> FamilyLedger:
+    """DESIGN_SLICE6B §3 over `entries` (the ledger up to, not including, any
+    look entry: rule 3). `expected(trial_id)` gives every identity field the
+    module derives now (cycle_id, trial_id, family, the declaration's
+    configuration_hash, window_id and `result_identity`'s fields).
+
+    Each result entry of this cycle is decoded exactly (`completed_entry`),
+    bound to its attempt (a start of this cycle, confirmation partition and
+    the entry's family, before the entry, whose (hypothesis_hash,
+    trial_index) maps to the entry's trial) and compared field by field;
+    anything else is a CycleError (rule 2). An attempt is completed when it
+    has exactly one result entry, after its start and before any outcome;
+    with no result entry before its first outcome it is a crash, whatever
+    the outcome says. A second result entry, a second outcome or a result
+    after the outcome is an order breach of the family (rule 1): reported,
+    not raised; the family's states are then FINAL-F-2's, never
+    `trial_states`'."""
+    starts = {a["attempt_id"]: a for a in family_attempts(
+        entries, family=family, cycle=cycle, trial_of=trial_of)}  # fmt: skip
+    results: list[dict[str, Any]] = []
+    for i, e in enumerate(entries):
+        if e.record_type != RESULT_ENTRY:
+            continue
+        payload = e.payload
+        if not isinstance(payload, dict) or payload.get("cycle_id") != cycle:
+            continue  # another cycle's result
+        completed_entry(payload, window)  # exact form, or CycleError
+        if payload["family"] not in FAMILIES:
+            raise CycleError(f"result entry {i} names unknown family")
+        if payload["family"] != family:
+            continue
+        a = starts.get(payload["attempt_id"])
+        if a is None or a["start"] >= i or a["trial_id"] != payload["trial_id"]:
+            raise CycleError(f"result entry {i} is not bound to its attempt")
+        want = expected(payload["trial_id"])
+        if any(payload[k] != v for k, v in want.items()):
+            raise CycleError(f"result entry {i} does not match its derived identity")
+        results.append({"attempt_id": a["attempt_id"], "position": i,
+                        "entry_hash": e.entry_hash, "payload": payload})  # fmt: skip
+    breaches: list[dict[str, Any]] = []
+    rewritten: list[dict[str, Any]] = []
+    for aid, a in starts.items():
+        res = [r["position"] for r in results if r["attempt_id"] == aid]
+        outs = a["outcomes"]
+        kinds = []
+        if len(res) > 1:
+            kinds.append(("second result entry", res[1]))
+        if len(outs) > 1:
+            kinds.append(("second outcome", outs[1]))
+        if res and outs and max(res) > outs[0]:
+            kinds.append(("result after outcome", min(r for r in res if r > outs[0])))
+        breaches += [
+            {"attempt_id": aid, "kind": k, "position": pos} for k, pos in kinds
+        ]
+        done = len(res) == 1 and (not outs or res[0] < outs[0])
+        if done:
+            row = {"outcome": attempts.OUTCOME_COMPLETED, "reason_code": None,
+                   "end": res[0]}  # fmt: skip
+        elif not res and outs:
+            row = {"outcome": attempts.OUTCOME_FAILED, "reason_code": CRASH,
+                   "end": outs[0]}  # fmt: skip
+        elif not res:
+            row = {"outcome": None, "reason_code": None, "end": None}
+        else:  # a breached attempt: kept for the record, no derived outcome
+            row = {"outcome": "breach", "reason_code": None, "end": None}
+        rewritten.append({"trial_id": a["trial_id"], "attempt_id": aid,
+                          "start": a["start"], "completed": done, **row})  # fmt: skip
+    breaches.sort(key=lambda b: b["position"])
+    if breaches:  # FINAL-F-2: by each trial's last attempt, no re-run slot
+        states = {}
+        for tid in trial_ids:
+            seq = [a for a in rewritten if a["trial_id"] == tid]
+            if not seq:
+                states[tid] = "unstarted"
+            elif seq[-1]["completed"]:
+                states[tid] = "completed"
+            elif seq[-1]["outcome"] is None:
+                states[tid] = "running"
+            else:
+                states[tid] = "final"
+    else:
+        states = trial_states(rewritten, trial_ids)
+    return FamilyLedger(rewritten, breaches, results, states)
