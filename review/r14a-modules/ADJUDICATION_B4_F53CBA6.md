@@ -43,3 +43,9 @@ directory); they were run here.
 - `mypy` on the module and the three B4 test files: clean apart from the 10 pre-existing
   errors in the imported `test_calibration_screen.py`.
 - `lint-imports`: 7 kept, 0 broken.
+
+## Owner decision (2026-11-15)
+
+The owner, in chat on 2026-11-15, accepted B4-D-1: "yes accept B4-D-1". The signed C2 row
+list gains `drand_group_hash` and `drand_beacon_id` (OD-4/S4 wording to follow). Recorded by
+Claude Opus 5.5; this is the owner's decision, not an AI approval.
