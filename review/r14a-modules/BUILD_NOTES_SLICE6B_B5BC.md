@@ -70,3 +70,10 @@ closing-before-persist each fail 1-2 tests.
 The release tests of the store build (§12, required tests of that build); an end-to-end
 `evaluate_look` run through the real BLS beacon, headers, capture and frozen gate code
 (the per-step tests replace those with recorders; the frozen code has its own tests).
+
+## Owner decision (2026-11-15)
+
+The owner, in chat on 2026-11-15, accepted B5B-D-1: "yes accept B5B-D-1". G-13 compares
+the SHA-256 of `specs/CANONICAL_BENCHMARKS_v1.1.md` in the module's checkout with the signed
+`canonical_benchmark_sha256` (S4 wording to follow). Recorded by Claude Opus 5.5; this is
+the owner's decision, not an AI approval.
