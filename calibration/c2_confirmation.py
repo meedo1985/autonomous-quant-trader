@@ -50,7 +50,7 @@ from aqt.backtest.event_contract import (
     EventResult,
     run_event_contract,
 )
-from aqt.core.ledger import GENESIS_HASH
+from aqt.core.ledger import GENESIS_HASH, append_entry, read_entries
 from aqt.data import manifest as dm
 from aqt.data.bars import BarSeries
 from aqt.features.columns import feature_columns
@@ -3960,3 +3960,97 @@ def prepare(started: Started, sources: Mapping[str, Any]) -> Inputs:
         chain=signed.chain,
     )
     return Inputs(started, decl, signed, headers, capture, w0, t_days, seeds, code_dir)
+
+
+# --- Slice 6b build B4c: evaluate_trial (§1, §3 rule 4, FINAL-F-4) ----------------
+
+
+def trial_may_run(inputs: Inputs, entries: Sequence[Any], trial_id: str,
+                  attempt_id: str) -> None:  # fmt: skip
+    """§3 rule 4 and the attempt-binding rule, read-free, on the read ledger:
+    the cycle has no look, closing or termination entry; the ledger passes
+    `cycle_ledger` and the trial's family `family_ledger` (identity of every
+    result entry); the family has no order breach (owner C-2); `attempt_id`
+    is a start of this cycle, of the confirmation partition and of the
+    trial's family whose (hypothesis_hash, trial_index) maps to `trial_id`;
+    and it is running (no result entry, no outcome). Else CycleError."""
+    decl = inputs.decl
+    entry = next((e for e in decl.entries if e["trial_id"] == trial_id), None)
+    if entry is None:
+        raise CycleError(f"{trial_id!r} is not a declared trial")
+    cycle = cycle_ledger(entries, decl, inputs.started.protocol_hash)
+    if cycle.look is not None or cycle.terminations:
+        raise CycleError("the cycle has a look or termination entry: no trial may run")
+    family = entry["family"]
+    fam = family_ledger(
+        cycle.entries,
+        family=family,
+        cycle=decl.cycle_id,
+        trial_of=inputs.trial_of,
+        trial_ids=[t["trial_id"] for t in decl.declared[family]],
+        expected=inputs.expected,
+        window=(inputs.w0, inputs.t_days),
+    )
+    if fam.breaches:
+        raise CycleError(f"{family} has an order breach ({fam.breach_reason})")
+    a = next((a for a in fam.attempts if a["attempt_id"] == attempt_id), None)
+    if a is None or a["trial_id"] != trial_id:
+        raise CycleError(f"attempt {attempt_id!r} is not a start of {trial_id} here")
+    if a["outcome"] is not None:  # derived: completed, crash, or a breach
+        raise CycleError(f"attempt {attempt_id!r} is not running")
+
+
+def run_trial(inputs: Inputs, trial_id: str, attempt_id: str,
+              read: Callable[[], Any]) -> dict[str, Any]:  # fmt: skip
+    """§2 step 4 for one trial, the only protected-data read: `read()` returns
+    `(composite, served)` (§6); `check_read` cuts `[w0 - W, w1)` with the
+    trial's warm-up W; `trial_path`; `trial_result` with this process's
+    identity (`result_identity`). Returns the result entry's payload."""
+    decl = inputs.decl
+    entry = next(e for e in decl.entries if e["trial_id"] == trial_id)
+    trial = next(t for t in decl.trials if t["trial_id"] == trial_id)
+    warmup, hours = trial["warmup_hours"], inputs.t_days * 24
+    start = inputs.w0 - warmup * HOUR
+    served = read()
+    if not (isinstance(served, tuple) and len(served) == 2):
+        raise CycleError("read did not serve (composite, partitions)")
+    rows = check_read(served[0], served[1], decl=decl,
+                      protocol_hash=inputs.started.protocol_hash, start=start,
+                      end=inputs.w0 + hours * HOUR)  # fmt: skip
+    seeds = inputs.seeds["families"][entry["family"]]["trials"][trial_id]
+    return trial_result(
+        cycle_id=decl.cycle_id,
+        trial=trial,
+        record=entry,
+        attempt_id=attempt_id,
+        path=trial_path(rows, start, inputs.w0, warmup, hours),
+        w0=inputs.w0,
+        window_hours=hours,
+        identity=result_identity(inputs.started, seeds, decl.data_manifest_sha256),
+    )
+
+
+def evaluate_trial(
+    started: Started,
+    sources: Mapping[str, Any],
+    trial_id: str,
+    attempt_id: str,
+    read: Callable[[], Any],
+) -> dict[str, Any]:
+    """§1 entry point: steps 2-4 for one attempt, in a fresh process after
+    `start`. Steps 2-3 (`prepare`), then `trial_may_run` on the ledger before
+    any protected-data read; `run_trial` reads and computes; then under the
+    look lock the ledger is read again, `trial_may_run` again (refusing
+    without appending if a look, closing or termination entry, a result or
+    outcome of the attempt, or a breach of the family now exists), the result
+    entry is appended, and the lock released (FINAL-F-4): no result lands
+    inside a look's steps 4-7, and a double launch gives one entry and one
+    refusal. Writes no outcome. Returns the appended payload."""
+    inputs = prepare(started, sources)
+    path = sources["ledger_path"]
+    trial_may_run(inputs, read_entries(path), trial_id, attempt_id)
+    payload = run_trial(inputs, trial_id, attempt_id, read)
+    with look_lock(path):
+        trial_may_run(inputs, read_entries(path), trial_id, attempt_id)
+        append_entry(path, record_type=RESULT_ENTRY, payload=payload)
+    return payload
