@@ -15,6 +15,7 @@ Item 4: frozen functions are called, not re-implemented.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import gzip
 import hashlib
 import importlib.util
@@ -34,7 +35,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -4191,13 +4192,18 @@ def completed_results(inputs: Inputs, family: FamilyLedger) -> dict[str, Any]:
     """`nominate`'s `completed`: for each trial whose state is `completed`,
     `completed_entry` of the result entry of its last derived-completed
     attempt (§3, §5)."""
+    window = (inputs.w0, inputs.t_days)
+    return {tid: completed_entry(p, window) for tid, p in used_results(family).items()}
+
+
+def used_results(family: FamilyLedger) -> dict[str, dict[str, Any]]:
+    """The result payload of each `completed` trial's last derived-completed
+    attempt, the one the look evaluates."""
     by_position = {r["position"]: r["payload"] for r in family.results}
     out = {}
     for a in family.attempts:  # ledger order: a later attempt replaces
         if a["completed"] and family.states.get(a["trial_id"]) == "completed":
-            out[a["trial_id"]] = completed_entry(
-                by_position[a["end"]], (inputs.w0, inputs.t_days)
-            )
+            out[a["trial_id"]] = by_position[a["end"]]
     return out
 
 
@@ -4263,3 +4269,251 @@ def evaluate_families(
         out[f] = FamilyEvaluation(nom, gates_, nominee_outcome(gates_), path, cpcv,
                                   completed)  # fmt: skip
     return out
+
+
+# --- Slice 6b build B5c: records, sealing, persist, closing entry (§4, §10-§12) ----
+
+EVALUATION_SCHEMA = "aqt.c2.evaluation.v1"  # §10
+
+
+def _plain(x: Any) -> Any:
+    """Record form (§10): floats as `hexf`, numpy scalars and tuples as JSON,
+    instants as `_time`."""
+    if isinstance(x, bool) or x is None or isinstance(x, int | str):
+        return x
+    if isinstance(x, np.integer):
+        return int(x)
+    if isinstance(x, float | np.floating):
+        return hexf(float(x))
+    if isinstance(x, datetime):
+        return _time(x)
+    if isinstance(x, Mapping):
+        return {str(k): _plain(v) for k, v in x.items()}
+    if isinstance(x, list | tuple | np.ndarray):
+        return [_plain(v) for v in x]
+    raise CycleError(f"no record form for {type(x).__name__}")
+
+
+def _dsr(result: dsr.FamilyResult) -> dict[str, Any]:
+    out: dict[str, Any] = _plain(dataclasses.asdict(result))
+    return out
+
+
+def evaluation_record(
+    inputs: Inputs, look: Look, families: Mapping[str, FamilyEvaluation]
+) -> dict[str, Any]:
+    """§10 `aqt.c2.evaluation.v1`, built after steps 1-8; every family with
+    its states, availability, cause, failing trials, U_proc results, nominee,
+    both DSR numerics (V governs, A-V1), every gate and the outcome; the C-14
+    report `diagnostic_only`. Floats are `hexf`."""
+    decl, started, signed = inputs.decl, inputs.started, inputs.signed
+    fams: dict[str, Any] = {}
+    trials: dict[str, str] = {}
+    for f, ev in families.items():
+        nom = ev.nomination
+        for tid, payload in used_results(look.families[f]).items():
+            trials[tid] = hashlib.sha256(cj(payload)).hexdigest()
+        g9_v = g9(nom.v.z, signed.z_crit).result
+        g9_t12 = g9(nom.task12.z, signed.z_crit).result
+        fams[f] = {
+            "states": dict(look.families[f].states),
+            "A_f": nom.available,
+            "reason": nom.reason,
+            "cause": nom.cause,
+            "failing": dict(nom.failing),
+            "u_proc_results": [dict(r) for r in nom.u_proc_results],
+            "u_proc_present": nom.u_proc_present,
+            "nominee": nom.nominee,
+            "dsr": {
+                "V": _dsr(nom.v),
+                "task12": _dsr(nom.task12),
+                "decision": {
+                    "reason": nom.task12.reason,
+                    "nominee": nom.task12.nominee,
+                },
+                "differs": (nom.v.nominee, nom.v.reason, g9_v)
+                != (nom.task12.nominee, nom.task12.reason, g9_t12),
+            },
+            "gates": {
+                g: {"result": x.result, "reason": x.reason, "values": _plain(x.values)}
+                for g, x in sorted(ev.gates.items())
+            },
+            "outcome": ev.outcome,
+            "cpcv": None if ev.cpcv is None else _plain(ev.cpcv),
+        }
+    return {
+        "schema": EVALUATION_SCHEMA,
+        "cycle_id": decl.cycle_id,
+        "chain_log": dict(started.chain_log),
+        "signed": {
+            **dict(signed.rows),
+            "engine_commit": started.engine_commit,
+            "screen_object_sha256": started.screen_object_sha256,
+            "image_digest": started.image_digest,
+        },
+        "declaration_sha256": started.declaration_sha256,
+        "headers_sha256": inputs.headers.headers_sha256,
+        "capture_record_sha256": inputs.capture.record_sha256,
+        "capture_before_tip_window": inputs.capture.before_tip_window,
+        "eligibility": {
+            "w0": _time(inputs.w0),
+            "T": inputs.t_days,
+            "cycle_start": _time(inputs.headers.cycle_start),
+        },
+        "seeds": _plain(inputs.seeds),
+        "ledger": {
+            "anchor": {
+                "head_hash": decl.anchor_head_hash,
+                "entry_count": decl.anchor_entry_count,
+            },
+            "head_hash": look.ledger.head_hash,
+            "entry_count": len(look.ledger.entries),
+            "look_entry_hash": look.entry_hash,
+        },
+        "trials": trials,
+        "families": fams,
+    }
+
+
+def seal_families(
+    inputs: Inputs,
+    look: Look,
+    families: Mapping[str, FamilyEvaluation],
+    evaluation_record_sha256: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """§5.3, §10: `seal_family` for every declared family and the sealing
+    record; returns (sealing record, {family: prediction artifact}) for the
+    status (a) families."""
+    decl, started = inputs.decl, inputs.started
+    code = {
+        "lockbox_module_sha256": started.lockbox_module_sha256,
+        "confirmation_module_sha256": started.confirmation_module_sha256,
+        "engine_commit": started.engine_commit,
+        "screen_object_sha256": started.screen_object_sha256,
+    }
+    entries: dict[str, dict[str, Any]] = {}
+    artifacts: dict[str, dict[str, Any]] = {}
+    for f, ev in families.items():
+        tid = ev.nomination.nominee
+        record = next((e for e in decl.entries if e["trial_id"] == tid), None)
+        trial = next((t for t in decl.trials if t["trial_id"] == tid), None)
+        used = used_results(look.families[f]).get(tid) if tid else None
+        entries[f], artifact = seal_family(
+            family=f,
+            nomination=ev.nomination,
+            outcome=ev.outcome,
+            cycle_id=decl.cycle_id,
+            protocol_hash=started.protocol_hash,
+            seeds=inputs.seeds,
+            record=record,
+            trial=trial,
+            path=ev.path,
+            w0=inputs.w0,
+            window_hours=inputs.t_days * 24,
+            window=inputs.window_id,
+            d_sha256=None if used is None else used["d_sha256"],
+            evaluation_record_sha256=evaluation_record_sha256,
+            code=code,
+        )
+        if artifact is not None:
+            artifacts[f] = artifact
+    sealing = sealing_record(
+        decl.cycle_id,
+        evaluation_record_sha256,
+        inputs.seeds["beacon"]["round"],
+        entries,
+        list(decl.declared),
+    )
+    return sealing, artifacts
+
+
+class Persist(Protocol):
+    """§12: returns only after every exact byte string is durably written
+    (fsync) where nothing is released; raises otherwise."""
+
+    def __call__(
+        self, evaluation: bytes, sealing: bytes, artifacts: dict[str, bytes]
+    ) -> None: ...
+
+
+def evaluate_look(
+    started: Started,
+    sources: Mapping[str, Any],
+    read: Callable[[], Any],
+    persist: Persist,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """§1 entry point: steps 2-8 in a fresh process after `start`: `prepare`;
+    `open_look` (the look entry before any protected-data read);
+    `evaluate_families` (the read, nomination, gates); the evaluation
+    record; sealing; `persist(evaluation, sealing, artifacts)` with the
+    exact canonical bytes; only after `persist` returns, the closing entry
+    (under the look lock) as the last act. Returns (evaluation record,
+    sealing record, {family: prediction artifact}). Any abort after the look
+    entry leaves it without a closing entry (§4, §11)."""
+    inputs = prepare(started, sources)
+    look = open_look(inputs, sources)
+    families = evaluate_families(inputs, look, read)
+    evaluation = evaluation_record(inputs, look, families)
+    evaluation_bytes = cj(evaluation)
+    evaluation_sha256 = hashlib.sha256(evaluation_bytes).hexdigest()
+    sealing, artifacts = seal_families(inputs, look, families, evaluation_sha256)
+    sealing_bytes = cj(sealing)
+    persist(evaluation_bytes, sealing_bytes, {f: cj(a) for f, a in artifacts.items()})
+    closing = closing_entry(
+        inputs.decl.cycle_id,
+        evaluation_sha256,
+        hashlib.sha256(sealing_bytes).hexdigest(),
+    )
+    path = sources["ledger_path"]
+    with look_lock(path):
+        append_entry(path, record_type=CLOSING_ENTRY, payload=closing)
+    return evaluation, sealing, artifacts
+
+
+class Store(Protocol):
+    """The obligations of the one store build serving this module and the
+    lockbox (DESIGN_SLICE6B rev 16 §12), to be tested in that build; the
+    module cannot check them itself.
+
+    - Ledger (§2 A-1, §4): every caller for a cycle uses the same ledger
+      path on one host; the ledger is never replaced or forked after the
+      declared anchor.
+    - Runner (§3): the runner writes `start_attempt`, and an outcome only for
+      an attempt with no result entry (crash codes); never a `completed`
+      outcome for an attempt with a result entry. It takes the cycle's look
+      lock around every start and outcome write (look lock, then append
+      lock) and makes that write's eligibility checks (no look, closing or
+      termination entry; attempt state) inside the same locked operation. It
+      launches one `evaluate_trial` process per `attempt_id`; a process that
+      ends without a result entry gets its crash outcome before anything else
+      is started for that trial.
+    - Termination (§4, §5.1): the store appends a termination entry
+      `{cycle_id, kind, reason}` on human action (invalidation under SPEC §5,
+      pre-pick termination) and `LOOK_WITHOUT_RECORD` for a look entry with
+      no closing entry.
+    - Release (§12, R14D6B9-F-2, R14D6B12-F-1): a stored evaluation or
+      sealing record is released to anything, the lockbox `begin_read`
+      included, only when the ledger holds this cycle's closing entry whose
+      two hashes equal the stored bytes' hashes and no termination entry for
+      the cycle; a prediction artifact only under the same condition and only
+      if its bytes hash to the sealing record's `prediction_artifact_sha256`.
+      The nominee's inventory `aqt.c2.artifacts.v1` (trial, signal, overlay,
+      from the hash-checked `trial_objects` and `code_files`) is served with
+      the prediction, under the same condition (R14D6B13-A-1).
+    - Capture (§2.1): the capture record is genuine and the earliest
+      qualifying capture; its archive payload bytes are kept.
+    - Declaration builder (§1, §8): before posting, the declaration meets
+      `parse_declaration`'s rules and every (K_f, T) has frozen thresholds;
+      a posted declaration that breaks one spends the cycle.
+    - Read gate (§6): only the cycle's composite manifest and whole BTC and
+      ETH exploration and confirmation partitions are served, to this
+      module's processes.
+    """
+
+    def persist(
+        self, evaluation: bytes, sealing: bytes, artifacts: dict[str, bytes]
+    ) -> None:
+        """§12: return only after every exact byte string is durably written
+        (fsync) where nothing is released before the closing condition;
+        raise otherwise."""
+        ...
