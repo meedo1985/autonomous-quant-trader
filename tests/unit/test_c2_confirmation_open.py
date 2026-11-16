@@ -207,14 +207,16 @@ def test_a_second_look_waits_at_the_lock_then_refuses(
         reads.append(1)
         return real_read(path)
 
-    def bounds(report: Any, t_days: int, k: int) -> Any:
+    real_allowed = cf.look_allowed
+
+    def allowed(*a: Any) -> Any:  # inside the look lock (bounds are outside)
         if not inside.is_set():
             inside.set()
             assert release.wait(timeout=10)
-        return BOUNDS
+        return real_allowed(*a)
 
     monkeypatch.setattr(cf, "read_entries", counting_read)
-    monkeypatch.setattr(cf, "classifier_bounds", bounds)
+    monkeypatch.setattr(cf, "look_allowed", allowed)
     outcome: list[str] = []
 
     def look() -> None:

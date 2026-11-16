@@ -132,9 +132,14 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         seen["seeds"] = kw
         return {"families": {}}
 
+    def qualification_checks(*a: Any) -> Any:
+        seen["qualification"] = a
+        return {}, {}
+
     monkeypatch.setattr(cf, "headers_check", headers_check)
     monkeypatch.setattr(cf, "check_capture_record", capture)
     monkeypatch.setattr(cf, "derive_seeds", derive_seeds)
+    monkeypatch.setattr(cf, "qualification_checks", qualification_checks)
     return seen
 
 
@@ -299,3 +304,49 @@ def test_evaluate_trial_with_a_refused_prepare_never_reads(
     with pytest.raises(cf.CycleError, match="does not hash"):
         cf.evaluate_trial(w.started(), src, "tr1", "attempt-a0", read)
     assert not (tmp_path / "l").exists()
+
+
+def test_the_qualification_checks_run_in_prepare_before_the_code_and_seeds(
+    calls: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R14B6F-F-2: a signed z_crit that is not the object's refuses both entry
+    points before any read, not only the look."""
+    w = World()
+    cf.prepare(w.started(), w.sources())
+    obj, protocol, signed, t_days, declared = calls["qualification"]
+    assert obj == Path("unused") and protocol == w.started().protocol
+    assert signed == cf.signed_c2(protocol) and set(declared) == {"trend", "vol"}
+
+    def refuse(*a: Any) -> None:
+        raise cf.CycleError("the signed z_crit is not the qualification object's")
+
+    monkeypatch.setattr(cf, "qualification_checks", refuse)
+    monkeypatch.setattr(cf, "install_code", lambda *a: pytest.fail("code installed"))
+    calls.clear()
+
+    def read() -> None:
+        raise AssertionError("protected data was read")
+
+    src = w.sources(ledger_path=tmp_path / "l")
+    with pytest.raises(cf.CycleError, match="z_crit"):
+        cf.evaluate_trial(w.started(), src, "tr1", "attempt-a0", read)
+    assert "seeds" not in calls and not (tmp_path / "l").exists()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"engine_commit": "6" * 7}, {"engine_commit": "G" * 40}, {"image_digest": ""},
+     {"confirmation_module_sha256": "5" * 63}],
+)  # fmt: skip
+def test_non_canonical_identity_fields_refuse_before_any_read(
+    calls: dict[str, Any], change: dict[str, str]
+) -> None:
+    """R14B6F-F-3: what the result entry would refuse after the read is
+    refused in prepare."""
+    import dataclasses
+
+    w = World()
+    started = dataclasses.replace(w.started(), **change)
+    with pytest.raises(cf.CycleError, match="identity fields are not canonical"):
+        cf.prepare(started, w.sources())
+    assert "seeds" not in calls

@@ -554,3 +554,13 @@ def test_parse_declaration_own_trial_id_mismatch_with_matching_hash() -> None:
     bad, _ = _decl(trials=[e[0], e[1], moved])
     with pytest.raises(c.CycleError, match="names another trial"):
         c.parse_declaration(bad, {**objs, "tr2": other})
+
+
+def test_capture_payload_longer_than_the_cap_is_refused_before_decoding() -> None:
+    """R14B6F-F-7: no gzip.decompress on unbounded caller bytes."""
+
+    big = b"\0" * (c.CAPTURE_PAYLOAD_MAX + 1)
+    digest = base64.b32encode(hashlib.sha1(big).digest()).decode()
+    record = _capture(payload=base64.b64encode(big).decode(), digest=digest)
+    with pytest.raises(c.CycleError, match="longer than"):
+        c.check_capture_record(record, _tip(), ACC)

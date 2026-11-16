@@ -10,6 +10,7 @@ import sys
 import threading
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -371,3 +372,28 @@ def test_a_dead_holder_releases_the_look_lock(tmp_path: Path) -> None:
         waiter.join(5)
     finally:
         proc.kill()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{"attempt_id": ["x"], "family": "trend", "partition": "confirmation"},
+     {k: v for k, v in {"attempt_id": "attempt-x", "family": "trend",
+      "partition": "confirmation", "hypothesis_hash": P, "protocol_hash": P,
+      "trial_index": 0, "symbols": ["BTCUSDT"]}.items()}],  # no `cycle`
+)  # fmt: skip
+def test_a_malformed_start_is_a_cycle_error(
+    tmp_path: Path, payload: dict[str, Any]
+) -> None:
+    """R14B6F-F-4: not a KeyError or TypeError."""
+    led = Led(tmp_path)
+    led.add(attempts.ATTEMPT_STARTED_RECORD_TYPE, payload)
+    with pytest.raises(cf.CycleError, match="start entry is malformed"):
+        led.cycle()
+
+
+def test_an_outcome_or_result_with_an_unhashable_attempt_id_is_not_ours() -> None:
+    """R14B6F-F-4: `of_cycle` never raises on a malformed attempt_id."""
+    ours = frozenset({"attempt-a"})
+    for rt in (attempts.ATTEMPT_OUTCOME_RECORD_TYPE, cf.RESULT_ENTRY):
+        e = SimpleNamespace(record_type=rt, payload={"attempt_id": ["attempt-a"]})
+        assert cf.of_cycle(e, "c1", ours) is False

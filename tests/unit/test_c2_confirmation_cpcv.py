@@ -368,7 +368,14 @@ def c14_violations(tree: ast.AST, module: str) -> list[str]:
     """B5BC-A-3: every use of the C-14 report other than producing it
     (`c14 = cpcv_report(...)` in `evaluate_families`), storing it (the
     `FamilyEvaluation` field and constructor argument) and serialising it in
-    `evaluation_record` (`ev.cpcv is None`, `_plain(ev.cpcv)`)."""
+    `evaluation_record` (`ev.cpcv is None`, `_plain(ev.cpcv)`).
+
+    R14B6F-F-5, limits: the guard is by name. It does not see a read by
+    string key of the serialised record, `getattr(ev, "cpcv")`,
+    `dataclasses.asdict(ev)`, a function handed the whole
+    `FamilyEvaluation`, or `ev.cpcv is None` used in another field. The
+    behavioural test in `test_c2_confirmation_look_records.py` covers what
+    the look actually does with the report."""
     parents = {c: n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
 
     def scope(node: ast.AST) -> str | None:
@@ -392,7 +399,8 @@ def c14_violations(tree: ast.AST, module: str) -> list[str]:
              and isinstance(parents.get(par), ast.Assign))
             or (name == "c14" and where == "evaluate_families" and (
                 (isinstance(par, ast.Assign) and par.targets == [node]
-                 and _call_name(par.value) == "cpcv_report")
+                 and (_call_name(par.value) == "cpcv_report"
+                      or isinstance(par.value, ast.Dict)))  # R14B6F-F-6 fallback
                 or (_call_name(par) == "FamilyEvaluation"
                     and node in getattr(par, "args", []))))
             or (name == "cpcv" and where == "FamilyEvaluation"

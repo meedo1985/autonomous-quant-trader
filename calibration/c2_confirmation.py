@@ -759,7 +759,10 @@ def family_attempts(
     Outcomes are matched to starts of this cycle only; an outcome whose
     attempt never started anywhere in the ledger is a CycleError (as
     `finish_attempt` cannot write one)."""
-    attempts.attempt_counts(entries, family=family, cycle=cycle)
+    try:
+        attempts.attempt_counts(entries, family=family, cycle=cycle)
+    except (attempts.AttemptError, TypeError, AttributeError) as err:  # R14B6F-F-4
+        raise CycleError(f"the attempt records are malformed: {err}") from None
     every = attempts.started_attempt_ids(entries)
     seen: set[str] = set()
     outcomes: dict[str, list[tuple[int, dict[str, Any]]]] = {}
@@ -2960,6 +2963,18 @@ def trial_result(
     return rec
 
 
+def _code_identity_ok(r: Mapping[str, Any]) -> bool:
+    """The form of the identity fields that come from `start` and the
+    declaration (not the seeds): 64-hex hashes, 40-hex `engine_commit`,
+    non-empty `image_digest`."""
+    return (
+        all(_hex(r[k], 64) for k in (
+            "data_manifest_sha256", "protocol_hash", "confirmation_module_sha256"))
+        and _hex(r["engine_commit"], 40)
+        and isinstance(r["image_digest"], str) and bool(r["image_digest"])
+    )  # fmt: skip
+
+
 def completed_entry(
     result: dict[str, Any], window: tuple[datetime, int]
 ) -> tuple[str, list[datetime], list[float], str | None]:
@@ -2986,10 +3001,7 @@ def completed_entry(
         type(result["trial_index"]) is int
         and _hex(result["seed_l266"], 64)
         and type(seed) is int and 0 <= seed < 2**31
-        and all(_hex(result[k], 64) for k in (
-            "data_manifest_sha256", "protocol_hash", "confirmation_module_sha256"))
-        and _hex(result["engine_commit"], 40)
-        and isinstance(result["image_digest"], str) and result["image_digest"]
+        and _code_identity_ok(result)
     ):  # fmt: skip
         raise CycleError("the pre-look identity fields are not canonical")
     raw_days = result["days"]
@@ -3103,6 +3115,11 @@ class Capture:
     before_tip_window: bool  # diagnostic only; refuses nothing, feeds nothing
 
 
+# The body is a 64-character hash; gzip adds ~20-40 bytes. Generous, and it
+# bounds `gzip.decompress` (at most ~1000x) on caller bytes
+CAPTURE_PAYLOAD_MAX = 1024
+
+
 def check_capture_record(record: bytes, headers: Headers,
                          acceptance_sha256: str) -> Capture:  # fmt: skip
     """O-6a SPEC §5 capture, offline: a qualifying URL for h+5, status 200, the
@@ -3136,6 +3153,8 @@ def check_capture_record(record: bytes, headers: Headers,
         raise CycleError("capture payload is not base64") from None
     if base64.b64encode(payload).decode() != r["payload"]:
         raise CycleError("capture payload is not canonical base64")
+    if len(payload) > CAPTURE_PAYLOAD_MAX:  # R14B6F-F-7: bound before decompressing
+        raise CycleError("capture payload is longer than a block hash response")
     if base64.b32encode(hashlib.sha1(payload).digest()).decode() != r["digest"]:
         raise CycleError("capture payload does not hash to the CDX digest")
     encoding = r["content_encoding"]
@@ -3206,6 +3225,30 @@ def classifier_bounds(report: dict[str, Any], t_days: int,
         return reduce.for_k(pool, k)  # type: ignore[arg-type]
     except (ValueError, KeyError, TypeError, AttributeError) as e:
         raise CycleError(f"classifier thresholds: {type(e).__name__}: {e}") from e
+
+
+Bounds = tuple[dict[str, float], dict[str, float]]  # (upper, lower), §8
+
+
+def qualification_checks(
+    obj: Path, protocol: bytes, signed: Signed, t_days: int,
+    declared: Mapping[str, Sequence[Any]],
+) -> tuple[dict[str, Any], dict[str, Bounds]]:  # fmt: skip
+    """§7, §8, read-free: the qualification report re-read from `obj`, its
+    `z_crit` and `family_block_rule` equal to the signed rows as strings, and
+    the classifier bounds of every declared family's (K_f, T). Run by
+    `prepare` (R14B6F-F-2: both entry points refuse before any read) and
+    again by `open_look`. Returns (report, {family: bounds})."""
+    report = qualification_report(obj, protocol)
+    if report.get("z_crit") != signed.z_crit:
+        raise CycleError("the signed z_crit is not the qualification object's")
+    if report.get("family_block_rule") != signed.family_block_rule:
+        raise CycleError(
+            "the signed family_block_rule is not the qualification object's"
+        )
+    bounds = {f: classifier_bounds(report, t_days, len(trials))
+              for f, trials in declared.items()}  # fmt: skip
+    return report, bounds
 
 
 # [DESIGN layout, to be bound in the S4 text] (§1). `protocol_hash` is not in
@@ -3486,21 +3529,35 @@ class CycleLedger:
         return self.entries[-1].entry_hash if self.entries else GENESIS_HASH
 
 
+def _starts(entries: Sequence[Any]) -> list[dict[str, Any]]:
+    """Every start payload, validated as `attempt_counts` does (R14B6F-F-4: a
+    malformed start is a CycleError, not a KeyError or TypeError)."""
+    try:
+        return [attempts._validated_attempt(p)
+                for p in attempts.recorded_attempts(entries)]  # fmt: skip
+    except (attempts.AttemptError, TypeError, AttributeError) as e:
+        raise CycleError(f"a start entry is malformed: {e}") from None
+
+
 def of_cycle(entry: Any, cycle: str, ours: frozenset[str]) -> bool:
     """An entry belongs to the cycle: a start naming it, an outcome of one of
     its starts (`ours`; an outcome has no cycle field, FINAL-F-6), a result
     entry naming it or naming one of its attempts (whatever cycle it claims,
     as `family_ledger` refuses it), or a look, closing or termination entry
     naming it."""
+    p = entry.payload
+    if not isinstance(p, Mapping):  # R14B6F-F-4: the reader refuses it, not here
+        return False
     if entry.record_type == attempts.ATTEMPT_STARTED_RECORD_TYPE:
-        return bool(entry.payload.get("cycle") == cycle)
+        return bool(p.get("cycle") == cycle)
+    aid = p.get("attempt_id")
+    mine = isinstance(aid, str) and aid in ours
     if entry.record_type == attempts.ATTEMPT_OUTCOME_RECORD_TYPE:
-        return entry.payload.get("attempt_id") in ours
+        return mine
     if entry.record_type == RESULT_ENTRY:  # B5A-A-1: also one naming our attempt
-        p = entry.payload
-        return bool(p.get("cycle_id") == cycle or p.get("attempt_id") in ours)
+        return bool(p.get("cycle_id") == cycle or mine)
     if entry.record_type in _CYCLE_ENTRY_KEYS:
-        return bool(entry.payload.get("cycle_id") == cycle)
+        return bool(p.get("cycle_id") == cycle)
     return False
 
 
@@ -3543,7 +3600,7 @@ def cycle_ledger(entries: Sequence[Any], decl: Declaration,
     head = entries[count - 1].entry_hash if count else GENESIS_HASH
     if head != decl.anchor_head_hash:
         raise CycleError("the ledger does not extend the declared anchor")
-    starts = [p for p in attempts.recorded_attempts(entries) if p["cycle"] == cycle]
+    starts = [p for p in _starts(entries) if p["cycle"] == cycle]
     if any(p["protocol_hash"] != protocol_hash for p in starts):
         raise CycleError("a start of this cycle carries another protocol hash")
     ours = frozenset(p["attempt_id"] for p in starts)
@@ -3929,7 +3986,8 @@ def prepare(started: Started, sources: Mapping[str, Any]) -> Inputs:
     protected-data read: `sources` has exactly SOURCE_KEYS; `headers_check`;
     the signed rows (§7); `parse_declaration`, `check_eligibility`,
     `check_declaration`, `check_screen_record` (against the signed
-    `qualification_object_sha256`); the code install and load of every
+    `qualification_object_sha256`); `qualification_checks` and the form of
+    the code-identity fields (R14B6F-F-2, F-3); the code install and load of every
     declared trial; the capture record (§2.1); `derive_seeds`. Any failure is
     a CycleError (SeedError for the seeds); nothing is read or written."""
     if not isinstance(sources, Mapping) or set(sources) != SOURCE_KEYS:
@@ -3954,6 +4012,12 @@ def prepare(started: Started, sources: Mapping[str, Any]) -> Inputs:
         raise CycleError(str(e)) from None
     check_screen_record(sources["screen_record"], decl.screen_record_sha256,
                         decl.trials, object_sha256)  # fmt: skip
+    qualification_checks(sources["object_dir"], started.protocol, signed, t_days,
+                         decl.declared)  # fmt: skip
+    if not _code_identity_ok(
+        {**vars(started), "data_manifest_sha256": decl.data_manifest_sha256}
+    ):
+        raise CycleError("the identity fields are not canonical")  # R14B6F-F-3
     code_dir = install_code(decl.trials, sources["code_files"])
     capture = check_capture_record(
         sources["capture_record"], headers, acceptance_sha256
@@ -4093,25 +4157,21 @@ class Look:
 
 
 def open_look(inputs: Inputs, sources: Mapping[str, Any]) -> Look:
-    """§2 steps 4-7 of `evaluate_look`, after `prepare`: the qualification
-    report re-read from `object_dir`, whose `z_crit` and `family_block_rule`
-    must equal the signed rows as strings (§7); then under the look lock: the
+    """§2 steps 4-7 of `evaluate_look`, after `prepare`: `qualification_checks`
+    again (the report re-read from `object_dir`, `z_crit` and
+    `family_block_rule` equal to the signed rows, the classifier bounds of
+    each family's (K_f, T)); then under the look lock: the
     ledger read, `cycle_ledger`, `family_ledger` for every declared family,
-    one clock read truncated to whole seconds, `look_allowed` (§13), the
-    classifier bounds for each family's (K_f, T) (§8), and the look entry
+    one clock read truncated to whole seconds, `look_allowed` (§13), and the look entry
     appended with `recorded_at_utc` = that clock. After the lock is released
     the ledger is read again: an entry of this cycle between the step-4 head
     and the look entry stops the look (§4 intervening entries); the look
     entry then stands without a closing entry. Every refusal before the
     append writes nothing."""
-    decl, started, signed = inputs.decl, inputs.started, inputs.signed
-    report = qualification_report(sources["object_dir"], started.protocol)
-    if report.get("z_crit") != signed.z_crit:
-        raise CycleError("the signed z_crit is not the qualification object's")
-    if report.get("family_block_rule") != signed.family_block_rule:
-        raise CycleError(
-            "the signed family_block_rule is not the qualification object's"
-        )
+    decl, started = inputs.decl, inputs.started
+    report, bounds = qualification_checks(sources["object_dir"], started.protocol,
+                                          inputs.signed, inputs.t_days,
+                                          decl.declared)  # fmt: skip
     path = sources["ledger_path"]
     with look_lock(path):
         entries = read_entries(path)
@@ -4133,10 +4193,6 @@ def open_look(inputs: Inputs, sources: Mapping[str, Any]) -> Look:
             raise CycleError(
                 "the look is not allowed yet: a trial is unfinished before day 180"
             )
-        bounds = {
-            f: classifier_bounds(report, inputs.t_days, len(trials))
-            for f, trials in decl.declared.items()
-        }
         payload = look_entry(decl.cycle_id, list(decl.declared), cycle.head_hash, now,
                              started.confirmation_module_sha256)  # fmt: skip
         entry = append_entry(path, record_type=LOOK_ENTRY, payload=payload,
@@ -4147,7 +4203,7 @@ def open_look(inputs: Inputs, sources: Mapping[str, Any]) -> Look:
     )
     if pos is None or cycle_ledger(after, decl, started.protocol_hash).look != pos:
         raise CycleError("the look entry is not the cycle's one look in the ledger")
-    ours = frozenset(p["attempt_id"] for p in attempts.recorded_attempts(after)
+    ours = frozenset(p["attempt_id"] for p in _starts(after)
                      if p["cycle"] == decl.cycle_id)  # fmt: skip
     if any(of_cycle(e, decl.cycle_id, ours) for e in after[len(entries) : pos]):
         raise CycleError(
@@ -4271,8 +4327,12 @@ def evaluate_families(
         if benchmark is None:
             fgates["G-13"] = _unavailable("BENCHMARK_SPEC_MISSING")
         gates_ = {**gates_, **fgates}
-        c14 = cpcv_report(trial, path, inputs.w0, hours, tseeds["estimator_seed"],
-                           gates_["G-12"])  # fmt: skip
+        try:  # R14B6F-F-6: a diagnostic nothing may read (§9) never aborts the look
+            c14 = cpcv_report(trial, path, inputs.w0, hours,
+                              tseeds["estimator_seed"], gates_["G-12"])  # fmt: skip
+        except Exception as e:
+            c14 = {"role": CPCV_ROLE, "status": UNAVAILABLE,
+                   "reason": f"C14_ERROR:{type(e).__name__}"}  # fmt: skip
         out[f] = FamilyEvaluation(nom, gates_, nominee_outcome(gates_), path, c14,
                                   completed)  # fmt: skip
     return out
@@ -4532,6 +4592,11 @@ class Store(Protocol):
     - Read gate (§6): only the cycle's composite manifest and whole BTC and
       ETH exploration and confirmation partitions are served, to this
       module's processes.
+    - Launch route (§1, R14B6F-F-8): each `evaluate_trial` or `evaluate_look`
+      process calls `start` itself and passes that call's own `Started` to
+      the entry point; a `Started` is never built by hand, kept from another
+      process or reused for other bytes. The module cannot tell a `Started`
+      that came from `start` from one that did not.
     """
 
     def persist(

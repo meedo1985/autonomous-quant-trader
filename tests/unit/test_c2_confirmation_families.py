@@ -262,3 +262,20 @@ def test_each_nominee_is_cut_with_its_own_warm_up(
     cf.evaluate_families(dataclasses.replace(inp, decl=decl), w.look(), w.read)
     starts = sorted(kw["start"] for _, kw in w.calls["check_read"])
     assert starts == [tt.W0 - 30 * cf.HOUR, tt.W0 - 10 * cf.HOUR] and w.reads == 1
+
+
+def test_an_error_in_the_diagnostic_does_not_abort_the_look(
+    w: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R14B6F-F-6: C-14 is diagnostic only (§9); its failure is recorded."""
+    w.finish_all()
+
+    def boom(*a: Any) -> None:
+        raise KeyError("ess")
+
+    monkeypatch.setattr(cf, "cpcv_report", boom)
+    got = w.evaluate()
+    for f in ("trend", "vol"):
+        assert got[f].cpcv == {"role": cf.CPCV_ROLE, "status": cf.UNAVAILABLE,
+                               "reason": "C14_ERROR:KeyError"}  # fmt: skip
+        assert got[f].outcome == "PROCEEDS_TO_LOCKBOX"  # gates untouched
