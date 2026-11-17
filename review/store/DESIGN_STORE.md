@@ -1,7 +1,9 @@
-# Store build design, rev 1: the one store serving the confirmation and lockbox modules
+# Store build design, rev 2: the one store serving the confirmation and lockbox modules
 
 - Author: Claude Opus 5.5 (`claude-opus-5-5`), 2026-11-17, branch `store-design` from
-  `main` `92e6f52` (PR #84 merged). Not reviewed yet.
+  `main` `92e6f52` (PR #84 merged). History: rev 1 `1633831` (Astra FIX ST1-A-1..5,
+  record `644558a`, adjudication `ADJUDICATION_DESIGN_STORE_REV1.md`); rev 2 repairs all
+  five (A-2 with a stated limit).
 - Owner instruction (2026-11-17, chat dialog): next task "Store build design".
 - Nothing here is decided by writing it. **[OWNER]** marks owner or S4 decisions;
   **[DESIGN]** marks choices this design proposes for review.
@@ -51,6 +53,28 @@ under the look lock (6b), while §D-3.7 says only the store writes the index, th
 never does, and every index reader goes through a store operation under `L_store`. One
 file would put module writers under `L_store` or the index under the look lock, against
 one of the two texts.
+
+### 1.1 Reading the cycle ledger before use (ST1-A-1)
+
+The store uses cycle-ledger facts (the closing entry and its hashes, termination entries,
+the look entry, starts and outcomes) only under this order, inside the operation that uses
+them:
+
+1. take `L_store` (if the operation is an `L_store` operation), then the cycle's **look
+   lock**; every cycle-ledger writer (module processes and the runner) appends only while
+   holding the look lock (6b §4, FINAL-F-4), so no append is in progress;
+2. read and verify the cycle ledger (`scan_bytes`, and the ledger-identity check of §4.1);
+3. fsync the cycle-ledger file and its directory (this makes durable any complete line a
+   crashed writer left un-fsynced, as §D-3.7's durable-before-use does for the index);
+4. only then decide, answer, append to the index or serve.
+
+**Lock order** **[DESIGN] D-7**: `L_store`, then the look lock, then the ledger's append
+lock. Module processes and the runner never take `L_store`, so no holder of the look lock
+ever waits for `L_store`; there is no cycle. Tests: a writer stalled between write and
+fsync of a closing entry (the store waits on the look lock and then sees it durable); a
+crashed writer leaving a complete un-fsynced closing line (the store's fsync makes it
+durable before admission; under M before that fsync, the line may be lost and the store has
+not used it).
 
 ## 2. Placement and reuse
 
@@ -106,27 +130,45 @@ one of the two texts.
 - **Durable before use**: a helper every `L_store` operation calls after its lookups and
   before any answer, append, create, bar or permit: fsync the index, the index directory
   and the sealed directory. An fsync error is a §26 stop.
-- **§26 stop** **[DESIGN] D-5**: a persisted stop marker (sealed create of
-  `stop.<n>.json` with the cause, which the reader projection never shows). While a marker
-  exists without a later human clearance record, every operation answers `STOPPED`
-  (§D-2.8) and serves nothing. Who clears it and through which view is **[OWNER]/S4**
-  (the reconciler, §D-2.3; §D-3.9).
+- **§26 stop** **[DESIGN] D-5** (ST1-A-2): on a stop condition the store (1) sets an
+  in-process stop at once, so this process serves nothing more; (2) tries to persist a stop
+  marker (sealed create of `stop.<n>.json` with the cause; the reader projection never
+  shows it); (3) exits with a fixed exit code (`EXIT_STOP = 26`) whether or not (2)
+  succeeded. On start, a marker without a later human clearance record makes every
+  operation answer `STOPPED` (§D-2.8). The supervisor must not restart the store after exit
+  26 (**deployment obligation**, e.g. systemd `RestartPreventExitStatus=26`; checked in the
+  access-tooling build). **Limit, stated:** if the marker cannot be persisted and the
+  machine then crashes and reboots, the stop is lost; the durable state is then one of the
+  crash-row outcomes (rows 2 and 4: a line survived whole, was lost, or is partial, which
+  is itself a stop), all of which Annex D already defines. Nothing can block across a lost
+  marker and a reboot; the residual is disclosed with R3. Tests: a fault injected at each
+  step of the marker's persistence (temp write, fsync, link, directory fsync): no further
+  operation served in that process, exit 26; restart with the marker: `STOPPED` for bars,
+  releases, permits and every other operation until clearance; restart without the marker
+  under M: the state is one of rows 2/4. Who clears a stop and through which view is
+  **[OWNER]/S4** (the reconciler, §D-2.3; §D-3.9).
 
 ## 4. Operations
 
 Each row: caller role, lock, the Annex D or module text it implements, slice (§6).
 
-### 4.1 Confirmation side (6b `Store` obligations; DESIGN_SLICE6B §12)
+### 4.1 Confirmation side (6b `Store` obligations; DESIGN_SLICE6B §12) (ST1-A-3)
 
-| Operation | Caller | What | Slice |
-|---|---|---|---|
-| `start_attempt` / `finish_attempt` (runner) | runner (store) | under the look lock, then the append lock: refuse after a look, closing or termination entry; one `evaluate_trial` process per `attempt_id`; a process that ends with no result entry gets its crash outcome before anything else starts for that trial; never a `completed` outcome for an attempt with a result entry | S2 |
-| launch route | runner | each module process calls `start` itself and passes its own `Started` (R14B6F-F-8); the runner never builds or reuses one | S2 |
-| `persist(evaluation, sealing, artifacts)` | `evaluate_look` | sealed create of the exact bytes; returns only after every directory fsync; raises otherwise | S2 |
-| `append_termination(cycle, kind, reason)` | owner action / store | `{cycle_id, kind, reason}` on human action (SPEC §5 invalidation, pre-pick termination), and `LOOK_WITHOUT_RECORD` for a look entry with no closing entry **[OWNER]** (B-3 reading open) | S2 |
-| release of C2 records | lockbox `begin_read`, reader | evaluation and sealing records only when the cycle ledger holds this cycle's closing entry whose two hashes equal the stored bytes' and no termination entry; a prediction artifact under the same condition and only if it hashes to the sealing record's `prediction_artifact_sha256`; the nominee inventory `aqt.c2.artifacts.v1` (trial, signal, overlay) served with it under the same condition | S2 |
-| confirmation read gate | `evaluate_trial`, `evaluate_look` | only the cycle's composite manifest and whole BTC and ETH exploration and confirmation partitions, to module processes | S2 |
-| capture record | store | the earliest qualifying capture record and its archive payload bytes, kept sealed (6b §2.1; B1-D-1) | S2 |
+Every obligation of the `c2_confirmation.Store` docstring and 6b §12, with its operation or
+owning build, and its test (slice S2 unless stated).
+
+| Obligation (source) | Operation or owner | Test |
+|---|---|---|
+| Ledger identity: one ledger path per cycle on one host; never replaced or forked after the declared anchor (Store "Ledger") | the store configuration holds the cycle's ledger path and the declaration's anchor `(head_hash, entry_count)`; every cycle-ledger read (§1.1) checks the anchor at `entry_count` and that every entry the store saw before is still there unchanged (it records `(count, head_hash)` of its last read); anything else is a §26 stop | a replaced file, a truncated file, a different prefix, a second path for the same cycle: each a stop |
+| Runner: `start_attempt` and outcome writes under the look lock, then the append lock; eligibility checks (no look, closing, termination; attempt state) inside the same locked operation; never a `completed` outcome for an attempt with a result entry (Store "Runner") | `runner.start(trial_id)`, `runner.finish(attempt_id, crash_code)` | after a look, closing or termination: refused, nothing written; outcome on an attempt with a result entry: refused; two runners racing: one write |
+| One `evaluate_trial` process per `attempt_id`; a process that ends with no result entry gets its crash outcome before anything else starts for that trial (Store "Runner"; 6b §3 residual) | the runner's process table (attempt to process), launch and reap | second launch of one attempt refused; exit without a result: crash outcome written before the next start |
+| Launch route: each process calls `start` itself and passes its own `Started` (R14B6F-F-8) | the runner launches the module entry point as a fresh process with the C2 bytes; it never builds or passes a `Started` | the launch arguments contain no `Started`; a source check that `aqt.store` never imports `calibration` (D-2) |
+| `persist(evaluation, sealing, artifacts)`: durable before returning; raises otherwise (Store "persist", 6b §12) | sealed create of each exact byte string | a fault at each step raises and nothing is reported stored; byte-exact read-back |
+| Termination entries on human action (SPEC §5 invalidation, pre-pick termination) and `LOOK_WITHOUT_RECORD` (Store "Termination") | `append_termination` (owner command role) under the look lock; `LOOK_WITHOUT_RECORD` when a look entry has no closing entry **[OWNER]** B-3 | appended once; an unknown cycle refused; `LOOK_WITHOUT_RECORD` only with a look and no closing entry |
+| Release of evaluation and sealing records, prediction artifact and nominee inventory only under the closing condition (Store "Release", 6b §12) | `c2_records(cycle, family)`, used by `begin_read`'s entitlement and the reader, after §1.1 | 6b §12's four required tests |
+| Read gate: only the cycle's composite manifest and whole BTC and ETH exploration and confirmation partitions, to module processes (Store "Read gate") | `confirmation_read(cycle)` for the module role | another partition, another cycle, a non-module role: refused |
+| Capture: the record is kept with its payload bytes (Store "Capture") | sealed create at cycle setup | byte-exact read-back. **That it is genuine and the earliest capture is the external verifier's** (6b §2 residual); no synthetic test can show it |
+| Declaration builder: before posting, the declaration meets `parse_declaration`'s rules and every (K_f, T) has frozen thresholds (Store "Declaration builder") | **cycle-setup preflight tool** `scripts/c2_preflight.py` (not the store service; it may import `calibration`): runs `parse_declaration`, `check_eligibility`, `check_declaration`, `qualification_checks` on the candidate declaration and object, and `signed_c2` on the candidate signed C2 bytes (the F-11 pre-signing step) | each refusal reproduced; a valid candidate passes |
 
 ### 4.2 Lockbox read side (§D-3.7; `c2_lockbox.Store`)
 
@@ -151,6 +193,14 @@ Each row: caller role, lock, the Annex D or module text it implements, slice (§
 | `append_revision(kind, at)` | governance action **[OWNER]/S4** | S4 |
 | reader rows (projection, response codes, cycle report and pending-list data) | reader, owner command, publisher | S4 |
 | `verify_replay(evaluation_id, projection_bytes)` | replay | S4 |
+| `promotion_evidence(evaluation_id)`: under `L_store` after the fsyncs, the facts §D-2.7's guard needs (ATTESTATION delivery entry present, or VOID; `cooling_off_start` = the RESULT `delivered_at`; C; the store-clock reading) | promotion gate | S4 |
+
+**Promotion guard (ST1-A-4).** The guard itself (accept an owner decision at `t_dec` only
+if the certificate is effective, `cooling_off_start + 259,200 ≤ t_dec` and `t_dec ≤ C`) and
+TC-7 belong to the **promotion gate**, a separate §16 enumerated build, not the store.
+`guard_state` no longer exists (option C rev 5 item 6). The store's part is
+`promotion_evidence` and its tests: correct facts before and after an ATTESTATION entry, a
+VOID, and C. Where the decision is recorded is **[OWNER]/S4** (ST-O-8).
 
 ### 4.4 Identities (§D-3.6) **[DESIGN] D-6**
 
@@ -161,32 +211,46 @@ unmapped caller is refused and logged. The core takes the role as an argument, s
 role-by-operation refusal is tested without sockets; the transport is a thin layer tested
 on Linux in CI. Which accounts exist and on which host is **[OWNER]/S4**.
 
-## 5. Tests (synthetic data only)
+## 5. Tests (synthetic data only) (ST1-A-5)
 
-All of §D-3.8's list that falls on the store, each against `CrashFs` and a scripted clock:
-`begin_read` (the 13 listed cases), T-S1..T-S6 as replaced there, TC-1..TC-7 (store side,
-with publisher and signer doubles), crash rows 1-13 and C1-C15 under P and M including the
-interleaving test (and its run against the wrong order, which must fail), B1 roles,
-B4.2 bundles (PASS fixture 1,053 bytes, SHA-256 `d64d228b…ba520`), B4.4 replay; plus 6b
-§12's required release tests (no closing entry → refused; status (a) with the prediction
-missing or not matching → refused; after closure a full handoff passes the lockbox's
-`_check_items`, `_check_trial` and prediction checks; before closure refused). No test
-measures timing. The full row list (C12-C15 are in `_REV3`..`_REV5`) is tabulated in the
-S1 build notes before any code, each row mapped to a test name.
+The effective list is §D-3.8's (it replaces the cited proposals' lists). Each test runs
+against `CrashFs` and a scripted clock; no test measures timing.
+
+| Group | Effective content (source) | Slice |
+|---|---|---|
+| begin_read | the 13 cases of §D-3.8 (rev 3 l.253-257, rev 4 l.147-155, rev 6's cooldown boundary, rev 5's cap order) | S3 |
+| T-S1 (as replaced) | `begin_read` at `t1 = C − 1` accepted, at `C` refused with nothing written; the clock advanced past C at each point inside the append: the entry counts; an injected write, flush or fsync error: §26 stop, nothing served | S3 |
+| T-S1 cross-operation half | concurrent reader-row, `release` (at or after `R_0`), `sign_permit` and `begin_read` wait for the append and answer from the durable state (C5 item 2) | S4 |
+| T-S2 (as replaced) | `t_f = D* − 1` counts, `t_f = D*` refused, for `D* = R_0 − 43,200` and `D* = C`; a second `mark_finished` refused; `write_bundle` after `D*` accepted as bytes and never counts; the bar and `record_pre_read_check` start checks | S3 |
+| T-S2 release half | a concurrent `release` before `R_0` refused (`STOPPED`); at or after `R_0` it waits for the finish's hold and shows its result (OC rev 3 item 6) | S4 |
+| T-S4 | rev 8 rows 1-9, 11, 12 under P and M, plus the interleaving test and its run against the wrong order (which must fail) | S3 |
+| T-S6 (as replaced) | release entry and RESULT delivery file: one fixed shape for every FAIL cause; shared fields agree | S4 |
+| TC-1..TC-6 (store side) | TC-1 (store part), TC-2, TC-3 (store part), TC-4 with the OC rev 3 and rev 5 additions, TC-5, TC-6 as replaced (no pre-read entry gives `STOPPED`, a terminated-cycle ID is served; codes and precedence; injected exceptions give `STOPPED`); publisher and signer doubles | S4 |
+| TC-7 | the promotion gate's (§4.3); the store tests `promotion_evidence` | S4 (evidence only) |
+| Option C crash rows | C1-C11 (OC rev 2) and C12-C15 (OC rev 3: an effectiveness check before C made durable after C; an M crash after a whole un-fsynced ATTESTATION entry with recovery after C; `sign_permit` at or after C or after a revision; a revision before `R_0`) | S4 |
+| D-12 T-1..T-8 | only through option C's crosswalk (T-4 and T-7 deleted; the rest replaced by rows above) | — |
+| B1 roles | an unmapped account refused; each role refused each operation outside its row; the signer refuses without, or against, a store `sign_permit`; the compromise reconciliation's three cases (store-records side) | S5 (roles), S4 (permit) |
+| B4.2 bundles, B4.4 replay | byte-exact bundles per kind incl. the PASS fixture (1,053 bytes, `d64d228b…ba520`); replay MATCH and MISMATCH cases | S3 (bundles), S4 (replay) |
+| Confirmation side | §4.1's tests, incl. 6b §12's four release tests | S2 |
+| Two-ledger handoff, §26 stop | §1.1's two tests; D-5's fault-injection tests | S2 (handoff), S1 (stop) |
+
+Rev 8 T-S3 and T-S5 and rows 10 and 13 are not in §D-3.8's effective list and are not
+built; their content is covered by T-S2, TC-2 and the release half above.
 
 ## 6. Build slices
 
 | Slice | Content | Gate |
 |---|---|---|
-| S1 | `Fs`, `PosixFs`, `CrashFs`, clock, sealed create, `L_store`, durable-before-use, §26 stop marker, index writer (byte-identical to `append_entry`), `scan_bytes`, import contracts, the row-to-test table | Astra review |
-| S2 | confirmation side (4.1) and 6b §12's release tests | Astra review |
-| S3 | lockbox read side (4.2), `begin_read` tests, T-S1..T-S5, rows 1-9, 11, 12 | Astra review |
-| S4 | release side (4.3), T-S6, TC-1..TC-7, rows C1-C15 | Astra review |
-| S5 | identities and transport (4.4), B1 role tests | Astra review |
-| final | whole store: final review (owner sends to Fable), owner §16 PR review | owner |
+| S1 | `Fs`, `PosixFs`, `CrashFs`, clock, sealed create, `L_store`, durable-before-use, §26 stop (D-5) and its tests, the index writer (byte-identical to `append_entry`), `scan_bytes`, import contracts | Astra review |
+| S2 | confirmation side (§1.1, §4.1), the preflight tool, their tests | Astra review |
+| S3 | lockbox read side (§4.2) and the S3 rows of §5 | Astra review |
+| S4 | release side (§4.3), `promotion_evidence`, and the S4 rows of §5 | Astra review |
+| S5 | identities and transport (§4.4), B1 role tests | Astra review |
+| final | the whole store: final review (the owner sends it to Fable), owner §16 PR review | owner |
 
 Each slice ends with pytest, ruff, mypy, lint-imports and the task-gate review, and records
-its reviews per AGENTS.md.
+its reviews per AGENTS.md. S3 needs only S1 and S2's `c2_records`; cross-operation
+assertions wait for S4.
 
 ## 7. Owner and S4 items
 
@@ -196,9 +260,11 @@ its reviews per AGENTS.md.
 | ST-O-2 | The clock source and the R3 assumption (no backward step, no forward jump), §D-3.9. |
 | ST-O-3 | Who clears a §26 stop, through which view (the reconciler, §D-2.3 S4 gate). |
 | ST-O-4 | The governance action that appends revision and invalidation entries. |
-| ST-O-5 | Cycle setup: who computes C and writes the store configuration (C from the declaration post's archive time `A` and the look; the look is known only later, so C is written at the look) **[DESIGN reading, to confirm]**. |
+| ST-O-5 | C is bound once the look exists: `C = min(A + 255 d, recorded look + 75 d)`, written into the store configuration at the look and never changed; recovery reuses the recorded value (Astra agreed with this reading). The initial configuration (ledger path, anchor, manifest hash, uid map) is written at cycle setup. Who performs both writes: **[OWNER]/S4**. |
 | ST-O-6 | B-3 (6b, still open): the `LOOK_WITHOUT_RECORD` reading and how such a cycle counts. |
-| ST-O-7 | Accept D-1 (two ledgers) and D-3 (`scan_bytes` added to `aqt.core.ledger`). |
+| ST-O-7 | Accept D-1 (two ledgers, with §1.1's handoff), D-3 (`scan_bytes` added to `aqt.core.ledger`) and D-7 (lock order). |
+| ST-O-8 | The promotion gate build: where an owner promotion decision is recorded, and that it reads `promotion_evidence` (§4.3). |
+| ST-O-9 | D-5's deployment obligation (no automatic restart after exit 26) and the disclosed limit of a lost stop marker across a reboot. |
 
 ## 8. Not decided here
 
