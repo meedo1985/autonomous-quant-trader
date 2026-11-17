@@ -13,3 +13,13 @@
 - Recorded by Claude Opus 5.5 (`claude-opus-5-5`). These are the owner's decisions, not an
   AI approval. Still open: F-9 and F-10 (wording route), the pre-signing items, the S4/SPEC
   wording for each accepted item, and the owner's §16 approval and merge of PR #84 itself.
+
+## Owner §16 PR review of PR #84 (2026-11-17)
+
+Asked in Claude Code's question dialog what he checked before the merge, the owner chose
+the option worded: "I read DEVIATIONS_SLICE6B_REV16.md and the PR description, decided the
+4 items, and accept the AI reviews (Astra, Fable) for the code itself; I approve the
+merge." He then instructed "merge". CI at the PR head: `calibration-tests`, `checks`,
+`runbook-dry-run` pass; `calibration-launcher` inconclusive (AMD EPYC OpenBLAS segfault,
+same on `main` at `809cd45`). Recorded by Claude Opus 5.5 as the owner's human review, not
+an AI approval.
