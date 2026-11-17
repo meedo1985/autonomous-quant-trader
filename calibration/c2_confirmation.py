@@ -773,7 +773,9 @@ def family_attempts(
                 raise CycleError(f"attempt {aid} is started twice")
             seen.add(aid)
         elif e.record_type == attempts.ATTEMPT_OUTCOME_RECORD_TYPE:
-            aid = e.payload["attempt_id"]
+            aid = e.payload.get("attempt_id") if isinstance(e.payload, dict) else None
+            if not isinstance(aid, str):  # B6FR-A-2: refused, not a KeyError/TypeError
+                raise CycleError(f"outcome entry {i} has no attempt id")
             if aid not in every:
                 raise CycleError(f"outcome for attempt {aid} that never started")
             if aid not in seen:  # B2-A-2: it cannot take a slot before its start
@@ -3431,8 +3433,10 @@ def family_ledger(
         payload = e.payload
         if not isinstance(payload, dict):
             raise CycleError(f"result entry {i} is not a record")
+        if not isinstance(payload.get("attempt_id"), str):  # B6FR-A-2
+            raise CycleError(f"result entry {i} has no attempt id")
         if payload.get("cycle_id") != cycle:
-            if payload.get("attempt_id") in ours:  # B2-A-1: not dropped unseen
+            if payload["attempt_id"] in ours:  # B2-A-1: not dropped unseen
                 raise CycleError(f"result entry {i} names another cycle")
             continue  # another cycle's result
         completed_entry(payload, window)  # exact form, or CycleError

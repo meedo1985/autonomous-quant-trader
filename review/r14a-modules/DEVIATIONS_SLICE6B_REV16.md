@@ -18,7 +18,7 @@
 | B5B-D-1 | §7: `canonical_benchmark_sha256` feeds G-13 | G-13 compares it with the SHA-256 of `specs/CANONICAL_BENCHMARKS_v1.1.md` in the module's checkout; file absent gives G-13 UNAVAILABLE `BENCHMARK_SPEC_MISSING` | Rev 16 names no compared value | Owner accepted, `73bbc5f`. **The file is absent at this commit: every nominee is `NO_RESULT` until it lands through the Constitution process** |
 | B5BC-O-1 | §5: the U_ops reason list (B-5, A-7) | `BENCHMARK_SPEC_MISSING` added to `U_OPS_REASONS` | A missing engine file is infrastructure (P18-7) | Owner accepted, `24f0c95` |
 | B5BC-A-2 | §10 field list | Each family record also carries `breaches` (every breach) and `attempts` (the §3-rewritten history); each gate carries its `cause` | §3 rule 1: every breach listed, full attempt history kept; P18-7 cause per gate (B5BC-A-1) | Astra-required repair; **§10 wording for the owner** |
-| B6F-D-1 (F-2) | §2: `z_crit`/`family_block_rule` equality and classifier bounds checked at the look only | `qualification_checks` also runs in `prepare`, so both entry points refuse before any read | A mismatch would otherwise let every trial read the data and then refuse every look | **Owner decision at PR review** (stricter, reads nothing new, fails closed) |
+| B6F-D-1 (F-2) | §2: `z_crit`/`family_block_rule` equality and classifier bounds checked at the look only | `qualification_checks` also runs in `prepare`, so both entry points refuse before any read | A mismatch would otherwise let every trial read the data and then refuse every look. Also moved: `open_look` now computes the classifier bounds outside the look lock, before `look_allowed` (it takes them from `qualification_checks`); this supersedes reading B5A-R-2 (bounds under the lock after `look_allowed`). A missing `T=<T>` still refuses with nothing written (B6FR-A-3) | **Owner decision at PR review** (stricter, reads nothing new, fails closed) |
 | B6F-D-2 (F-6) | §9: C-14 is diagnostic; silent on its errors | An exception in `cpcv_report` is recorded as `{"role": "diagnostic_only", "status": "UNAVAILABLE", "reason": "C14_ERROR:<type>"}`; the look continues | Nothing may read C-14 (§9), so it must not abort the look | **Owner decision at PR review** (Fable's proposal) |
 | F-7 cap | §2.1: no size bound | `CAPTURE_PAYLOAD_MAX = 1024` bytes, checked before `gzip.decompress` | Bounds decompression of caller bytes | Fable's proposal, repaired; for the record |
 
@@ -28,6 +28,7 @@
 |---|---|
 | B5B-R-1 | `read` is called once at the look, and only when some family has a nominee. With no nominee the look makes no manifest check. |
 | B5C-R-5 | The closing entry is appended even after a termination entry; release still needs both a closing entry and no termination (§12). |
+| B5A-R-2 | Superseded by B6F-D-1: the bounds are now computed before the look lock. |
 | B4-A-1 consequence | `signed_c2` refuses a signed C2 in which any §7 row name occurs as a whole token on more than one line, comments included. |
 
 The other readings (B1..B5 notes, `-R-` ids) are in each build note and were checked by
@@ -56,4 +57,7 @@ the S4/SPEC/P18 wording items listed there.
 2. B6F-D-1 and B6F-D-2: accept or reject.
 3. F-9 and F-10: the wording route (may wait for the S4 text).
 4. The §16 review itself: the build has had different-model reviews (Astra per slice,
-   Fable final); the owner's PR review is the remaining merge condition.
+   Fable final, Astra short check of the Fable repairs `ASTRA_REVIEW_B6F_REPAIRS_2A02F45.md`).
+   The merge needs both: the repairs of that short check accepted (F-1's merge block is
+   lifted only then, `ADJUDICATION_FABLE_FINAL_6B_24F0C95.md`), and the owner's PR review
+   (B6FR-A-3).

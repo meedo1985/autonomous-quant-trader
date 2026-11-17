@@ -70,7 +70,6 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     cf.load_line266()
     monkeypatch.setattr(dsr, "_V_VERIFIED", True)
     monkeypatch.setattr(cf, "benchmark_spec_sha256", lambda root=None: BENCHMARK)
-    monkeypatch.setattr(cf, "_now", lambda: datetime(2026, 11, 17, 12, tzinfo=UTC))
     yield
     sys.path[:] = saved
 
@@ -123,6 +122,8 @@ class World:
     declaration, signed C2, the public header chain and a capture record."""
 
     def __init__(self, tmp: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.monkeypatch = monkeypatch
+
         def read_object(files: dict[str, bytes]) -> tuple[dict[str, Any], dict]:
             return json.loads(files["choices.json"]), {}
 
@@ -218,6 +219,10 @@ class World:
             )  # fmt: skip
             out[tid] = cf.evaluate_trial(self.started, self.sources(), tid, aid,
                                          self.read)  # fmt: skip
+        # B6FR-A-1: the look clock is fixed (F-5 needs one instant for both
+        # looks) and never before the ledger's last entry, whatever the date
+        look = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1)
+        self.monkeypatch.setattr(cf, "_now", lambda: look)
         return out
 
 

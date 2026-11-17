@@ -397,3 +397,25 @@ def test_an_outcome_or_result_with_an_unhashable_attempt_id_is_not_ours() -> Non
     for rt in (attempts.ATTEMPT_OUTCOME_RECORD_TYPE, cf.RESULT_ENTRY):
         e = SimpleNamespace(record_type=rt, payload={"attempt_id": ["attempt-a"]})
         assert cf.of_cycle(e, "c1", ours) is False
+
+
+@pytest.mark.parametrize(
+    ("record_type", "payload", "match"),
+    [
+        (attempts.ATTEMPT_OUTCOME_RECORD_TYPE, {"attempt_id": []}, "outcome entry"),
+        (attempts.ATTEMPT_OUTCOME_RECORD_TYPE, {"outcome": "failed"}, "outcome entry"),
+        (cf.RESULT_ENTRY, {"cycle_id": "other", "attempt_id": []}, "result entry"),
+    ],
+)  # fmt: skip
+def test_a_malformed_outcome_or_result_id_is_refused_by_the_readers(
+    tmp_path: Path, record_type: str, payload: dict[str, Any], match: str
+) -> None:
+    """B6FR-A-2: `family_attempts` and `family_ledger` refuse, never a
+    KeyError or TypeError."""
+    led = Led(tmp_path)
+    led.start("attempt-a")
+    bad = SimpleNamespace(record_type=record_type, payload=payload)
+    with pytest.raises(cf.CycleError, match=match):
+        cf.family_ledger([*led.entries(), bad], family="trend", cycle="c1",
+                         trial_of={(P, 0): "t0"}, trial_ids=["t0"],
+                         expected=lambda tid: {}, window=(T0, 2))  # fmt: skip
