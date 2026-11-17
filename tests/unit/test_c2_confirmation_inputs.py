@@ -1,0 +1,566 @@
+"""Slice 6b part 2: read-free input checks (DESIGN_SLICE6B rev 16 §2, §2.1)."""
+
+from __future__ import annotations
+
+import base64
+import gzip
+import hashlib
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from calibration import c2_confirmation as c
+from calibration.seeds import cj, sha
+
+# Bitcoin mainnet headers of heights 0..6 (public; fetched 2026-11-15 from
+# blockstream.info and self-verifying: the links and the genesis hash below must hold)
+MAINNET = [bytes.fromhex(h) for h in (
+    "0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c",
+    "010000006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e61bc6649ffff001d01e36299",
+    "010000004860eb18bf1b1620e37e9490fc8a427514416fd75159ab86688e9a8300000000d5fdcc541e25de1c7a5addedf24858b8bb665c9f36ef744ee42c316022c90f9bb0bc6649ffff001d08d2bd61",
+    "01000000bddd99ccfda39da1b108ce1a5d70038d0a967bacb68b6b63065f626a0000000044f672226090d85db9a9f2fbfe5f0f9609b387af7be5b7fbb7a1767c831c9e995dbe6649ffff001d05e0ed6d",
+    "010000004944469562ae1c2c74d9a535e00b6f3e40ffbad4f2fda3895501b582000000007a06ea98cd40ba2e3288262b28638cec5337c1456aaf5eedc8e9e5a20f062bdf8cc16649ffff001d2bfee0a9",
+    "0100000085144a84488ea88d221c8bd6c059da090e88f8a2c99690ee55dbba4e00000000e11c48fecdd9e72510ca84f023370c9a38bf91ac5cae88019bee94d24528526344c36649ffff001d1d03e477",
+    "01000000fc33f596f822a0a1951ffdbf2a897b095636ad871707bf5d3162729b00000000379dfb96a5ea8c81700ea4ac6b97ae9a9312b2d4301a29580e924ee6761a2520adc46649ffff001d189c4c97",
+)]  # fmt: skip
+GENESIS = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
+BLOCK5 = "000000009b7262315dbf071787ad3656097b892abffd1f95a1a022f896f533fc"
+
+
+def _acceptance(block_hash: str = GENESIS, height: int = 1) -> tuple[bytes, str]:
+    record = cj({"block_hash": block_hash, "height": height})
+    return record, hashlib.sha256(record).hexdigest()
+
+
+def test_headers_check_known_answer_mainnet_0_to_5() -> None:
+    record, digest = _acceptance()
+    got = c.headers_check(record, digest, MAINNET[:6])
+    assert got.height == 1
+    assert got.cycle_start == datetime(2009, 1, 3, 18, 15, 5, tzinfo=UTC)  # genesis
+    assert got.tip_block_hash == BLOCK5
+    assert got.tip_time == datetime.fromtimestamp(0x4966C344, UTC)
+    assert got.headers_sha256 == hashlib.sha256(b"".join(MAINNET[:6])).hexdigest()
+
+
+def test_headers_check_refuses_another_acceptance_record() -> None:
+    record, _ = _acceptance()
+    with pytest.raises(c.CycleError, match="not the one start verified"):
+        c.headers_check(record, "0" * 64, MAINNET[:6])
+
+
+def test_headers_check_refuses_headers_of_another_block() -> None:
+    record, digest = _acceptance()
+    with pytest.raises(c.CycleError, match="includes the post"):
+        c.headers_check(record, digest, MAINNET[1:7])  # a valid chain, one block later
+
+
+@pytest.mark.parametrize("headers", [
+    MAINNET[:5], MAINNET[:7], [*MAINNET[:5], MAINNET[5][:79]],
+    [*MAINNET[:5], bytearray(MAINNET[5])],
+])  # fmt: skip
+def test_headers_check_refuses_wrong_count_or_size(headers: list[bytes]) -> None:
+    record, digest = _acceptance()
+    with pytest.raises(c.CycleError, match="exactly 6 headers"):
+        c.headers_check(record, digest, headers)
+
+
+def test_headers_check_refuses_a_broken_link() -> None:
+    record, digest = _acceptance()
+    swapped = [*MAINNET[:3], MAINNET[4], MAINNET[3], MAINNET[5]]
+    with pytest.raises(c.CycleError, match=r"headers\[3\] does not follow"):
+        c.headers_check(record, digest, swapped)
+    altered = bytearray(MAINNET[2])
+    altered[76] ^= 1  # nonce: headers[2]'s hash changes, so headers[3] no longer links
+    with pytest.raises(c.CycleError, match=r"headers\[3\]"):
+        c.headers_check(record, digest, [*MAINNET[:2], bytes(altered), *MAINNET[3:6]])
+
+
+def test_headers_check_link_uses_internal_byte_order() -> None:
+    """A link written in display order (reversed) must not pass."""
+    record, digest = _acceptance()
+    flipped = bytearray(MAINNET[1])
+    flipped[4:36] = flipped[4:36][::-1]
+    with pytest.raises(c.CycleError, match=r"headers\[1\]"):
+        c.headers_check(record, digest, [MAINNET[0], bytes(flipped), *MAINNET[2:6]])
+
+
+# --- capture record (§2.1, schema v2 per VERIFY_CAPTURE_DIGEST_2026-11-15.md) --------
+
+# Internet Archive capture of https://blockstream.info/api/block-height/0 at
+# 20260905161311: the exact 69 gzip bytes of its `id_` fetch and its CDX digest
+KNOWN_PAYLOAD = bytes.fromhex(
+    "1f8b080000000000040335c1c901c0200804c096387485725602fd97e02b33223fcd0f882c89"
+    "cd56ec70edf43573e0ec051a517aecfae88530aa0df300854028b040000000"
+)
+KNOWN_DIGEST = "NNVZIO5QLFHVIRULV75YOBX7EKNQDJMI"
+TIP_TIME = datetime(2026, 9, 5, 17, 0, tzinfo=UTC)
+ACC = "a" * 64
+
+
+def _tip(height: int = -5, tip: str = GENESIS) -> c.Headers:
+    """Headers whose h+5 is block 0, the known capture's height."""
+    return c.Headers(height=height, cycle_start=TIP_TIME, tip_block_hash=tip,
+                     tip_time=TIP_TIME, headers_sha256="0" * 64)  # fmt: skip
+
+
+def _capture(**change: object) -> bytes:
+    r = {
+        "schema": c.CAPTURE_SCHEMA,
+        "url": "https://blockstream.info/api/block-height/0",
+        "timestamp": "20260905161311",
+        "status": "200",
+        "digest": KNOWN_DIGEST,
+        "payload": base64.b64encode(KNOWN_PAYLOAD).decode(),
+        "content_encoding": "gzip",
+        "body": GENESIS,
+        "acceptance_record_sha256": ACC,
+        **change,
+    }
+    return cj(r)
+
+
+def test_capture_known_answer_real_archive_capture() -> None:
+    record = _capture()
+    got = c.check_capture_record(record, _tip(), ACC)
+    assert got.timestamp == "20260905161311"
+    assert got.record_sha256 == hashlib.sha256(record).hexdigest()
+    assert got.before_tip_window is False  # 16:13 is within 2 h before 17:00
+
+
+def test_capture_before_tip_window_is_a_diagnostic_not_a_refusal() -> None:
+    late_tip = c.Headers(height=-5, cycle_start=TIP_TIME, tip_block_hash=GENESIS,
+                         tip_time=datetime(2026, 9, 5, 18, 14, tzinfo=UTC),
+                         headers_sha256="0" * 64)  # fmt: skip
+    assert c.check_capture_record(_capture(), late_tip, ACC).before_tip_window is True
+
+
+def test_capture_mempool_url_and_identity_encoding_pass() -> None:
+    raw = GENESIS.encode()
+    digest = base64.b32encode(hashlib.sha1(raw).digest()).decode()
+    record = _capture(url="https://mempool.space/api/block-height/0",
+                      content_encoding="identity", digest=digest,
+                      payload=base64.b64encode(raw).decode())  # fmt: skip
+    assert c.check_capture_record(record, _tip(), ACC).timestamp == "20260905161311"
+
+
+def test_capture_digest_of_the_body_alone_is_refused() -> None:
+    """Rev 16 item 3 as written (digest of the body) must not pass for gzip."""
+    body_digest = base64.b32encode(hashlib.sha1(GENESIS.encode()).digest()).decode()
+    with pytest.raises(c.CycleError, match="CDX digest"):
+        c.check_capture_record(_capture(digest=body_digest), _tip(), ACC)
+
+
+@pytest.mark.parametrize(("change", "match"), [
+    ({"url": "https://blockstream.info/api/block-height/1"}, "qualifying URL"),
+    ({"url": "http://blockstream.info/api/block-height/0"}, "qualifying URL"),
+    ({"url": "https://web.archive.org/web/20260905161311/https://blockstream.info/api/block-height/0"},
+     "qualifying URL"),
+    ({"timestamp": "2026090516131"}, "14 CDX digits"),
+    ({"timestamp": "20261305161311"}, "14 CDX digits"),
+    ({"timestamp": 20260905161311}, "14 CDX digits"),
+    ({"status": 200}, "status"),
+    ({"status": "302"}, "status"),
+    ({"payload": "not base64!"}, "base64"),
+    ({"payload": base64.b64encode(KNOWN_PAYLOAD).decode() + "\n"}, "base64"),
+    ({"content_encoding": "br"}, "not supported"),
+    ({"content_encoding": "identity"}, "decoded payload"),
+    ({"body": GENESIS + "\n"}, "decoded payload"),
+    ({"body": None}, "decoded payload"),
+    ({"acceptance_record_sha256": "b" * 64}, "another acceptance record"),
+    ({"schema": "aqt.c2.capture_record.v1"}, "schema"),
+])  # fmt: skip
+def test_capture_refusals(change: dict[str, object], match: str) -> None:
+    with pytest.raises(c.CycleError, match=match):
+        c.check_capture_record(_capture(**change), _tip(), ACC)
+
+
+def test_capture_body_must_be_the_tip_hash() -> None:
+    with pytest.raises(c.CycleError, match="tip block hash"):
+        c.check_capture_record(_capture(), _tip(tip=BLOCK5), ACC)
+
+
+def test_capture_corrupt_gzip_is_refused() -> None:
+    bad = KNOWN_PAYLOAD[:-6] + b"\x00" * 6  # crc/length broken
+    digest = base64.b32encode(hashlib.sha1(bad).digest()).decode()
+    with pytest.raises(c.CycleError, match="gzip"):
+        c.check_capture_record(
+            _capture(payload=base64.b64encode(bad).decode(), digest=digest), _tip(), ACC
+        )
+
+
+def test_capture_record_must_be_canonical_with_exact_fields() -> None:
+    record = _capture()
+    with pytest.raises(c.CycleError, match="canonical schema"):
+        c.check_capture_record(record + b" ", _tip(), ACC)
+    with pytest.raises(c.CycleError, match="canonical schema"):
+        c.check_capture_record(cj({**json.loads(record), "extra": 1}), _tip(), ACC)
+    with pytest.raises(c.CycleError, match="not JSON"):
+        c.check_capture_record(b"{", _tip(), ACC)
+
+
+# --- qualification re-read and classifier thresholds (§2, §8) ------------------------
+
+
+def _row(digest: str) -> bytes:
+    return f'qualification_object_sha256: "{digest}"\n'.encode()
+
+
+def _object(tmp_path: Path, files: dict[str, bytes]) -> str:
+    for name, data in files.items():
+        (tmp_path / name).write_bytes(data)
+    manifest = {k: hashlib.sha256(v).hexdigest() for k, v in files.items()}
+    (tmp_path / "manifest.json").write_bytes(json.dumps(manifest).encode())
+    return sha(manifest)
+
+
+def test_qualification_report_reads_the_signed_object(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from calibration import qobj
+
+    digest = _object(tmp_path, {"choices.json": b"{}", "definition.json": b"{}"})
+    seen: list[dict[str, bytes]] = []
+
+    def read(f: dict[str, bytes]) -> tuple[dict[str, int], dict[str, Any]]:
+        seen.append(f)
+        return {"r": 1}, {}
+
+    monkeypatch.setattr(qobj, "read", read)
+    protocol = _row(digest)
+    assert c.qualification_report(tmp_path, protocol) == {"r": 1}
+    assert seen == [{"choices.json": b"{}", "definition.json": b"{}"}]
+    with pytest.raises(c.CycleError, match="not the signed one"):
+        c.qualification_report(tmp_path, _row("0" * 64))
+    other = f'screen_object_sha256: "{digest}"\n'.encode()  # R14D6B9-F-1: not this row
+    with pytest.raises(c.ChainError, match="qualification_object_sha256"):
+        c.qualification_report(tmp_path, other)
+    (tmp_path / "choices.json").write_bytes(b"{ }")
+    with pytest.raises(c.CycleError, match="choices.json does not match"):
+        c.qualification_report(tmp_path, protocol)
+
+
+def test_qualification_report_turns_a_read_refusal_into_a_cycle_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from calibration import qobj
+
+    digest = _object(tmp_path, {"choices.json": b"{}"})
+
+    def refuse(f: dict[str, bytes]) -> Any:
+        raise ValueError("not a qualification run")
+
+    monkeypatch.setattr(qobj, "read", refuse)
+    with pytest.raises(c.CycleError, match="not a qualification run"):
+        c.qualification_report(tmp_path, _row(digest))
+
+
+def test_classifier_bounds_pools_like_d19_heldout() -> None:
+    from calibration import classifier, reduce
+
+    names_up = sorted(classifier.UPPER)
+    names_lo = sorted(classifier.LOWER)
+    frozen = {
+        "upper": {"K": "4", "T": "900", **{n: "1.5" for n in names_up}},
+        "lower": {"K": "4", "T": "900", **{n: "-1.5" for n in names_lo}},
+    }
+    report = {"final_thresholds": {"T=900": frozen}}
+    pool = tuple({n: float(v) for n, v in frozen[s].items()} for s in frozen)
+    expected = reduce.for_k(pool, 3)  # type: ignore[arg-type]
+    assert c.classifier_bounds(report, 900, 3) == expected
+    with pytest.raises(c.CycleError, match="T=901"):
+        c.classifier_bounds(report, 901, 3)
+    frozen["upper"] = {"K": "4", "T": "900"}  # its tails missing
+    with pytest.raises(c.CycleError, match="classifier thresholds"):
+        c.classifier_bounds(report, 900, 3)
+
+
+# --- declaration layout (§1) ----------------------------------------------------------
+
+
+def _decl(**change: Any) -> tuple[bytes, dict[str, dict[str, Any]]]:
+    import test_calibration_screen as ts  # the screen tests' trial fixture
+
+    from calibration import screen
+
+    objs = {
+        "tr1": ts._trial(trial_id="tr1", family="trend"),
+        "vo1": ts._trial(trial_id="vo1", family="vol"),
+        "tr2": ts._trial(trial_id="tr2", family="trend"),
+    }
+    entries = [
+        {"family": o["family"], "trial_id": i, "hypothesis_hash": "ab" * 32,
+         "configuration_hash": screen.trial_sha256(o), "trial_index": n}
+        for n, (i, o) in enumerate(objs.items())
+    ]  # fmt: skip
+    d = {
+        "protocol_hash": "1" * 64,
+        "cycle_id": "C2-0001",
+        "trials": entries,
+        "data_manifest_sha256": "2" * 64,
+        "last_seen": "2024-01-01T00:00:00Z",
+        "embargo_days": 30,
+        "ledger_anchor": {"head_hash": "3" * 64, "entry_count": 7},
+        "screen_record_sha256": "4" * 64,
+        **change,
+    }
+    return cj(d), objs
+
+
+def test_parse_declaration_reads_every_field_in_declaration_order() -> None:
+    raw, objs = _decl()
+    got = c.parse_declaration(raw, objs)
+    assert got.cycle_id == "C2-0001"
+    assert [t["trial_id"] for t in got.trials] == ["tr1", "vo1", "tr2"]
+    assert {f: [t["trial_id"] for t in ts] for f, ts in got.declared.items()} == {
+        "trend": ["tr1", "tr2"], "vol": ["vo1"]}  # fmt: skip
+    assert got.last_seen == datetime(2024, 1, 1, tzinfo=UTC)
+    assert (got.embargo_days, got.anchor_head_hash, got.anchor_entry_count) == (
+        30, "3" * 64, 7)  # fmt: skip
+    assert got.data_manifest_sha256 == "2" * 64 and got.screen_record_sha256 == "4" * 64
+
+
+def test_parse_declaration_refuses_unknown_or_missing_keys() -> None:
+    raw, objs = _decl()
+    d = json.loads(raw)
+    missing = {k: v for k, v in d.items() if k != "protocol_hash"}
+    for bad in ({**d, "extra": 1}, missing):
+        with pytest.raises(c.CycleError, match="declaration's keys"):
+            c.parse_declaration(cj(bad), objs)
+    d2 = json.loads(raw)
+    d2["trials"][0]["extra"] = 1
+    with pytest.raises(c.CycleError, match="declared trial's keys"):
+        c.parse_declaration(cj(d2), objs)
+    with pytest.raises(c.CycleError, match="anchor's keys"):
+        c.parse_declaration(cj({**d, "ledger_anchor": {"head_hash": "3" * 64}}), objs)
+
+
+def _entries(raw: bytes) -> list[dict[str, Any]]:
+    return list(json.loads(raw)["trials"])
+
+
+def test_parse_declaration_trial_rules() -> None:
+    raw, objs = _decl()
+    e = _entries(raw)
+    cases: list[tuple[list[dict[str, Any]], str]] = [
+        ([{**e[0], "trial_index": "0"}, *e[1:]], "not an int"),
+        ([{**e[0], "trial_index": True}, *e[1:]], "not an int"),
+        ([e[0], e[1], {**e[2], "trial_id": "tr1"}], "declared twice"),
+        ([e[0], e[1], {**e[2], "trial_index": 0}], r"\(hypothesis_hash, trial_index\)"),
+        ([], "1 to 20"),
+        ([e[0], e[1], {**e[2], "configuration_hash": e[0]["configuration_hash"]}],
+         "not the declared one"),
+        ([e[0], e[1], {**e[2], "family": "vol"}], "names another trial"),
+    ]  # fmt: skip
+    for trials, match in cases:
+        bad, _ = _decl(trials=trials)
+        with pytest.raises(c.CycleError, match=match):
+            c.parse_declaration(bad, objs)
+
+
+def test_parse_declaration_refuses_more_than_max_trials_in_all() -> None:
+    raw, objs = _decl()
+    e = _entries(raw)
+    many = [{**e[0], "trial_id": f"x{i}", "trial_index": i + 10} for i in range(21)]
+    bad, _ = _decl(trials=many)
+    with pytest.raises(c.CycleError, match="21 declared trials"):
+        c.parse_declaration(bad, objs)
+
+
+def test_parse_declaration_needs_exactly_the_declared_trial_objects() -> None:
+    raw, objs = _decl()
+    with pytest.raises(c.CycleError, match="exactly the declared trials"):
+        c.parse_declaration(raw, {k: v for k, v in objs.items() if k != "vo1"})
+    with pytest.raises(c.CycleError, match="exactly the declared trials"):
+        c.parse_declaration(raw, {**objs, "extra": objs["vo1"]})
+    swapped = {**objs, "tr2": {**objs["tr2"], "trial_id": "trX"}}
+    with pytest.raises(c.CycleError, match="tr2"):
+        c.parse_declaration(raw, swapped)  # its hash changes: not the declared one
+
+
+@pytest.mark.parametrize(("change", "match"), [
+    ({"protocol_hash": "1" * 63}, "64 lower-case hex"),
+    ({"data_manifest_sha256": "A" * 64}, "64 lower-case hex"),
+    ({"embargo_days": -1}, "non-negative ints"),
+    ({"embargo_days": 30.0}, "non-negative ints"),
+    ({"ledger_anchor": {"head_hash": "3" * 64, "entry_count": "7"}}, "non-negative"),
+    ({"last_seen": "2024-01-01 00:00:00"}, "last_seen"),
+    ({"last_seen": 1704067200}, "last_seen"),
+    ({"cycle_id": ""}, "cycle_id"),
+])  # fmt: skip
+def test_parse_declaration_value_forms(change: dict[str, Any], match: str) -> None:
+    raw, objs = _decl(**change)
+    with pytest.raises(c.CycleError, match=match):
+        c.parse_declaration(raw, objs)
+
+
+# --- Astra B1-A-1..3 repairs ----------------------------------------------------
+
+
+@pytest.mark.parametrize("change", [{"url": []}, {"url": {"a": 1}}, {"url": None}])
+def test_capture_wrong_typed_url_is_a_cycle_error(change: dict[str, object]) -> None:
+    with pytest.raises(c.CycleError, match="qualifying URL"):  # B1-A-1
+        c.check_capture_record(_capture(**change), _tip(), ACC)
+
+
+@pytest.mark.parametrize("ts_", [
+    "２０26" + "0905161311",  # full-width digits  # noqa: RUF001
+    "2026095161311 ",  # 14 chars, a space
+])  # fmt: skip
+def test_capture_timestamp_must_be_exact_ascii_digits(ts_: str) -> None:
+    with pytest.raises(c.CycleError, match="14 CDX digits"):  # B1-A-2
+        c.check_capture_record(_capture(timestamp=ts_), _tip(), ACC)
+
+
+def test_capture_gzip_variants_fail_against_the_archived_digest() -> None:
+    """B1-A-3: bytes that still decode to the tip hash but are not the
+    archived bytes fail the digest (it stays the archive's)."""
+    variants = [
+        gzip.compress(GENESIS.encode()),  # recompressed
+        KNOWN_PAYLOAD + gzip.compress(b""),  # an appended empty member
+        KNOWN_PAYLOAD + b"\x00" * 4,  # zero padding
+    ]
+    for v in variants:
+        assert gzip.decompress(v) == GENESIS.encode()
+        with pytest.raises(c.CycleError, match="CDX digest"):
+            c.check_capture_record(_capture(payload=base64.b64encode(v).decode()),
+                                   _tip(), ACC)  # fmt: skip
+
+
+def test_capture_extra_decoded_content_is_refused() -> None:
+    v = KNOWN_PAYLOAD + gzip.compress(b"\n")
+    digest = base64.b32encode(hashlib.sha1(v).digest()).decode()
+    with pytest.raises(c.CycleError, match="decoded payload"):
+        c.check_capture_record(
+            _capture(payload=base64.b64encode(v).decode(), digest=digest), _tip(), ACC
+        )
+
+
+def test_capture_non_canonical_base64_pad_bits_are_refused() -> None:
+    raw = GENESIS.encode()[:1]  # one byte: "0" -> canonical "MA=="
+    digest = base64.b32encode(hashlib.sha1(raw).digest()).decode()
+    assert base64.b64decode("MB==", validate=True) == raw  # same byte, other pad bits
+    with pytest.raises(c.CycleError, match="canonical base64"):
+        record = _capture(payload="MB==", digest=digest, content_encoding="identity")
+        c.check_capture_record(record, _tip(), ACC)
+
+
+def test_qualification_report_missing_or_malformed_object_is_a_cycle_error(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(c.CycleError, match="FileNotFoundError"):  # B1-A-1
+        c.qualification_report(tmp_path / "absent", _row("0" * 64))
+    (tmp_path / "manifest.json").write_bytes(b"not json")
+    with pytest.raises(c.CycleError, match="qualification object"):
+        c.qualification_report(tmp_path, _row("0" * 64))
+    (tmp_path / "manifest.json").write_bytes(b"[1]")
+    with pytest.raises(c.CycleError, match="not the signed one"):
+        c.qualification_report(tmp_path, _row("0" * 64))
+    digest = _object(tmp_path, {"gone.json": b"{}"})
+    (tmp_path / "gone.json").unlink()
+    with pytest.raises(c.CycleError, match="FileNotFoundError"):
+        c.qualification_report(tmp_path, _row(digest))
+
+
+def _frozen() -> dict[str, dict[str, str]]:
+    from calibration import classifier
+
+    return {
+        "upper": {"K": "4", "T": "900", **dict.fromkeys(classifier.UPPER, "1.5")},
+        "lower": {"K": "4", "T": "900", **dict.fromkeys(classifier.LOWER, "-1.5")},
+    }
+
+
+@pytest.mark.parametrize("damage", ["no_T", "bad_value", "no_lower", "not_a_map"])
+def test_classifier_bounds_malformed_thresholds_are_cycle_errors(damage: str) -> None:
+    frozen: Any = _frozen()  # B1-A-1
+    if damage == "no_T":
+        del frozen["upper"]["T"]
+    elif damage == "bad_value":
+        frozen["upper"]["K"] = "x"
+    elif damage == "no_lower":
+        del frozen["lower"]
+    else:
+        frozen["upper"] = ["K"]
+    with pytest.raises(c.CycleError, match="classifier thresholds"):
+        c.classifier_bounds({"final_thresholds": {"T=900": frozen}}, 900, 3)
+
+
+def test_classifier_bounds_k1_is_reduce_for_k() -> None:
+    from calibration import reduce
+
+    frozen = _frozen()
+    pool = tuple({n: float(v) for n, v in frozen[s].items()} for s in frozen)
+    expected = reduce.for_k(pool, 1)  # type: ignore[arg-type]
+    report = {"final_thresholds": {"T=900": frozen}}
+    assert c.classifier_bounds(report, 900, 1) == expected
+
+
+@pytest.mark.parametrize("field", ["trial_id", "hypothesis_hash", "family",
+                                   "configuration_hash"])  # fmt: skip
+def test_parse_declaration_wrong_typed_entry_fields(field: str) -> None:
+    raw, objs = _decl()  # B1-A-1
+    e = _entries(raw)
+    bad, _ = _decl(trials=[{**e[0], field: []}, *e[1:]])
+    with pytest.raises(c.CycleError, match="wrong form"):
+        c.parse_declaration(bad, objs)
+
+
+@pytest.mark.parametrize("last_seen", [
+    "2024-1-1T0:0:0Z", "２０24-01-01T00:00:00Z", "2024-01-01T00:00:00z",  # noqa: RUF001
+])  # fmt: skip
+def test_parse_declaration_last_seen_exact_form(last_seen: str) -> None:
+    raw, objs = _decl(last_seen=last_seen)  # B1-A-2
+    with pytest.raises(c.CycleError, match="last_seen"):
+        c.parse_declaration(raw, objs)
+
+
+def test_parse_declaration_follows_declaration_order_not_the_map_order() -> None:
+    raw, objs = _decl()  # B1-A-3: the object map in reverse insertion order
+    got = c.parse_declaration(raw, dict(reversed(list(objs.items()))))
+    assert [t["trial_id"] for t in got.trials] == ["tr1", "vo1", "tr2"]
+    assert [t["trial_id"] for t in got.declared["trend"]] == ["tr1", "tr2"]
+
+
+def test_parse_declaration_max_trials_counts_both_families() -> None:
+    import test_calibration_screen as ts
+
+    from calibration import screen
+
+    objs = {f"{f[0]}{i}": ts._trial(trial_id=f"{f[0]}{i}", family=f)
+            for f, n in (("trend", 11), ("vol", 10)) for i in range(n)}  # fmt: skip
+    entries = [{"family": o["family"], "trial_id": i, "hypothesis_hash": "ab" * 32,
+                "configuration_hash": screen.trial_sha256(o), "trial_index": n}
+               for n, (i, o) in enumerate(objs.items())]  # fmt: skip
+    bad, _ = _decl(trials=entries)  # B1-A-3: 11 + 10, each family under 20
+    with pytest.raises(c.CycleError, match="21 declared trials"):
+        c.parse_declaration(bad, objs)
+    ok, _ = _decl(trials=entries[:20])
+    assert len(c.parse_declaration(ok, dict(list(objs.items())[:20])).trials) == 20
+
+
+def test_parse_declaration_own_trial_id_mismatch_with_matching_hash() -> None:
+    """B1-A-3: the object hashes to the entry, but names another trial_id."""
+    import test_calibration_screen as ts
+
+    from calibration import screen
+
+    raw, objs = _decl()
+    e = _entries(raw)
+    other = ts._trial(trial_id="trZ", family="trend")
+    moved = {**e[2], "configuration_hash": screen.trial_sha256(other)}
+    bad, _ = _decl(trials=[e[0], e[1], moved])
+    with pytest.raises(c.CycleError, match="names another trial"):
+        c.parse_declaration(bad, {**objs, "tr2": other})
+
+
+def test_capture_payload_longer_than_the_cap_is_refused_before_decoding() -> None:
+    """R14B6F-F-7: no gzip.decompress on unbounded caller bytes."""
+
+    big = b"\0" * (c.CAPTURE_PAYLOAD_MAX + 1)
+    digest = base64.b32encode(hashlib.sha1(big).digest()).decode()
+    record = _capture(payload=base64.b64encode(big).decode(), digest=digest)
+    with pytest.raises(c.CycleError, match="longer than"):
+        c.check_capture_record(record, _tip(), ACC)

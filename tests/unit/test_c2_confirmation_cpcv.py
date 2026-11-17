@@ -1,0 +1,447 @@
+"""R-14a confirmation module, slice 5b: the C-14 CPCV diagnostic report
+(Annex C C-14; protocol_v1.yaml l.215-222; DESIGN §5.4). Synthetic data only
+(the screen tests' path and trial fixtures)."""
+
+from __future__ import annotations
+
+import ast
+import random
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pytest
+import test_calibration_screen as ts  # the screen tests' fixtures
+
+import aqt.metrics.statistics as st
+from aqt.backtest.costs import (
+    ewma_hourly_volatility_bps_series,
+    hourly_log_returns_bps,
+)
+from aqt.backtest.event_contract import run_event_contract
+from aqt.features.columns import feature_columns
+from calibration import c2_confirmation as cf
+from calibration import screen
+
+ROOT = Path(__file__).resolve().parents[2]
+ON = cf.Gate(cf.PASS, None, {"ess": 250.0})
+
+
+# --- groups, splits, paths ----------------------------------------------------
+
+
+def test_groups_are_chronological_with_the_remainder_first() -> None:
+    assert cf.cpcv_groups(30) == [(0, 4), (4, 8), (8, 12), (12, 16), (16, 20),
+                                  (20, 24), (24, 27), (27, 30)]  # fmt: skip
+    assert cf.cpcv_groups(8) == [(g, g + 1) for g in range(8)]
+    assert cf.cpcv_groups(1247)[-1] == (1092, 1247)
+    with pytest.raises(screen.TrialError, match="8 window days"):
+        cf.cpcv_groups(7)
+
+
+def test_the_28_splits_are_lexicographic() -> None:
+    splits = cf.cpcv_splits()
+    assert len(splits) == 28 == len(set(splits))
+    assert splits == sorted(splits)
+    assert splits[0] == (0, 1) and splits[-1] == (6, 7)
+
+
+def test_every_split_lies_on_exactly_one_path_through_both_its_groups() -> None:
+    seen: list[tuple[int, int]] = []
+    for p in cf.CPCV_PATHS:
+        per_group = cf.cpcv_path_splits(p)
+        assert all(g in s for g, s in enumerate(per_group))
+        assert len(set(per_group)) == 4  # each split serves its two groups
+        seen += sorted(set(per_group))
+    assert sorted(seen) == cf.cpcv_splits()
+    assert cf.cpcv_path_splits(1)[:2] == [(0, 1), (0, 1)]
+
+
+def test_training_rows_purge_and_embargo(monkeypatch: pytest.MonkeyPatch) -> None:
+    t0 = datetime(2022, 1, 1, tzinfo=UTC)
+    times = [t0 + timedelta(days=k) for k in range(20)]
+    ys = [float(k) for k in range(20)]
+    w1 = t0 + timedelta(days=20)
+    test = [(t0 + timedelta(days=5), t0 + timedelta(days=8))]  # days 5, 6, 7
+    seen: list[tuple[list[float | None], int]] = []
+
+    def embargo(daily: list[float | None], h: int) -> int:
+        seen.append((daily, h))
+        return 2
+
+    monkeypatch.setattr(screen, "embargo_days", embargo)
+    # H = 48 h: day 4's label [4, 6) meets the test group, day 3's [3, 5) does
+    # not; embargo 2 days drops days 8, 9; day 19's label is unrealised
+    kept = cf.cpcv_training_rows(times, ys, test, 48, w1)
+    assert kept == [0, 1, 2, 3, *range(10, 19)]
+    # R14S5B-S-1: the cutoff sees only the purged training labels, by
+    # calendar day, test and purged days as gaps
+    assert seen == [([0.0, 1.0, 2.0, 3.0, None, None, None, None,
+                      *map(float, range(8, 19))], 2)]  # fmt: skip
+    two = [*test, (t0 + timedelta(days=12), t0 + timedelta(days=14))]
+    assert cf.cpcv_training_rows(times, ys, two, 24, w1) == [
+        0, 1, 2, 3, 4, 10, 11, *range(16, 20)
+    ]  # fmt: skip
+    with pytest.raises(screen.RunUnavailable, match="TRAINING_ROWS"):
+        cf.cpcv_training_rows(times, ys, [(t0, w1)], 24, w1)
+
+
+def test_test_group_labels_cannot_change_the_training_rows() -> None:
+    # R14S5B-S-1: with the real ACF cutoff, rewriting every label inside the
+    # test groups (and their purge zones) leaves the kept rows unchanged
+    t0 = datetime(2022, 1, 1, tzinfo=UTC)
+    times = [t0 + timedelta(days=k) for k in range(60)]
+    w1 = t0 + timedelta(days=60)
+    gen = random.Random(5)
+    ys = [gen.gauss(0, 1) for _ in times]
+    test = [(t0 + timedelta(days=10), t0 + timedelta(days=17)),
+            (t0 + timedelta(days=40), t0 + timedelta(days=47))]  # fmt: skip
+    base = cf.cpcv_training_rows(times, ys, test, 72, w1)
+    for k in (0.0, 1.0, 9.0):
+        # strongly autocorrelated test-zone labels that would lengthen a
+        # window-wide cutoff
+        other = [
+            (k + 0.01 * i) if any(s - timedelta(days=3) < t < e for s, e in test)
+            else y
+            for i, (t, y) in enumerate(zip(times, ys, strict=True))
+        ]  # fmt: skip
+        assert cf.cpcv_training_rows(times, other, test, 72, w1) == base
+
+
+# --- the switch ---------------------------------------------------------------
+
+
+def test_below_250_effective_decisions_nothing_is_computed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trial = ts._screen_trial(tmp_path, monkeypatch)
+
+    def no(*_: object, **__: object) -> None:
+        raise AssertionError("computed")
+
+    monkeypatch.setattr(cf, "feature_columns", no)
+    off = cf.Gate(cf.FAIL, None, {"ess": 249.99})
+    got = cf.cpcv_report(trial, ts._screen_path(), ts.W0, ts.WINDOW_H, 0, off)
+    assert got == {"role": "diagnostic_only", "status": "CPCV not enabled",
+                   "ess": 249.99}  # fmt: skip
+    # a PASSing G-12 below 250 is still off: the switch is ESS, not the gate
+    passing = cf.Gate(cf.PASS, None, {"ess": 120.0})
+    got = cf.cpcv_report(trial, ts._screen_path(), ts.W0, ts.WINDOW_H, 0, passing)
+    assert got["status"] == "CPCV not enabled"
+    gone = cf.Gate(cf.UNAVAILABLE, "ZERO_VARIANCE", {})
+    got = cf.cpcv_report(trial, ts._screen_path(), ts.W0, ts.WINDOW_H, 0, gone)
+    assert got == {"role": "diagnostic_only", "status": "UNAVAILABLE",
+                   "reason": "ZERO_VARIANCE"}  # fmt: skip
+
+
+def test_inputs_are_checked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    trial = ts._screen_trial(tmp_path, monkeypatch)
+    path = ts._screen_path()
+    with pytest.raises(screen.TrialError, match="path length"):
+        cf.cpcv_report(trial, path[:-1], ts.W0, ts.WINDOW_H, 0, ON)
+    with pytest.raises(screen.TrialError, match="estimator_seed"):
+        cf.cpcv_report(trial, path, ts.W0, ts.WINDOW_H, 2**31, ON)
+    unbound = {**trial, "family": "vol", "sigma": "HAR_RV"}
+    got = cf.cpcv_report(unbound, path, ts.W0, ts.WINDOW_H, 0, ON)
+    assert (got["status"], got["reason"]) == ("UNAVAILABLE", "SIGMA_UNBOUND")
+
+
+# --- a non-model trial ----------------------------------------------------------
+
+
+def _independent(trial: dict[str, Any], path: Any) -> tuple[float, float]:
+    """C-14 (3)-(4) written out for a trial without a model or overlay: every
+    group from flat with the window's targets, the window's benchmark."""
+    warmup = trial["warmup_hours"]
+    series = screen.path_series(path, 0, ts.W0 - timedelta(hours=warmup))
+    first, columns = feature_columns(series)
+    sigma = ewma_hourly_volatility_bps_series(hourly_log_returns_bps(series))
+    closes = [b.close for b in series.bars]
+    signal = screen.load(trial["signal"], trial["signal_sha256"])
+    targets, _ = screen.leg_targets(trial, signal, None, columns, first, closes,
+                                    warmup, ts.WINDOW_H, 0)  # fmt: skip
+    cand: list[float] = []
+    for a, b in cf.cpcv_groups(ts.WINDOW_H // 24):
+        run = run_event_contract(series, targets[24 * a : 24 * b], warmup + 24 * a,
+                                 sigma_bps=sigma)  # fmt: skip
+        cand += screen.daily_returns(run)
+    bench = screen.daily_returns(run_event_contract(
+        series, screen.benchmark_targets(columns, first, warmup, ts.WINDOW_H), warmup,
+        sigma_bps=sigma))  # fmt: skip
+    stats = st.paired_sharpe_statistics(cand, bench)
+    assert stats.paired_sharpe_improvement is not None
+    assert stats.difference_series_sharpe.scaled is not None
+    return stats.paired_sharpe_improvement, stats.difference_series_sharpe.scaled
+
+
+def test_a_non_model_trial_restarts_every_group_flat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trial = ts._screen_trial(tmp_path, monkeypatch)
+    path = ts._screen_path()
+    got = cf.cpcv_report(trial, path, ts.W0, ts.WINDOW_H, 0, ON)
+    assert got["role"] == "diagnostic_only" and got["status"] == "COMPUTED"
+    assert got["groups"][0] == ["2022-01-01T00:00:00Z", "2022-01-05T00:00:00Z"]
+    assert got["groups"][-1] == ["2022-01-28T00:00:00Z", "2022-01-31T00:00:00Z"]
+    improv, diff = _independent(trial, path)
+    assert [p["path"] for p in got["paths"]] == list(range(1, 8))
+    for p in got["paths"]:  # no fit: every path is the same
+        assert (p["E-IMPROV"], p["E-DIFF"], p["reason"]) == (improv, diff, None)
+    assert got["summaries"] == {
+        "E-IMPROV": {"median": improv, "p05": improv},
+        "E-DIFF": {"median": diff, "p05": diff},
+    }
+    # the flat restarts matter: the continuous baseline pair differs
+    d = cf.baseline_d(trial, path, ts.W0, ts.WINDOW_H, 0)
+    assert st.sharpe(d).scaled != diff
+
+
+def test_each_group_gets_a_fresh_overlay_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    code = (
+        "def o(t, m, state):\n"
+        "    state['n'] = state.get('n', 0) + 1\n"
+        "    return 0.0 if state['n'] <= 24 else t\n"
+    )
+    digest = ts._module(tmp_path, monkeypatch, "cpcv_overlay", code)
+    trial = ts._screen_trial(tmp_path, monkeypatch, overlay="cpcv_overlay:o",
+                             overlay_sha256=digest)  # fmt: skip
+    runs: list[list[float]] = []
+    real = run_event_contract
+
+    def spy(series: Any, targets: Any, start: int, **kw: Any) -> Any:
+        runs.append(list(targets))
+        return real(series, targets, start, **kw)
+
+    monkeypatch.setattr(cf, "run_event_contract", spy)
+    got = cf.cpcv_report(trial, ts._screen_path(), ts.W0, ts.WINDOW_H, 0, ON)
+    assert got["status"] == "COMPUTED"
+    groups = runs[1:]  # the first run is the window benchmark
+    assert len(groups) == 8  # a non-model trial runs each group once
+    assert all(t[:24] == [0.0] * 24 and any(t[24:]) for t in groups)
+
+
+# --- a model trial ------------------------------------------------------------
+
+
+def test_a_model_trial_fits_once_per_split_without_its_test_groups(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trial = ts._model_trial(tmp_path, monkeypatch)
+    seeds: list[int] = []
+    real_build = screen.build_model
+
+    def build(cls: str, params: Any, seed: int) -> Any:
+        seeds.append(seed)
+        return real_build(cls, params, seed)
+
+    kept: list[tuple[list[tuple[datetime, datetime]], list[datetime]]] = []
+    real_rows = cf.cpcv_training_rows
+
+    def rows(times: Any, ys: Any, test: Any, hours: int, w1: datetime) -> list[int]:
+        out = real_rows(times, ys, test, hours, w1)
+        kept.append((list(test), [times[i] for i in out]))
+        return out
+
+    monkeypatch.setattr(screen, "build_model", build)
+    monkeypatch.setattr(cf, "cpcv_training_rows", rows)
+    got = cf.cpcv_report(trial, ts._long_path(), ts.W0, ts.WINDOW_H, 7, ON)
+    assert got["status"] == "COMPUTED"
+    assert seeds == [7] * 28  # one fit per split, the nominee's estimator seed
+    groups = cf.cpcv_groups(ts.WINDOW_H // 24)
+    tested = sorted(
+        tuple(groups.index(((s - ts.W0).days, (e - ts.W0).days)) for s, e in test)
+        for test, _ in kept
+    )
+    assert tested == cf.cpcv_splits()
+    for test, times in kept:  # training is window days outside the test groups
+        assert times and all(ts.W0 <= t for t in times)
+        assert not any(s <= t < e for t in times for s, e in test)
+    values = [p["E-DIFF"] for p in got["paths"]]
+    assert None not in values and len(set(values)) > 1  # the splits differ
+    assert got["summaries"]["E-DIFF"] == {
+        "median": st.type_seven_quantile(values, 0.5),
+        "p05": st.type_seven_quantile(values, 0.05),
+    }
+
+
+class _Constant:
+    """A stand-in fitted model predicting one value per split."""
+
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def fit(self, x: Any, y: Any) -> None:
+        pass
+
+    def predict(self, x: Any) -> Any:
+        return np.full(len(x), self.value)
+
+
+def test_every_path_takes_group_g_from_split_g_xor_p(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R14S5B-S-3: each split's fit predicts its own constant, so every path's
+    # value is checked against a write-out of C-14 (3), group by group
+    trial: dict[str, Any] = ts._model_trial(tmp_path, monkeypatch)
+    path = ts._long_path()
+    order: list[tuple[int, int]] = []
+    groups = cf.cpcv_groups(ts.WINDOW_H // 24)
+    real_rows = cf.cpcv_training_rows
+
+    def rows(times: Any, ys: Any, test: Any, hours: int, w1: datetime) -> list[int]:
+        order.append(tuple(  # type: ignore[arg-type]
+            groups.index(((s - ts.W0).days, (e - ts.W0).days)) for s, e in test
+        ))  # fmt: skip
+        return real_rows(times, ys, test, hours, w1)
+
+    value = {split: 0.01 * k for k, split in enumerate(cf.cpcv_splits())}
+    monkeypatch.setattr(cf, "cpcv_training_rows", rows)
+    monkeypatch.setattr(
+        screen, "build_model", lambda *_, **__: _Constant(value[order[-1]])
+    )
+    got = cf.cpcv_report(trial, path, ts.W0, ts.WINDOW_H, 0, ON)
+
+    warmup = trial["warmup_hours"]
+    series = screen.path_series(path, 0, ts.W0 - timedelta(hours=warmup))
+    first, columns = feature_columns(series)
+    sigma = ewma_hourly_volatility_bps_series(hourly_log_returns_bps(series))
+    closes = [b.close for b in series.bars]
+    bench = screen.daily_returns(run_event_contract(
+        series, screen.benchmark_targets(columns, first, warmup, ts.WINDOW_H), warmup,
+        sigma_bps=sigma))  # fmt: skip
+
+    def group(g: int, c: float) -> list[float]:
+        cols = {**columns, "model:m": (c,) * len(columns["rv_168"])}
+        signal = screen.load(trial["signal"], trial["signal_sha256"])
+        targets, _ = screen.leg_targets(trial, signal, None, cols, first, closes,
+                                        warmup, ts.WINDOW_H, 0)  # fmt: skip
+        a, b = groups[g]
+        run = run_event_contract(series, targets[24 * a : 24 * b], warmup + 24 * a,
+                                 sigma_bps=sigma)  # fmt: skip
+        return screen.daily_returns(run)
+
+    for entry in got["paths"]:
+        p = entry["path"]
+        cand = [r for g in range(8)
+                for r in group(g, value[(min(g, g ^ p), max(g, g ^ p))])]  # fmt: skip
+        stats = st.paired_sharpe_statistics(cand, bench)
+        assert entry["E-DIFF"] == stats.difference_series_sharpe.scaled
+        assert entry["E-IMPROV"] == stats.paired_sharpe_improvement
+    assert len({e["E-DIFF"] for e in got["paths"]}) == 7
+
+
+def test_one_failed_split_makes_its_path_and_the_summaries_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trial = ts._model_trial(tmp_path, monkeypatch)
+    calls = {"n": 0}
+    real_build = screen.build_model
+
+    def build(cls: str, params: Any, seed: int) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:  # the first fit is split (0, 1), on path 1 only
+            raise RuntimeError("library failure")
+        return real_build(cls, params, seed)
+
+    monkeypatch.setattr(screen, "build_model", build)
+    got = cf.cpcv_report(trial, ts._long_path(), ts.W0, ts.WINDOW_H, 0, ON)
+    first, *rest = got["paths"]
+    assert (first["E-IMPROV"], first["E-DIFF"], first["reason"]) == (
+        None, None, "MODEL_FIT_ERROR"
+    )  # fmt: skip
+    assert all(p["E-DIFF"] is not None and p["reason"] is None for p in rest)
+    assert got["summaries"] == {"E-IMPROV": {"result": "UNAVAILABLE"},
+                                "E-DIFF": {"result": "UNAVAILABLE"}}  # fmt: skip
+
+
+# --- role: nothing reads the report ---------------------------------------------
+
+
+def _call_name(node: object) -> str | None:
+    return getattr(getattr(node, "func", None), "id", None)
+
+
+def c14_violations(tree: ast.AST, module: str) -> list[str]:
+    """B5BC-A-3: every use of the C-14 report other than producing it
+    (`c14 = cpcv_report(...)` in `evaluate_families`), storing it (the
+    `FamilyEvaluation` field and constructor argument) and serialising it in
+    `evaluation_record` (`ev.cpcv is None`, `_plain(ev.cpcv)`).
+
+    R14B6F-F-5, limits: the guard is by name. It does not see a read by
+    string key of the serialised record, `getattr(ev, "cpcv")`,
+    `dataclasses.asdict(ev)`, a function handed the whole
+    `FamilyEvaluation`, or `ev.cpcv is None` used in another field. The
+    behavioural test in `test_c2_confirmation_look_records.py` covers what
+    the look actually does with the report."""
+    parents = {c: n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
+
+    def scope(node: ast.AST) -> str | None:
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, ast.FunctionDef | ast.ClassDef):
+                return node.name
+        return None
+
+    bad = []
+    for node in ast.walk(tree):
+        name = getattr(node, "id", None) or getattr(node, "attr", None)
+        if name not in ("cpcv_report", "cpcv", "c14"):
+            continue
+        if isinstance(node, ast.FunctionDef):
+            continue
+        par, where = parents.get(node), scope(node)
+        ok = module == "c2_confirmation.py" and (
+            (name == "cpcv_report" and where == "evaluate_families"
+             and isinstance(par, ast.Call) and par.func is node
+             and isinstance(parents.get(par), ast.Assign))
+            or (name == "c14" and where == "evaluate_families" and (
+                (isinstance(par, ast.Assign) and par.targets == [node]
+                 and (_call_name(par.value) == "cpcv_report"
+                      or isinstance(par.value, ast.Dict)))  # R14B6F-F-6 fallback
+                or (_call_name(par) == "FamilyEvaluation"
+                    and node in getattr(par, "args", []))))
+            or (name == "cpcv" and where == "FamilyEvaluation"
+                and isinstance(par, ast.AnnAssign))
+            or (name == "cpcv" and where == "evaluation_record" and (
+                _call_name(par) == "_plain"
+                or (isinstance(par, ast.Compare) and isinstance(par.ops[0], ast.Is)
+                    and isinstance(par.comparators[0], ast.Constant)
+                    and par.comparators[0].value is None)))
+        )  # fmt: skip
+        if not ok:
+            bad.append(f"{module}:{getattr(node, 'lineno', '?')} {where}.{name}")
+    return bad
+
+
+def test_no_code_path_reads_the_report() -> None:
+    # C-14 (5): no gate, screen, mapping, DSR test, nomination or promotion
+    # reads it; slice 6 only computes it and writes it to the record
+    bad = []
+    for f in [*ROOT.joinpath("calibration").rglob("*.py"),
+              *ROOT.joinpath("src").rglob("*.py")]:  # fmt: skip
+        bad += c14_violations(ast.parse(f.read_text(encoding="utf-8")), f.name)
+    assert bad == []
+    source = (ROOT / "calibration" / "c2_confirmation.py").read_text(encoding="utf-8")
+    assert "c14 = cpcv_report(" in source  # the one producer is still there
+
+
+def test_a_gate_reading_the_report_is_caught() -> None:
+    """Astra's counterexample: a gate decided from the diagnostic."""
+    source = (ROOT / "calibration" / "c2_confirmation.py").read_text(encoding="utf-8")
+    anchor = "        out[f] = FamilyEvaluation(nom, gates_, nominee_outcome(gates_)"
+    assert source.count(anchor) == 1
+    bad_line = (
+        '        if c14.get("status") != "COMPUTED":\n'
+        '            gates_["G-9"] = Gate(FAIL)\n'
+    )
+    mutated = source.replace(anchor, bad_line + anchor)
+    assert c14_violations(ast.parse(mutated), "c2_confirmation.py")
+    reader = "    return evaluation, sealing, artifacts\n"
+    assert source.count(reader) == 1
+    extra = "    _ = [e.cpcv for e in families.values()]\n"
+    mutated = source.replace(reader, extra + reader)
+    assert c14_violations(ast.parse(mutated), "c2_confirmation.py")
+    assert c14_violations(ast.parse("x = cf.cpcv_report\n"), "anything.py")
