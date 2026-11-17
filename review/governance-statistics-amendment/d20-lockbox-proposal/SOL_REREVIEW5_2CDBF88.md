@@ -1,0 +1,34 @@
+# Codex Sol re-check of D-20 lockbox revision 6 (2cdbf88)
+
+Prompt: `REREVIEW5_PROMPT.md`. Reviewer metadata from the Codex CLI header (2026-10-27): model `gpt-6-sol`, provider openai, sandbox read-only, reasoning effort high, Codex CLI v0.164.0, session id `01a17c38-b159-7003-9c93-ae38dd7bceb1`, 79,222 tokens.
+
+Verdict: **FIX** (3 BLOCKER, 1 NON-BLOCKING, 1 QUESTION). Findings D20LR6-S-1..5. Dispositions: D20LR5-S-1 FIX (-> S-1); D20LR5-S-2 ACCEPT WITH NOTES (-> S-5); D20LR5-S-3 FIX (-> S-3); D20LR5-S-4 ACCEPT WITH NOTES. E6-1 confirmed applied; S4 consolidation deferral accepted.
+
+No finding is left unrepaired yet; dispositions go in revision 7.
+
+## Report (verbatim)
+
+**VERDICT: FIX.** Revision 6 is an inactive proposal. Deleting the snapshot fixes its two-copy recovery problem, and Q1 now describes the six-hour boundary. Two timing rules still conflict with the claimed fixed result and release contract. This is a read-only review; I wrote nothing. IDs use the requested Sol prefix; the caller must verify model metadata from the CLI header.
+
+### Rev-5 finding dispositions
+
+| Own finding | Re-check | Evidence |
+|---|---|---|
+| D20LR5-S-1 | **FIX** | Rev 6 re-reads the clock before calling `append_entry`, but that function then acquires its own lock, verifies the ledger, writes, and fsyncs. The actual append can cross C or `R_j` after the re-read. |
+| D20LR5-S-2 | **ACCEPT WITH NOTES** | Deleting snapshot `P` removes the stale-projection crash. A torn index still requires a §26 human stop; the crash table must not describe that as an automatically decidable durable result. |
+| D20LR5-S-3 | **FIX** | The fixed delay and fix-step claims are withdrawn, and timing leakage is disclosed. Removing `L_seal` does not establish public-call availability while sealed work consumes the shared disk or CPU. |
+| D20LR5-S-4 | **ACCEPT WITH NOTES** | Q1 names the six-hour boundary and its effect, drops Δ and “usually,” and no longer promises timing protection. Q6 still understates a possible missed release. |
+
+### Findings
+
+- **D20LR6-S-1 — BLOCKER; [rev 6 §1.2, commit-point rule](/D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/governance-statistics-amendment/d20-lockbox-proposal/PROPOSAL_REV6.md:93).** At `C−1` or `R_j−1`, the store can pass its clock check; `append_entry` can perform the append and fsync after the deadline. For a release, a row durable after `R_j` could become visible from `R_j`, although [D-12 P-7](/D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/governance-statistics-amendment/d12-proposal/PROPOSAL_REV7.md:87) treats a row *not committed before* `R_j` as a missed release. “Decided before C, durable after C” is an interpretation proposed by rev 6, not established by the cited day-255 rule; for release it is unsound under P-7. **Minimal repair:** bind the deadline to the actual durable append, or explicitly take the different rule through the owner’s amendment route. T-S1/T-S2 must inject crossings *inside* `append_entry`, during sealing, and between a bar-response clock read and its send; their current before/after-commit checks do not cover every crossing.
+
+- **D20LR6-S-2 — BLOCKER; [§1.2 effective result and T-S5](/D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/governance-statistics-amendment/d20-lockbox-proposal/PROPOSAL_REV6.md:111).** `mark_finished` can sample `D*−1`, then land after the first `state` call or a FAIL release. Before landing, the effective result is FAIL; afterward it can be PASS. T-S5 expressly tests both changes, including a published FAIL for a completed PASS. Calling this a storage fault does not make the result fixed at `D*`, as D-12 step 5 and its no-release-time-conversion argument require. **Minimal repair:** make a finished record eligible only when its durable completion precedes `D*`; late completion is void and cannot change an already fixed result. Test the boundary and restart cases.
+
+- **D20LR6-S-3 — BLOCKER; [T-S3, R5 and Q6](/D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/governance-statistics-amendment/d20-lockbox-proposal/PROPOSAL_REV6.md:165).** Sealed work no longer holds `L_store`, but it shares the resources needed by an index fsync. A worker disk stall can delay `insert_release` beyond `R_j`; the posting moves to the next day. T-S3 cannot guarantee success “in every case” under the stated shared-machine design. R5 and Q6 say the residual cannot move posting time, so their disclosure omits this case and its possible timing signal. **Minimal repair:** narrow T-S3 to lock independence, disclose outcome-correlated resource delays and missed releases, and route that enlarged residual to the owner; alternatively specify and test an enforceable availability bound.
+
+- **D20LR6-S-4 — QUESTION; [§1.3 and Q6](/D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/governance-statistics-amendment/d20-lockbox-proposal/PROPOSAL_REV6.md:172).** R5 accurately acknowledges unmeasured, fault-free hints about early stopping, FAIL kind, and possibly PASS versus performance FAIL. D-12’s accepted R1–R4 do not accept this channel: R1 needs a fault and hints only at PASS. Given [Constitution §7’s PASS/FAIL-only rule](/D:/PMP-programs-for-sharawi/aqt-freeze-sheet/docs/RESEARCH_CONSTITUTION.md:72) and D-12’s rule that owner-visible facts reach research, **my recommendation is an explicit C2 §7 exception if the owner accepts R5**, subject to the required human review. Q6 should state that governance cost directly rather than leave it as something S4 “must confirm.” Its signing hint also applies only where a pre-cap PASS requires signing.
+
+- **D20LR6-S-5 — NON-BLOCKING; [§1.2 crash table and T-S4](/D:/PMP-programs-for-sharawi/aqt-freeze-sheet/review/governance-statistics-amendment/d20-lockbox-proposal/PROPOSAL_REV6.md:147).** The index and sealed files are now the authoritative records, with no snapshot to rebuild. A partial last line, however, leaves operations stopped pending human reconciliation, not “exactly one” automatically usable truth. The table also omits crashes during an append before fsync and after a sealed link before directory fsync. **Minimal repair:** qualify the claim and add those crash states to T-S4, including restart after C. Preserve the stated §26 stop without automatic repair or replay.
+
+**Owner and handoff checks:** Q1’s near-cap consequence and moved boundary are fairly stated. Q2(i), Q2(ii), and Q3–Q5 show no new store contradiction in this focused check. Q6 is understandable to a non-statistician once the missed-release possibility and C2 cost are added. Deferring a **single consolidated effective signing text** to S4 is acceptable as a recorded obligation. E6-1 is present: the rev-6 disposition row cites Sol lines 27, 30, and 41. No implementation checks apply to this read-only proposal review; the boundary examples above are analytic counterexamples.

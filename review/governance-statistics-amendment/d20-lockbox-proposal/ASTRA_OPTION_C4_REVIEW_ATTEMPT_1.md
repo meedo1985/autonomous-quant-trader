@@ -1,0 +1,3 @@
+# Codex Astra re-check of D-20 option C revision C4 (5599056): attempt 1, no report
+
+Model `gpt-6-astra` (CLI header), reasoning effort high, read-only, Codex CLI v0.164.0, session id `01a18ce1-4bf9-7bd3-9686-87cd089665e1`, 44,580 tokens. Prompt: scratchpad `optc4_astra_prompt.md` (same as Sol's except the ID prefix D20C4-A and an independence sentence). The run ended with "ERROR: You've hit your usage limit ... try again at 5:55 PM" (local time, 2026-10-30) before writing any report. It produced **no findings**; nothing is lost. A second attempt will be recorded as `ASTRA_OPTION_C4_REVIEW_5599056.md`.

@@ -56,6 +56,16 @@ Activation is blocked until each of these exists:
 | A promoted candidate, or the deployable baseline | No cycle has started; verdict `KEEP_BLOCKED` | [FROZEN §11, §13] |
 | An external alert channel | None exists; each needs a credential and network path | §5 below |
 
+**Status update, 2026-10-25** (added by Claude Opus 5.5; the table above is kept as written on 2026-09-26). Still a DRAFT, not activated.
+- **Governor, executor, HALT/FLATTEN/FREEZE, paper loop:** written and merged as Tasks 21-25 (PRs #28-#31, then #35 for the post-merge review).
+- **External alert channel:** a private Telegram bot exists (Task 28, PR #38) and is tested end to end weekly; the last acknowledgement was 2026-10-24 09:51Z.
+- **Forward paper:** running on the owner's server since 2026-10-04 (Task 29, PR #42). Its `L-02` count of effective decisions is in its hourly reports.
+- **Unchanged:**
+  - §25 is signed;
+  - `L-01` = 0;
+  - no cycle has started and no candidate is promoted; the baseline route to shadow or canary is not established (`review/roadmap/next-steps-negotiation-2026-10-25/final_answer.md`);
+  - this protocol is not activated.
+
 ## 2. Stages
 
 The Constitution names paper, shadow, and canary gates ([FROZEN §11]: "all
